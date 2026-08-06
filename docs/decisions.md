@@ -143,6 +143,19 @@ events it produced survive as domain data.
 This is the clearest single win in the design, and it only became visible after
 dropping the assumption that the queue had to be the one already in use.
 
+One path complicates it. The bulk member upsert that precedes a recipient-list
+send dispatches inline rather than deferring, and its caller reads the
+resulting status synchronously to decide whether the send may proceed. That is
+a request-time gate, not background work, and it reaches the gate through a
+wrapper rather than as a direct call, so it is easy to miss when counting
+callers.
+
+It does not block the deletion, but it changes the shape of it: that path
+becomes an ordinary synchronous API call, and only the genuinely deferred paths
+become tasks. Arguably clearer than routing a blocking check through queue
+machinery, but it has to be done deliberately rather than discovered during the
+cutover.
+
 ## Infrastructure is disposable, application code is not
 
 The migration stance is that migration cost does not constrain design. That
