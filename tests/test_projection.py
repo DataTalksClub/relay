@@ -192,3 +192,31 @@ def test_failures_are_counted_and_worker_reads_healthy_when_idle():
     # checking in is.
     assert payload["worker"]["healthy"] is True
     assert payload["queue"]["pending"] == 0
+
+
+@pytest.mark.django_db(transaction=True)
+def test_stamp_annotates_a_task_that_is_only_queued():
+    """Context must be visible before a worker picks the task up.
+
+    Without this, a console shows a queue of anonymous rows exactly when the
+    operator most wants to know what is waiting.
+    """
+    import taskdeck
+
+    result = tasks.simple_ok.enqueue(1)
+    taskdeck.stamp(result, entity=("campaign", "42"), owner_id="client-a", message="batch 1 of 3")
+
+    run = TaskRun.objects.get(result_id=str(result.id))
+    assert run.status == TaskRunStatus.QUEUED
+    assert (run.entity_type, run.entity_id) == ("campaign", "42")
+    assert run.owner_id == "client-a"
+    assert run.message == "batch 1 of 3"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_stamp_accepts_a_bare_result_id_and_ignores_unknown_ids():
+    import taskdeck
+
+    result = tasks.simple_ok.enqueue(1)
+    assert taskdeck.stamp(str(result.id), owner_id="client-b") is True
+    assert taskdeck.stamp("no-such-id", owner_id="client-b") is False

@@ -84,6 +84,35 @@ def set_entity(entity_type, entity_id):
     return bool(qs.update(entity_type=str(entity_type)[:64], entity_id=str(entity_id)[:255]))
 
 
+def stamp(task_result, *, entity=None, owner_id=None, message=None):
+    """Annotate the run for a task that was just enqueued.
+
+    ``set_entity``/``set_owner`` act on the *currently executing* task, so a
+    task that is only queued carries nothing until a worker picks it up. That
+    leaves a console showing a queue of anonymous rows, which is when context
+    is most wanted. This stamps the row at enqueue time instead.
+
+    ``task_result`` is whatever ``.enqueue()`` returned; a bare id also works.
+    """
+    result_id = str(getattr(task_result, "id", task_result) or "")
+    if not result_id:
+        return False
+
+    fields = {}
+    if entity is not None:
+        entity_type, entity_id = entity
+        fields["entity_type"] = str(entity_type)[:64]
+        fields["entity_id"] = str(entity_id)[:255]
+    if owner_id is not None:
+        fields["owner_id"] = str(owner_id)[:255]
+    if message is not None:
+        fields["message"] = str(message)[:500]
+    if not fields:
+        return False
+
+    return bool(TaskRun.objects.filter(result_id=result_id).update(**fields))
+
+
 def set_owner(owner_id):
     """Attach the tenant this run belongs to.
 

@@ -20,6 +20,7 @@ _LAZY = {
     "report": "taskdeck.progress",
     "set_entity": "taskdeck.progress",
     "set_owner": "taskdeck.progress",
+    "stamp": "taskdeck.progress",
     "set_total": "taskdeck.progress",
 }
 
