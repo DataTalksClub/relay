@@ -171,3 +171,56 @@ checked against the code before being planned around. An earlier draft assumed
 a capture mode existed for shadow-comparing rendered output during a cutover.
 It was added and then removed again, so it is a feature to build, not one to
 rely on.
+
+## Learned while building it
+
+Recorded because each of these cost real time and none was predictable from the
+design.
+
+### The two tasks implementations have separate signal objects
+
+Django 6.0 ships `django.tasks`. The `django-tasks` backport ships
+`django_tasks`. Each defines its own `Signal` instances, and a backend emits on
+whichever module it imported.
+
+The database backend imports the backport's. Its compatibility shim aliases the
+`Task` *class* so tasks defined with Django's native decorator run correctly —
+but it does not alias the signals. So the obvious wiring, connecting receivers
+to `django.tasks.signals`, produces a projection that stays permanently empty
+while every other part of the system appears to work perfectly.
+
+taskdeck binds to every signals module present and deduplicates on the
+backend's result id. The test suite asserts the mismatched combination
+explicitly, because that is the one a reasonable person would not think to try.
+
+### The projection has to be defensive, not correct
+
+A receiver that raises inside `task_enqueued` propagates into the caller's
+enqueue. A missing status row degrades a dashboard; a raised exception loses
+the user's work. Every receiver swallows and logs.
+
+### Context must be bound inside a deferred callable
+
+Binding a correlation id around a loop that calls `enqueue_on_commit` does
+nothing: on-commit callbacks run after the block exits, by which point the
+context manager has reset. The binding has to happen inside the deferred
+function. This is easy to write wrongly and produces no error — just
+uncorrelated rows.
+
+### Enqueue-time context matters more than expected
+
+`set_entity` and `set_owner` act on the currently executing task, so anything
+merely queued carries nothing until a worker picks it up. That is exactly when
+an operator wants to know what is waiting. `stamp()` annotates the row at
+enqueue instead.
+
+### Pinning by git tag has a build cost
+
+A git-pinned dependency needs git present wherever the image is built, and
+`uv sync` will not resolve it otherwise. It also means a change to the package
+requires an explicit lock upgrade in each consumer before it is picked up —
+easy to forget, and the failure surfaces as a stale attribute error rather than
+anything obviously version-related.
+
+Worth the isolation for now, but it is a real tax and the reason to publish to
+an index once the API settles.
