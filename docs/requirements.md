@@ -7,10 +7,12 @@ Date: 2026-08-06
 Three Django 6.0 projects run background work today, each with a different
 mechanism, and two of them on different compute platforms:
 
-- [ai-shipping-labs](https://github.com/) — django-q2 with the ORM broker, a
-  `qcluster` sidecar in a combined ECS Fargate task. Carries roughly 90% of the
-  background work: 24 cron schedules and ~40 event-driven enqueue sites across
-  12 apps.
+- ai-shipping-labs — django-q2 with the ORM broker on ECS Fargate. Carries
+  roughly 90% of the background work: 24 cron schedules and ~40 event-driven
+  enqueue sites across 12 apps. Production runs the worker as its own ECS
+  service alongside the web service; other environments run it as a sidecar in
+  a combined task. The two shapes are selected by branches in the deploy
+  script, not by configuration.
 - [course-management-platform](https://github.com/DataTalksClub/course-management-platform)
   — no queue. A hand-rolled database outbox drained by a scheduled ECS task
   every five minutes, plus two other scheduled commands.
@@ -80,10 +82,17 @@ Every project runs its workers the same way: a worker process alongside the web
 process, on the same platform, deployed by the same mechanism, in both
 production and development environments.
 
-Environment parity is an explicit requirement. Today it is broken in two
-places: one project's scheduled jobs exist only in production, and another runs
-Lambda in production and systemd in its sandbox, with a status page that only
-understands the latter.
+Environment parity is an explicit requirement, and today it is broken in three
+different ways:
+
+- one project runs its worker as a separate service in production and as a
+  sidecar everywhere else, with the choice hard-coded in deploy-script branches
+- another project's scheduled jobs exist only in production
+- the third has only a sandbox, and its status page reads liveness from the
+  process supervisor, which will not survive a move to any other platform
+
+Parity has to be a property of configuration, not of which branch of a shell
+script an environment happens to take.
 
 ### R3 — Status that crosses service boundaries
 
