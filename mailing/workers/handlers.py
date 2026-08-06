@@ -4,6 +4,7 @@ from mailing.queue_contracts import (
     validate_transactional_email_message,
 )
 from mailing.services.campaign_sender import send_campaign_batch
+from mailing.services.inbound_email import process_inbound_s3_notification
 from mailing.services.ses_webhooks import normalize_ses_webhook_worker_payload, process_ses_webhook
 from mailing.services.transactional_sender import send_transactional_email_from_queue
 from mailing.sqs import process_sqs_event
@@ -25,6 +26,10 @@ def email_events_handler(event, context=None):
     return process_sqs_event(event, _handle_email_event_record)
 
 
+def inbound_email_handler(event, context=None):
+    return process_sqs_event(event, _handle_inbound_email_record)
+
+
 def _handle_transactional_email_record(payload, record):
     validate_transactional_email_message(payload)
     send_transactional_email_from_queue(payload)
@@ -43,3 +48,7 @@ def _handle_email_event_record(payload, record):
     validate_email_event_message(payload)
     # Future event ingest uses idempotency_key for edge-generated tracking
     # events while keeping email_events append-only for auditable history.
+
+
+def _handle_inbound_email_record(payload, record):
+    process_inbound_s3_notification(payload)

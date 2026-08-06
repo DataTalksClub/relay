@@ -24,7 +24,7 @@ from mailing.models import (
 )
 from mailing.queue_contracts import CONTRACT_VERSION, SES_WEBHOOKS_CONTRACT, validate_ses_webhook_message
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
-from mailing.sqs import enqueue_ses_webhook
+from mailing.enqueue import enqueue_ses_webhook
 
 SNS_NOTIFICATION = "Notification"
 SNS_SUBSCRIPTION_CONFIRMATION = "SubscriptionConfirmation"

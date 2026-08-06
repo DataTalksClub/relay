@@ -123,6 +123,7 @@ Per environment, set:
 - Region: `SESRegion`/`AWS_REGION`.
 - DNS: DKIM, SPF, DMARC, and optional custom MAIL FROM.
 - Event publishing: SES/SNS webhook processing is active through the `ses-webhooks` queue and Lambda event source mapping. Before production sends, smoke-test a bounce/complaint notification path and verify the queue drains, the worker logs the notification, the DLQ stays empty, and alarms route to the on-call channel.
+- Inbound processing: the `aws-infra/sandbox/datamailer` root owns SES receipt aliases, encrypted private S3 storage, S3-to-SQS notifications, the inbound DLQ, DynamoDB idempotency, and the normalized-event SNS topic. Send a real message to a configured sandbox alias, run `uv run python scripts/inspect_inbound_mail.py --latest --terraform-dir ../aws-infra/sandbox/datamailer --expect-to invoice@mailer.dtcdev.click`, then verify the inbound queue drains, the SNS consumer receives one `inbound-email` v1 event, and the inbound DLQ remains empty. Datamailer has no production deployment yet; repeat this smoke procedure when a production environment is created.
 
 HUMAN checks before production traffic:
 

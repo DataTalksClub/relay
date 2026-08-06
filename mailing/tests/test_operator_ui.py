@@ -1760,6 +1760,7 @@ def test_queue_action_snapshots_enqueues_idempotently_and_does_not_call_ses(
     audience,
     client_record,
     monkeypatch,
+    django_capture_on_commit_callbacks,
 ):
     client.force_login(operator)
     campaign = Campaign.objects.create(
@@ -1785,8 +1786,17 @@ def test_queue_action_snapshots_enqueues_idempotently_and_does_not_call_ses(
     assert campaign.status == "draft"
     assert CampaignRecipient.objects.filter(campaign=campaign).count() == 0
 
-    first = client.post(reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"})
-    second = client.post(reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"})
+    # Batches are enqueued on commit now rather than immediately, so the
+    # callbacks must be executed for the enqueue to be observable. That
+    # deferral is the point of the change: a rollback leaves nothing queued.
+    with django_capture_on_commit_callbacks(execute=True):
+        first = client.post(
+            reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"}
+        )
+    with django_capture_on_commit_callbacks(execute=True):
+        second = client.post(
+            reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"}
+        )
 
     campaign.refresh_from_db()
     assert first.status_code == 302

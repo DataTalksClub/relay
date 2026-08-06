@@ -1,30 +1,16 @@
 #!/usr/bin/env python3
 import argparse
-import html
 import importlib
 import json
 import os
-import re
 import subprocess
+import sys
 from dataclasses import dataclass
-from email import policy
-from email.parser import BytesParser
-from email.utils import getaddresses
 from pathlib import Path
 
-SELECTED_HEADERS = (
-    "list-unsubscribe",
-    "list-unsubscribe-post",
-    "x-ses-receipt",
-    "x-ses-spam-verdict",
-    "x-ses-virus-verdict",
-    "x-ses-spf-verdict",
-    "x-ses-dkim-verdict",
-    "x-ses-dmarc-verdict",
-)
-LINK_RE = re.compile(r"https?://[^\s<>'\")]+", re.IGNORECASE)
-HREF_RE = re.compile(r"""href=["']([^"']+)["']""", re.IGNORECASE)
-TAG_RE = re.compile(r"<[^>]+>")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from mailing.inbound_mime import address_values, html_to_text, normalize_preview, parse_mime
 
 
 @dataclass
@@ -32,28 +18,6 @@ class CheckResult:
     name: str
     status: str
     detail: str
-
-
-@dataclass
-class PartSummary:
-    count: int
-    characters: int
-    preview: str
-
-
-@dataclass
-class EmailSummary:
-    subject: str
-    from_: str
-    to: str
-    date: str
-    message_id: str
-    selected_headers: dict[str, str]
-    text: PartSummary
-    html: PartSummary
-    links: list[str]
-    body_text: str
-    body_html: str
 
 
 def pass_(name, detail):
@@ -71,100 +35,6 @@ def fail(name, detail):
 def client_error_code(exc):
     response = getattr(exc, "response", {})
     return response.get("Error", {}).get("Code", exc.__class__.__name__)
-
-
-def normalize_preview(value, limit=240):
-    value = " ".join((value or "").split())
-    if len(value) <= limit:
-        return value
-    return f"{value[: limit - 3]}..."
-
-
-def address_values(value):
-    return [addr.lower() for _name, addr in getaddresses([value or ""]) if addr]
-
-
-def html_to_text(value):
-    return html.unescape(TAG_RE.sub(" ", value or ""))
-
-
-def message_parts(message):
-    if message.is_multipart():
-        return list(message.walk())
-    return [message]
-
-
-def part_text(part):
-    try:
-        content = part.get_content()
-    except Exception:
-        payload = part.get_payload(decode=True)
-        if payload is None:
-            return str(part.get_payload() or "")
-        charset = part.get_content_charset() or "utf-8"
-        return payload.decode(charset, errors="replace")
-    return content if isinstance(content, str) else str(content)
-
-
-def extract_links(text, html_text, selected_headers):
-    links = []
-    for value in (text or "", html_text or "", "\n".join(selected_headers.values())):
-        links.extend(match.rstrip(".,;") for match in LINK_RE.findall(value))
-    links.extend(html.unescape(match).rstrip(".,;") for match in HREF_RE.findall(html_text or ""))
-
-    seen = set()
-    deduped = []
-    for link in links:
-        if link not in seen:
-            seen.add(link)
-            deduped.append(link)
-    return deduped
-
-
-def summarize_parts(parts):
-    joined = "\n".join(parts)
-    return PartSummary(count=len(parts), characters=len(joined), preview=normalize_preview(joined))
-
-
-def parse_mime(raw):
-    if not raw.strip():
-        raise ValueError("empty MIME input")
-
-    message = BytesParser(policy=policy.default).parsebytes(raw)
-    if not message.keys():
-        raise ValueError("MIME input has no headers")
-
-    text_parts = []
-    html_parts = []
-    for part in message_parts(message):
-        if part.is_multipart():
-            continue
-        if part.get_content_disposition() == "attachment":
-            continue
-
-        content_type = part.get_content_type()
-        if content_type == "text/plain":
-            text_parts.append(part_text(part))
-        elif content_type == "text/html":
-            html_parts.append(part_text(part))
-
-    body_text = "\n".join(text_parts)
-    body_html = "\n".join(html_parts)
-    selected_headers = {name: str(message[name]) for name in SELECTED_HEADERS if message[name] is not None}
-
-    return EmailSummary(
-        subject=str(message["subject"] or ""),
-        from_=str(message["from"] or ""),
-        to=str(message["to"] or ""),
-        date=str(message["date"] or ""),
-        message_id=str(message["message-id"] or ""),
-        selected_headers=selected_headers,
-        text=summarize_parts(text_parts),
-        html=summarize_parts(html_parts),
-        links=extract_links(body_text, body_html, selected_headers),
-        body_text=body_text,
-        body_html=body_html,
-    )
 
 
 def summary_results(summary, source):

@@ -1,6 +1,7 @@
 from mailing.workers.handlers import (
     campaign_email_handler,
     email_events_handler,
+    inbound_email_handler,
     ses_webhooks_handler,
     transactional_email_handler,
 )
@@ -8,6 +9,7 @@ from mailing.workers.handlers import (
 __all__ = [
     "campaign_email_handler",
     "email_events_handler",
+    "inbound_email_handler",
     "ses_webhooks_handler",
     "transactional_email_handler",
 ]

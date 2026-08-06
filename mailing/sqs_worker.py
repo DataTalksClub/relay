@@ -9,6 +9,7 @@ from mailing.sqs import records_from_messages
 from mailing.workers import (
     campaign_email_handler,
     email_events_handler,
+    inbound_email_handler,
     ses_webhooks_handler,
     transactional_email_handler,
 )
@@ -28,7 +29,7 @@ class WorkerResult:
     failed: int
 
 
-WORKER_NAMES = ("transactional", "campaign", "ses-webhooks", "email-events")
+WORKER_NAMES = ("transactional", "campaign", "ses-webhooks", "email-events", "inbound-email")
 
 
 def get_worker_config(name):
@@ -52,6 +53,11 @@ def get_worker_config(name):
             name="email-events",
             queue_url=settings.SQS_EMAIL_EVENTS_QUEUE_URL,
             handler=email_events_handler,
+        ),
+        "inbound-email": WorkerConfig(
+            name="inbound-email",
+            queue_url=settings.SQS_INBOUND_EMAIL_QUEUE_URL,
+            handler=inbound_email_handler,
         ),
     }
     config = configs[name]

@@ -11,6 +11,8 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "pyjwt>=2.10",
     "python-dotenv>=1.2.0",
+    "django-tasks-db>=0.12.0",       # ORM backend for the django.tasks interface
+    "taskdeck",                      # shared task/status layer (DataTalksClub/taskdeck)
     "whitenoise>=6.12.0",
 ]
 
@@ -42,3 +44,6 @@ known-first-party = ["datamailer", "mailing"]
 
 [tool.ruff.lint.per-file-ignores]
 "manage.py" = ["PLC0415"]
+
+[tool.uv.sources]
+taskdeck = { git = "https://github.com/DataTalksClub/taskdeck.git", branch = "main" }

@@ -30,7 +30,7 @@ from mailing.services.recipient_lists import (
 from mailing.services.senders import normalize_sender_id, resolve_sender_email
 from mailing.services.transactional_catalog import validate_template_context
 from mailing.services.transactional_rendering import render_template_string
-from mailing.sqs import enqueue_transactional_email
+from mailing.enqueue import enqueue_transactional_email
 
 
 class TransactionalSendRejected(Exception):

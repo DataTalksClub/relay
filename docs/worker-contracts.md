@@ -37,8 +37,55 @@ Malformed JSON, missing required fields, unknown contract names, and unsupported
 - `campaign-email`: campaign recipient batches.
 - `ses-webhooks`: asynchronous SES provider events.
 - `email-events`: tracking and event ingest.
+- `inbound-email`: S3 notifications for raw messages received by SES.
 
 Transactional and campaign work use separate queues and workers so campaign backlog cannot delay account-critical email.
+
+## `inbound-email` v1
+
+SES stores the raw MIME object under the private inbound bucket's `raw/` prefix. S3 sends an object-created notification to the `inbound-email` queue. The Datamailer worker parses the message and publishes one normalized SNS event for each configured recipient route.
+
+The published event has this shape:
+
+```json
+{
+  "contract": "inbound-email",
+  "version": 1,
+  "event_id": "sha256-of-message-id-and-route",
+  "event_type": "email.received",
+  "occurred_at": "2026-07-12T07:30:01+00:00",
+  "route": "invoice",
+  "message_id": "<message-123@example.com>",
+  "sender": {"header": "Billing <billing@example.com>", "addresses": ["billing@example.com"]},
+  "recipients": {
+    "to": "invoice@mailer.dtcdev.click",
+    "cc": "",
+    "addresses": ["invoice@mailer.dtcdev.click"],
+    "matched": ["invoice@mailer.dtcdev.click"]
+  },
+  "subject": "July invoice",
+  "date": "Sun, 12 Jul 2026 09:30:00 +0200",
+  "body": {
+    "text": {"content_type": "text/plain", "value": "Attached", "size": 8},
+    "html": {"content_type": "text/html", "value": "<p>Attached</p>", "size": 15}
+  },
+  "attachments": [{
+    "filename": "invoice.pdf",
+    "content_type": "application/pdf",
+    "content_id": "",
+    "disposition": "attachment",
+    "size": 12345,
+    "s3": {"bucket": "private-inbound-bucket", "key": "processed/event-id/attachments/001-invoice.pdf"}
+  }],
+  "raw_mime": {"bucket": "private-inbound-bucket", "key": "raw/ses-object-key"}
+}
+```
+
+Bodies up to `INBOUND_EMAIL_INLINE_BODY_MAX_BYTES` are included as text. Larger bodies, all attachments, and raw MIME are represented by private S3 references. Consumers need explicit read access to those object prefixes; Datamailer never publishes binary content through SNS.
+
+Aliases are configured as exact address-to-route mappings in `INBOUND_EMAIL_ROUTES`, for example `invoice@mailer.dtcdev.click=invoice,todo@mailer.dtcdev.click=todo`. One message sent to aliases belonging to two routes produces two events. Duplicate delivery is suppressed by a DynamoDB conditional write on the SHA-256 of `Message-ID + route`. A failed SNS publish releases the claim so SQS can retry.
+
+Raw MIME expires after `inbound_mail_retention_days` (60 days in the sandbox default). Extracted bodies and attachments expire after `inbound_email_artifact_retention_days` (14 days by default). Dapier must copy required artifacts to their system of record before expiry.
 
 ## `transactional-email` v1
 

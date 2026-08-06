@@ -1,5 +1,7 @@
+import uuid
 from dataclasses import dataclass
 
+import taskdeck
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Q, Sum
@@ -25,7 +27,7 @@ from mailing.services.contacts import (
     has_invalid_email_validation,
     is_verified_for_marketing,
 )
-from mailing.sqs import enqueue_campaign_email
+from mailing.enqueue import enqueue_campaign_email
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,12 @@ def estimate_campaign_recipients(campaign, *, preview_limit=25):
     )
 
 
+def _enqueue_campaign_batch(correlation_id, payload):
+    """Enqueue one batch under the send's shared correlation id."""
+    with taskdeck.bind_correlation(correlation_id):
+        enqueue_campaign_email(payload)
+
+
 def queue_campaign(campaign, *, batch_size=None):
     batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 10)
     if batch_size <= 0:
@@ -167,8 +175,24 @@ def queue_campaign(campaign, *, batch_size=None):
         locked_campaign.save(update_fields=["status", "updated_at"])
         _append_queue_audit_events(locked_campaign, recipient_ids, len(payloads))
 
-    for payload in payloads:
-        enqueue_campaign_email(payload)
+        # Enqueue only once this transaction commits.
+        #
+        # Previously this loop ran after the `atomic` block with no on-commit
+        # hook. When `queue_campaign` is called inside an outer transaction the
+        # block above is only a savepoint, so the batches were dispatched
+        # before the outer commit -- a subsequent rollback left a campaign that
+        # was never marked QUEUED with its sends already in flight, and a
+        # failure part-way through the loop left a QUEUED campaign with only
+        # some batches dispatched. Both are unrecoverable once mail leaves.
+        #
+        # The correlation id must be bound *inside* the deferred callable, not
+        # around this loop: on-commit callbacks run after the block exits, by
+        # which point a context manager here would already have reset.
+        send_correlation_id = uuid.uuid4()
+        for payload in payloads:
+            taskdeck.enqueue_on_commit(
+                _enqueue_campaign_batch, send_correlation_id, payload
+            )
 
     return QueueCampaignResult(
         campaign_id=locked_campaign.id,
