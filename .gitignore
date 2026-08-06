@@ -18,3 +18,4 @@ staticfiles/
 terraform.tfvars
 *.tfvars.json
 backend.hcl
+.env.prod

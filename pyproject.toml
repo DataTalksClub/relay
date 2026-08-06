@@ -8,6 +8,7 @@ dependencies = [
     "cryptography>=48.0.0",
     "dj-database-url>=3.0.0",
     "django>=6.0.0,<7.0.0",
+    "gunicorn>=23.0.0",             # WSGI server for the container image
     "psycopg2-binary>=2.9.11",
     "pyjwt>=2.10",
     "python-dotenv>=1.2.0",

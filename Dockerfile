@@ -9,8 +9,15 @@ ENV UV_FROZEN=1
 
 WORKDIR /app
 
+# git is needed at build time only: taskdeck is pinned to a git revision rather
+# than published to an index. Removed in the same layer so it does not ship.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && uv sync --frozen \
+    && apt-get purge -y git \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 RUN uv run python manage.py collectstatic --noinput

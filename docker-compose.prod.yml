@@ -1,0 +1,97 @@
+# Production-shaped stack: gunicorn, a task worker, and the ingress drains,
+# all from one image, behind Caddy for TLS.
+#
+# The worker is a separate container rather than a thread inside web so that a
+# large campaign send cannot starve request handling, and so `docker compose
+# logs worker` answers "what is the queue doing" without filtering.
+
+x-app: &app
+  image: datamailer:latest
+  build:
+    context: .
+  restart: unless-stopped
+  env_file: .env.prod
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-datamailer}
+      POSTGRES_USER: ${POSTGRES_USER:-datamailer_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-datamailer_user} -d ${POSTGRES_DB:-datamailer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    <<: *app
+    restart: "no"
+    command: uv run python manage.py migrate --noinput
+
+  web:
+    <<: *app
+    command: uv run gunicorn datamailer.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 60
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    <<: *app
+    # Runs the django.tasks database backend's worker. Task code is unchanged
+    # by this choice; swapping the backend swaps this command and nothing else.
+    command: uv run python manage.py db_worker
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The two queues AWS writes into directly. Disabled unless their queue URLs
+  # are configured, so a deployment without SES wiring still comes up cleanly.
+  ingress-ses:
+    <<: *app
+    profiles: ["ingress"]
+    command: uv run python manage.py drain_sqs_ingress ses-webhooks
+
+  ingress-inbound:
+    <<: *app
+    profiles: ["ingress"]
+    command: uv run python manage.py drain_sqs_ingress inbound-email
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS must be set}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
