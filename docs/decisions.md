@@ -24,8 +24,19 @@ not a reason.
 ## Backend: a Postgres queue, not a broker
 
 Requirements that decide it: no new infrastructure, transactional enqueue (R8),
-serialisation by lock rather than global concurrency cap (R9), periodic tasks,
-and no polling load on a small database instance.
+serialisation by lock rather than global concurrency cap (R9), and periodic
+tasks.
+
+One caveat, since it was initially stated as a decisive factor and is not: the
+concern about polling load on a small database instance came from an alarm
+threshold in a template that was never applied. It is not evidence about any
+running system. A Postgres-native queue is still the right call on the other
+four grounds, but that particular argument should not be repeated.
+
+A harder prerequisite: a Postgres queue needs Postgres. One of the three
+projects has no managed database at all and runs on SQLite, so provisioning one
+is a precondition of this choice rather than a detail. Any plan that assumes
+otherwise is planning against infrastructure that does not exist.
 
 A Postgres-native queue using `LISTEN`/`NOTIFY` with `FOR UPDATE SKIP LOCKED`
 satisfies all of these without adding a broker. Workers wake on enqueue instead
@@ -140,4 +151,10 @@ files — rather than carefully migrating it.
 
 It does not license rewriting tested domain behaviour. Handlers that are
 already backend-agnostic lose their wrapper and become plain task functions.
-Senders, contracts, webhook processing, capture modes, and tenant models stay.
+Senders, queue contracts, webhook processing, and tenant models stay.
+
+One caveat discovered while reviewing this: verification strategies must be
+checked against the code before being planned around. An earlier draft assumed
+a capture mode existed for shadow-comparing rendered output during a cutover.
+It was added and then removed again, so it is a feature to build, not one to
+rely on.

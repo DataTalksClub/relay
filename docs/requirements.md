@@ -14,9 +14,12 @@ mechanism, and two of them on different compute platforms:
 - [course-management-platform](https://github.com/DataTalksClub/course-management-platform)
   — no queue. A hand-rolled database outbox drained by a scheduled ECS task
   every five minutes, plus two other scheduled commands.
-- [datamailer](https://github.com/DataTalksClub/datamailer) — SQS with Lambda
-  workers via event source mappings in production, and the same handlers as
-  systemd units in the sandbox environment.
+- [datamailer](https://github.com/DataTalksClub/datamailer) — SQS queues with
+  the handlers run as long-lived systemd units. Sandbox only; there is no
+  production deployment yet. Its repo contains a CloudFormation template
+  describing Lambda workers and a managed database, but that template is not
+  what is deployed — the applied infrastructure provisions queues, SES, and
+  inbound mail, and no database. It therefore runs on SQLite.
 
 Five execution models, three compute platforms, three unrelated status
 surfaces. The goal is one of each.
@@ -49,6 +52,27 @@ Databases stay separate per project. Queues stay separate per project.
 All projects enqueue and define background work through `django.tasks`.
 No project imports a queue backend directly. The backend must be swappable by
 configuration.
+
+Prerequisite: `django.tasks` arrived in Django 6.0, and only two of the three
+projects are on it. The third is on 5.2, so a framework upgrade is a
+precondition for this requirement rather than part of it. A backport package
+providing the same interface on older Django is the alternative if that upgrade
+has to wait.
+
+### R1a — Queue ingress from cloud services
+
+Not all work originates in application code. Provider event notifications and
+inbound mail are delivered by cloud services directly into queues, so a queue
+that only application code can write to is insufficient.
+
+The design must keep a thin ingress path for these — a queue the provider can
+write to, drained by a worker that hands off to the internal task system —
+rather than assuming every producer is a Django process.
+
+This was initially assessed the other way, from reading application code alone,
+where every enqueue call did appear to originate in Django. The deployed
+infrastructure contradicts that: notification topics and object-storage events
+are wired straight into the queues.
 
 ### R2 — One compute shape
 
@@ -165,9 +189,25 @@ Paging stays on cloud-provider alarms, which survive the console being down.
 Enqueuing must be able to participate in the database transaction that caused
 it, so that a committed data change and its follow-up work cannot diverge.
 
-Two of the three projects currently work around the absence of this: one wraps
-every enqueue in an on-commit hook by hand, the other built a full outbox with
-a six-state machine to get the same guarantee. Making it native removes both.
+Two of the three projects work around the absence of this today, and one of
+them works around it incompletely.
+
+One project built a full outbox with a six-state machine to get the guarantee.
+The other hand-rolls it per call site, and only one of three enqueue paths is
+actually guarded: the transactional send wraps its enqueue in an on-commit
+hook, while the campaign queueing path enqueues after its atomic block with no
+hook at all, and the webhook ingress path does the same.
+
+The campaign path is a live instance of the failure this requirement exists to
+prevent. When that function runs inside an outer transaction, its inner atomic
+block is a savepoint, so the sends are enqueued before the outer commit — and a
+subsequent rollback leaves work queued for a state that never existed. A
+partial failure part-way through the enqueue loop leaves a campaign marked
+queued with only some of its batches dispatched.
+
+Making enqueue transactional removes the outbox, removes the per-call-site
+hooks, and closes this class of bug rather than relying on every author
+remembering.
 
 ### R9 — Serialisation by lock, not by global concurrency cap
 
