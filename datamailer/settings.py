@@ -91,6 +91,11 @@ TASKS = {
 # Identifies this project in the taskdeck status contract and in TaskRun rows.
 TASKDECK_PROJECT = "datamailer"
 
+# Bearer token the cross-project console presents to read the status
+# contract. Empty disables the endpoint entirely (it 404s), so a host that
+# has not been given a token cannot leak operational detail.
+TASKDECK_STATUS_TOKEN = os.environ.get("TASKDECK_STATUS_TOKEN", "")
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",

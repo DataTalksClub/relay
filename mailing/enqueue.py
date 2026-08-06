@@ -9,15 +9,34 @@ cannot be replaced by an in-application queue.
 Callers keep the same function names, so nothing downstream changes shape.
 """
 
+import taskdeck
+
 from mailing import tasks
 
 
 def enqueue_transactional_email(payload):
-    return tasks.send_transactional_email.enqueue(payload)
+    result = tasks.send_transactional_email.enqueue(payload)
+    # Stamped at enqueue rather than only inside the task body, so a queued
+    # backlog shows what it is waiting on instead of a list of anonymous rows.
+    taskdeck.stamp(
+        result,
+        entity=("transactional_message", payload["transactional_message_id"])
+        if payload.get("transactional_message_id")
+        else None,
+        owner_id=payload.get("client_id"),
+    )
+    return result
 
 
 def enqueue_campaign_email(payload):
-    return tasks.send_campaign_email_batch.enqueue(payload)
+    result = tasks.send_campaign_email_batch.enqueue(payload)
+    recipient_ids = payload.get("recipient_ids") or []
+    taskdeck.stamp(
+        result,
+        entity=("campaign", payload["campaign_id"]) if payload.get("campaign_id") else None,
+        message=f"{len(recipient_ids)} recipients" if recipient_ids else None,
+    )
+    return result
 
 
 def enqueue_ses_webhook(payload):

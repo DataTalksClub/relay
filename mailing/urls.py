@@ -1,12 +1,13 @@
 from django.urls import path
 
-from mailing import views
+from mailing import ops_views, views
 
 app_name = "mailing"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("health/", views.health, name="health"),
+    path("internal/ops/status", ops_views.status, name="taskdeck_status"),
     path("campaigns/", views.campaign_list, name="campaign_list"),
     path("campaigns/new/", views.campaign_create, name="campaign_create"),
     path("campaigns/<int:campaign_id>/", views.campaign_detail, name="campaign_detail"),

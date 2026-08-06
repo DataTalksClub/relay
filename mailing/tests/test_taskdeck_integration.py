@@ -8,12 +8,12 @@ Email cannot be recalled, so this is guarded explicitly rather than trusted.
 """
 
 import pytest
+import taskdeck
 from django.db import transaction
-from django.utils import timezone
 from django.tasks import task
+from django.utils import timezone
 from taskdeck.models import TaskRun, TaskRunStatus
 
-import taskdeck
 from mailing.models import (
     Audience,
     Campaign,

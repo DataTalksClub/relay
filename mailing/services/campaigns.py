@@ -7,6 +7,7 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
+from mailing.enqueue import enqueue_campaign_email
 from mailing.models import (
     Campaign,
     CampaignRecipient,
@@ -27,7 +28,6 @@ from mailing.services.contacts import (
     has_invalid_email_validation,
     is_verified_for_marketing,
 )
-from mailing.enqueue import enqueue_campaign_email
 
 
 @dataclass(frozen=True)

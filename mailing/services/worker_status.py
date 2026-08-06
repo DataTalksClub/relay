@@ -177,6 +177,16 @@ def _badge_for_systemd(properties: dict[str, str]) -> tuple[str, str, str]:
     return "Unknown", "neutral", properties.get("UnavailableReason") or sub_state or active_state
 
 
+def backlog_count(worker_key: str) -> int | None:
+    """Backlog for one worker, without touching the process supervisor.
+
+    Public counterpart to ``_backlog_count``, for callers that want queue depth
+    alone. The systemd-based liveness half of this module does not survive a
+    move off EC2; this half is portable and is what the status contract uses.
+    """
+    return _backlog_count(worker_key)
+
+
 def _backlog_count(worker_key: str) -> int | None:
     if worker_key == "transactional":
         return TransactionalMessage.objects.filter(status=TransactionalMessageStatus.QUEUED).count()

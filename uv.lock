@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-07-30T23:18:42.638831132Z"
+exclude-newer = "2026-07-30T23:30:48.530459654Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -486,7 +486,7 @@ wheels = [
 [[package]]
 name = "taskdeck"
 version = "0.1.0"
-source = { git = "https://github.com/DataTalksClub/taskdeck.git?branch=main#86fa8f6a412237c14ee994ff0c2698daddcccf6c" }
+source = { git = "https://github.com/DataTalksClub/taskdeck.git?branch=main#deffb3dcbbd4da389531709d2ca317ccb632898b" }
 dependencies = [
     { name = "django" },
 ]
