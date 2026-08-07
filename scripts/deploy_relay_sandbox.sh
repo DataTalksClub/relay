@@ -38,6 +38,7 @@ POSTGRES_USER=relay
 POSTGRES_PASSWORD=${postgres_password}
 DEFAULT_FROM_EMAIL=DataTalks.Club Courses <courses@relay.dtcdev.click>
 RELAY_API_DOCS_BASE_URL=https://relay.dtcdev.click
+RELAY_SES_MAX_SEND_RATE=1
 RELAY_BOOTSTRAP_API_KEY=relay_${api_public_id}_${api_secret}
 TASKDECK_STATUS_TOKEN=${status_token}
 RELAY_REQUIRE_TASK_ROLES=True
