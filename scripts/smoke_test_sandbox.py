@@ -467,7 +467,7 @@ def run_ses_event_smoke(config, session, args):
         results.append(fail("SES event queue", "missing ses-webhooks queue URL"))
         return results
 
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "datamailer.settings")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "relay.settings")
     importlib.import_module("django").setup()
 
     smoke_id = f"{int(time.time())}-{uuid.uuid4().hex[:12]}"

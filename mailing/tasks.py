@@ -11,9 +11,9 @@ settings.
 
 import logging
 
-import taskdeck
 from django.tasks import task
 
+import taskdeck
 from mailing.queue_contracts import (
     validate_campaign_email_message,
     validate_email_event_message,

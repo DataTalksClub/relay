@@ -11,7 +11,6 @@ import pytest
 from django.core.cache import cache
 from django.urls import reverse
 from django.utils import timezone
-from taskdeck.models import TaskRun, TaskRunStatus
 
 from mailing.models import (
     Audience,
@@ -24,6 +23,7 @@ from mailing.models import (
     SubscriptionStatus,
 )
 from mailing.services.campaigns import queue_campaign
+from taskdeck.models import TaskRun, TaskRunStatus
 
 pytestmark = pytest.mark.django_db
 
@@ -102,7 +102,7 @@ def test_payload_matches_the_contract(client, settings):
     assert response.status_code == 200
     payload = response.json()
     assert payload["contract_version"] == 1
-    assert payload["project"] == "datamailer"
+    assert payload["project"] == "relay"
     assert set(payload) >= {
         "contract_version",
         "project",

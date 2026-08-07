@@ -37,7 +37,7 @@ def test_systemd_status_can_be_disabled(settings, monkeypatch):
 
     monkeypatch.setattr("mailing.services.worker_status.subprocess.run", fail_run)
 
-    assert systemd_service_properties("datamailer-db-worker.service") == {
+    assert systemd_service_properties("relay-db-worker.service") == {
         "ActiveState": "unknown",
         "UnavailableReason": "Systemd status checks are disabled.",
     }
@@ -98,7 +98,7 @@ def test_worker_status_api_requires_staff(client):
 
 def _fake_systemd_run(args, **kwargs):
     service_name = args[2]
-    if service_name == "datamailer-cmp-callbacks-worker.service":
+    if service_name == "relay-cmp-callbacks-worker.service":
         stdout = "\n".join(
             [
                 "LoadState=loaded",

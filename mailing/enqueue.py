@@ -10,7 +10,6 @@ Callers keep the same function names, so nothing downstream changes shape.
 """
 
 import taskdeck
-
 from mailing import tasks
 
 

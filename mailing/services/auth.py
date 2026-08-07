@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from mailing.models import Client, ClientApiKey
 
-API_KEY_PREFIX = "dm_"
+API_KEY_PREFIX = "relay_"
 
 
 @dataclass(frozen=True)

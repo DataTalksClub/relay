@@ -7,10 +7,10 @@ import json
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
-from taskdeck.models import TaskRun
 
 from mailing.ingress import get_ingress_config
 from mailing.sqs_worker import SqsWorker
+from taskdeck.models import TaskRun
 
 pytestmark = pytest.mark.django_db
 

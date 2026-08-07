@@ -1,4 +1,4 @@
-name: Deploy Sandbox
+name: Deploy Relay Sandbox
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
       - "*.md"
 
 concurrency:
-  group: datamailer-sandbox
+  group: relay-sandbox
   cancel-in-progress: false
 
 permissions:
@@ -17,10 +17,10 @@ permissions:
   id-token: write
 
 env:
-  AWS_REGION: us-east-1
-  SANDBOX_INSTANCE_ID: ${{ vars.DATAMAILER_SANDBOX_INSTANCE_ID || 'i-044716a7d6b053eef' }}
-  SANDBOX_HEALTH_URL: ${{ vars.DATAMAILER_SANDBOX_HEALTH_URL || 'https://datamailer.dtcdev.click/health/' }}
-  SANDBOX_DEPLOY_ROLE_ARN: ${{ vars.DATAMAILER_SANDBOX_DEPLOY_ROLE_ARN || 'arn:aws:iam::817685572750:role/datamailer-sandbox-github-deploy' }}
+  AWS_REGION: eu-west-1
+  SANDBOX_INSTANCE_ID: ${{ vars.RELAY_SANDBOX_INSTANCE_ID || 'i-03b7cd5de0a10a889' }}
+  SANDBOX_HEALTH_URL: ${{ vars.RELAY_SANDBOX_HEALTH_URL || 'https://relay.dtcdev.click/health/ready' }}
+  SANDBOX_DEPLOY_ROLE_ARN: ${{ vars.RELAY_SANDBOX_DEPLOY_ROLE_ARN || 'arn:aws:iam::817685572750:role/relay-sandbox-github-deploy' }}
 
 jobs:
   test:
@@ -29,9 +29,12 @@ jobs:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
       - name: Install dependencies
-        run: uv sync --dev
-      - name: Run lint
-        run: uv run ruff check .
+        run: uv sync --frozen --dev
+      - name: Run lint and checks
+        run: |
+          uv run ruff check .
+          uv run python manage.py makemigrations --check --dry-run
+          uv run python manage.py check
       - name: Run tests
         run: uv run pytest
 
@@ -46,45 +49,35 @@ jobs:
           role-to-assume: ${{ env.SANDBOX_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy sandbox host
+      - name: Deploy the complete Relay release
         id: deploy
         run: |
           set -euo pipefail
-
-          COMMAND_ID=$(
+          command_id=$(
             aws ssm send-command \
               --region "$AWS_REGION" \
               --instance-ids "$SANDBOX_INSTANCE_ID" \
               --document-name AWS-RunShellScript \
-              --comment "Deploy Datamailer sandbox ${GITHUB_SHA}" \
-              --parameters commands="[
-                \"set -eux\",
-                \"sudo -u ubuntu git -C /opt/datamailer fetch origin main\",
-                \"sudo -u ubuntu git -C /opt/datamailer checkout --force ${GITHUB_SHA}\",
-                \"sudo -u ubuntu /usr/local/bin/uv --directory /opt/datamailer sync --frozen\",
-                \"sudo -u ubuntu /usr/local/bin/uv --directory /opt/datamailer pip install gunicorn\",
-                \"sudo -u ubuntu /usr/local/bin/uv --directory /opt/datamailer run python manage.py collectstatic --noinput\",
-                \"sudo -u ubuntu /usr/local/bin/uv --directory /opt/datamailer run python manage.py migrate --noinput\",
-                \"sudo -u ubuntu /usr/local/bin/uv --directory /opt/datamailer run python manage.py provision_client_scope --organization datatalksclub --organization-name DataTalksClub --audience dtc-courses --audience-name 'DataTalksClub Courses' --client dtc-courses --client-name 'DTC Courses'\",
-                \"sudo -u ubuntu /usr/local/bin/uv --directory /opt/datamailer run python manage.py set_client_senders dtc-courses --organization datatalksclub --default-sender courses --sender courses=courses@dtcdev.click --sender no-reply=no-reply@dtcdev.click\",
-                \"systemctl restart datamailer\",
-                \"bash /opt/datamailer/scripts/install_sandbox_worker_service.sh\",
-                \"systemctl is-active datamailer\",
-                \"systemctl is-active datamailer-db-worker\",
-                \"systemctl is-active datamailer-ses-webhooks-worker\",
-                \"systemctl is-active datamailer-cmp-callbacks-worker\",
-                \"systemctl is-active datamailer-recipient-list-imports-worker\",
-                \"sudo -u ubuntu git -C /opt/datamailer rev-parse --short HEAD\"
-              ]" \
+              --comment "Deploy Relay sandbox ${GITHUB_SHA}" \
+              --parameters "commands=[\"set -euo pipefail\",\"if [[ ! -d /opt/relay/.git ]]; then if [[ -f /opt/relay/README ]]; then mv /opt/relay/README /var/lib/relay/bootstrap-readme; fi; git -C /opt/relay init; git -C /opt/relay remote add origin https://github.com/DataTalksClub/relay.git; fi\",\"git -C /opt/relay fetch origin ${GITHUB_SHA}\",\"git -C /opt/relay checkout --force ${GITHUB_SHA}\",\"bash /opt/relay/scripts/deploy_relay_sandbox.sh ${GITHUB_SHA}\"]" \
               --query 'Command.CommandId' \
               --output text
           )
-
-          echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
-          aws ssm wait command-executed \
-            --region "$AWS_REGION" \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$SANDBOX_INSTANCE_ID"
+          echo "command_id=$command_id" >>"$GITHUB_OUTPUT"
+          for _ in $(seq 1 240); do
+            status=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$command_id" \
+              --instance-id "$SANDBOX_INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || true)
+            case "$status" in
+              Success) exit 0 ;;
+              Failed|Cancelled|TimedOut|Cancelling) exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "Relay deployment did not finish within 20 minutes" >&2
+          exit 1
 
       - name: Show deployment output
         if: always()
@@ -95,6 +88,5 @@ jobs:
             --instance-id "$SANDBOX_INSTANCE_ID" \
             --query '{Status:Status,ResponseCode:ResponseCode,Stdout:StandardOutputContent,Stderr:StandardErrorContent}'
 
-      - name: Verify sandbox health
-        run: |
-          curl --fail --silent --show-error --retry 10 --retry-delay 3 "$SANDBOX_HEALTH_URL"
+      - name: Verify public health
+        run: curl --fail --silent --show-error --retry 10 --retry-delay 3 "$SANDBOX_HEALTH_URL"

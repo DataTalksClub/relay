@@ -3,13 +3,13 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from django.contrib.auth import get_user_model
 
-from datamailer import oidc
+from relay import oidc
 
 AUTH_SETTINGS = {
     "AUTH_BASE_URL": "https://auth.example.test",
     "AUTH_CLIENT_ID": "datamailer-client",
-    "AUTH_CALLBACK_URL": "https://datamailer.example.test/auth/callback",
-    "AUTH_LOGOUT_URL": "https://datamailer.example.test/",
+    "AUTH_CALLBACK_URL": "https://relay.example.test/auth/callback",
+    "AUTH_LOGOUT_URL": "https://relay.example.test/",
     "AUTH_ISSUER": "https://issuer.example.test/pool",
     "AUTH_JWKS_URL": "https://issuer.example.test/pool/.well-known/jwks.json",
 }

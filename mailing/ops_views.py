@@ -16,11 +16,11 @@ from django.core.cache import cache
 from django.http import JsonResponse
 from django.urls import reverse
 from django.views.decorators.http import require_GET
-from taskdeck.collector import collect_status
-from taskdeck.models import TaskRun, TaskRunStatus
 
 from mailing.models import Campaign, TransactionalMessage
 from mailing.services.worker_status import WORKER_DEFINITIONS, backlog_count
+from taskdeck.collector import collect_status
+from taskdeck.models import TaskRun, TaskRunStatus
 
 logger = logging.getLogger(__name__)
 

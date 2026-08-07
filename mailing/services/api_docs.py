@@ -18,7 +18,7 @@ DEMO_API_KEYS = [
         "audience": "datatalks-club",
         "name": "Newsletter import/export",
         "env_var": "DATAMAILER_DTC_NEWSLETTER_KEY",
-        "raw_key": "dm_dtcnews_demo_newsletter_import_export_key",
+        "raw_key": "relay_dtcnews_demo_newsletter_import_export_key",
         "purpose": "Contact sync, newsletter subscriptions, JSON/CSV import, CSV export.",
     },
     {
@@ -26,7 +26,7 @@ DEMO_API_KEYS = [
         "audience": "dtc-courses",
         "name": "Course platform transactional",
         "env_var": "DATAMAILER_DTC_COURSES_KEY",
-        "raw_key": "dm_dtccourses_demo_transactional_email_key",
+        "raw_key": "relay_dtccourses_demo_transactional_email_key",
         "purpose": "Course registration, password reset, email verification, course contact state.",
     },
     {
@@ -34,7 +34,7 @@ DEMO_API_KEYS = [
         "audience": "ai-shipping-labs",
         "name": "ASL platform transactional",
         "env_var": "DATAMAILER_ASL_PLATFORM_KEY",
-        "raw_key": "dm_aslplatform_demo_transactional_email_key",
+        "raw_key": "relay_aslplatform_demo_transactional_email_key",
         "purpose": "AI Shipping Labs transactional and platform contact examples.",
     },
 ]
@@ -157,7 +157,7 @@ def workflow_examples(base_url=None):
                     "summary": "Seeded local data creates named keys per client. Staff users can create and revoke additional purpose-specific keys from Clients.",
                     "request": "",
                     "curl": f"""export DATAMAILER_URL="${{DATAMAILER_URL:-{base_url}}}"
-export DATAMAILER_API_KEY="dm_dtccourses_demo_transactional_email_key"
+export DATAMAILER_API_KEY="relay_dtccourses_demo_transactional_email_key"
 
 curl -sS "$DATAMAILER_URL/api/contacts/status?email=alex.verified@example.com&audience=dtc-courses&client=dtc-courses" \\
   -H "Authorization: Bearer $DATAMAILER_API_KEY" """,

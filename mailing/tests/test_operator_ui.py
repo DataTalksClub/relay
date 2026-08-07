@@ -207,7 +207,7 @@ def test_dashboard_renders_operational_summary_links_and_seeded_style_data(
     assert "Operational Summary" in html
     assert "Background processing" in html
     assert "Processing diagnostics" in html
-    assert html.index("Processing diagnostics") < html.index("datamailer-db-worker.service")
+    assert html.index("Processing diagnostics") < html.index("relay-db-worker.service")
     assert "Recent Campaign Activity" in html
     assert "Deliverability Attention" in html
     assert "Quick Links" in html

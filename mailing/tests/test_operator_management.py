@@ -174,7 +174,7 @@ def test_client_api_keys_create_list_revoke_one_key_and_auth_safe(client, operat
     )
     raw_key = generated.context["raw_api_key_context"]["raw_key"]
     api_key = ClientApiKey.objects.get(client=client_record, name="Website registration")
-    assert raw_key.startswith("dm_")
+    assert raw_key.startswith("relay_")
     assert raw_key in generated.content.decode()
     assert api_key.display_prefix in generated.content.decode()
     assert api_key.key_hash

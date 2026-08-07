@@ -1,12 +1,12 @@
 import uuid
 from dataclasses import dataclass
 
-import taskdeck
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
+import taskdeck
 from mailing.enqueue import enqueue_campaign_email
 from mailing.models import (
     Campaign,

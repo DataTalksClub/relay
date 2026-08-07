@@ -3,6 +3,7 @@ import json
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
+from django.db import connection
 from django.db.models import Count, Max, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -165,7 +166,17 @@ from mailing.services.worker_status import worker_status_payload
 
 
 def health(request):
-    return JsonResponse({"status": "ok"})
+    return JsonResponse({"status": "ok", "service": "relay"})
+
+
+def readiness(request):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except Exception:
+        return JsonResponse({"status": "not_ready", "service": "relay"}, status=503)
+    return JsonResponse({"status": "ready", "service": "relay"})
 
 
 def active_operator_client(request):

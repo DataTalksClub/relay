@@ -35,17 +35,17 @@ ADMIN_PASSWORD = "admin"
 DEMO_API_KEYS = {
     "dtc-newsletter": {
         "name": "Newsletter import/export",
-        "raw_key": "dm_dtcnews_demo_newsletter_import_export_key",
+        "raw_key": "relay_dtcnews_demo_newsletter_import_export_key",
         "notes": "Stable local key for newsletter contact sync examples.",
     },
     "dtc-courses": {
         "name": "Course platform transactional",
-        "raw_key": "dm_dtccourses_demo_transactional_email_key",
+        "raw_key": "relay_dtccourses_demo_transactional_email_key",
         "notes": "Stable local key for course registration and password email examples.",
     },
     "asl-platform": {
         "name": "ASL platform transactional",
-        "raw_key": "dm_aslplatform_demo_transactional_email_key",
+        "raw_key": "relay_aslplatform_demo_transactional_email_key",
         "notes": "Stable local key for AI Shipping Labs transactional examples.",
     },
 }
@@ -205,7 +205,7 @@ def upsert_clients(organizations):
 def upsert_client_api_keys(clients):
     for slug, client in clients.items():
         key_spec = DEMO_API_KEYS[slug]
-        public_id = key_spec["raw_key"].removeprefix("dm_").split("_", 1)[0]
+        public_id = key_spec["raw_key"].removeprefix("relay_").split("_", 1)[0]
         api_key, _created = ClientApiKey.objects.update_or_create(
             client=client,
             name=key_spec["name"],

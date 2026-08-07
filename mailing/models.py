@@ -51,6 +51,8 @@ class Client(TimeStampedModel):
     sender_emails = models.JSONField(default=list, blank=True)
     cmp_webhook_url = models.URLField(max_length=2048, blank=True)
     cmp_webhook_token = models.CharField(max_length=255, blank=True)
+    relay_webhook_signing_secret = models.CharField(max_length=255, blank=True)
+    relay_webhook_allowed_origins = models.JSONField(default=list, blank=True)
     mailchimp_api_key = models.CharField(max_length=255, blank=True)
     mailchimp_list_id = models.CharField(max_length=64, blank=True)
     mailchimp_enabled = models.BooleanField(default=False)
@@ -104,7 +106,7 @@ class ClientApiKey(TimeStampedModel):
 
     @property
     def display_prefix(self):
-        return f"dm_{self.public_id}"
+        return f"relay_{self.public_id}"
 
     def __str__(self):
         return f"{self.client.slug} / {self.name}"

@@ -416,13 +416,16 @@ def request_json(method, url, api_key, payload=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Create or update CMP transactional templates via the Datamailer API.")
-    parser.add_argument("--base-url", default=os.environ.get("DATAMAILER_URL", "http://127.0.0.1:8001"))
-    parser.add_argument("--api-key", default=os.environ.get("DATAMAILER_API_KEY", ""))
+    parser.add_argument("--base-url", default=os.environ.get("RELAY_URL", "http://127.0.0.1:8001"))
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("RELAY_API_KEY") or os.environ.get("RELAY_BOOTSTRAP_API_KEY", ""),
+    )
     parser.add_argument("--template-key", choices=sorted(TEMPLATES), default="")
     args = parser.parse_args()
 
     if not args.api_key:
-        print("DATAMAILER_API_KEY or --api-key is required.", file=sys.stderr)
+        print("RELAY_API_KEY, RELAY_BOOTSTRAP_API_KEY, or --api-key is required.", file=sys.stderr)
         return 2
 
     base_url = args.base_url.rstrip("/")

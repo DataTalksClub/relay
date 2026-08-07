@@ -144,9 +144,9 @@ def test_seed_demo_data_creates_transactional_history_and_hashed_api_keys():
         }
     ]
     api_key = ClientApiKey.objects.get(client=client, name="Course platform transactional")
-    assert api_key.display_prefix == "dm_dtccourses"
-    assert check_api_key("dm_dtccourses_demo_transactional_email_key", api_key.key_hash) is True
-    assert api_key.key_hash != "dm_dtccourses_demo_transactional_email_key"
+    assert api_key.display_prefix == "relay_dtccourses"
+    assert check_api_key("relay_dtccourses_demo_transactional_email_key", api_key.key_hash) is True
+    assert api_key.key_hash != "relay_dtccourses_demo_transactional_email_key"
 
     assert set(EmailTemplate.objects.values_list("key", flat=True)) == {
         "email-verification",

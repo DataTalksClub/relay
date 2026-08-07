@@ -7,6 +7,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
+from jobs.models import Job, JobStatus, Schedule
 from mailing.models import (
     CampaignRecipient,
     CampaignRecipientStatus,
@@ -63,37 +64,51 @@ WORKER_DEFINITIONS = (
     WorkerDefinition(
         "transactional",
         "Transactional email",
-        "datamailer-db-worker.service",
+        "relay-db-worker.service",
         "db_worker",
         "Queued messages",
     ),
     WorkerDefinition(
         "campaign",
         "Campaign email",
-        "datamailer-db-worker.service",
+        "relay-db-worker.service",
         "db_worker",
         "Pending recipients",
     ),
     WorkerDefinition(
         "ses-webhooks",
         "SES webhooks",
-        "datamailer-ses-webhooks-worker.service",
+        "relay-ses-webhooks-worker.service",
         "drain_sqs_ingress ses-webhooks",
         "SQS backlog",
     ),
     WorkerDefinition(
         "cmp-callbacks",
         "CMP callbacks",
-        "datamailer-cmp-callbacks-worker.service",
+        "relay-cmp-callbacks-worker.service",
         "process_cmp_callbacks",
         "Due callbacks",
     ),
     WorkerDefinition(
         "recipient-list-imports",
         "Recipient list imports",
-        "datamailer-recipient-list-imports-worker.service",
+        "relay-recipient-list-imports-worker.service",
         "process_recipient_list_imports",
         "Pending import jobs",
+    ),
+    WorkerDefinition(
+        "relay-jobs",
+        "Relay jobs",
+        "relay-db-worker.service",
+        "db_worker",
+        "Queued jobs",
+    ),
+    WorkerDefinition(
+        "scheduler",
+        "Relay scheduler",
+        "relay-scheduler.service",
+        "run_relay_scheduler",
+        "Due schedules",
     ),
 )
 
@@ -212,6 +227,10 @@ def _backlog_count(worker_key: str) -> int | None:
                 RecipientListImportJobStatus.PROCESSING,
             ]
         ).count()
+    if worker_key == "relay-jobs":
+        return Job.objects.filter(status__in=[JobStatus.QUEUED, JobStatus.RETRYING]).count()
+    if worker_key == "scheduler":
+        return Schedule.objects.filter(enabled=True, next_run_at__lte=timezone.now()).count()
     return None
 
 

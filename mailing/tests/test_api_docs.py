@@ -147,8 +147,8 @@ def test_api_docs_page_renders_runnable_workflow_examples(client, staff_user):
     assert response.status_code == 200
     assert "Setup and Authentication" in page
     assert "Client key management" in page
-    assert "dm_dtccourses_demo_transactional_email_key" in page
-    assert "dm_dtcnews_demo_newsletter_import_export_key" in page
+    assert "relay_dtccourses_demo_transactional_email_key" in page
+    assert "relay_dtcnews_demo_newsletter_import_export_key" in page
     assert "Course platform transactional" in page
     assert "Newsletter import/export" in page
 

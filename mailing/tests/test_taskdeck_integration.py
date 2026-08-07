@@ -8,12 +8,11 @@ Email cannot be recalled, so this is guarded explicitly rather than trusted.
 """
 
 import pytest
-import taskdeck
 from django.db import transaction
 from django.tasks import task
 from django.utils import timezone
-from taskdeck.models import TaskRun, TaskRunStatus
 
+import taskdeck
 from mailing import tasks as mailing_tasks
 from mailing.models import (
     Audience,
@@ -30,6 +29,7 @@ from mailing.models import (
     TransactionalMessageStatus,
 )
 from mailing.services.campaigns import queue_campaign
+from taskdeck.models import TaskRun, TaskRunStatus
 
 pytestmark = pytest.mark.django_db
 
@@ -138,7 +138,7 @@ def test_enqueue_creates_a_task_run_carrying_the_campaign(
         queue_campaign(campaign)
 
     run = TaskRun.objects.get(name="send_campaign_email_batch")
-    assert run.project == "datamailer"
+    assert run.project == "relay"
     assert run.status == TaskRunStatus.QUEUED
 
 

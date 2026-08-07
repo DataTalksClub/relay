@@ -1,5 +1,5 @@
 [project]
-name = "datamailer-backend"
+name = "relay"
 version = "0.1.0"
 description = "A Django mailing service for audiences, campaigns, transactional email, and engagement tracking."
 requires-python = ">=3.12"
@@ -13,8 +13,8 @@ dependencies = [
     "pyjwt>=2.10",
     "python-dotenv>=1.2.0",
     "django-tasks-db>=0.12.0",       # ORM backend for the django.tasks interface
-    "taskdeck",                      # shared task/status layer (DataTalksClub/taskdeck)
     "whitenoise>=6.12.0",
+    "croniter>=6.2.4",
 ]
 
 [dependency-groups]
@@ -25,10 +25,10 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "datamailer.settings"
+DJANGO_SETTINGS_MODULE = "relay.settings"
 pythonpath = ["."]
 python_files = ["test_*.py", "*_test.py", "tests.py"]
-testpaths = ["mailing/tests", "tests"]
+testpaths = ["jobs/tests", "mailing/tests", "tests"]
 markers = [
     "aws_local: requires LocalStack or another local AWS-compatible endpoint",
 ]
@@ -41,10 +41,7 @@ line-length = 120
 select = ["F", "I", "PLC0415"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["datamailer", "mailing"]
+known-first-party = ["relay", "mailing", "taskdeck"]
 
 [tool.ruff.lint.per-file-ignores]
 "manage.py" = ["PLC0415"]
-
-[tool.uv.sources]
-taskdeck = { git = "https://github.com/DataTalksClub/taskdeck.git", branch = "main" }

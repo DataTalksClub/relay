@@ -7,6 +7,7 @@ app_name = "mailing"
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("health/", views.health, name="health"),
+    path("health/ready", views.readiness, name="readiness"),
     path("internal/ops/status", ops_views.status, name="taskdeck_status"),
     path("campaigns/", views.campaign_list, name="campaign_list"),
     path("campaigns/new/", views.campaign_create, name="campaign_create"),
