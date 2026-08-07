@@ -37,7 +37,7 @@ def test_systemd_status_can_be_disabled(settings, monkeypatch):
 
     monkeypatch.setattr("mailing.services.worker_status.subprocess.run", fail_run)
 
-    assert systemd_service_properties("datamailer-campaign-worker.service") == {
+    assert systemd_service_properties("datamailer-db-worker.service") == {
         "ActiveState": "unknown",
         "UnavailableReason": "Systemd status checks are disabled.",
     }
@@ -51,13 +51,16 @@ def test_sandbox_worker_statuses_include_systemd_state_and_local_backlog(setting
 
     statuses = {status.key: status for status in sandbox_worker_statuses()}
 
+    # Transactional and campaign are both drained by db_worker now, so they
+    # necessarily report the same liveness; only their backlogs differ.
     assert statuses["transactional"].badge_label == "Running"
     assert statuses["transactional"].backlog_count == 1
     assert statuses["transactional"].pid == "123"
-    assert statuses["campaign"].badge_label == "Failed"
-    assert statuses["campaign"].badge_tone == "danger"
-    assert statuses["campaign"].detail == "failed; result=exit-code"
+    assert statuses["campaign"].badge_label == "Running"
     assert statuses["campaign"].backlog_count == 1
+    assert statuses["cmp-callbacks"].badge_label == "Failed"
+    assert statuses["cmp-callbacks"].badge_tone == "danger"
+    assert statuses["cmp-callbacks"].detail == "failed; result=exit-code"
     assert statuses["ses-webhooks"].backlog_count is None
     assert statuses["cmp-callbacks"].backlog_count == 1
     assert statuses["recipient-list-imports"].backlog_count == 1
@@ -78,9 +81,10 @@ def test_worker_status_api_returns_staff_only_json_status(client, settings, monk
     workers = {worker["key"]: worker for worker in payload["workers"]}
     assert workers["transactional"]["alive"] is True
     assert workers["transactional"]["backlog"] == {"label": "Queued messages", "count": 1}
-    assert workers["campaign"]["alive"] is False
-    assert workers["campaign"]["status"] == "failed"
-    assert workers["campaign"]["detail"] == "failed; result=exit-code"
+    assert workers["campaign"]["alive"] is True
+    assert workers["cmp-callbacks"]["alive"] is False
+    assert workers["cmp-callbacks"]["status"] == "failed"
+    assert workers["cmp-callbacks"]["detail"] == "failed; result=exit-code"
     assert workers["ses-webhooks"]["backlog"] == {"label": "SQS backlog", "count": None}
     assert workers["recipient-list-imports"]["backlog"] == {"label": "Pending import jobs", "count": 1}
 
@@ -94,7 +98,7 @@ def test_worker_status_api_requires_staff(client):
 
 def _fake_systemd_run(args, **kwargs):
     service_name = args[2]
-    if service_name == "datamailer-campaign-worker.service":
+    if service_name == "datamailer-cmp-callbacks-worker.service":
         stdout = "\n".join(
             [
                 "LoadState=loaded",

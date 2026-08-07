@@ -1,12 +1,17 @@
 """Re-enqueue transactional messages stuck in the ``queued`` state.
 
-Transactional sends create messages as ``queued`` and push them to SQS on
-commit; ``process_sqs_worker`` then sends them. If the worker is down, or the
-on-commit enqueue failed, messages stay ``queued`` and are never delivered.
+Transactional sends create messages as ``queued`` and enqueue a task on
+commit; ``db_worker`` then sends them. If the worker is down, or the on-commit
+enqueue failed, messages stay ``queued`` and are never delivered.
 
-This command finds such messages and re-enqueues them to SQS (idempotently --
-the worker claims each message atomically and skips anything already
-sending/sent, so re-enqueuing a message that is still in SQS is safe).
+This command finds such messages and re-enqueues them (idempotently -- the
+send claims each message atomically and skips anything already sending/sent,
+so re-enqueuing a message whose task is still pending is safe).
+
+It enqueues through ``mailing.enqueue``, the same path a live send uses. It
+previously used ``mailing.sqs``, which since the move to django.tasks writes
+to a queue nothing reads -- so the recovery command would have reported
+success while the messages stayed undelivered.
 
     # Count what's stuck (also answers "how many didn't receive it"):
     python manage.py reenqueue_queued_transactional --dry-run
@@ -25,9 +30,9 @@ from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from mailing.enqueue import enqueue_transactional_email
 from mailing.models import TransactionalMessage, TransactionalMessageStatus
 from mailing.services.transactional import build_transactional_queue_payload
-from mailing.sqs import enqueue_transactional_email
 
 
 class Command(BaseCommand):

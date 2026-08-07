@@ -106,9 +106,22 @@ SERVICE
 # notifications arriving over HTTP -- is written to the database and never
 # executed. The SQS worker units below do not cover it: they drain the AWS-fed
 # queues, which is a different transport.
+# Retired: transactional and campaign work is enqueued through django.tasks
+# and drained by db_worker, so nothing writes to those two queues any more.
+# Removed rather than merely not installed, so a host that already has them
+# converges instead of running pollers against queues with no producer.
+retire_worker_service() {
+  local unit="datamailer-$1-worker"
+  if systemctl list-unit-files "${unit}.service" >/dev/null 2>&1; then
+    systemctl disable --now "$unit" 2>/dev/null || true
+  fi
+  rm -f "/etc/systemd/system/${unit}.service"
+}
+
+retire_worker_service transactional
+retire_worker_service campaign
+
 install_db_worker_service
-install_worker_service transactional transactional "Datamailer sandbox transactional SQS worker"
-install_worker_service campaign campaign "Datamailer sandbox campaign SQS worker"
 install_worker_service ses-webhooks ses-webhooks "Datamailer sandbox SES webhook SQS worker"
 install_worker_service inbound-email inbound-email "Datamailer sandbox inbound email SQS worker"
 install_cmp_callbacks_service
@@ -116,22 +129,16 @@ install_recipient_list_imports_service
 
 systemctl daemon-reload
 systemctl enable datamailer-db-worker
-systemctl enable datamailer-transactional-worker
-systemctl enable datamailer-campaign-worker
 systemctl enable datamailer-ses-webhooks-worker
 systemctl enable datamailer-inbound-email-worker
 systemctl enable datamailer-cmp-callbacks-worker
 systemctl enable datamailer-recipient-list-imports-worker
 systemctl restart datamailer-db-worker
-systemctl restart datamailer-transactional-worker
-systemctl restart datamailer-campaign-worker
 systemctl restart datamailer-ses-webhooks-worker
 systemctl restart datamailer-inbound-email-worker
 systemctl restart datamailer-cmp-callbacks-worker
 systemctl restart datamailer-recipient-list-imports-worker
 systemctl is-active datamailer-db-worker
-systemctl is-active datamailer-transactional-worker
-systemctl is-active datamailer-campaign-worker
 systemctl is-active datamailer-ses-webhooks-worker
 systemctl is-active datamailer-inbound-email-worker
 systemctl is-active datamailer-cmp-callbacks-worker

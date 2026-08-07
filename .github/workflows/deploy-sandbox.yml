@@ -71,7 +71,6 @@ jobs:
                 \"bash /opt/datamailer/scripts/install_sandbox_worker_service.sh\",
                 \"systemctl is-active datamailer\",
                 \"systemctl is-active datamailer-db-worker\",
-                \"systemctl is-active datamailer-transactional-worker\",
                 \"systemctl is-active datamailer-ses-webhooks-worker\",
                 \"systemctl is-active datamailer-cmp-callbacks-worker\",
                 \"systemctl is-active datamailer-recipient-list-imports-worker\",

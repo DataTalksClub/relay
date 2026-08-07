@@ -54,19 +54,24 @@ class WorkerDefinition:
     backlog_label: str
 
 
+# Transactional and campaign work no longer travels over SQS -- it is enqueued
+# through django.tasks and drained by db_worker. The backlog numbers below are
+# domain counts, not queue depths, so they stayed meaningful across that move;
+# what changed is which worker is responsible for them. Pointing them at the
+# retired SQS services would report a dead unit forever.
 WORKER_DEFINITIONS = (
     WorkerDefinition(
         "transactional",
         "Transactional email",
-        "datamailer-transactional-worker.service",
-        "process_sqs_worker transactional",
+        "datamailer-db-worker.service",
+        "db_worker",
         "Queued messages",
     ),
     WorkerDefinition(
         "campaign",
         "Campaign email",
-        "datamailer-campaign-worker.service",
-        "process_sqs_worker campaign",
+        "datamailer-db-worker.service",
+        "db_worker",
         "Pending recipients",
     ),
     WorkerDefinition(
