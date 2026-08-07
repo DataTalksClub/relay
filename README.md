@@ -1,120 +1,66 @@
-# Datamailer
+# Relay
 
-Datamailer is a standalone Django mailing service for shared audiences,
-campaigns, transactional email, and unsubscribe handling. It also tracks
-engagement stats.
+One service that runs background work for the estate. It sends email, and it
+runs everything else. Other projects **use** it over an API — they do not
+install it and they do not deploy workers of their own.
 
-## Included Features
+**Status: specification.** The code here is datamailer and taskdeck, merged with
+their histories intact but not yet unified. Nothing has been renamed and no new
+capability exists yet.
 
-Datamailer includes:
+## Start here
 
-- UI and admin for audience management
-- Shared contacts with audience/client-specific subscriptions
-- Campaign sends with one recipient row per intended contact
-- Open tracking, click tracking, unsubscribe, bounce, and complaint handling
-- Transactional email API for registration, password reset, email verification, and similar client-app flows
-- Optional per-client one-way Mailchimp sync that tags contacts in a client's Mailchimp audience when they join a mapped recipient-list node
-- API for client apps to check whether an email is verified/subscribed
-- Postgres source of truth, SQS queues, Lambda workers, and SES delivery
+Read in this order:
 
-Infrastructure Terraform is kept in the private `DataTalksClub/datamailer-infra` repository. This public
-repo keeps app code, tests, CloudFormation skeletons, and smoke scripts.
+1. **[docs/context.md](docs/context.md)** — what Relay is for in the owner's own
+   framing, the estate around it, what is deployed, and four mistakes already
+   paid for in production. Written for someone with no prior history.
+2. **[docs/requirements.md](docs/requirements.md)** — what Relay must do. The
+   section that matters most is "Three kinds of task".
+3. **[docs/unification-plan.md](docs/unification-plan.md)** — the ordered work,
+   in phases.
 
-## Design Docs
+## The idea in one paragraph
 
-Read these docs for the main architecture and API details:
+There are several Django projects in the estate and each one currently needs its
+own worker process deployed and paid for. A central worker cannot simply import
+another project's tasks — that would need its models, settings and database. But
+the unit of work does not have to be a Python import: Relay's worker can make an
+authenticated, retried, scheduled HTTP call into a project's existing web
+process. The project adds an endpoint, not a deployment. Relay owns the queue,
+the retries, the schedule and the status; the project keeps its code.
 
-- [Architecture](docs/architecture.md)
-- [Data Model](docs/data-model.md)
-- [API Design](docs/api.md)
-- [Milestones and Tasks](docs/milestones.md)
+## What is in here now
 
-## CLI client
+```
+datamailer/      Django project (settings, urls, wsgi) — to be renamed `relay`
+mailing/         the email domain app — keeps its name and its table names
+taskdeck-src/    the taskdeck repo, merged; to be unpicked into place
+cli/ docs/ infra/ scripts/ static/ templates/ tests/
+```
 
-[`cli/`](cli/) is a standalone, dependency-free command-line client published to PyPI as
-[`datamailer`](https://pypi.org/project/datamailer/).
+Both projects' histories are present — 200 commits — so `git log` still answers
+why each part looks the way it does.
 
-Use it to send email through any Datamailer deployment with a URL and a client
-API key:
+## Two things that must not be forgotten
+
+**`DataTalksClub/datamailer` is in production use.** CMP production email points
+at it (`main/cmp/app_prod.tf`), despite it being called a sandbox. Its `main`
+branch auto-deploys. Relay shares nothing with it and does not touch it.
+
+**Infrastructure changes go to `DataTalksClub/aws-infra` as a pull request**,
+never applied directly.
+
+## Conventions
+
+`uv`, not `pip`:
 
 ```bash
-pip install datamailer
-datamailer configure --url https://datamailer.example.com --api-key dm_xxx
-./run_pipeline.sh | datamailer send --to me@example.com --subject "Pipeline output"
+uv sync
+uv run python manage.py migrate
+uv run pytest
 ```
 
-See [cli/README.md](cli/README.md) for usage details. The CLI is versioned and
-released independently from this backend as `datamailer-backend`.
-
-## Setup
-
-Install dependencies and run migrations:
-
-```bash
-make setup
-```
-
-Seed local demo data:
-
-```bash
-uv run python manage.py seed_demo_data
-```
-
-Run the web app:
-
-```bash
-make run
-```
-
-Log in at `/admin/login/` with:
-
-- Username: `admin`
-- Password: `admin`
-
-The product UI uses Django staff auth, so unauthenticated users are redirected to `/admin/login/`.
-Staff users can open the local API reference at `/api-docs/`. The OpenAPI JSON is
-available at `/api-docs/openapi.json`.
-Transactional template keys and required context are visible to staff at `/templates/`.
-
-## Local demo app
-
-Run Datamailer locally with Postgres and seeded demo data:
-
-```bash
-make demo-up
-```
-
-The command starts the app on `http://localhost:8001`, runs migrations, seeds
-demo data, and serves the operator UI. Log in with `admin` / `admin`.
-
-The seeded `dtc-courses` client has this local API key:
-
-```text
-dm_dtccourses_demo_transactional_email_key
-```
-
-For transactional e2e checks, call `POST /api/transactional/send` with
-`"dry_run": true` to validate and render the message inline without queueing,
-sending, or persisting it.
-
-Client applications authenticate to `/api` with Bearer authentication. In the product UI, open
-`/clients/`, create or select a client, then create a named API key for each integration. The raw key is
-shown once after generation and should be stored by the client application. API access is scoped to the
-authenticated client's organization and the request's `audience`/`client` values.
-
-After migrations, rerun the local-only `seed_demo_data` command to refresh the
-test admin and core API records. It also refreshes demo contacts and campaigns.
-Transactional history, engagement events, and suppressed contacts are refreshed
-without enqueueing SQS work or calling SES.
-
-## Direction
-
-Datamailer should replace expensive Mailchimp-like sending for DataTalksClub and AI Shipping Labs while remaining reusable by multiple client apps.
-
-The first production architecture is intentionally boring:
-
-- Django for UI, API, tracking endpoints, and admin workflows
-- Postgres for contacts, subscriptions, campaigns, recipient snapshots, and event history
-- SQS for durable send/event queues
-- Lambda workers for bursty campaign sending, transactional sending, and webhook/event processing
-- Amazon SES for delivery, bounces, complaints, opens/clicks where provider events are available
+`AGENTS.md` carries the conventions inherited from datamailer. Note that its
+claim that datamailer has no production deployment is misleading — see
+[docs/context.md](docs/context.md).
