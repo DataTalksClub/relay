@@ -157,6 +157,7 @@ replace_container relay-recipient-imports "${app_container_args[@]}" \
 
 replace_container relay-caddy \
   --network host \
+  --entrypoint caddy \
   --volume "$app_dir/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
   --volume /var/lib/relay/caddy-data:/data \
   --volume /var/lib/relay/caddy-config:/config \
