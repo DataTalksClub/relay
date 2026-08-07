@@ -59,7 +59,7 @@ jobs:
               --instance-ids "$SANDBOX_INSTANCE_ID" \
               --document-name AWS-RunShellScript \
               --comment "Deploy Relay sandbox ${GITHUB_SHA}" \
-              --parameters "commands=[\"set -euo pipefail\",\"if [[ ! -d /opt/relay/.git ]]; then if [[ -f /opt/relay/README ]]; then mv /opt/relay/README /var/lib/relay/bootstrap-readme; fi; git -C /opt/relay init; git -C /opt/relay remote add origin https://github.com/DataTalksClub/relay.git; fi\",\"git -C /opt/relay fetch origin ${GITHUB_SHA}\",\"git -C /opt/relay checkout --force ${GITHUB_SHA}\",\"bash /opt/relay/scripts/deploy_relay_sandbox.sh ${GITHUB_SHA}\"]" \
+              --parameters "commands=[\"set -euo pipefail\",\"git config --global --add safe.directory /opt/relay\",\"if [[ ! -d /opt/relay/.git ]]; then if [[ -f /opt/relay/README ]]; then mv /opt/relay/README /var/lib/relay/bootstrap-readme; fi; git -C /opt/relay init; git -C /opt/relay remote add origin https://github.com/DataTalksClub/relay.git; fi\",\"git -C /opt/relay fetch origin ${GITHUB_SHA}\",\"git -C /opt/relay checkout --force ${GITHUB_SHA}\",\"bash /opt/relay/scripts/deploy_relay_sandbox.sh ${GITHUB_SHA}\"]" \
               --query 'Command.CommandId' \
               --output text
           )
@@ -82,9 +82,14 @@ jobs:
       - name: Show deployment output
         if: always()
         run: |
+          command_id="${{ steps.deploy.outputs.command_id }}"
+          if [[ -z "$command_id" ]]; then
+            echo "No SSM deployment command was created."
+            exit 0
+          fi
           aws ssm get-command-invocation \
             --region "$AWS_REGION" \
-            --command-id "${{ steps.deploy.outputs.command_id }}" \
+            --command-id "$command_id" \
             --instance-id "$SANDBOX_INSTANCE_ID" \
             --query '{Status:Status,ResponseCode:ResponseCode,Stdout:StandardOutputContent,Stderr:StandardErrorContent}'
 
