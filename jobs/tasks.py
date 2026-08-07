@@ -36,7 +36,7 @@ class PermanentJobError(Exception):
 @task()
 def execute_job(job_id):
     with transaction.atomic():
-        job = Job.objects.select_for_update().select_related("client", "schedule").get(pk=job_id)
+        job = Job.objects.select_for_update().select_related("client").get(pk=job_id)
         if job.is_terminal:
             return {"job_id": str(job.pk), "status": job.status}
         job.attempt += 1
