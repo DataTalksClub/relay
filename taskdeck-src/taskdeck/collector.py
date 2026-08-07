@@ -76,7 +76,7 @@ def serialize_run(run, entity_resolver=None):
     if entity_resolver and run.entity_type:
         try:
             payload["entity"] = entity_resolver(run.entity_type, run.entity_id)
-        except Exception:  # noqa: BLE001 - a project's resolver touches its own
+        except Exception:  # a project's resolver touches its own
             # models and may raise anything; a broken link must degrade to no
             # link rather than take down the whole status endpoint.
             payload["entity"] = None

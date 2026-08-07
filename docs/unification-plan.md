@@ -10,7 +10,14 @@ Phase 4 is infrastructure. **Keep the test suite green throughout** — it is th
 only thing standing between a refactor and a silent behaviour change in a
 service that sends real email.
 
-Baseline: 493 tests pass and `ruff check .` is clean at the merge commit.
+Baseline, verified at the specification commit: **493 tests pass** and
+`ruff check .` is clean.
+
+Note that the two repositories had different ruff configurations — taskdeck
+enabled `BLE001`, this project does not — so a `noqa` in the merged tree became
+unused and was removed to get the baseline clean. Expect a few more of that kind
+as the two configurations are reconciled in Phase 1; they are cosmetic, but do
+not let them accumulate, because a permanently-failing lint stops being read.
 
 ---
 
