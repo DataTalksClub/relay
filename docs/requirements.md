@@ -1,319 +1,313 @@
 # Requirements
 
-Date: 2026-08-06
+Date: 2026-08-07 (supersedes the 2026-08-06 draft)
+
+## The shape, stated first
+
+One central platform runs background work for the estate. Other services **use**
+it over an API; they do not install it. A client asks the platform to do
+something, gets an identifier back, and can see the status of that work.
+
+The platform sends email today. It is being generalised to run other work as
+well, because email turned out to be one task type rather than the point.
+
+This is the intent, and it is stated first because the previous draft buried it.
+
+## What the previous draft got wrong
+
+Recorded deliberately, because the confusion cost real time and would otherwise
+recur.
+
+The 2026-08-06 draft described **two architectures without saying which was
+primary**:
+
+- A "Non-negotiable constraints" section describing a *library*: every project
+  installs a shared package, runs its own worker, keeps its own queue and
+  database. It stated "there is no design in which a shared worker runs another
+  project's tasks, and any proposal that implies one is wrong."
+- A "Hub topology" section describing a *service*: "the hub owns render, send
+  and track", "the hub exposes one generic job resource", "the hub is
+  authoritative", and — at R5 — one project "becoming the hub the other two
+  send through".
+
+Both are in the same document. Work proceeded on the library reading, which
+produced per-project task tables and no central place, which is the opposite of
+the goal.
+
+The apparent contradiction dissolves once the question is asked precisely:
+
+> **Whose code does the worker import?**
+
+A worker cannot import a *client's* task code — that would need the client's
+models, settings and database. That is a genuine constraint and it is what the
+old constraints section was reaching for.
+
+But the platform does not run client code. **It runs its own.** A client
+requests a task type the platform already implements. Nothing foreign is ever
+imported, and the work is centralised. Both halves were right; they were about
+different code.
+
+Write it this way from now on: *the platform owns the code it runs.*
+
+## Constraints
+
+**The platform owns every task implementation it executes.** A client names a
+task type and supplies parameters. A client never ships code to the platform.
+This is what makes one runtime possible.
+
+**Domain decisions stay with the domain data.** Deciding *who* should receive
+something needs enrolments, deadlines and tiers, which live in the calling
+project. Only the doing moves. A client that needs to compute a recipient list
+on a schedule keeps that job locally.
+
+**So clients may still have local background work,** and the console must show
+it alongside platform work. The shared package remains available for that. It
+is no longer the primary architecture — it is what a client uses for the
+residue that cannot move.
+
+**Email is unrecallable.** It is the only output in the estate that cannot be
+withdrawn, which constrains cutovers everywhere below.
 
 ## Context
 
-Three Django 6.0 projects run background work today, each with a different
-mechanism, and two of them on different compute platforms:
+Three Django projects run background work, with five execution models across
+three compute platforms and three unrelated status surfaces:
 
-- ai-shipping-labs — django-q2 with the ORM broker on ECS Fargate. Carries
-  roughly 90% of the background work: 24 cron schedules and ~40 event-driven
-  enqueue sites across 12 apps. Production runs the worker as its own ECS
-  service alongside the web service; other environments run it as a sidecar in
-  a combined task. The two shapes are selected by branches in the deploy
-  script, not by configuration.
-- [course-management-platform](https://github.com/DataTalksClub/course-management-platform)
-  — no queue. A hand-rolled database outbox drained by a scheduled ECS task
-  every five minutes, plus two other scheduled commands.
-- [datamailer](https://github.com/DataTalksClub/datamailer) — SQS queues with
-  the handlers run as long-lived systemd units. Sandbox only; there is no
-  production deployment yet. Its repo contains a CloudFormation template
-  describing Lambda workers and a managed database, but that template is not
-  what is deployed — the applied infrastructure provisions queues, SES, and
-  inbound mail, and no database. It therefore runs on SQLite.
+- **ai-shipping-labs** — django-q2 on the ORM broker, ECS Fargate. ~90% of the
+  estate's background work: 24 cron schedules, ~40 enqueue sites across 12
+  apps. Worker shape differs between production and other environments, chosen
+  by branches in a deploy script rather than configuration.
+- **course-management-platform** — no queue. A hand-rolled database outbox
+  drained by a scheduled ECS task every five minutes, plus two scheduled
+  commands. Already a client of the platform for email.
+- **datamailer** — the platform in embryo. Per-client API keys, tenant scoping,
+  a task queue, and a status contract. Runs on one EC2 host with Postgres.
+  Sandbox only; carries CMP production email despite that.
 
-Five execution models, three compute platforms, three unrelated status
-surfaces. The goal is one of each.
-
-The two motivations, in the order they were given: cost, and being able to
-manage the estate without holding three different mental models.
-
-Cost turned out to be a weak motivation on inspection — the always-on worker
-footprint is already close to zero, because AISL runs its worker as a sidecar
-in the web task and CMP has no always-on worker at all. Manageability is the
-real driver, and the second-order costs (three mechanisms to debug, three
-places a failure can hide) are the ones worth paying down.
-
-## Non-negotiable constraints
-
-Task code runs in its own project. A worker executes a task by importing it,
-which requires that project's models, settings, and database connection. One
-worker process is one Django settings module and one database. There is no
-design in which a shared worker runs another project's tasks, and any proposal
-that implies one is wrong.
-
-What is shared is the model, the helpers, and the contract. Never the runtime.
-
-Databases stay separate per project. Queues stay separate per project.
+The stated driver is manageability, not cost: one mental model instead of
+three, and one place a failure can be found. Cost was assessed as a weak
+motivation — the always-on worker footprint is already near zero.
 
 ## Functional requirements
 
 ### R1 — One interface
 
-All projects enqueue and define background work through `django.tasks`.
-No project imports a queue backend directly. The backend must be swappable by
-configuration.
+All background work is defined and enqueued through `django.tasks`. No project
+imports a queue backend directly; the backend is swappable by configuration.
 
-Prerequisite: `django.tasks` arrived in Django 6.0, and only two of the three
-projects are on it. The third is on 5.2, so a framework upgrade is a
-precondition for this requirement rather than part of it. A backport package
-providing the same interface on older Django is the alternative if that upgrade
-has to wait.
+### R1a — Ingress from cloud services
 
-### R1a — Queue ingress from cloud services
+Not all work originates in application code. Provider notifications and inbound
+mail are delivered by cloud services straight into queues, so a queue only
+Django can write to is insufficient.
 
-Not all work originates in application code. Provider event notifications and
-inbound mail are delivered by cloud services directly into queues, so a queue
-that only application code can write to is insufficient.
-
-The design must keep a thin ingress path for these — a queue the provider can
-write to, drained by a worker that hands off to the internal task system —
-rather than assuming every producer is a Django process.
-
-This was initially assessed the other way, from reading application code alone,
-where every enqueue call did appear to originate in Django. The deployed
-infrastructure contradicts that: notification topics and object-storage events
-are wired straight into the queues.
+A thin ingress path stays: a queue the provider writes to, drained by a worker
+that hands each message to the task system rather than processing it inline.
+Processing inline puts that work on a second execution path where it is
+invisible to the console — which is the blind spot this exists to remove.
 
 ### R2 — One compute shape
 
-Every project runs its workers the same way: a worker process alongside the web
-process, on the same platform, deployed by the same mechanism, in both
-production and development environments.
+Workers run the same way everywhere: alongside the web process, on the same
+platform, by the same mechanism, in every environment. Parity is a property of
+configuration, not of which branch of a deploy script an environment takes.
 
-Environment parity is an explicit requirement, and today it is broken in three
-different ways:
-
-- one project runs its worker as a separate service in production and as a
-  sidecar everywhere else, with the choice hard-coded in deploy-script branches
-- another project's scheduled jobs exist only in production
-- the third has only a sandbox, and its status page reads liveness from the
-  process supervisor, which will not survive a move to any other platform
-
-Parity has to be a property of configuration, not of which branch of a shell
-script an environment happens to take.
+**A worker must be part of the deployment definition, not a manual step.** A
+project that enqueues work with no worker running accepts tasks and silently
+never runs them. The deploy must fail when the worker is absent rather than
+succeed quietly.
 
 ### R3 — Status that crosses service boundaries
 
-A single logical operation can span two services:
+One logical operation spans services:
 
 ```
-project A "send campaign 42" → hub job → N child tasks → provider → events → callback
+client "send campaign 42" → platform job → N child tasks → provider → events → callback
 ```
 
-A correlation identifier minted by the originator must survive the API call,
-the execution in the other service, and the callback. Asking "did it go out"
-in the originating project must be answerable regardless of where the work ran.
+A correlation identifier minted by the originator survives the API call, the
+execution on the platform, and the callback. "Did it go out" is answerable from
+the originating project regardless of where the work ran.
 
-This is a first-migration requirement, not a later addition. Threading an
-identifier retroactively means backfilling across two services.
+First-migration requirement. Threading an identifier retroactively means
+backfilling across two services.
 
 ### R4 — Progress, modelled by workload shape
 
-Three shapes, deliberately handled differently.
+Three shapes, handled differently on purpose.
 
-Countable fan-out. The parent knows the total before enqueuing children. This
-is common: campaign sends chunk a materialised recipient list, event
-notification fan-outs iterate registrations and already return their count,
-imports iterate rows. These need a progress bar.
+**Countable fan-out.** The parent knows the total before enqueuing children.
+Common: campaign sends chunk a recipient list, notification fan-outs iterate
+registrations. The parent declares the total; the numerator is derived from
+finished children, so a child that dies without reporting cannot corrupt it.
 
-Opaque single unit. Most scheduled jobs, and every individual send. There is no
-meaningful numerator. These need elapsed time measured against a rolling
-baseline of previous runs of the same task, so the question "is it stuck" is
-answerable. Raw elapsed time alone is not useful.
+**Opaque single unit.** Most scheduled jobs and every individual send. No
+meaningful numerator. These need elapsed time against a rolling baseline of
+previous runs of the same task, so "is it stuck" is answerable.
 
-Deferred external outcome. Email opens and clicks arrive over hours to days and
-never reach a terminal state. These are not task progress and must not be
-modelled as such — doing so makes every campaign appear to run for a week and
-destroys the meaning of "in progress". They belong on the domain object, fed by
-the provider's event pipeline.
-
-A campaign page renders both: send progress from the task system while sending,
-engagement counters from the domain model forever after.
+**Deferred external outcome.** Opens and clicks arrive over days and never reach
+a terminal state. Not progress. Modelling them as progress makes every campaign
+appear to run for a week. They belong on the domain object.
 
 ### R5 — Tenant scoping
 
-One of the three projects is being built as a multi-client product and is
-becoming the hub the other two send through. Its task records are not all
-equal — a client must see only their own jobs.
+The platform is multi-client. A client sees only its own jobs. The owner field
+exists from the first migration; adding it later means backfill plus auditing
+every existing query for the missing filter.
 
-The task model carries an optional owner field from the first migration.
-Adding tenant scoping later means backfill plus auditing every existing query
-for the missing filter.
+### R6 — Per-task credentials
 
-### R6 — Per-task AWS credentials
+The platform's own role must not carry the union of every permission any task
+needs — that concentration gets worse, not better, once one service runs work
+for the whole estate.
 
-A project's container role should not carry the union of every permission any
-of its tasks needs.
+Each task type has a role scoped to exactly what it does. The platform's role
+is an almost-powerless identity whose only permission is assuming those roles.
 
-Each project's task role becomes an almost-powerless identity whose only
-permission is assuming per-task roles. Each task type has a role scoped to
-exactly what it does, and the package resolves task name to role from one
-declarative map:
+- Default-deny: a task with no mapping gets a session with no permissions,
+  never the parent role.
+- The role session name carries the task run identifier, so audit entries join
+  back to the task using the same identifier as R3.
+- Credentials refresh: long fan-out parents outlive a default session lifetime,
+  and mid-task expiry presents as a random permissions failure.
+- No module-level cloud clients: anything built at import time picks up ambient
+  credentials and bypasses the scheme.
 
-```python
-with task_role("<task-role-name>") as aws:
-    client = aws.client("ses")
-```
+This buys scoping per unit of work, audit attribution, and blast-radius
+reduction. It is **not** a tenant boundary and must not be described as one — a
+compromised worker can assume any of the roles.
 
-Requirements on this mechanism:
-
-- Default-deny. A task with no map entry gets a session with no permissions,
-  never the parent role. Otherwise new tasks silently inherit whatever the
-  container has.
-- The role session name carries the task run identifier, so audit-log entries
-  join back to the task that caused them using the same identifier as R3.
-- Credentials must refresh. Long fan-out parents outlive a default session
-  lifetime, and mid-task expiry presents as a random permissions failure.
-- No module-level cloud clients. Anything constructed at import time picks up
-  ambient container credentials and bypasses the scheme entirely.
-
-What this achieves: scoping per unit of work rather than per container, audit
-attribution, and blast-radius reduction for bugs. What it does not achieve:
-containment against a compromised worker, which can assume any of the roles.
-It is not a tenant boundary and must not be described as one.
+Where per-tenant sending identities are involved, the role lives in the
+tenant's own infrastructure and the platform assumes into it, so a routing bug
+produces an access denial rather than mail correctly delivered from the wrong
+domain.
 
 ### R7 — One console
 
-A single page showing, for every project: worker liveness, queue depth and
-oldest pending age, registered schedules with last and next run, recent task
-runs with status and progress, and a failure count.
+A single page showing, for the platform and for every project with local work:
+worker liveness, queue depth and oldest pending age, schedules with last and
+next run, recent runs with status and progress, and a failure count.
 
-The console reads a versioned JSON contract over HTTP from each project. It
-holds no state beyond a cache and has no database.
+Reads a versioned JSON contract over HTTP. Holds no state beyond a cache and has
+no database.
 
 Pull, not push. A console that polls learns a project is dead because the fetch
-fails. A console that waits for pushes cannot distinguish a healthy quiet
-project from a dead one.
+fails; one that waits for pushes cannot tell a healthy quiet project from a
+dead one.
 
-The console deploys independently of the projects it watches. Embedding it in
-the largest project is cheaper but means the tool used to diagnose an outage
-dies with the thing most likely to be having one.
+Deploys independently of what it watches — embedding it in the largest project
+means the tool used to diagnose an outage dies with the thing most likely to be
+having one.
 
 Paging stays on cloud-provider alarms, which survive the console being down.
 
+**This is the piece that delivers "one central place" for observation, and it
+does not exist yet.** Its absence is why the estate feels decentralised even
+where the architecture is right.
+
 ### R8 — Transactional enqueue
 
-Enqueuing must be able to participate in the database transaction that caused
-it, so that a committed data change and its follow-up work cannot diverge.
-
-Two of the three projects work around the absence of this today, and one of
-them works around it incompletely.
-
-One project built a full outbox with a six-state machine to get the guarantee.
-The other hand-rolls it per call site, and only one of three enqueue paths is
-actually guarded: the transactional send wraps its enqueue in an on-commit
-hook, while the campaign queueing path enqueues after its atomic block with no
-hook at all, and the webhook ingress path does the same.
-
-The campaign path is a live instance of the failure this requirement exists to
-prevent. When that function runs inside an outer transaction, its inner atomic
-block is a savepoint, so the sends are enqueued before the outer commit — and a
-subsequent rollback leaves work queued for a state that never existed. A
-partial failure part-way through the enqueue loop leaves a campaign marked
-queued with only some of its batches dispatched.
-
-Making enqueue transactional removes the outbox, removes the per-call-site
-hooks, and closes this class of bug rather than relying on every author
-remembering.
+Enqueuing participates in the transaction that caused it, so a committed change
+and its follow-up work cannot diverge. This removes the hand-rolled outbox and
+the per-call-site hooks, and closes the class of bug rather than relying on
+every author remembering.
 
 ### R9 — Serialisation by lock, not by global concurrency cap
 
-Rate-limited external providers need work serialised per key — per client, per
-configuration set — not globally.
+Rate-limited providers need work serialised per key — per client, per
+configuration set — not globally. A global cap of one serialises unrelated
+clients against each other and does not express the real constraint.
 
-The current mechanism in one project is a global concurrency cap of one on
-every worker, which serialises unrelated clients against each other. The
-replacement must express the real constraint.
+### R10 — A task's result must survive the backend
 
-## Split: package versus contract
+Whatever a task returns is stored by the queue backend. A task that returns a
+model instance or another non-serialisable object fails *after* its work has
+committed — the email is sent and the record says it failed.
 
-Package the write path, where divergence causes real bugs:
+Tasks return plain data. This is a requirement rather than a convention because
+the failure is invisible in tests that never exercise the real backend.
 
-- backend wiring and adapter
-- the task run model and its migration
-- enqueue helpers stamping correlation, parent, and owner identifiers
-- progress helpers
-- per-task credential resolution
-- periodic task registration
-- the default status collector
+## What is shared, and how
 
-Three separate implementations would diverge on what counts as failed, when a
-heartbeat is written, and whether a correlation identifier survives a retry. If
-"failed" means something different per project, the console does not aggregate
-— it lies.
+**The platform's internals** — backend wiring, the task run model, enqueue and
+progress helpers, credential resolution, the status collector — live in one
+package. Three separate implementations would diverge on what counts as failed
+and whether a correlation identifier survives a retry. If "failed" means
+something different per project, the console does not aggregate; it lies.
 
-Contract the read path, where the network already forces a boundary:
+**The client-facing surface is an API, not a package.** A client integrates by
+calling the platform and receiving callbacks. Only a client with residual local
+work installs the package.
 
-- the status endpoint view and its authentication, which differs per project by
-  nature
-- the console itself
-- per-project entity resolution, which imports that project's domain models and
-  cannot move
-- domain counters
+**The read path is a contract.** The status endpoint, its authentication, and
+per-project entity resolution differ by nature and stay local.
 
-Compatibility rules: package migrations stay additive for several releases,
-never renaming or dropping a column in a minor version. The contract carries a
-version field the console tolerates older values of. Each project then upgrades
-on its own schedule, which matters because the hub project's release cadence
-diverges from the others once it has external clients.
+Compatibility: package migrations stay additive for several releases. The
+contract carries a version the console tolerates older values of, so each
+project upgrades on its own schedule — which matters once the platform's
+release cadence diverges from its clients'.
 
-## Hub topology
+## Platform topology
 
-The originating project owns who gets what and when. The hub owns render, send,
-and track.
+The client owns who gets what and when. The platform owns doing it and
+reporting on it.
 
-This keeps domain logic where the domain data is. Scheduled jobs that decide
-who should receive something stay in the project that understands tiers,
-registrations, and enrolment state. Only the final delivery step moves.
-
-The hub exposes one generic job resource rather than per-feature status
+The platform exposes one generic job resource rather than per-feature status
 endpoints, and the job payload uses the same shape as the internal status
-contract, so the console renders a hub job with the code it already uses for a
-local task.
+contract, so the console renders a platform job with the code it already uses
+for a local task.
 
-An idempotency key supplied by the client is mandatory — a client retrying
-after a timeout must not cause a double send.
+A client-supplied idempotency key is mandatory: a client retrying after a
+timeout must not cause a double send.
 
 ### Status ownership
 
-The hub is authoritative. Clients hold a projection that is explicitly a cache
-and never a second source of truth. A split where both sides own status,
-fan-out, and history produces reconciliation bugs.
+The platform is authoritative. Clients hold a projection that is explicitly a
+cache, never a second source of truth. A split where both sides own status and
+history produces reconciliation bugs.
 
 Three parts, because callbacks alone are insufficient:
 
 1. Callbacks maintain the projection, so a client page renders locally and
-   survives the hub being slow.
+   survives the platform being slow.
 2. A reconciliation sweep re-pulls any non-terminal chain after a bounded
    interval, because callbacks get lost.
 3. An explicit refresh on the detail page, for when someone is watching.
 
 ## Migration stance
 
-Migration cost is not a design constraint. Where the from-scratch answer
-differs from evolving what exists, the from-scratch answer wins and the
-migration is work to be done.
+Migration cost is not a design constraint. Where the from-scratch answer differs
+from evolving what exists, the from-scratch answer wins and the migration is
+work to be done.
 
 Two things this does not license:
 
-Rewriting working application code. Infrastructure is disposable; tested domain
-behaviour is not. Handlers that are already backend-agnostic lose their wrapper
-and become plain task functions.
+**Rewriting working application code.** Infrastructure is disposable; tested
+domain behaviour is not.
 
-Big-bang cutover of anything irreversible. Email is the only unrecallable
-output in this estate; a bad cutover sends the entire list duplicates or
-nothing. It also needs to stay clear of the platform migration, because two
-simultaneous changes make a breakage undiagnosable.
+**Big-bang cutover of anything irreversible.** Email is the only unrecallable
+output in this estate; a bad cutover sends the whole list duplicates or nothing.
+It also stays clear of any platform migration, because two simultaneous changes
+make a breakage undiagnosable.
 
-## Open questions
+## Open decisions
 
-Deliberately unresolved, listed so plans do not assume an answer:
+Unresolved. Listed so plans do not assume an answer.
 
-1. Whether a maintained backend adapter for the `django.tasks` interface exists
-   for the chosen queue, or whether it is ours to write.
-2. Real send volume at the hub, and the resulting connection count against a
-   small database instance.
-3. Whether the existing container size fits a web process plus a worker for the
+1. **What "ad-hoc task" means.** Either the platform implements a catalogue of
+   task types that clients invoke by name — the natural extension of how email
+   templates work today — or clients supply code to run, which means sandboxing,
+   resource limits and code distribution, and brings back the foreign-code
+   problem as an isolation problem. These differ by an order of magnitude in
+   scope. Recommendation: the catalogue.
+2. **The platform's name.** It sends email and runs general work, so a name
+   leaning either way will age badly. Recommendation: *Relay* — a mail relay is
+   literally the email half, and relaying work onward is the general half.
+   Alternatives considered: Dispatch, Depot, Courier. `taskdeck` is better kept
+   for the package than promoted to the platform.
+3. Whether a maintained `django.tasks` backend adapter exists for the chosen
+   queue, or whether it is ours to write.
+4. Real send volume at the platform, and the resulting connection count against
+   a small database instance.
+5. Whether the existing container size fits a web process plus a worker for the
    two projects that do not run one today.
