@@ -1,4 +1,8 @@
+import os
+import subprocess
+import sys
 from io import StringIO
+from pathlib import Path
 
 import pytest
 from django.core.management import call_command
@@ -16,6 +20,20 @@ ENQUEUE = (
     "mailing.management.commands.reenqueue_queued_transactional."
     "enqueue_transactional_email"
 )
+
+
+def test_command_loads_in_fresh_django_process():
+    environment = os.environ.copy()
+    environment["SECRET_KEY"] = "test-secret-key"
+    result = subprocess.run(
+        [sys.executable, "manage.py", "help", "reenqueue_queued_transactional"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture

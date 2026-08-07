@@ -10,10 +10,11 @@ Callers keep the same function names, so nothing downstream changes shape.
 """
 
 import taskdeck
-from mailing import tasks
 
 
 def enqueue_transactional_email(payload):
+    from mailing import tasks  # noqa: PLC0415 - avoids service/enqueue import cycles
+
     result = tasks.send_transactional_email.enqueue(payload)
     # Stamped at enqueue rather than only inside the task body, so a queued
     # backlog shows what it is waiting on instead of a list of anonymous rows.
@@ -28,6 +29,8 @@ def enqueue_transactional_email(payload):
 
 
 def enqueue_campaign_email(payload):
+    from mailing import tasks  # noqa: PLC0415 - avoids service/enqueue import cycles
+
     result = tasks.send_campaign_email_batch.enqueue(payload)
     recipient_ids = payload.get("recipient_ids") or []
     taskdeck.stamp(
@@ -44,6 +47,8 @@ def enqueue_transactional_email_batch(message_ids, *, list_key="", template_key=
     The parent fans out to the individual sends. Callers get a single run to
     watch, with progress, rather than a page of unrelated rows.
     """
+    from mailing import tasks  # noqa: PLC0415 - avoids service/enqueue import cycles
+
     result = tasks.send_transactional_email_batch.enqueue(
         list(message_ids),
         list_key=list_key,
@@ -65,4 +70,6 @@ def enqueue_ses_webhook(payload):
     Notifications delivered by SNS straight to the queue are drained by
     ``mailing/ingress.py`` instead; both paths converge on the same task.
     """
+    from mailing import tasks  # noqa: PLC0415 - avoids service/enqueue import cycles
+
     return tasks.process_ses_webhook_event.enqueue(payload)
