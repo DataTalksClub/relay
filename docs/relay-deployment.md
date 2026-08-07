@@ -84,17 +84,25 @@ restore decision if a migration changed data incompatibly.
 
 ## Verify email before moving a client
 
-Confirm the SES identity and task role before sending:
+Confirm the shared sending identity in `us-east-1`, the inbound identity in
+`eu-west-1`, and Relay's task role before sending:
 
 ```bash
-aws ses get-identity-verification-attributes \
+aws sesv2 get-email-identity \
+  --region us-east-1 \
+  --email-identity dtcdev.click
+
+aws sesv2 get-email-identity \
   --region eu-west-1 \
-  --identities relay.dtcdev.click inbound.relay.dtcdev.click
+  --email-identity inbound.relay.dtcdev.click
 
 aws iam get-role --role-name relay-sandbox-email-send
 ```
 
-Submit an email to a verified sandbox recipient and wait for the transactional
-message to reach `sent`. Then confirm the SES event reaches
-`relay-sandbox-ses-webhooks` and drains without a DLQ message before you update
-a client to use Relay.
+Relay uses `relay@dtcdev.click` as its default sender, while the `dtc-courses`
+client uses the `courses` sender ID, which resolves to
+`courses@dtcdev.click`.
+
+Submit an email and wait for the transactional message to reach `sent`. Then
+confirm the SES event reaches `relay-sandbox-ses-webhooks` and drains without a
+DLQ message before you update a client to use Relay.

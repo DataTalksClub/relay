@@ -209,6 +209,7 @@ EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.conso
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "newsletter@example.com")
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+AWS_SES_REGION = os.environ.get("AWS_SES_REGION", AWS_REGION)
 AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
 API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).rstrip("/")

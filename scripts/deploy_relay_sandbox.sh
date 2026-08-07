@@ -38,9 +38,11 @@ DATABASE_URL=postgresql://relay:${postgres_password}@127.0.0.1:5432/relay
 POSTGRES_DB=relay
 POSTGRES_USER=relay
 POSTGRES_PASSWORD=${postgres_password}
-DEFAULT_FROM_EMAIL=DataTalks.Club Courses <courses@relay.dtcdev.click>
+DEFAULT_FROM_EMAIL=DataTalksClub Relay <relay@dtcdev.click>
+AWS_SES_REGION=us-east-1
+AWS_SES_CONFIGURATION_SET=datamailer-sandbox
 RELAY_API_DOCS_BASE_URL=https://relay.dtcdev.click
-RELAY_SES_MAX_SEND_RATE=1
+RELAY_SES_MAX_SEND_RATE=14
 RELAY_BOOTSTRAP_API_KEY=relay_${api_public_id}_${api_secret}
 TASKDECK_STATUS_TOKEN=${status_token}
 RELAY_REQUIRE_TASK_ROLES=True
@@ -48,6 +50,21 @@ RELAY_WORKER_STATUS_SYSTEMD_ENABLED=False
 ENV
   chmod 0600 "$runtime_env"
 fi
+
+set_runtime_value() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^${key}=" "$runtime_env"; then
+    sed -i "s|^${key}=.*$|${key}=${value}|" "$runtime_env"
+  else
+    printf '%s=%s\n' "$key" "$value" >>"$runtime_env"
+  fi
+}
+
+set_runtime_value DEFAULT_FROM_EMAIL 'DataTalksClub Relay <relay@dtcdev.click>'
+set_runtime_value AWS_SES_REGION us-east-1
+set_runtime_value AWS_SES_CONFIGURATION_SET datamailer-sandbox
+set_runtime_value RELAY_SES_MAX_SEND_RATE 14
 
 grep -q '^RELAY_EMAIL_SEND_ROLE_ARN=' "$infra_env" || {
   echo "RELAY_EMAIL_SEND_ROLE_ARN is missing from $infra_env" >&2
@@ -130,8 +147,8 @@ run_app python manage.py provision_client_api_key \
 run_app python manage.py set_client_senders dtc-courses \
   --organization datatalksclub \
   --default-sender courses \
-  --sender 'courses=DataTalks.Club Courses <courses@relay.dtcdev.click>' \
-  --sender 'no-reply=DataTalksClub <no-reply@relay.dtcdev.click>'
+  --sender 'courses=DataTalks.Club Courses <courses@dtcdev.click>' \
+  --sender 'no-reply=DataTalksClub <no-reply@dtcdev.click>'
 
 app_container_args=(
   --network host

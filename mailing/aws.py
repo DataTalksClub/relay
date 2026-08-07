@@ -38,9 +38,9 @@ def _role_credentials(task_type):
         return credentials
 
 
-def aws_client(service_name, *, endpoint_url=None, task_type=None):
+def aws_client(service_name, *, endpoint_url=None, task_type=None, region_name=None):
     kwargs = {
-        "region_name": settings.AWS_REGION,
+        "region_name": region_name or settings.AWS_REGION,
         "endpoint_url": endpoint_url if endpoint_url is not None else settings.AWS_ENDPOINT_URL or None,
     }
     if task_type:
@@ -59,7 +59,12 @@ def sqs_client(*, endpoint_url=None):
 
 
 def ses_client(*, endpoint_url=None):
-    return aws_client("ses", endpoint_url=endpoint_url, task_type="email.send")
+    return aws_client(
+        "ses",
+        endpoint_url=endpoint_url,
+        task_type="email.send",
+        region_name=settings.AWS_SES_REGION,
+    )
 
 
 def s3_client(*, endpoint_url=None):
