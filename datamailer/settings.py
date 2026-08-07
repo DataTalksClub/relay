@@ -158,6 +158,27 @@ DATABASES = {
     )
 }
 
+if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
+    # On a single host this database has many writers: two gunicorn workers,
+    # the task worker, and five queue workers. SQLite's default is to fail
+    # immediately when another connection holds the write lock, which surfaces
+    # as "database is locked" on a bulk send rather than as a wait.
+    #
+    # WAL lets readers continue while one writer works, `timeout` makes a
+    # blocked writer wait instead of raising, and IMMEDIATE takes the write
+    # lock when a write transaction opens rather than upgrading mid-way --
+    # the upgrade is what turns two concurrent transactions into an error
+    # neither can retry.
+    #
+    # None of this makes SQLite a good fit for this many writers. It buys room
+    # until the move to Postgres; see docs/managed-database-migration.md.
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"] |= {
+        "timeout": 30,
+        "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+        "transaction_mode": "IMMEDIATE",
+    }
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
