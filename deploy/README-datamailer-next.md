@@ -32,8 +32,8 @@ queue URLs configured. Start them with `--profile ingress` once it does.
 
 ```bash
 cd /opt/datamailer
-docker compose --env-file .env.prod -f docker-compose.prod.yml ps
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f worker
+docker compose -f deploy/docker-compose.yml --env-file .env ps
+docker compose -f deploy/docker-compose.yml --env-file .env logs -f worker
 ```
 
 `datamailer.service` brings the stack up on boot.
@@ -50,6 +50,6 @@ fixing on both if either becomes long-lived.
 one worker container multiplies the effective rate. Keep the worker at one
 replica until that constraint moves somewhere shared.
 
-Secrets were generated at launch and live only in `/opt/datamailer/.env.prod`
+Secrets were generated at launch and live only in `/opt/datamailer/.env`
 (mode 600) and in the instance user-data. Rotate them if this host outlives its
 sandbox purpose.

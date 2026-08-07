@@ -5,12 +5,27 @@
 # large campaign send cannot starve request handling, and so `docker compose
 # logs worker` answers "what is the queue doing" without filtering.
 
+# Run from the repository root:
+#
+#   docker compose -f deploy/docker-compose.yml --env-file .env <command>
+#
+# Compose takes the project directory from this file's location, so paths here
+# are relative to `deploy/` and the repository root is `..`. The --env-file is
+# what feeds the ${...} interpolation below; `env_file:` covers the containers.
+
+# Pinned because Compose would otherwise name the project after this file's
+# directory ("deploy"), which would point the stack at a new, empty set of
+# volumes rather than the existing datamailer_* ones.
+name: datamailer
+
 x-app: &app
   image: datamailer:latest
   build:
-    context: .
+    context: ..
   restart: unless-stopped
-  env_file: .env.prod
+  # The same file Django's settings.py reads via load_dotenv, so a container
+  # and a `manage.py` run on the host see one set of values, not two that drift.
+  env_file: ../.env
   depends_on:
     db:
       condition: service_healthy
@@ -84,7 +99,7 @@ services:
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS must be set}
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
