@@ -78,7 +78,7 @@ WORKER_DEFINITIONS = (
         "ses-webhooks",
         "SES webhooks",
         "datamailer-ses-webhooks-worker.service",
-        "process_sqs_worker ses-webhooks",
+        "drain_sqs_ingress ses-webhooks",
         "SQS backlog",
     ),
     WorkerDefinition(

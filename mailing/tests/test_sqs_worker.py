@@ -1,10 +1,6 @@
 import json
 
-import pytest
-from django.core.exceptions import ImproperlyConfigured
-from django.core.management import call_command
-
-from mailing.sqs_worker import SqsWorker, WorkerConfig, get_worker_config
+from mailing.sqs_worker import SqsWorker, WorkerConfig
 
 
 class FakeSqsClient:
@@ -72,28 +68,6 @@ def test_sqs_worker_empty_poll_does_not_delete():
     assert result.deleted == 0
     assert result.failed == 0
     assert client.deleted_receipts == []
-
-
-def test_get_worker_config_requires_queue_url(settings):
-    settings.SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = ""
-
-    with pytest.raises(ImproperlyConfigured, match="transactional worker"):
-        get_worker_config("transactional")
-
-
-def test_process_sqs_worker_once(settings, monkeypatch):
-    settings.SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = "https://sqs.example/transactional"
-    client = FakeSqsClient([_message("message-1")])
-
-    monkeypatch.setattr("mailing.sqs_worker.sqs_client", lambda: client)
-    monkeypatch.setattr(
-        "mailing.sqs_worker.transactional_email_handler",
-        lambda event, context: {"batchItemFailures": []},
-    )
-
-    call_command("process_sqs_worker", "transactional", "--once")
-
-    assert client.deleted_receipts == ["message-1-receipt"]
 
 
 def _message(message_id, payload=None):

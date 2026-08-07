@@ -1,18 +1,8 @@
 from dataclasses import dataclass
 from time import sleep
 
-from django.conf import settings
-from django.core.exceptions import ImproperlyConfigured
-
 from mailing.aws import sqs_client
 from mailing.sqs import records_from_messages
-from mailing.workers import (
-    campaign_email_handler,
-    email_events_handler,
-    inbound_email_handler,
-    ses_webhooks_handler,
-    transactional_email_handler,
-)
 
 
 @dataclass(frozen=True)
@@ -28,42 +18,6 @@ class WorkerResult:
     deleted: int
     failed: int
 
-
-WORKER_NAMES = ("transactional", "campaign", "ses-webhooks", "email-events", "inbound-email")
-
-
-def get_worker_config(name):
-    configs = {
-        "transactional": WorkerConfig(
-            name="transactional",
-            queue_url=settings.SQS_TRANSACTIONAL_EMAIL_QUEUE_URL,
-            handler=transactional_email_handler,
-        ),
-        "campaign": WorkerConfig(
-            name="campaign",
-            queue_url=settings.SQS_CAMPAIGN_EMAIL_QUEUE_URL,
-            handler=campaign_email_handler,
-        ),
-        "ses-webhooks": WorkerConfig(
-            name="ses-webhooks",
-            queue_url=settings.SQS_SES_WEBHOOKS_QUEUE_URL,
-            handler=ses_webhooks_handler,
-        ),
-        "email-events": WorkerConfig(
-            name="email-events",
-            queue_url=settings.SQS_EMAIL_EVENTS_QUEUE_URL,
-            handler=email_events_handler,
-        ),
-        "inbound-email": WorkerConfig(
-            name="inbound-email",
-            queue_url=settings.SQS_INBOUND_EMAIL_QUEUE_URL,
-            handler=inbound_email_handler,
-        ),
-    }
-    config = configs[name]
-    if not config.queue_url:
-        raise ImproperlyConfigured(f"SQS queue URL is required for {name} worker.")
-    return config
 
 
 class SqsWorker:

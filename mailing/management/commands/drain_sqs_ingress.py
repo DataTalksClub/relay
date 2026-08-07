@@ -1,7 +1,8 @@
 """Poll an AWS-fed SQS queue and hand each message to the task system.
 
-Runs alongside the task worker. Kept separate from `process_sqs_worker` so the
-existing command keeps working unchanged during the transition.
+Runs alongside the task worker. This is the only SQS consumer left: the queues
+Django used to write to moved onto django.tasks, and the two that remain are
+fed by AWS itself.
 """
 
 import signal

@@ -45,9 +45,9 @@ Keep Django web thin and cheap on ARM. Django should enqueue work and serve UI/A
 The sandbox may run Datamailer web on EC2 with SQLite before the shared Postgres/RDS stack is enabled. In that mode, workers need local access to the same SQLite database file as the web process. Run transactional, campaign, SES webhook, and CMP callback processing as systemd services on the same EC2 instance:
 
 ```bash
-python manage.py process_sqs_worker transactional --batch-size 10 --wait-time 20
-python manage.py process_sqs_worker campaign --batch-size 10 --wait-time 20
-python manage.py process_sqs_worker ses-webhooks --batch-size 10 --wait-time 20
+python manage.py db_worker
+python manage.py drain_sqs_ingress ses-webhooks --batch-size 10 --wait-time 20
+python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20
 python manage.py process_cmp_callbacks --batch-size 25 --idle-sleep 5
 ```
 

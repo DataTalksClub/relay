@@ -18,7 +18,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/datamailer
 EnvironmentFile=/opt/datamailer/.env
-ExecStart=/opt/datamailer/.venv/bin/python manage.py process_sqs_worker ${command_name} --batch-size 10 --wait-time 20
+ExecStart=/opt/datamailer/.venv/bin/python manage.py drain_sqs_ingress ${command_name} --batch-size 10 --wait-time 20
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM
@@ -122,8 +122,12 @@ retire_worker_service transactional
 retire_worker_service campaign
 
 install_db_worker_service
-install_worker_service ses-webhooks ses-webhooks "Datamailer sandbox SES webhook SQS worker"
-install_worker_service inbound-email inbound-email "Datamailer sandbox inbound email SQS worker"
+# These two drain rather than process: each message becomes a task, so SES
+# notifications and inbound mail run on the same execution path as everything
+# else and appear in the status contract. Processing them inline -- which
+# process_sqs_worker did -- left ~2,800 SES events a week invisible.
+install_worker_service ses-webhooks ses-webhooks "Datamailer sandbox SES webhook ingress drain"
+install_worker_service inbound-email inbound-email "Datamailer sandbox inbound email ingress drain"
 install_cmp_callbacks_service
 install_recipient_list_imports_service
 
