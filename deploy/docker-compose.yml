@@ -26,11 +26,21 @@ x-app: &app
   # The same file Django's settings.py reads via load_dotenv, so a container
   # and a `manage.py` run on the host see one set of values, not two that drift.
   env_file: ../.env
+  environment:
+    # The one setting that decides which database the whole stack uses.
+    # dj_database_url parses it, so moving to a managed Postgres is this line
+    # in .env and nothing else -- see docs/managed-database-migration.md. The
+    # db service below is the default value's target, not an assumption baked
+    # into the app.
+    DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-datamailer_user}:${POSTGRES_PASSWORD:-}@db:5432/${POSTGRES_DB:-datamailer}}
   depends_on:
     db:
       condition: service_healthy
 
 services:
+  # Postgres on this host, in a container: no RDS bill, and one less moving
+  # part while this is a sandbox. It is addressed only through DATABASE_URL,
+  # so replacing it with a managed endpoint does not touch the app services.
   db:
     image: postgres:17
     restart: unless-stopped
