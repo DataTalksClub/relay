@@ -19,6 +19,8 @@ if [[ ! -f "$infra_env" ]]; then
 fi
 
 install -d -m 0755 /etc/relay /var/lib/relay/postgres /var/lib/relay/caddy-data /var/lib/relay/caddy-config
+git config --system --get-all safe.directory | grep -Fxq "$app_dir" || \
+  git config --system --add safe.directory "$app_dir"
 
 if [[ ! -f "$runtime_env" ]]; then
   umask 077
@@ -62,6 +64,10 @@ if [[ ! -d "$app_dir/.git" ]]; then
     mv "$app_dir/README" /var/lib/relay/bootstrap-readme
   fi
   git -C "$app_dir" init
+fi
+if git -C "$app_dir" remote get-url origin >/dev/null 2>&1; then
+  git -C "$app_dir" remote set-url origin https://github.com/DataTalksClub/relay.git
+else
   git -C "$app_dir" remote add origin https://github.com/DataTalksClub/relay.git
 fi
 git -C "$app_dir" fetch --prune origin main

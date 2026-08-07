@@ -59,7 +59,7 @@ jobs:
               --instance-ids "$SANDBOX_INSTANCE_ID" \
               --document-name AWS-RunShellScript \
               --comment "Deploy Relay sandbox ${GITHUB_SHA}" \
-              --parameters "commands=[\"set -euo pipefail\",\"git config --global --add safe.directory /opt/relay\",\"if [[ ! -d /opt/relay/.git ]]; then if [[ -f /opt/relay/README ]]; then mv /opt/relay/README /var/lib/relay/bootstrap-readme; fi; git -C /opt/relay init; fi\",\"if git -C /opt/relay remote get-url origin >/dev/null 2>&1; then git -C /opt/relay remote set-url origin https://github.com/DataTalksClub/relay.git; else git -C /opt/relay remote add origin https://github.com/DataTalksClub/relay.git; fi\",\"git -C /opt/relay fetch origin ${GITHUB_SHA}\",\"git -C /opt/relay checkout --force ${GITHUB_SHA}\",\"bash /opt/relay/scripts/deploy_relay_sandbox.sh ${GITHUB_SHA}\"]" \
+              --parameters "commands=[\"set -euo pipefail\",\"git config --system --get-all safe.directory | grep -Fxq /opt/relay || git config --system --add safe.directory /opt/relay\",\"if [[ ! -d /opt/relay/.git ]]; then if [[ -f /opt/relay/README ]]; then mv /opt/relay/README /var/lib/relay/bootstrap-readme; fi; git -C /opt/relay init; fi\",\"if git -C /opt/relay remote get-url origin >/dev/null 2>&1; then git -C /opt/relay remote set-url origin https://github.com/DataTalksClub/relay.git; else git -C /opt/relay remote add origin https://github.com/DataTalksClub/relay.git; fi\",\"git -C /opt/relay fetch origin ${GITHUB_SHA}\",\"git -C /opt/relay checkout --force ${GITHUB_SHA}\",\"bash /opt/relay/scripts/deploy_relay_sandbox.sh ${GITHUB_SHA}\"]" \
               --query 'Command.CommandId' \
               --output text
           )
