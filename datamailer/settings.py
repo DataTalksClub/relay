@@ -96,6 +96,27 @@ TASKDECK_PROJECT = "datamailer"
 # has not been given a token cannot leak operational detail.
 TASKDECK_STATUS_TOKEN = os.environ.get("TASKDECK_STATUS_TOKEN", "")
 
+# Recurring sends that something outside this service triggers on a timer.
+#
+# Datamailer has no scheduler and should not grow one: the caller decides who
+# gets a reminder and when, and it already owns a schedule. What was missing is
+# that a schedule which silently stops firing looked exactly like a quiet
+# period. Declaring the expectation here lets the status contract report the
+# last run against it, so a missed sweep is visible.
+#
+# `template_key` is how a run is recognised: the batch task records it in the
+# run's message. `cron` and `max_age_s` are what the trigger is *expected* to
+# do -- keep them in step with the EventBridge rules in
+# aws-infra main/cmp/cmp_deadline_reminder.tf, which are the source of truth.
+TASKDECK_SCHEDULES = [
+    {
+        "name": "deadline-reminders",
+        "template_key": "deadline-reminder",
+        "cron": "0 9 * * *",
+        "max_age_s": 60 * 60 * 26,  # daily, with room for a late or slow run
+    },
+]
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",

@@ -4,10 +4,14 @@ Shape is asserted against docs/contract.md in the taskdeck repo, because the
 cross-project console depends on it and the two deploy independently.
 """
 
+import datetime
+import uuid
+
 import pytest
 from django.core.cache import cache
 from django.urls import reverse
 from django.utils import timezone
+from taskdeck.models import TaskRun, TaskRunStatus
 
 from mailing.models import (
     Audience,
@@ -181,3 +185,76 @@ def test_response_is_cached_so_polling_is_cheap(client, settings, monkeypatch):
     client.get(url(), headers=headers)
 
     assert len(calls) == 1, "second poll within the window must be served from cache"
+
+
+SCHEDULE = [
+    {
+        "name": "deadline-reminders",
+        "template_key": "deadline-reminder",
+        "cron": "0 9 * * *",
+        "max_age_s": 93600,
+    }
+]
+
+
+def _batch_run(message, status, finished_at=None):
+    return TaskRun.objects.create(
+        result_id=f"r-{TaskRun.objects.count()}",
+        project="datamailer",
+        name="send_transactional_email_batch",
+        func="mailing.tasks.send_transactional_email_batch",
+        status=status,
+        message=message,
+        correlation_id=uuid.uuid4(),
+        finished_at=finished_at,
+    )
+
+
+def test_schedule_with_no_run_reports_nulls(client, settings):
+    """The case that matters: a schedule that has never fired, or has stopped,
+    must be distinguishable from one that is simply quiet."""
+    settings.TASKDECK_STATUS_TOKEN = "t"
+    settings.TASKDECK_SCHEDULES = SCHEDULE
+    cache.clear()
+
+    body = client.get(url(), headers={"authorization": "Bearer t"}).json()
+
+    assert len(body["schedules"]) == 1
+    schedule = body["schedules"][0]
+    assert schedule["name"] == "deadline-reminders"
+    assert schedule["cron"] == "0 9 * * *"
+    assert schedule["last_run"] is None
+    assert schedule["last_success"] is None
+    assert schedule["max_age_s"] == 93600
+
+
+def test_schedule_reports_its_last_run_and_last_success(client, settings):
+    settings.TASKDECK_STATUS_TOKEN = "t"
+    settings.TASKDECK_SCHEDULES = SCHEDULE
+    cache.clear()
+
+    finished = timezone.now() - datetime.timedelta(hours=2)
+    _batch_run("deadline-reminder: 40 recipients", TaskRunStatus.SUCCESS, finished_at=finished)
+    # A later failure must not overwrite last_success -- that distinction is
+    # what says "it is still running but no longer working".
+    _batch_run("deadline-reminder: 41 recipients", TaskRunStatus.FAILED)
+
+    body = client.get(url(), headers={"authorization": "Bearer t"}).json()
+    schedule = body["schedules"][0]
+
+    assert schedule["last_run"] is not None
+    assert schedule["last_success"] == finished.isoformat()
+
+
+def test_schedule_ignores_batches_for_a_different_template(client, settings):
+    """A scoring run must not be mistaken for a reminder sweep."""
+    settings.TASKDECK_STATUS_TOKEN = "t"
+    settings.TASKDECK_SCHEDULES = SCHEDULE
+    cache.clear()
+
+    _batch_run("homework-score-notification: 12 recipients", TaskRunStatus.SUCCESS,
+               finished_at=timezone.now())
+
+    body = client.get(url(), headers={"authorization": "Bearer t"}).json()
+
+    assert body["schedules"][0]["last_run"] is None

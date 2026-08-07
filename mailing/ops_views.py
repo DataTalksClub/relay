@@ -17,6 +17,7 @@ from django.http import JsonResponse
 from django.urls import reverse
 from django.views.decorators.http import require_GET
 from taskdeck.collector import collect_status
+from taskdeck.models import TaskRun, TaskRunStatus
 
 from mailing.models import Campaign, TransactionalMessage
 from mailing.services.worker_status import WORKER_DEFINITIONS, backlog_count
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 CACHE_KEY = "taskdeck:status"
 CACHE_SECONDS = 30
+
+# The batch task's recorded path. Schedules are matched against it rather than
+# against individual sends, because one sweep is one run.
+BATCH_TASK_PATH = "mailing.tasks.send_transactional_email_batch"
 
 
 def _authorised(request):
@@ -89,8 +94,58 @@ def _ingress_backlogs():
     return rows
 
 
+def _schedules():
+    """Report each expected recurring send against what actually ran.
+
+    Datamailer does not own these timers -- EventBridge does, on the CMP side --
+    so there is nothing here to read a schedule from. What this can do is look
+    up the last batch that matches each declared schedule, which turns "no
+    reminders went out for three days" from something nobody notices into
+    something the console shows.
+
+    Runs are matched on the batch task plus the template key it records in its
+    message. That coupling is narrow and deliberate: `send_transactional_email_batch`
+    is the only writer of that string.
+    """
+    rows = []
+    for schedule in getattr(settings, "TASKDECK_SCHEDULES", []):
+        template_key = schedule.get("template_key", "")
+        runs = TaskRun.objects.filter(
+            func=BATCH_TASK_PATH,
+            message__startswith=f"{template_key}:",
+        )
+        last = runs.order_by("-enqueued_at").first()
+        last_success = (
+            runs.filter(status=TaskRunStatus.SUCCESS).order_by("-finished_at").first()
+        )
+        rows.append(
+            {
+                "name": schedule.get("name", template_key),
+                "cron": schedule.get("cron", ""),
+                "last_run": last.enqueued_at.isoformat() if last else None,
+                "last_success": (
+                    last_success.finished_at.isoformat()
+                    if last_success and last_success.finished_at
+                    else None
+                ),
+                # Null rather than computed: working it out needs a cron parser,
+                # and a dependency for one cosmetic field is a poor trade in a
+                # mail service. `max_age_s` gives a consumer what it actually
+                # needs to flag an overdue schedule.
+                "next_run": None,
+                "max_age_s": schedule.get("max_age_s"),
+                "enabled": schedule.get("enabled", True),
+            }
+        )
+    return rows
+
+
 def build_payload():
-    payload = collect_status(mode="sidecar", entity_resolver=_entity_resolver)
+    payload = collect_status(
+        mode="sidecar",
+        entity_resolver=_entity_resolver,
+        schedules=_schedules(),
+    )
     payload["ingress_backlogs"] = _ingress_backlogs()
     return payload
 
