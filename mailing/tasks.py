@@ -85,6 +85,60 @@ def send_campaign_email_batch(payload):
 
 
 @task()
+def send_transactional_email_batch(message_ids, list_key="", template_key="", client_id=None):
+    """Fan out one bulk transactional send -- a scoring run, a reminder sweep.
+
+    The recipient-list endpoints used to enqueue one send per member straight
+    from the request. Those are siblings with no parent, so a run that scores
+    300 students produced 300 unrelated rows and no way to ask how far along it
+    was, or whether it had finished at all.
+
+    Enqueuing the children *from inside this task* is what fixes that: taskdeck
+    links a task to whichever run enqueued it, so they become this run's
+    children, and ``set_total`` here gives the denominator. The numerator is
+    derived from finished children rather than counted up as they go, so a
+    child that dies without reporting cannot corrupt it.
+
+    Takes message ids rather than whole payloads. The rows are already
+    committed by the time this runs, and a few thousand rendered payloads would
+    otherwise be copied into the task's arguments.
+    """
+    from mailing.enqueue import enqueue_transactional_email  # noqa: PLC0415 - breaks an import cycle
+    from mailing.models import TransactionalMessage  # noqa: PLC0415 - keeps tasks import-light
+    from mailing.services.transactional import (  # noqa: PLC0415 - breaks an import cycle
+        build_transactional_queue_payload,
+    )
+
+    if client_id:
+        taskdeck.set_owner(client_id)
+    if list_key:
+        taskdeck.set_entity("recipient_list", list_key)
+
+    message_ids = list(message_ids or [])
+    taskdeck.set_total(len(message_ids), message=_batch_message(template_key, len(message_ids)))
+
+    messages = TransactionalMessage.objects.select_related("client", "contact", "template").in_bulk(message_ids)
+    enqueued = 0
+    for message_id in message_ids:
+        message = messages.get(message_id)
+        if message is None:
+            # Deleted between commit and pickup. Skipping keeps the rest of the
+            # batch moving; the total stays honest because the child never
+            # appears and the parent's progress reflects what actually ran.
+            logger.warning("taskdeck: batch %s skipped missing message %s", list_key, message_id)
+            continue
+        enqueue_transactional_email(build_transactional_queue_payload(message))
+        enqueued += 1
+
+    return {"enqueued": enqueued, "requested": len(message_ids), "template_key": template_key}
+
+
+def _batch_message(template_key, count):
+    recipients = f"{count} recipient{'' if count == 1 else 's'}"
+    return f"{template_key}: {recipients}" if template_key else recipients
+
+
+@task()
 def process_ses_webhook_event(payload):
     """Apply one SES delivery/bounce/complaint notification.
 

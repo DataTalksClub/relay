@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 
-from mailing.enqueue import enqueue_transactional_email
+from mailing.enqueue import enqueue_transactional_email, enqueue_transactional_email_batch
 from mailing.models import (
     CategoryPreference,
     EmailEvent,
@@ -177,7 +177,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
         sender_id_for_payload(payload, template),
     )
 
-    queue_payloads = []
+    queued_message_ids = []
     created_count = 0
     enqueued_count = 0
     skipped_count = 0
@@ -254,7 +254,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
                         "recipient_list_key": recipient_list.key,
                     },
                 )
-                queue_payloads.append(build_transactional_queue_payload(message))
+                queued_message_ids.append(message.id)
                 created_count += 1
                 enqueued_count += 1
                 continue
@@ -280,11 +280,16 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
             created_count += 1
             skipped_count += 1
 
-        def enqueue_payloads():
-            for queue_payload in queue_payloads:
-                enqueue_transactional_email(queue_payload)
+        def enqueue_batch():
+            enqueue_transactional_email_batch(
+                queued_message_ids,
+                list_key=recipient_list.key,
+                template_key=template.key,
+                client_id=authenticated_client.id,
+            )
 
-        transaction.on_commit(enqueue_payloads)
+        if queued_message_ids:
+            transaction.on_commit(enqueue_batch)
 
     response = {
         "recipient_list": {
@@ -319,7 +324,7 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
     for _, context in member_contexts:
         validate_template_context(template, context)
 
-    queue_payloads = []
+    queued_message_ids = []
     created_count = 0
     enqueued_count = 0
     skipped_count = 0
@@ -373,7 +378,7 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
                         "transient_recipient_list_key": payload["list_key"],
                     },
                 )
-                queue_payloads.append(build_transactional_queue_payload(message))
+                queued_message_ids.append(message.id)
                 created_count += 1
                 enqueued_count += 1
                 continue
@@ -399,11 +404,16 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
             created_count += 1
             skipped_count += 1
 
-        def enqueue_payloads():
-            for queue_payload in queue_payloads:
-                enqueue_transactional_email(queue_payload)
+        def enqueue_batch():
+            enqueue_transactional_email_batch(
+                queued_message_ids,
+                list_key=payload["list_key"],
+                template_key=template.key,
+                client_id=authenticated_client.id,
+            )
 
-        transaction.on_commit(enqueue_payloads)
+        if queued_message_ids:
+            transaction.on_commit(enqueue_batch)
 
     return {
         "transient_recipient_list": {

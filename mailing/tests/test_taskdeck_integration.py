@@ -14,6 +14,7 @@ from django.tasks import task
 from django.utils import timezone
 from taskdeck.models import TaskRun, TaskRunStatus
 
+from mailing import tasks as mailing_tasks
 from mailing.models import (
     Audience,
     Campaign,
@@ -21,9 +22,12 @@ from mailing.models import (
     CampaignStatus,
     Client,
     Contact,
+    EmailTemplate,
     Organization,
     Subscription,
     SubscriptionStatus,
+    TransactionalMessage,
+    TransactionalMessageStatus,
 )
 from mailing.services.campaigns import queue_campaign
 
@@ -179,3 +183,99 @@ def test_fanout_children_attach_without_explicit_threading(settings):
     parent = TaskRun.objects.get(result_id=str(result.id))
     assert parent.children.count() == 2
     assert parent.resolved_progress() == (2, 2)
+
+
+@pytest.fixture
+def score_template(client_record):
+    return EmailTemplate.objects.create(
+        client=client_record,
+        key="homework-score-notification",
+        name="Homework score",
+        subject="Score",
+        text_body="Score",
+    )
+
+
+def _queued_message(client_record, contact, template, email):
+    return TransactionalMessage.objects.create(
+        client=client_record,
+        contact=contact,
+        email=email,
+        template=template,
+        template_key=template.key,
+        status=TransactionalMessageStatus.QUEUED,
+        subject="Score",
+        idempotency_key=f"homework-score:{email}",
+    )
+
+
+def test_bulk_send_batch_reports_progress_over_its_children(
+    settings, monkeypatch, client_record, subscribed_contact, score_template
+):
+    """A scoring run must be answerable as "k of N sent", not as N loose rows.
+
+    The recipient-list endpoints used to enqueue one send per member straight
+    from the request. Those are siblings with no parent, so there was no
+    denominator to show and no single row to watch. The linkage this depends on
+    -- a child attaching to whichever run enqueued it -- only happens when the
+    children are enqueued from inside the parent, which is why the batch task
+    is driven here rather than the endpoint.
+    """
+    settings.TASKS = {"default": {"BACKEND": "django_tasks.backends.immediate.ImmediateBackend"}}
+
+    messages = [
+        _queued_message(client_record, subscribed_contact, score_template, f"s{i}@example.com")
+        for i in range(3)
+    ]
+
+    # Stop at the point of dispatch: this is about the shape of the fan-out,
+    # not about SES. The child still runs, so the parent's progress is real.
+    sent = []
+    monkeypatch.setattr(
+        "mailing.tasks.send_transactional_email_from_queue",
+        lambda payload, **kwargs: sent.append(payload),
+    )
+
+    result = mailing_tasks.send_transactional_email_batch.enqueue(
+        [m.id for m in messages],
+        list_key="homework-1-submitters",
+        template_key=score_template.key,
+        client_id=client_record.id,
+    )
+
+    parent = TaskRun.objects.get(result_id=str(result.id))
+    assert parent.children.count() == 3, "each member send must hang off the batch"
+    assert parent.resolved_progress() == (3, 3)
+    assert parent.entity_type == "recipient_list"
+    assert parent.entity_id == "homework-1-submitters"
+    assert parent.owner_id == str(client_record.id)
+    assert parent.message == "homework-score-notification: 3 recipients"
+    assert len(sent) == 3
+
+
+def test_bulk_send_batch_skips_a_message_deleted_before_pickup(
+    settings, monkeypatch, client_record, subscribed_contact, score_template
+):
+    """The batch is enqueued on commit and runs later, so a row can vanish in
+    between. The rest of the batch must still go out."""
+    settings.TASKS = {"default": {"BACKEND": "django_tasks.backends.immediate.ImmediateBackend"}}
+
+    kept = _queued_message(client_record, subscribed_contact, score_template, "kept@example.com")
+    gone = _queued_message(client_record, subscribed_contact, score_template, "gone@example.com")
+    gone_id = gone.id
+    gone.delete()
+
+    sent = []
+    monkeypatch.setattr(
+        "mailing.tasks.send_transactional_email_from_queue",
+        lambda payload, **kwargs: sent.append(payload),
+    )
+
+    result = mailing_tasks.send_transactional_email_batch.enqueue([kept.id, gone_id])
+
+    parent = TaskRun.objects.get(result_id=str(result.id))
+    assert len(sent) == 1
+    assert parent.children.count() == 1
+    # The denominator still reflects what was asked for, so the gap is visible
+    # rather than silently rounded away.
+    assert parent.resolved_progress() == (1, 2)

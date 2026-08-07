@@ -39,6 +39,27 @@ def enqueue_campaign_email(payload):
     return result
 
 
+def enqueue_transactional_email_batch(message_ids, *, list_key="", template_key="", client_id=None):
+    """Queue one parent for a bulk send instead of one task per recipient.
+
+    The parent fans out to the individual sends. Callers get a single run to
+    watch, with progress, rather than a page of unrelated rows.
+    """
+    result = tasks.send_transactional_email_batch.enqueue(
+        list(message_ids),
+        list_key=list_key,
+        template_key=template_key,
+        client_id=client_id,
+    )
+    taskdeck.stamp(
+        result,
+        entity=("recipient_list", list_key) if list_key else None,
+        owner_id=client_id,
+        message=tasks._batch_message(template_key, len(message_ids)),
+    )
+    return result
+
+
 def enqueue_ses_webhook(payload):
     """Queue an SES notification received over HTTP.
 

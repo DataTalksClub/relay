@@ -553,6 +553,13 @@ def test_recipient_list_send_can_sync_members_and_render_member_context(
 ):
     enqueued = []
     monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    # Bulk sends fan out from a parent task rather than enqueuing per recipient
+    # here, so the batch is what this endpoint hands off.
+    batches = []
+    monkeypatch.setattr(
+        "mailing.services.transactional.enqueue_transactional_email_batch",
+        lambda message_ids, **kwargs: batches.append((list(message_ids), kwargs)),
+    )
     score_template = EmailTemplate.objects.create(
         client=api_client_record,
         key="homework-score-notification",
@@ -626,7 +633,14 @@ def test_recipient_list_send_can_sync_members_and_render_member_context(
     assert "Homework 1: 9" in message.text_body
     assert message.metadata["recipient_list_member_metadata"]["total_score"] == 9
     assert RecipientListMember.objects.get(source_object_key="homework-submission:old").active is False
-    assert len(enqueued) == 1
+    # A scoring send hands off one batch, not one task per submitter -- that is
+    # what gives the run a parent to show progress against.
+    assert enqueued == []
+    assert len(batches) == 1
+    message_ids, batch_kwargs = batches[0]
+    assert message_ids == [message.id]
+    assert batch_kwargs["template_key"] == score_template.key
+    assert batch_kwargs["client_id"] == message.client_id
 
 
 def test_transient_recipient_list_send_renders_members_without_persisting_list(
@@ -637,6 +651,13 @@ def test_transient_recipient_list_send_renders_members_without_persisting_list(
 ):
     enqueued = []
     monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    # Bulk sends fan out from a parent task rather than enqueuing per recipient
+    # here, so the batch is what this endpoint hands off.
+    batches = []
+    monkeypatch.setattr(
+        "mailing.services.transactional.enqueue_transactional_email_batch",
+        lambda message_ids, **kwargs: batches.append((list(message_ids), kwargs)),
+    )
     reminder_template = EmailTemplate.objects.create(
         client=api_client_record,
         key="deadline-reminder",
@@ -728,7 +749,11 @@ def test_transient_recipient_list_send_renders_members_without_persisting_list(
     assert messages[0].metadata["category_tag"] == "deadline-reminders"
     assert messages[1].status == TransactionalMessageStatus.SKIPPED
     assert messages[1].last_error == "category_unsubscribe"
-    assert len(enqueued) == 1
+    # One batch, carrying only the queued message -- the skipped one must not
+    # be handed to the sender.
+    assert enqueued == []
+    assert len(batches) == 1
+    assert batches[0][0] == [messages[0].id]
 
 
 def test_transactional_send_uses_client_default_sender(client, api_client_record, template, monkeypatch):
