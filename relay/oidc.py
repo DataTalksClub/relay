@@ -189,6 +189,23 @@ def end(request):
 
 
 def admin_login(request):
-    if configured() and request.GET.get("local") != "1":
+    """Front `/admin/login/`: shared login is the only way into a deployed Relay.
+
+    This used to honour `?local=1` and hand back Django's password form even
+    where Cognito was configured. Nothing in the deploy needed it -- operator
+    accounts are created by the callback above without a usable password -- and
+    a public hostname turns it into a password endpoint on the open internet.
+    The decision is that there is no local escape hatch on a deployed host: no
+    query parameter, no address allowlist, recovery goes through a shell on the
+    host.
+
+    Django's password form survives in exactly one place, where there is no
+    identity provider to talk to: a developer's machine, running DEBUG with no
+    AUTH_* configured. A deployed host that has lost its auth configuration
+    fails closed rather than quietly degrading to passwords.
+    """
+    if configured():
         return HttpResponseRedirect("/auth/login?return_to=/admin/")
+    if not settings.DEBUG:
+        return _security_headers(HttpResponse("Shared authentication is not configured", status=503))
     return admin.site.login(request)

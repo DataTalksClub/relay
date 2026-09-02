@@ -53,18 +53,37 @@ CSRF_TRUSTED_ORIGINS = csv_env("CSRF_TRUSTED_ORIGINS", "", allow_empty=True)
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-AUTH_BASE_URL = os.environ.get("AUTH_BASE_URL", "" if DEBUG else "https://auth.dtcdev.click").rstrip("/")
-AUTH_CLIENT_ID = os.environ.get("AUTH_CLIENT_ID", "" if DEBUG else "41gcnc18qjtq61rsag9iqoepmk")
-AUTH_CALLBACK_URL = os.environ.get(
-    "AUTH_CALLBACK_URL", "" if DEBUG else "https://relay.dtcdev.click/auth/callback"
-)
-AUTH_LOGOUT_URL = os.environ.get("AUTH_LOGOUT_URL", "" if DEBUG else "https://relay.dtcdev.click/")
-AUTH_ISSUER = os.environ.get(
-    "AUTH_ISSUER", "" if DEBUG else "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_H7nJu52Bs"
-).rstrip("/")
+# Shared Cognito login. These describe one deployment: which user pool it
+# trusts and which hostname that pool sends the operator back to. They used to
+# fall back to the sandbox host and pool whenever DEBUG was off, which meant any
+# other hostname sent operators to the sandbox callback and login failed there
+# without anything in the app noticing. A deployed host now has to say who it
+# is; DEBUG=False with these unset stops the process instead of guessing.
+AUTH_BASE_URL = os.environ.get("AUTH_BASE_URL", "").rstrip("/")
+AUTH_CLIENT_ID = os.environ.get("AUTH_CLIENT_ID", "")
+AUTH_CALLBACK_URL = os.environ.get("AUTH_CALLBACK_URL", "")
+AUTH_LOGOUT_URL = os.environ.get("AUTH_LOGOUT_URL", "")
+AUTH_ISSUER = os.environ.get("AUTH_ISSUER", "").rstrip("/")
 AUTH_JWKS_URL = os.environ.get(
     "AUTH_JWKS_URL", f"{AUTH_ISSUER}/.well-known/jwks.json" if AUTH_ISSUER else ""
 )
+if not DEBUG and not TESTING:
+    _missing_auth = sorted(
+        name
+        for name, value in (
+            ("AUTH_BASE_URL", AUTH_BASE_URL),
+            ("AUTH_CLIENT_ID", AUTH_CLIENT_ID),
+            ("AUTH_CALLBACK_URL", AUTH_CALLBACK_URL),
+            ("AUTH_ISSUER", AUTH_ISSUER),
+        )
+        if not value
+    )
+    if _missing_auth:
+        raise ImproperlyConfigured(
+            "Shared login is the only way into Relay's admin and operator UI, so these must be set "
+            f"when DEBUG=False: {', '.join(_missing_auth)}. AUTH_CALLBACK_URL must point at this "
+            "deployment's own hostname."
+        )
 
 INSTALLED_APPS = [
     "django.contrib.admin",

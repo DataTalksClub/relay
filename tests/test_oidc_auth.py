@@ -1,9 +1,15 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from django.contrib.auth import get_user_model
 
 from relay import oidc
+
+ROOT = Path(__file__).resolve().parents[1]
 
 AUTH_SETTINGS = {
     "AUTH_BASE_URL": "https://auth.example.test",
@@ -100,3 +106,61 @@ def test_admin_login_redirects_to_shared_auth_when_configured(client, settings):
     response = client.get("/admin/login/")
     assert response.status_code == 302
     assert response["Location"] == "/auth/login?return_to=/admin/"
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["?local=1", "?local=1&next=/admin/", "?next=/admin/&local=1", "?LOCAL=1", "?local=true"],
+)
+def test_admin_login_has_no_local_password_escape_hatch(client, settings, query):
+    """A deployed host offers shared login only; `?local=1` used to hand back a password form."""
+    for key, value in AUTH_SETTINGS.items():
+        setattr(settings, key, value)
+    settings.DEBUG = False
+    response = client.get(f"/admin/login/{query}")
+    assert response.status_code == 302
+    assert response["Location"] == "/auth/login?return_to=/admin/"
+    assert b'type="password"' not in response.content
+
+
+def test_admin_login_fails_closed_when_shared_auth_is_unconfigured_in_production(client, settings):
+    for key in AUTH_SETTINGS:
+        setattr(settings, key, "")
+    settings.DEBUG = False
+    response = client.get("/admin/login/?local=1")
+    assert response.status_code == 503
+    assert b'type="password"' not in response.content
+    assert response["Cache-Control"] == "no-store"
+
+
+def test_admin_login_keeps_the_password_form_for_local_development(client, settings):
+    for key in AUTH_SETTINGS:
+        setattr(settings, key, "")
+    settings.DEBUG = True
+    response = client.get("/admin/login/")
+    assert response.status_code == 200
+    assert b'type="password"' in response.content
+
+
+def test_shared_auth_settings_have_no_host_defaults_and_fail_loudly():
+    """DEBUG=False without AUTH_* must stop the process, not point at another deployment's host."""
+    env = os.environ | {
+        "DEBUG": "False",
+        "SECRET_KEY": "settings-import-check",
+        "AUTH_BASE_URL": "",
+        "AUTH_CLIENT_ID": "",
+        "AUTH_CALLBACK_URL": "",
+        "AUTH_LOGOUT_URL": "",
+        "AUTH_ISSUER": "",
+        "AUTH_JWKS_URL": "",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", "import relay.settings"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    for name in ("AUTH_BASE_URL", "AUTH_CLIENT_ID", "AUTH_CALLBACK_URL", "AUTH_ISSUER"):
+        assert name in result.stderr
