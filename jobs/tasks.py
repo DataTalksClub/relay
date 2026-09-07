@@ -13,7 +13,7 @@ from django.utils import timezone
 
 import taskdeck
 from jobs.models import Job, JobStatus
-from jobs.services import TASK_TYPE_ECHO, TASK_TYPE_EMAIL_SEND, TASK_TYPE_WEBHOOK, enqueue_job
+from jobs.services import TASK_TYPE_ECHO, TASK_TYPE_EMAIL_SEND, TASK_TYPE_WEBHOOK, enqueue_job, retry_delay
 from mailing.services.transactional import TransactionalSendRejected, send_transactional_email_for_client
 
 MAX_RESPONSE_BODY_LENGTH = 2048
@@ -200,8 +200,7 @@ def _retry_or_fail(job, exc):
     if job.attempt >= job.max_attempts:
         return _mark_failed(job, exc)
 
-    delay = settings.RELAY_JOB_RETRY_BASE_SECONDS * (2 ** (job.attempt - 1))
-    run_after = timezone.now() + timedelta(seconds=delay)
+    run_after = timezone.now() + timedelta(seconds=retry_delay(job.attempt))
     Job.objects.filter(pk=job.pk).update(
         status=JobStatus.RETRYING,
         run_after=run_after,

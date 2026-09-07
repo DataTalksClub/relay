@@ -134,7 +134,12 @@ def _normalize_task_payload(task_type, data, client, errors):
 def submit_job(data, client, *, schedule=None):
     submission = normalize_submission(data, client)
     with transaction.atomic():
-        if submission.task_type == TASK_TYPE_WEBHOOK and schedule is None:
+        # A replay of an existing idempotency key returns the original task
+        # and never counts against the per-client webhook limits.
+        replayed = Job.objects.filter(
+            client=client, idempotency_key=submission.idempotency_key
+        ).exists()
+        if not replayed and submission.task_type == TASK_TYPE_WEBHOOK and schedule is None:
             _enforce_webhook_client_limits(client)
         job, created = Job.objects.get_or_create(
             client=client,
@@ -225,6 +230,11 @@ def serialize_job(job):
         "error": job.error,
         "schedule_id": str(job.schedule_id) if job.schedule_id else None,
     }
+
+
+def retry_delay(attempt):
+    """Backoff before the redelivery that follows ``attempt``."""
+    return settings.RELAY_JOB_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
 
 
 def recover_unenqueued_jobs(*, limit=100):

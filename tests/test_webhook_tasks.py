@@ -658,3 +658,117 @@ def test_webhook_reference_receiver_rejects_a_forged_signature():
 
     with pytest.raises(ReceiverRejection, match="bad signature"):
         reference_receiver_verify(body, headers, "webhook-secret", now=now)
+
+
+# --- Retryable fail callbacks and idempotent replays ------------------------
+# The community-base package client (community_base.jobs.relay.RelayClient)
+# reports chunked-work failures with fail_task(error, retryable=...) and
+# expects a retrying task while attempts remain, not an immediate failure.
+
+
+def leased_job(monkeypatch, relay_client, key, **extra):
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *_, **__: WebhookResponse(202, json.dumps({"lease_seconds": 600}).encode()),
+    )
+    job = submit_webhook(relay_client, key, **extra)
+    execute_job.call(str(job.pk))
+    job.refresh_from_db()
+    assert job.status == JobStatus.RUNNING
+    return job
+
+
+def test_webhook_fail_callback_with_retryable_reenters_backoff(
+    monkeypatch, relay_client, client, auth
+):
+    job = leased_job(monkeypatch, relay_client, "retryable-callback", max_attempts=2)
+
+    response = client.post(
+        f"/api/tasks/{job.pk}/fail",
+        data=json.dumps({"error": "receiver not ready", "retryable": True}),
+        content_type="application/json",
+        **auth,
+    )
+    job.refresh_from_db()
+
+    assert response.status_code == 200
+    assert response.json()["status"] == JobStatus.RETRYING
+    assert job.status == JobStatus.RETRYING
+    assert job.error == "receiver not ready"
+    assert job.lease_expires_at is None
+    assert job.task_result_id  # the redelivery was enqueued
+    delay = (job.run_after - timezone.now()).total_seconds()
+    assert 3 < delay <= settings.RELAY_JOB_RETRY_BASE_SECONDS + 2
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda *_, **__: WebhookResponse(204, b"")
+    )
+    make_due(job)
+    execute_job.call(str(job.pk))
+    job.refresh_from_db()
+    assert job.status == JobStatus.SUCCEEDED
+    assert job.attempt == 2
+
+
+def test_webhook_fail_callback_retryable_fails_when_attempts_exhausted(
+    monkeypatch, relay_client, client, auth
+):
+    job = leased_job(monkeypatch, relay_client, "retryable-exhausted", max_attempts=1)
+
+    response = client.post(
+        f"/api/tasks/{job.pk}/fail",
+        data=json.dumps({"error": "still broken", "retryable": True}),
+        content_type="application/json",
+        **auth,
+    )
+    job.refresh_from_db()
+
+    assert response.json()["status"] == JobStatus.FAILED
+    assert job.status == JobStatus.FAILED
+    assert job.attempt == 1
+    assert job.finished_at is not None
+
+
+def test_webhook_fail_callback_rejects_non_bool_retryable(
+    monkeypatch, relay_client, client, auth
+):
+    job = leased_job(monkeypatch, relay_client, "retryable-type")
+
+    response = client.post(
+        f"/api/tasks/{job.pk}/fail",
+        data=json.dumps({"error": "boom", "retryable": "yes"}),
+        content_type="application/json",
+        **auth,
+    )
+    job.refresh_from_db()
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"]["retryable"] == "must_be_boolean"
+    assert job.status == JobStatus.RUNNING
+    assert job.lease_expires_at is not None
+
+
+def test_webhook_idempotent_replay_does_not_count_against_limits(
+    relay_client, client, auth
+):
+    for index in range(4):
+        submit_webhook(relay_client, f"cap-{index}")
+
+    replay_request = {
+        "type": "webhook",
+        "idempotency_key": "cap-0",
+        "url": "https://client.example.com/work",
+        "params": {},
+    }
+    replay = client.post("/api/tasks", data=replay_request, content_type="application/json", **auth)
+    assert replay.status_code == 200
+    assert replay.json()["idempotent_replay"] is True
+
+    fresh = client.post(
+        "/api/tasks",
+        data=replay_request | {"idempotency_key": "cap-fresh"},
+        content_type="application/json",
+        **auth,
+    )
+    assert fresh.status_code == 429
+    assert fresh.json()["error"]["fields"]["type"] == "concurrency_limit_exceeded"

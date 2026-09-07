@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
 from django.http import JsonResponse
@@ -10,6 +12,7 @@ from jobs.models import Job, JobStatus
 from jobs.services import (
     IdempotencyConflict,
     enqueue_job,
+    retry_delay,
     serialize_job,
     submit_job,
 )
@@ -90,11 +93,18 @@ def _resolve_lease(request, task_id, *, resolution):
     except ApiValidationError as exc:
         return validation_error_response(exc)
 
+    retryable = False
     if resolution == JobStatus.FAILED:
         error = body.get("error", "failed by client callback")
         if not isinstance(error, str):
             return JsonResponse(
                 {"error": {"code": "validation_error", "fields": {"error": "must_be_string"}}},
+                status=400,
+            )
+        retryable = body.get("retryable", False)
+        if not isinstance(retryable, bool):
+            return JsonResponse(
+                {"error": {"code": "validation_error", "fields": {"retryable": "must_be_boolean"}}},
                 status=400,
             )
         result = None
@@ -110,6 +120,20 @@ def _resolve_lease(request, task_id, *, resolution):
         conflict = _lease_conflict(job, resolution)
         if conflict:
             return conflict
+
+        if resolution == JobStatus.FAILED and retryable and job.attempt < job.max_attempts:
+            # A transient failure the receiver asked to have redelivered:
+            # re-enter the normal backoff schedule while attempts remain.
+            Job.objects.filter(pk=job.pk, status=JobStatus.RUNNING).update(
+                status=JobStatus.RETRYING,
+                run_after=timezone.now() + timedelta(seconds=retry_delay(job.attempt)),
+                task_result_id="",
+                error=error[:4000],
+                lease_expires_at=None,
+            )
+            job.refresh_from_db()
+            transaction.on_commit(lambda: enqueue_job(job.pk))
+            return JsonResponse(serialize_job(job))
 
         now = timezone.now()
         job.status = resolution

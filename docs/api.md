@@ -385,12 +385,15 @@ the task with a client-authenticated callback:
 
 ```text
 POST /api/tasks/{task_id}/complete    {"result": {...}}   # optional body
-POST /api/tasks/{task_id}/fail       {"error": "..."}    # optional body
+POST /api/tasks/{task_id}/fail       {"error": "...", "retryable": false}
 ```
 
 - `complete` marks the task `succeeded` and stores the optional `result`.
-- `fail` marks the task `failed` with the optional `error`. It does not retry:
-  the receiver reported on work it already owns.
+- `fail` marks the task `failed` with the optional `error`. By default it does
+  not retry: the receiver reported on work it already owns. Passing
+  `"retryable": true` asks Relay to redeliver the task: while attempts remain
+  it becomes `retrying` with the usual backoff, and once attempts are
+  exhausted it fails.
 - Repeating the same callback is a harmless idempotent `200`; the opposite
   resolution on a finished task is `409 task_already_finished`; a callback for
   a task with no lease in progress is `409 no_lease_in_progress`.
@@ -410,6 +413,7 @@ per-task `max_attempts` (default 5, range 1-10).
 | Connection error or response timeout | retry with backoff |
 | HTTP `429` | retry with backoff |
 | HTTP `5xx` | retry with backoff |
+| `fail` callback with `"retryable": true`, attempts left | retry with backoff |
 | Any other `4xx` (including `408`, `425`) | fail immediately |
 | `202` without a valid `lease_seconds` | fail immediately |
 | Lease expiry without a callback | fail, no retry |
@@ -426,7 +430,9 @@ undebuggable.
 | Task creation rate | 60 per rolling minute | a submission beyond it is rejected with `429 rate_limit_exceeded` |
 
 Tasks created by Relay schedules do not consume these limits; schedules are
-operator-configured and bounded by their cron expression.
+operator-configured and bounded by their cron expression. Replays of an
+existing idempotency key do not consume them either — they return the original
+task instead of creating a new one.
 
 Tasks that end in the `failed` state after their attempts (or a client `fail`
 callback, or lease expiry) appear in the staff dead-letter list at
