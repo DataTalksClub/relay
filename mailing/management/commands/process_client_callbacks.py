@@ -2,11 +2,11 @@ from time import sleep
 
 from django.core.management.base import BaseCommand
 
-from mailing.services.cmp_callbacks import process_due_cmp_callbacks
+from mailing.services.client_callbacks import process_due_client_callbacks
 
 
 class Command(BaseCommand):
-    help = "Dispatch due CMP webhook callbacks from the Datamailer outbox."
+    help = "Dispatch due client callbacks from the tenant-scoped HMAC outbox."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -33,9 +33,9 @@ class Command(BaseCommand):
             self.stderr.write("batch-size must be at least 1.")
             return
 
-        self.stdout.write("Starting CMP callback dispatcher")
+        self.stdout.write("Starting client callback dispatcher")
         while True:
-            result = process_due_cmp_callbacks(limit=batch_size)
+            result = process_due_client_callbacks(limit=batch_size)
             self.stdout.write("processed={processed} delivered={delivered} failed={failed}".format(**result))
             if options["once"]:
                 return

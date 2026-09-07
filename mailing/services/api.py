@@ -15,7 +15,6 @@ from mailing.models import (
     CampaignRecipientStatus,
     CampaignStatus,
     CategoryPreference,
-    CmpCallback,
     Contact,
     ContactSourceMetadata,
     ContactTag,
@@ -35,7 +34,7 @@ from mailing.models import (
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
 from mailing.services.campaigns import queue_campaign
-from mailing.services.cmp_callbacks import emit_cmp_contact_event
+from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.contacts import (
     assign_tag,
     is_marketing_email_allowed,
@@ -1058,7 +1057,7 @@ def upsert_contact_for_client(data, authenticated_client):
             event_type=EmailEventType.SUBSCRIBE,
             metadata={"source": "api"},
         )
-        emit_cmp_contact_event(event)
+        emit_client_callback(event)
 
     for tag_name in tags:
         assign_tag(contact, scope.audience, tag_name)
@@ -1089,7 +1088,6 @@ def contact_has_scoped_relationship(contact, scope):
         ).exists()
         or TransactionalMessage.objects.filter(contact=contact, client=scope.client).exists()
         or EmailEvent.objects.filter(contact=contact, audience=scope.audience, client=scope.client).exists()
-        or CmpCallback.objects.filter(contact=contact, audience=scope.audience, client=scope.client).exists()
     )
 
 
@@ -1103,7 +1101,6 @@ def empty_erasure_counts():
         "transactional_messages_anonymized": 0,
         "campaign_recipients_anonymized": 0,
         "email_events_anonymized": 0,
-        "cmp_callbacks_anonymized": 0,
     }
 
 
@@ -1154,10 +1151,6 @@ def erase_contact_for_client(data, authenticated_client):
     )
     counts["email_events_anonymized"] = EmailEvent.objects.filter(contact=contact).update(
         metadata={"erased": True},
-    )
-    counts["cmp_callbacks_anonymized"] = CmpCallback.objects.filter(contact=contact).update(
-        payload={"erased": True},
-        updated_at=now,
     )
 
     contact.email = erased_email
@@ -1355,7 +1348,7 @@ def update_contact_suppression_for_client(contact_id, data, authenticated_client
                     event_type=event_map[field],
                     metadata={"source": "api", "reason": reason},
                 )
-                emit_cmp_contact_event(event)
+                emit_client_callback(event)
             elif field == "global_unsubscribed_at":
                 event = EmailEvent.objects.create(
                     contact=contact,
@@ -1364,7 +1357,7 @@ def update_contact_suppression_for_client(contact_id, data, authenticated_client
                     event_type=EmailEventType.SUBSCRIBE,
                     metadata={"source": "api", "reason": reason},
                 )
-                emit_cmp_contact_event(event)
+                emit_client_callback(event)
     return contact_payload(contact, scope.audience, scope.client, requested_email=contact.email)
 
 

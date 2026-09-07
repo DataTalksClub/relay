@@ -551,47 +551,185 @@ POST /webhooks/ses
 
 These are not client Bearer API routes.
 
-## CMP Contact Event Callbacks
+## Client Callbacks
 
-When configured, Datamailer queues hard-bounce, complaint, public unsubscribe,
-resubscribe, and transactional skipped/failed events for CMP after the local
-Datamailer transaction commits. A background dispatcher posts queued callbacks
-and retries failures with backoff.
+When a callback endpoint is configured for a client, Relay announces delivery
+and engagement transitions to that client's endpoint with signed, versioned,
+redacted JSON events. The CMP Bearer callback contract this replaces carried
+full recipient addresses and message metadata; the generic contract never
+carries them, so a consumer can log and store payloads as-is.
 
-```text
-CMP_WEBHOOK_URL=https://courses.example.com/api/datamailer/events
-CMP_WEBHOOK_TOKEN=shared-secret
+### Configuration
+
+One endpoint per client, managed by operators on the client record:
+
+| Field | Meaning |
+|---|---|
+| URL | The one HTTPS endpoint Relay posts to. Per-message URLs and redirects to other origins are not permitted. |
+| Signing secret | Dedicated HMAC signing secret, separate from every client API key. Write-only: it is shown once at provisioning and never returned afterwards. |
+| Previous signing secret | Retained during a rotation for a bounded verification overlap; the receiver accepts either secret until the overlap ends. |
+| Contract version | Integer version of the event payload, currently `1`. |
+| Enabled | Disablement stops all deliveries immediately; in-flight pending callbacks fail terminally with `endpoint_disabled`. |
+
+Real secret provisioning is infrastructure work and uses approved
+server-side secret handling; secrets never appear in URLs, logs, errors, or
+docs examples.
+
+### Event types and reason codes
+
+Relay posts these event types after the corresponding transport state commits:
+
+| Event type | Fired on | Reason codes |
+|---|---|---|
+| `delivery.accepted` | message queued, then handed to the provider | `queued`, `sent` |
+| `delivery.delivered` | provider confirmed delivery | none |
+| `delivery.bounced` | provider reported a bounce | `hard_bounce`, `soft_bounce` |
+| `delivery.complained` | recipient filed a complaint | `complaint` |
+| `delivery.suppressed` | send was suppressed before delivery | `unverified`, `invalid_email`, `global_unsubscribe`, `client_unsubscribe`, `audience_unsubscribe`, `hard_bounce`, `complaint`, `duplicate`, `category_unsubscribe`, `missing_category_scope`, `suppressed` |
+| `delivery.failed` | the provider rejected or the send failed terminally | `ses_permanent_failure`, `queue_payload_mismatch`, `send_failed` |
+| `engagement.opened` | tracked open | none |
+| `engagement.clicked` | tracked click | none |
+| `subscription.changed` | subscribe or unsubscribe state changed | `subscribed`, `unsubscribed` |
+
+`reason_code` is omitted when the table shows "none".
+
+### Payload
+
+The body is the canonical JSON serialization of the event (sorted keys, no
+whitespace), signed exactly as sent on every attempt:
+
+```json
+{
+  "contract_version": 1,
+  "event_id": "dd8b8f17-6d55-5094-ae45-83cd8ac37b96",
+  "event_type": "delivery.delivered",
+  "occurred_at": "2026-09-08T12:00:00+00:00",
+  "sequence": 3,
+  "message_id": "1042",
+  "message_kind": "transactional",
+  "client_reference": "registration-user-123",
+  "template_key": "registration-welcome"
+}
 ```
 
-These global settings are the fallback. A Datamailer client can also configure
-its own CMP webhook URL and token from the operator client form.
+| Field | Meaning |
+|---|---|
+| `contract_version` | Payload contract version. Additive changes do not bump it; removing or repurposing a field does. Reject nothing on an unknown major version silently: log it. |
+| `event_id` | Stable UUID for one transition. Duplicate deliveries of the same event reuse the id, so receivers can deduplicate on it. |
+| `event_type` | One of the types above. |
+| `occurred_at` | When the transition committed. |
+| `sequence` | 1-based counter per message. Ordering of deliveries is best-effort (retries reorder); use `sequence` to reorder if you need strict ordering. |
+| `message_id` | Relay message id as a string: the transactional message id, or the campaign recipient id when `message_kind` is `campaign`. |
+| `message_kind` | `transactional`, `campaign`, or empty for contact-level transitions such as subscription changes. |
+| `client_reference` | Your idempotency key from the original send, when one exists. |
+| `template_key` | Template key for transactional messages, empty otherwise. |
+| `reason_code` | Safe reason code from the table above, when applicable. |
 
-Datamailer sends:
+The payload contains nothing else. No recipient address, subject, body,
+template context, custom headers, credentials, raw provider payload, or
+arbitrary metadata is ever included.
 
-```text
-Authorization: Bearer <CMP_WEBHOOK_TOKEN>
+### Signature headers
+
+Every request carries:
+
+| Header | Meaning |
+|---|---|
+| `X-Relay-Timestamp` | Unix timestamp of the attempt |
+| `X-Relay-Signature` | `sha256=` + HMAC-SHA256 over `<timestamp>.<raw-json-body>` with the callback signing secret |
+| `X-Relay-Event-Id` | the `event_id`, for quick routing and dedup |
+| `X-Relay-Event-Type` | the `event_type` |
+| `X-Relay-Contract-Version` | the `contract_version` |
+| `X-Relay-Attempt` | 1-based attempt counter |
+
+There is no `Authorization` header and no Bearer credential. The signature
+scheme is identical to webhook task deliveries.
+
+A deterministic verification fixture lives at
+`tests/fixtures/client_callback_contract_v1.json`: it contains a canonical
+body, a signing secret, a timestamp, and the expected signature, plus a
+rotated-secret signature. Consumer contract tests should verify the fixture
+instead of inventing their own vectors.
+
+### Reference receiver
+
+The receiver verifies origin and freshness with the callback signing secret.
+The replay window is part of the receiver's contract; 5 minutes is a workable
+default. During a rotation, verify against the current secret and then the
+previous one.
+
+```python
+import hashlib
+import hmac
+import time
+
+REPLAY_WINDOW_SECONDS = 300
+
+
+class Reject(Exception):
+    pass
+
+
+def verify_relay_callback(body: bytes, headers: dict, secrets: list[str], *, now=None) -> None:
+    """Verify X-Relay-* headers on a client callback delivery. Raises Reject."""
+    now = now or time.time()
+    timestamp = headers.get("X-Relay-Timestamp", "")
+    signature = headers.get("X-Relay-Signature", "")
+    try:
+        stamp = int(timestamp)
+    except ValueError:
+        raise Reject("missing or malformed timestamp") from None
+    if abs(now - stamp) > REPLAY_WINDOW_SECONDS:
+        raise Reject("timestamp outside replay window")
+    expected = [
+        "sha256="
+        + hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+        for secret in secrets
+    ]
+    if not any(hmac.compare_digest(candidate, signature) for candidate in expected):
+        raise Reject("bad signature")
 ```
 
-Implemented callback event types:
+### Delivery, retries, and deduplication
 
-```text
-contact.hard_bounced
-contact.complained
-subscription.unsubscribed
-subscription.resubscribed
-transactional.skipped
-transactional.failed
-```
+Callback rows are created in the same transaction as the transport state they
+announce and dispatched only after that transaction commits, so a committed
+transition is never silently missing its callback. A duplicate transition
+never creates a second row: work is deduplicated on client plus `event_id`.
 
-Callbacks are stored in the `cmp_callbacks` outbox. Run the dispatcher with:
+Delivery responds to a receiver that answers `2xx`. Duplicate successful
+acknowledgements are treated as success. Relay retries:
+
+| Outcome | Class |
+|---|---|
+| Connection error or timeout | retry with bounded exponential backoff |
+| HTTP `429` | retry with bounded exponential backoff |
+| HTTP `5xx` | retry with bounded exponential backoff |
+| Any other `4xx` | fail terminally |
+| Redirect (`3xx`) | fail terminally; redirects are never followed |
+| Endpoint disabled | fail terminally as `endpoint_disabled` |
+| Retry exhaustion | fail terminally |
+
+Backoff starts at 60 seconds and doubles per attempt, capped at 6 hours, with
+a small deterministic jitter. Relay records the attempt count, the response
+status class (`2xx`/`3xx`/`4xx`/`5xx`), a safe error code, and the next
+attempt time. Response bodies and headers are never stored.
+
+Callback failure never regresses Relay transport state: a delivered message
+stays delivered whether or not the callback succeeded. If callbacks are
+delayed or lost, reconcile against `GET /api/transactional/messages/{message_id}`,
+which remains authoritative.
+
+Run the dispatcher with:
 
 ```bash
-python manage.py process_cmp_callbacks --batch-size 25
+python manage.py process_client_callbacks --batch-size 25
 ```
 
-Sandbox deploys install this dispatcher as `datamailer-cmp-callbacks-worker`.
-Operators can inspect recent callback status, attempt counts, next retry time,
-delivery time, and the last error from the client detail page and Django admin.
+Sandbox deploys install this dispatcher as `relay-client-callbacks-worker`.
+Operators can inspect recent callback status, attempt counts, next retry
+time, delivery time, and the last safe error from the client detail page and
+Django admin.
 
 ## Mailchimp Sync
 

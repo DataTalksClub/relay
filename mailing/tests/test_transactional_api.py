@@ -2,7 +2,6 @@ import json
 
 import pytest
 from django.contrib import admin
-from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -11,8 +10,8 @@ from mailing.models import (
     Audience,
     CategoryPreference,
     Client,
-    CmpCallback,
-    CmpCallbackStatus,
+    ClientCallback,
+    ClientCallbackStatus,
     Contact,
     EmailEvent,
     EmailEventType,
@@ -27,7 +26,8 @@ from mailing.models import (
 )
 from mailing.queue_contracts import validate_transactional_email_message
 from mailing.services.auth import create_client_api_key
-from mailing.services.cmp_callbacks import process_due_cmp_callbacks
+from mailing.services.client_callbacks import process_due_client_callbacks
+from mailing.tests.callback_helpers import create_callback_endpoint, install_fake_opener
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -93,32 +93,6 @@ def post_transactional(django_client, payload, raw_key=API_KEY):
         content_type="application/json",
         **auth_headers(raw_key),
     )
-
-
-class CallbackResponse:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, traceback):
-        return False
-
-
-def collect_cmp_callbacks(monkeypatch):
-    posts = []
-
-    def fake_urlopen(request, *, timeout):
-        posts.append(
-            {
-                "url": request.full_url,
-                "json": json.loads(request.data.decode("utf-8")),
-                "headers": dict(request.header_items()),
-                "timeout": timeout,
-            }
-        )
-        return CallbackResponse()
-
-    monkeypatch.setattr("mailing.services.cmp_callbacks.urlopen", fake_urlopen)
-    return posts
 
 
 def post_recipient_list_transactional(django_client, list_key, payload, raw_key=API_KEY):
@@ -440,7 +414,6 @@ def test_transactional_send_skips_category_opted_out_contact(
     assert enqueued == []
 
 
-@override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
 def test_transactional_send_to_recipient_list_creates_per_member_messages(
     client,
     audience,
@@ -448,8 +421,9 @@ def test_transactional_send_to_recipient_list_creates_per_member_messages(
     template,
     monkeypatch,
 ):
+    create_callback_endpoint(api_client_record)
     enqueued = []
-    posts = collect_cmp_callbacks(monkeypatch)
+    opener = install_fake_opener(monkeypatch)
     monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
     allowed_contact = Contact.objects.create(email="allowed@example.com")
     suppressed_contact = Contact.objects.create(
@@ -518,22 +492,16 @@ def test_transactional_send_to_recipient_list_creates_per_member_messages(
     assert messages[1].status == TransactionalMessageStatus.SKIPPED
     assert messages[1].last_error == "hard_bounce"
     assert len(enqueued) == 0
-    assert CmpCallback.objects.filter(status=CmpCallbackStatus.PENDING).count() == 2
-    process_due_cmp_callbacks()
-    assert len(posts) == 2
-    reasons_by_email = {
-        post["json"]["email"]: post["json"]["metadata"]["reason"]
-        for post in posts
-    }
-    assert posts[0]["url"] == "https://cmp.example.com/api/datamailer/events"
-    assert posts[0]["headers"]["Authorization"] == "Bearer secret"
-    assert {post["json"]["event_type"] for post in posts} == {"transactional.skipped"}
-    assert {post["json"]["audience"] for post in posts} == {audience.slug}
-    assert {post["json"]["client"] for post in posts} == {api_client_record.slug}
-    assert reasons_by_email == {
-        "allowed@example.com": "category_unsubscribe",
-        "suppressed@example.com": "hard_bounce",
-    }
+    assert ClientCallback.objects.filter(status=ClientCallbackStatus.PENDING).count() == 2
+    process_due_client_callbacks()
+    assert len(opener.requests) == 2
+    bodies = [json.loads(request["body"].decode("utf-8")) for request in opener.requests]
+    assert {body["event_type"] for body in bodies} == {"delivery.suppressed"}
+    assert {body["reason_code"] for body in bodies} == {"category_unsubscribe", "hard_bounce"}
+    assert {body["template_key"] for body in bodies} == {template.key}
+    joined = opener.requests[0]["body"].decode("utf-8") + opener.requests[1]["body"].decode("utf-8")
+    assert "allowed@example.com" not in joined
+    assert "suppressed@example.com" not in joined
 
     replay = post_recipient_list_transactional(client, recipient_list.key, payload)
 

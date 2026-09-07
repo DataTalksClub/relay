@@ -19,7 +19,7 @@ from mailing.models import (
 )
 from mailing.queue_contracts import CONTRACT_VERSION, TRANSACTIONAL_EMAIL_CONTRACT, validate_transactional_email_message
 from mailing.services.api import ApiValidationError, isoformat, validate_contact_scope
-from mailing.services.cmp_callbacks import emit_cmp_contact_event
+from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.contacts import is_transactional_email_allowed, normalize_email, upsert_contact
 from mailing.services.recipient_lists import (
     bulk_upsert_recipient_list_members_for_client,
@@ -955,7 +955,7 @@ def append_transactional_event(message, event_type, metadata):
         event_type=event_type,
         metadata=metadata,
     )
-    emit_cmp_contact_event(event)
+    emit_client_callback(event)
     return event
 
 

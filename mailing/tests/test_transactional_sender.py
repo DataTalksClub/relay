@@ -9,8 +9,8 @@ from django.utils import timezone
 
 from mailing.models import (
     Client,
-    CmpCallback,
-    CmpCallbackStatus,
+    ClientCallback,
+    ClientCallbackStatus,
     Contact,
     EmailEvent,
     EmailEventType,
@@ -19,9 +19,10 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
-from mailing.services.cmp_callbacks import process_due_cmp_callbacks
+from mailing.services.client_callbacks import process_due_client_callbacks
 from mailing.services.transactional import build_transactional_queue_payload
 from mailing.sqs import records_from_messages
+from mailing.tests.callback_helpers import create_callback_endpoint, install_fake_opener
 from mailing.workers import transactional_email_handler
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -162,32 +163,6 @@ def test_transactional_handler_sends_structured_message_parts_as_raw_email(
     assert ses.raw_params["Destinations"] == ["person@example.com"]
     assert b"X-Calendar-UID: event-123" in ses.raw_params["RawMessage"]["Data"]
     assert b"BEGIN:VCALENDAR" in ses.raw_params["RawMessage"]["Data"]
-
-
-class CallbackResponse:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, traceback):
-        return False
-
-
-def collect_cmp_callbacks(monkeypatch):
-    posts = []
-
-    def fake_urlopen(request, *, timeout):
-        posts.append(
-            {
-                "url": request.full_url,
-                "json": json.loads(request.data.decode("utf-8")),
-                "headers": dict(request.header_items()),
-                "timeout": timeout,
-            }
-        )
-        return CallbackResponse()
-
-    monkeypatch.setattr("mailing.services.cmp_callbacks.urlopen", fake_urlopen)
-    return posts
 
 
 @override_settings(DEFAULT_FROM_EMAIL="sender@example.com", AWS_REGION="us-east-1", AWS_SES_CONFIGURATION_SET="")
@@ -396,9 +371,9 @@ def test_post_ses_failure_does_not_send_again_on_retry(transactional_message, mo
     assert EmailEvent.objects.count() == 0
 
 
-@override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
 def test_permanent_ses_failure_marks_failed_and_acknowledges(transactional_message, monkeypatch):
-    posts = collect_cmp_callbacks(monkeypatch)
+    create_callback_endpoint(transactional_message.client)
+    opener = install_fake_opener(monkeypatch)
 
     class PermanentSesClient:
         def send_email(self, **params):
@@ -420,15 +395,18 @@ def test_permanent_ses_failure_marks_failed_and_acknowledges(transactional_messa
     assert transactional_message.ses_message_id == ""
     assert transactional_message.last_error == "MessageRejected: Address rejected"
     assert event.metadata["reason"] == "ses_permanent_failure"
-    assert CmpCallback.objects.filter(status=CmpCallbackStatus.PENDING).count() == 1
-    process_due_cmp_callbacks()
-    assert len(posts) == 1
-    assert posts[0]["url"] == "https://cmp.example.com/api/datamailer/events"
-    assert posts[0]["headers"]["Authorization"] == "Bearer secret"
-    assert posts[0]["json"]["event_type"] == "transactional.failed"
-    assert posts[0]["json"]["email"] == transactional_message.email
-    assert posts[0]["json"]["client"] == transactional_message.client.slug
-    assert posts[0]["json"]["metadata"]["reason"] == "ses_permanent_failure"
+    assert ClientCallback.objects.filter(status=ClientCallbackStatus.PENDING).count() == 1
+    process_due_client_callbacks()
+    assert len(opener.requests) == 1
+    request = opener.requests[0]
+    assert request["url"] == "https://callback.example.com/hooks"
+    assert "authorization" not in request["headers"]
+    body = json.loads(request["body"].decode("utf-8"))
+    assert body["event_type"] == "delivery.failed"
+    assert body["reason_code"] == "ses_permanent_failure"
+    assert body["client_reference"] == transactional_message.idempotency_key
+    assert transactional_message.email not in request["body"].decode("utf-8")
+    assert "ses_permanent_failure" in request["body"].decode("utf-8")
 
 
 def test_mixed_batch_retries_only_invalid_and_transient_records(transactional_message, monkeypatch):

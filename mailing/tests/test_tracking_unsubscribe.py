@@ -12,8 +12,8 @@ from mailing.models import (
     CampaignRecipient,
     CampaignRecipientStatus,
     Client,
-    CmpCallback,
-    CmpCallbackStatus,
+    ClientCallback,
+    ClientCallbackStatus,
     Contact,
     EmailEvent,
     EmailEventType,
@@ -21,7 +21,7 @@ from mailing.models import (
     Subscription,
     SubscriptionStatus,
 )
-from mailing.services.cmp_callbacks import process_due_cmp_callbacks
+from mailing.services.client_callbacks import process_due_client_callbacks
 from mailing.services.public_urls import (
     campaign_recipient_public_urls,
     click_redirect_url,
@@ -30,6 +30,7 @@ from mailing.services.public_urls import (
 )
 from mailing.services.tokens import ensure_campaign_recipient_tokens, get_recipient_by_tracking_token, token_hash
 from mailing.services.tracking import TRANSPARENT_GIF
+from mailing.tests.callback_helpers import create_callback_endpoint, install_fake_opener
 
 pytestmark = pytest.mark.django_db
 
@@ -215,12 +216,8 @@ def test_click_redirect_records_repeated_clicks_and_redirects(client, recipient)
     ]
 
 
-@override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
-def test_tracking_open_and_click_emit_cmp_callbacks(client, recipient, monkeypatch):
-    monkeypatch.setattr(
-        "mailing.services.cmp_callbacks.transaction.on_commit",
-        lambda callback: callback(),
-    )
+def test_tracking_open_and_click_emit_client_callbacks(client, recipient, app_client, monkeypatch):
+    create_callback_endpoint(app_client)
     token = ensure_campaign_recipient_tokens(recipient).tracking_token
 
     open_response = client.get(reverse("mailing:tracking_open", args=[token]))
@@ -231,9 +228,9 @@ def test_tracking_open_and_click_emit_cmp_callbacks(client, recipient, monkeypat
 
     assert open_response.status_code == 200
     assert click_response.status_code == 302
-    assert list(CmpCallback.objects.order_by("id").values_list("event_type", flat=True)) == [
-        "message.opened",
-        "message.clicked",
+    assert list(ClientCallback.objects.order_by("id").values_list("event_type", flat=True)) == [
+        "engagement.opened",
+        "engagement.clicked",
     ]
 
 
@@ -318,36 +315,9 @@ def test_unsubscribe_post_applies_scope_idempotently_and_records_events(client, 
         assert subscription.unsubscribe_reason == "public_unsubscribe"
 
 
-@override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
-def test_unsubscribe_post_emits_cmp_callback(client, recipient, monkeypatch):
-    posts = []
-
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_urlopen(request, *, timeout):
-        posts.append(
-            {
-                "url": request.full_url,
-                "json": json.loads(request.data.decode("utf-8")),
-                "headers": dict(request.header_items()),
-                "timeout": timeout,
-            }
-        )
-        return Response()
-
-    monkeypatch.setattr(
-        "mailing.services.cmp_callbacks.urlopen",
-        fake_urlopen,
-    )
-    monkeypatch.setattr(
-        "mailing.services.cmp_callbacks.transaction.on_commit",
-        lambda callback: callback(),
-    )
+def test_unsubscribe_post_emits_client_callback(client, recipient, app_client, monkeypatch):
+    create_callback_endpoint(app_client)
+    opener = install_fake_opener(monkeypatch)
     token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
 
     response = client.post(
@@ -356,17 +326,15 @@ def test_unsubscribe_post_emits_cmp_callback(client, recipient, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert CmpCallback.objects.filter(status=CmpCallbackStatus.PENDING).count() == 1
-    process_due_cmp_callbacks()
-    assert len(posts) == 1
-    body = posts[0]["json"]
-    assert posts[0]["url"] == "https://cmp.example.com/api/datamailer/events"
-    assert posts[0]["headers"]["Authorization"] == "Bearer secret"
-    assert body["event_type"] == "subscription.unsubscribed"
-    assert body["email"] == recipient.contact.normalized_email
-    assert body["audience"] == recipient.campaign.audience.slug
-    assert body["client"] == recipient.campaign.client.slug
-    assert body["metadata"]["scope"] == "client"
+    assert ClientCallback.objects.filter(status=ClientCallbackStatus.PENDING).count() == 1
+    process_due_client_callbacks()
+    assert len(opener.requests) == 1
+    body = json.loads(opener.requests[0]["body"].decode("utf-8"))
+    assert opener.requests[0]["url"] == "https://callback.example.com/hooks"
+    assert "authorization" not in opener.requests[0]["headers"]
+    assert body["event_type"] == "subscription.changed"
+    assert body["reason_code"] == "unsubscribed"
+    assert recipient.contact.normalized_email not in opener.requests[0]["body"].decode("utf-8")
 
 
 def test_unsubscribe_invalid_token_and_invalid_scope_do_not_mutate(client, recipient):

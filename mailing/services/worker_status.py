@@ -12,8 +12,8 @@ from mailing.models import (
     CampaignRecipient,
     CampaignRecipientStatus,
     CampaignStatus,
-    CmpCallback,
-    CmpCallbackStatus,
+    ClientCallback,
+    ClientCallbackStatus,
     RecipientListImportJob,
     RecipientListImportJobStatus,
     TransactionalMessage,
@@ -83,10 +83,10 @@ WORKER_DEFINITIONS = (
         "SQS backlog",
     ),
     WorkerDefinition(
-        "cmp-callbacks",
-        "CMP callbacks",
-        "relay-cmp-callbacks-worker.service",
-        "process_cmp_callbacks",
+        "client-callbacks",
+        "Client callbacks",
+        "relay-client-callbacks-worker.service",
+        "process_client_callbacks",
         "Due callbacks",
     ),
     WorkerDefinition(
@@ -215,10 +215,10 @@ def _backlog_count(worker_key: str) -> int | None:
             campaign__status__in=[CampaignStatus.QUEUED, CampaignStatus.SENDING],
             status=CampaignRecipientStatus.PENDING,
         ).count()
-    if worker_key == "cmp-callbacks":
-        return CmpCallback.objects.filter(
-            Q(status=CmpCallbackStatus.PENDING, next_attempt_at__lte=timezone.now())
-            | Q(status=CmpCallbackStatus.FAILED)
+    if worker_key == "client-callbacks":
+        return ClientCallback.objects.filter(
+            Q(status=ClientCallbackStatus.PENDING, next_attempt_at__lte=timezone.now())
+            | Q(status=ClientCallbackStatus.FAILED)
         ).count()
     if worker_key == "recipient-list-imports":
         return RecipientListImportJob.objects.filter(

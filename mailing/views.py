@@ -26,11 +26,12 @@ from mailing.forms import (
 )
 from mailing.models import (
     Audience,
+    CallbackEndpoint,
     Campaign,
     CampaignStatus,
     Client,
     ClientApiKey,
-    CmpCallback,
+    ClientCallback,
     EmailEvent,
     EmailEventType,
     MailchimpSync,
@@ -336,9 +337,9 @@ def transactional_message_detail(request, message_id):
         {"event": event, "context": event_context(event), "metadata_summary": metadata_summary(event.metadata)}
         for event in events
     ]
-    callback_rows = CmpCallback.objects.filter(
-        email_event__transactional_message=message,
-    ).order_by("-created_at", "-id")
+    callback_rows = ClientCallback.objects.filter(
+        transactional_message=message,
+    ).order_by("sequence")
     return render(
         request,
         "mailing/operator/transactional_message_detail.html",
@@ -850,9 +851,9 @@ def client_detail(request, client_id):
         raw_api_key_context = request.session.pop("operator_raw_api_key")
     key_form = ClientApiKeyForm(client=client)
     api_keys = client_api_keys_for_detail(client)
-    cmp_callbacks = (
-        CmpCallback.objects.filter(client=client)
-        .select_related("contact", "email_event")
+    client_callbacks = (
+        ClientCallback.objects.filter(client=client)
+        .select_related("endpoint")
         .order_by("-created_at", "-id")[:10]
     )
     mailchimp_syncs = (
@@ -870,7 +871,8 @@ def client_detail(request, client_id):
             "revoked_key_count": sum(1 for api_key in api_keys if api_key.revoked_at is not None),
             "key_form": key_form,
             "raw_api_key_context": raw_api_key_context,
-            "cmp_callbacks": cmp_callbacks,
+            "client_callbacks": client_callbacks,
+            "callback_endpoint": CallbackEndpoint.objects.filter(client=client).first(),
             "mailchimp_status": mailchimp_status_payload(client),
             "mailchimp_syncs": mailchimp_syncs,
             "mailchimp_audiences": _mailchimp_tag_mapping_editors(client),

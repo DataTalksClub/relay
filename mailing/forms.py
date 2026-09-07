@@ -204,15 +204,12 @@ class ClientForm(forms.ModelForm):
             "slug",
             "default_sender_id",
             "sender_emails",
-            "cmp_webhook_url",
-            "cmp_webhook_token",
             "mailchimp_api_key",
             "mailchimp_list_id",
             "mailchimp_enabled",
             "is_active",
         ]
         widgets = {
-            "cmp_webhook_token": forms.PasswordInput(render_value=True),
             "mailchimp_api_key": forms.PasswordInput(render_value=False),
         }
 
@@ -236,17 +233,6 @@ class ClientForm(forms.ModelForm):
             "One sender per line as sender-id=email@example.com or "
             "sender-id=Display Name <email@example.com>. API payload "
             "from_email must use a configured sender ID."
-        )
-        self.fields["cmp_webhook_url"].label = "CMP webhook URL"
-        self.fields["cmp_webhook_url"].required = False
-        self.fields["cmp_webhook_url"].help_text = (
-            "Optional client-specific callback endpoint for delivery, suppression, "
-            "unsubscribe, and transactional failure events."
-        )
-        self.fields["cmp_webhook_token"].label = "CMP webhook token"
-        self.fields["cmp_webhook_token"].required = False
-        self.fields["cmp_webhook_token"].help_text = (
-            "Bearer token Datamailer sends to the CMP webhook. Leave empty to use global settings, if configured."
         )
         self.fields["mailchimp_api_key"].label = "Mailchimp API key"
         self.fields["mailchimp_api_key"].required = False
