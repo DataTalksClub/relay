@@ -1,13 +1,25 @@
+from django.contrib.admin.views.decorators import staff_member_required
+from django.db import transaction
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 
-from jobs.models import Job
-from jobs.services import IdempotencyConflict, serialize_job, submit_job
+from jobs.models import Job, JobStatus
+from jobs.services import (
+    IdempotencyConflict,
+    enqueue_job,
+    serialize_job,
+    submit_job,
+)
 from mailing.services.api_errors import ApiValidationError
 from mailing.views import (
     authenticate_api_request,
     json_request_body,
     method_not_allowed_response,
+    paginate,
+    pagination_querystring,
     validation_error_response,
 )
 
@@ -53,3 +65,155 @@ def task_detail(request, task_id):
     if job is None:
         return JsonResponse({"error": {"code": "not_found"}}, status=404)
     return JsonResponse(serialize_job(job))
+
+
+@csrf_exempt
+@require_POST
+def task_complete(request, task_id):
+    return _resolve_lease(request, task_id, resolution=JobStatus.SUCCEEDED)
+
+
+@csrf_exempt
+@require_POST
+def task_fail(request, task_id):
+    return _resolve_lease(request, task_id, resolution=JobStatus.FAILED)
+
+
+def _resolve_lease(request, task_id, *, resolution):
+    """Apply a client's ack-then-callback completion for a leased task."""
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        body = json_request_body(request)
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    if resolution == JobStatus.FAILED:
+        error = body.get("error", "failed by client callback")
+        if not isinstance(error, str):
+            return JsonResponse(
+                {"error": {"code": "validation_error", "fields": {"error": "must_be_string"}}},
+                status=400,
+            )
+        result = None
+    else:
+        error = ""
+        result = body.get("result")
+
+    with transaction.atomic():
+        job = Job.objects.select_for_update().filter(pk=task_id, client=client).first()
+        if job is None:
+            return JsonResponse({"error": {"code": "not_found"}}, status=404)
+
+        conflict = _lease_conflict(job, resolution)
+        if conflict:
+            return conflict
+
+        now = timezone.now()
+        job.status = resolution
+        job.finished_at = now
+        job.run_after = now
+        job.error = error[:4000]
+        if result is not None:
+            job.result = result
+        job.lease_expires_at = None
+        job.save(
+            update_fields=[
+                "status",
+                "finished_at",
+                "run_after",
+                "error",
+                "result",
+                "lease_expires_at",
+                "updated_at",
+            ]
+        )
+    return JsonResponse(serialize_job(job))
+
+
+def _lease_conflict(job, resolution):
+    if job.status == resolution:
+        # Repeating the same callback is harmless; say so instead of 409.
+        response = JsonResponse(serialize_job(job))
+        response["X-Idempotent-Replay"] = "true"
+        return response
+    if job.is_terminal:
+        return JsonResponse(
+            {
+                "error": {
+                    "code": "task_already_finished",
+                    "message": f"The task already finished as {job.status}.",
+                }
+            },
+            status=409,
+        )
+    if job.status != JobStatus.RUNNING or job.lease_expires_at is None:
+        return JsonResponse(
+            {
+                "error": {
+                    "code": "no_lease_in_progress",
+                    "message": "The task is not waiting for a completion callback.",
+                }
+            },
+            status=409,
+        )
+    if job.lease_expires_at < timezone.now():
+        # Fail it here rather than 409: the lease is over either way, and the
+        # sweep's conditional update stays a no-op.
+        Job.objects.filter(pk=job.pk, status=JobStatus.RUNNING).update(
+            status=JobStatus.FAILED,
+            error="lease expired without a completion callback",
+            finished_at=timezone.now(),
+        )
+        job.refresh_from_db()
+        return JsonResponse(
+            {
+                "error": {
+                    "code": "lease_expired",
+                    "message": "The lease expired before the callback arrived.",
+                }
+            },
+            status=409,
+        )
+    return None
+
+
+DEAD_LETTER_PAGE_SIZE = 25
+
+
+@staff_member_required
+def dead_letter_list(request):
+    failed = (
+        Job.objects.filter(status=JobStatus.FAILED)
+        .select_related("client", "schedule")
+        .order_by("-finished_at", "-updated_at")
+    )
+    return render(
+        request,
+        "jobs/dead_letters.html",
+        {
+            "page": paginate(request, failed, per_page=DEAD_LETTER_PAGE_SIZE),
+            "pagination_querystring": pagination_querystring(request),
+        },
+    )
+
+
+@staff_member_required
+@require_POST
+def dead_letter_retry(request, task_id):
+    job = get_object_or_404(Job, pk=task_id, status=JobStatus.FAILED)
+    with transaction.atomic():
+        Job.objects.filter(pk=job.pk, status=JobStatus.FAILED).update(
+            status=JobStatus.QUEUED,
+            attempt=0,
+            run_after=timezone.now(),
+            task_result_id="",
+            error="",
+            response_status=None,
+            response_body="",
+            lease_expires_at=None,
+        )
+        transaction.on_commit(lambda: enqueue_job(job.pk))
+    return redirect("jobs:dead_letter_list")

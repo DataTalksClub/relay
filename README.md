@@ -45,10 +45,17 @@ Relay currently runs three task types:
   retries timeouts, `429` responses and server errors with exponential backoff,
   but it doesn't retry ordinary `4xx` responses.
 
-Relay adds `X-Relay-Task-Id`, `X-Relay-Correlation-Id`, `X-Relay-Timestamp` and
-`X-Relay-Signature` to each webhook request. It computes the signature as
-HMAC-SHA256 over `<timestamp>.<raw-json-body>` with the client's webhook secret,
-and a webhook may run for at most 60 seconds.
+Relay adds `X-Relay-Task-Id`, `X-Relay-Correlation-Id`, `X-Relay-Timestamp`,
+`X-Relay-Attempt` and `X-Relay-Signature` to each webhook request. It computes
+the signature as HMAC-SHA256 over `<timestamp>.<raw-json-body>` with the
+client's webhook secret, and a webhook may run for at most 60 seconds.
+
+A receiver with longer work can answer `202` with `{"lease_seconds": N}` and
+complete or fail the task later through `POST /api/tasks/{id}/complete` or
+`/fail`. Relay keeps the task `running` under a lease and fails it if the lease
+expires without a callback. The retry table, per-client limits and the lease
+protocol are documented in [docs/api.md](docs/api.md), together with a
+reference receiver that rejects replayed timestamps.
 
 ## Create a schedule
 

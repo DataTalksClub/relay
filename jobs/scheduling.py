@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from croniter import croniter
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -47,7 +48,7 @@ def upsert_schedule(data, client):
         "params": data.get("params", {}),
         "url": data.get("url"),
         "timeout_seconds": data.get("timeout_seconds"),
-        "max_attempts": data.get("max_attempts", 3),
+        "max_attempts": data.get("max_attempts", settings.RELAY_JOB_MAX_ATTEMPTS),
         "idempotency_key": "schedule-validation",
     }
     if definition["timeout_seconds"] is None:

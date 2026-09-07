@@ -195,8 +195,12 @@ not start Relay on SQLite.
 
 ## Open decisions — do not invent answers
 
-1. **Webhook task timeout ceiling.** Determines how much work fits the model and
-   whether an ack-then-callback path is needed in version one.
+1. **Webhook task timeout ceiling.** Decided in R1.2 (relay issue #6): 60
+   seconds synchronous, with an ack-then-callback mode for longer work — the
+   receiver answers `202` with `{"lease_seconds": N}` and later completes or
+   fails the task through the API; an expired lease fails the task without
+   re-execution. See "Timeout ceiling and the 202 lease protocol" in
+   [api.md](api.md). The remaining decisions below are still open.
 2. **Compute shape for Relay.** Datamailer's single EC2 host with systemd is
    what it grew, not what was chosen. Decide fresh.
 3. **Whether AISL migrates**, and when. Largest win, largest migration. Not
