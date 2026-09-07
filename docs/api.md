@@ -336,6 +336,141 @@ GET /api/transactional/messages/{message_id}
 
 Returns the current status for a transactional message created by the authenticated client, plus its event timeline. Use the `message.id` returned by `POST /api/transactional/send`.
 
+## Task API
+
+Relay runs background work on behalf of clients. A client submits a task, gets a
+task id, and reads status from the same service. See the README for a
+copy-pasteable `system.echo` example.
+
+```text
+POST /api/tasks
+GET  /api/tasks
+GET  /api/tasks/{task_id}
+POST /api/tasks/{task_id}/complete
+POST /api/tasks/{task_id}/fail
+```
+
+Every submission needs an `idempotency_key`. Repeating the same request returns
+the original task; reusing the key for different work returns `409 Conflict`.
+
+### Webhook tasks
+
+`type: "webhook"` sends a signed HTTPS request to a registered client origin.
+The origin must be registered on the client (with the webhook signing secret)
+before submission; every other origin is rejected.
+
+Relay adds these headers to each request:
+
+| Header | Meaning |
+|---|---|
+| `X-Relay-Task-Id` | task id, so the receiver can deduplicate retries |
+| `X-Relay-Correlation-Id` | stable id shared by all attempts of one logical task |
+| `X-Relay-Timestamp` | unix timestamp of the attempt, used in the signature |
+| `X-Relay-Attempt` | 1-based attempt counter (1 on the first delivery) |
+| `X-Relay-Signature` | `sha256=` + HMAC-SHA256 over `<timestamp>.<raw-json-body>` with the client's webhook secret |
+
+The signature scheme and body layout are identical on every attempt; only the
+timestamp, signature, and attempt header change.
+
+### Timeout ceiling and the 202 lease protocol
+
+A synchronous webhook may run for at most 60 seconds (`timeout_seconds`, default
+30). This ceiling is decided: work that cannot finish in 60 seconds does not
+belong in the synchronous path.
+
+For longer work the receiver can acknowledge instead of finishing. When it
+responds `202` with `{"lease_seconds": N}`, Relay marks the task `running` under
+a lease that expires after `N` seconds (cap: 3600). The receiver then resolves
+the task with a client-authenticated callback:
+
+```text
+POST /api/tasks/{task_id}/complete    {"result": {...}}   # optional body
+POST /api/tasks/{task_id}/fail       {"error": "..."}    # optional body
+```
+
+- `complete` marks the task `succeeded` and stores the optional `result`.
+- `fail` marks the task `failed` with the optional `error`. It does not retry:
+  the receiver reported on work it already owns.
+- Repeating the same callback is a harmless idempotent `200`; the opposite
+  resolution on a finished task is `409 task_already_finished`; a callback for
+  a task with no lease in progress is `409 no_lease_in_progress`.
+- If the lease expires without a callback, Relay fails the task with
+  `lease expired without a completion callback`. An expired lease never
+  re-executes the request: the receiver already took the work, and re-running
+  it could repeat a side effect. Callbacks that arrive after expiry are
+  rejected with `409 lease_expired`.
+
+### Retry table
+
+Retries use exponential backoff (base 5 seconds: 5s, 10s, 20s, ...) up to the
+per-task `max_attempts` (default 5, range 1-10).
+
+| Outcome | Class |
+|---|---|
+| Connection error or response timeout | retry with backoff |
+| HTTP `429` | retry with backoff |
+| HTTP `5xx` | retry with backoff |
+| Any other `4xx` (including `408`, `425`) | fail immediately |
+| `202` without a valid `lease_seconds` | fail immediately |
+| Lease expiry without a callback | fail, no retry |
+
+On every failure Relay stores the HTTP response status and the response body,
+truncated to 2 KB, on the task. A webhook task that fails with no detail is
+undebuggable.
+
+### Per-client limits on webhook tasks
+
+| Limit | Default | Effect |
+|---|---|---|
+| Concurrent in-flight tasks | 4 | a submission that would exceed it is rejected with `429 concurrency_limit_exceeded` |
+| Task creation rate | 60 per rolling minute | a submission beyond it is rejected with `429 rate_limit_exceeded` |
+
+Tasks created by Relay schedules do not consume these limits; schedules are
+operator-configured and bounded by their cron expression.
+
+Tasks that end in the `failed` state after their attempts (or a client `fail`
+callback, or lease expiry) appear in the staff dead-letter list at
+`/jobs/dead-letters/` with a retry button.
+
+### Reference receiver
+
+A receiver verifies origin and freshness with the shared webhook secret. The
+window is part of the receiver's contract, not Relay's; 5 minutes is a
+workable default. A captured request replayed later fails the timestamp check.
+
+```python
+import hashlib
+import hmac
+import time
+
+REPLAY_WINDOW_SECONDS = 300
+
+
+class Reject(Exception):
+    pass
+
+
+def verify_relay_webhook(body: bytes, headers: dict, secret: str, *, now=None) -> None:
+    """Verify X-Relay-* headers on a webhook task delivery. Raises Reject."""
+    now = now or time.time()
+    timestamp = headers.get("X-Relay-Timestamp", "")
+    signature = headers.get("X-Relay-Signature", "")
+    try:
+        stamp = int(timestamp)
+    except ValueError:
+        raise Reject("missing or malformed timestamp") from None
+    if abs(now - stamp) > REPLAY_WINDOW_SECONDS:
+        raise Reject("timestamp outside replay window")
+    expected = hmac.new(
+        secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest("sha256=" + expected, signature):
+        raise Reject("bad signature")
+```
+
+Relay's own test suite replays a correctly signed request with an old timestamp
+against this exact function and asserts the rejection.
+
 ## Contact History
 
 ```text

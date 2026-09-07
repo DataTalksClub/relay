@@ -2,6 +2,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from urllib.parse import urlsplit
 
 from django.conf import settings
@@ -133,6 +134,8 @@ def _normalize_task_payload(task_type, data, client, errors):
 def submit_job(data, client, *, schedule=None):
     submission = normalize_submission(data, client)
     with transaction.atomic():
+        if submission.task_type == TASK_TYPE_WEBHOOK and schedule is None:
+            _enforce_webhook_client_limits(client)
         job, created = Job.objects.get_or_create(
             client=client,
             idempotency_key=submission.idempotency_key,
@@ -150,6 +153,39 @@ def submit_job(data, client, *, schedule=None):
         if created:
             transaction.on_commit(lambda: enqueue_job(job.pk))
     return job, created
+
+
+def _enforce_webhook_client_limits(client):
+    """Reject webhook submissions when the client is over its limits.
+
+    Schedule-created jobs skip these checks: they are operator-configured,
+    bounded by cron, and a dropped tick is recorded as missed rather than
+    erroring the scheduler loop.
+    """
+    inflight_limit = settings.RELAY_WEBHOOK_MAX_INFLIGHT_PER_CLIENT
+    inflight = Job.objects.filter(
+        client=client,
+        task_type=TASK_TYPE_WEBHOOK,
+        status__in=[JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRYING],
+    ).count()
+    if inflight >= inflight_limit:
+        raise ApiValidationError(
+            {"type": "concurrency_limit_exceeded"},
+            status_code=429,
+        )
+
+    rate_limit = settings.RELAY_WEBHOOK_RATE_LIMIT_PER_MINUTE
+    window_start = timezone.now() - timedelta(seconds=60)
+    recent = Job.objects.filter(
+        client=client,
+        task_type=TASK_TYPE_WEBHOOK,
+        created_at__gte=window_start,
+    ).count()
+    if recent >= rate_limit:
+        raise ApiValidationError(
+            {"type": "rate_limit_exceeded"},
+            status_code=429,
+        )
 
 
 def enqueue_job(job_id):
@@ -179,6 +215,7 @@ def serialize_job(job):
         "attempt": job.attempt,
         "max_attempts": job.max_attempts,
         "run_after": job.run_after.isoformat(),
+        "lease_expires_at": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
         "created_at": job.created_at.isoformat(),
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
@@ -201,3 +238,30 @@ def recover_unenqueued_jobs(*, limit=100):
         if enqueue_job(job.pk) is not None:
             recovered += 1
     return recovered
+
+
+def fail_expired_leases(*, limit=100):
+    """Fail running lease jobs whose completion callback never arrived.
+
+    The receiver took the work with a 202 ack; re-executing it could repeat a
+    side effect the client already performed, so an expired lease is terminal,
+    not a retry.
+    """
+    now = timezone.now()
+    expired = Job.objects.filter(
+        status=JobStatus.RUNNING,
+        lease_expires_at__lt=now,
+    ).values_list("pk", flat=True)[:limit]
+    failed = 0
+    for job_id in expired:
+        failed += Job.objects.filter(
+            pk=job_id,
+            status=JobStatus.RUNNING,
+            lease_expires_at__lt=now,
+        ).update(
+            status=JobStatus.FAILED,
+            error="lease expired without a completion callback",
+            finished_at=now,
+            run_after=now,
+        )
+    return failed

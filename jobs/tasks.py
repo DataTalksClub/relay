@@ -16,7 +16,8 @@ from jobs.models import Job, JobStatus
 from jobs.services import TASK_TYPE_ECHO, TASK_TYPE_EMAIL_SEND, TASK_TYPE_WEBHOOK, enqueue_job
 from mailing.services.transactional import TransactionalSendRejected, send_transactional_email_for_client
 
-MAX_RESPONSE_BODY_LENGTH = 4096
+MAX_RESPONSE_BODY_LENGTH = 2048
+HTTP_LEASE_ACK_STATUS = 202
 
 
 class RetryableJobError(Exception):
@@ -31,6 +32,19 @@ class PermanentJobError(Exception):
         self.response_status = response_status
         self.response_body = response_body
         super().__init__(message)
+
+
+class WebhookAcknowledged(Exception):
+    """The receiver accepted the work with a 202 lease instead of finishing it.
+
+    Carries the lease the receiver asked for; `execute_job` turns it into a
+    running lease that the complete/fail callbacks resolve.
+    """
+
+    def __init__(self, lease_seconds, response_body=""):
+        self.lease_seconds = lease_seconds
+        self.response_body = response_body
+        super().__init__(f"webhook acknowledged with lease of {lease_seconds} seconds")
 
 
 @task()
@@ -50,6 +64,8 @@ def execute_job(job_id):
 
     try:
         result, response_status, response_body = _dispatch(job)
+    except WebhookAcknowledged as ack:
+        return _start_lease(job, ack)
     except RetryableJobError as exc:
         return _retry_or_fail(job, exc)
     except PermanentJobError as exc:
@@ -65,6 +81,7 @@ def execute_job(job_id):
         response_body=response_body[:MAX_RESPONSE_BODY_LENGTH],
         finished_at=finished_at,
         run_after=finished_at,
+        lease_expires_at=None,
         error="",
     )
     if job.schedule_id:
@@ -106,6 +123,7 @@ def _call_webhook(job):
             "X-Relay-Timestamp": timestamp,
             "X-Relay-Task-Id": str(job.pk),
             "X-Relay-Correlation-Id": str(job.correlation_id),
+            "X-Relay-Attempt": str(job.attempt),
             "X-Relay-Signature": f"sha256={signature}",
         },
     )
@@ -115,7 +133,7 @@ def _call_webhook(job):
             status = response.status
     except urllib.error.HTTPError as exc:
         response_body = exc.read(MAX_RESPONSE_BODY_LENGTH + 1).decode("utf-8", "replace")
-        if exc.code >= 500 or exc.code in {408, 425, 429}:
+        if exc.code >= 500 or exc.code == 429:
             raise RetryableJobError(
                 f"webhook returned HTTP {exc.code}",
                 response_status=exc.code,
@@ -129,6 +147,10 @@ def _call_webhook(job):
     except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
         raise RetryableJobError(f"webhook request failed: {exc}") from exc
 
+    if status == HTTP_LEASE_ACK_STATUS:
+        lease_seconds = _lease_seconds_from(response_body)
+        raise WebhookAcknowledged(lease_seconds, response_body=response_body)
+
     if not 200 <= status < 300:
         raise RetryableJobError(
             f"webhook returned HTTP {status}",
@@ -136,6 +158,42 @@ def _call_webhook(job):
             response_body=response_body,
         )
     return {"http_status": status}, status, response_body
+
+
+def _lease_seconds_from(response_body):
+    try:
+        parsed = json.loads(response_body)
+    except json.JSONDecodeError as exc:
+        raise PermanentJobError("webhook returned 202 without a JSON lease body") from exc
+    lease_seconds = parsed.get("lease_seconds") if isinstance(parsed, dict) else None
+    maximum = settings.RELAY_WEBHOOK_MAX_LEASE_SECONDS
+    if (
+        not isinstance(lease_seconds, (int, float))
+        or isinstance(lease_seconds, bool)
+        or lease_seconds <= 0
+        or lease_seconds > maximum
+    ):
+        raise PermanentJobError(
+            f"webhook returned 202 with lease_seconds outside 0 < N <= {maximum:g}"
+        )
+    return float(lease_seconds)
+
+
+def _start_lease(job, ack):
+    lease_expires_at = timezone.now() + timedelta(seconds=ack.lease_seconds)
+    Job.objects.filter(pk=job.pk).update(
+        status=JobStatus.RUNNING,
+        lease_expires_at=lease_expires_at,
+        response_status=HTTP_LEASE_ACK_STATUS,
+        response_body=ack.response_body[:MAX_RESPONSE_BODY_LENGTH],
+        error="",
+    )
+    return {
+        "job_id": str(job.pk),
+        "status": JobStatus.RUNNING,
+        "lease_expires_at": lease_expires_at.isoformat(),
+        "lease_seconds": ack.lease_seconds,
+    }
 
 
 def _retry_or_fail(job, exc):

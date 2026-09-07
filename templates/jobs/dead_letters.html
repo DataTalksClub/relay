@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Dead-letter tasks | Relay{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Dead-letter tasks</h1>
+      <p>Tasks that finished as `failed` after exhausting their attempts (or that a client failed, or whose lease expired). Retrying resets attempts and re-enqueues the task.</p>
+    </div>
+    <div class="actions">
+      <a class="button secondary" href="{% url 'mailing:dashboard' %}">Dashboard</a>
+    </div>
+  </div>
+
+  {% if page.object_list %}
+    <section class="section" aria-labelledby="dead-letter-table">
+      <div class="section-header">
+        <div>
+          <h2 id="dead-letter-table">Failed tasks</h2>
+          <p class="muted"><strong>{{ page.paginator.count }}</strong> task{{ page.paginator.count|pluralize }} in the dead-letter list, newest first.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Task</th>
+              <th scope="col">Client</th>
+              <th scope="col">Attempts</th>
+              <th scope="col">Response</th>
+              <th scope="col">Failed</th>
+              <th scope="col">Error</th>
+              <th scope="col">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for job in page.object_list %}
+              <tr>
+                <td>
+                  <div class="nowrap">{{ job.task_type }}</div>
+                  <div class="muted">{{ job.id }}</div>
+                  {% if job.idempotency_key %}<div class="helptext">{{ job.idempotency_key }}</div>{% endif %}
+                </td>
+                <td>{{ job.client.slug }}</td>
+                <td class="nowrap">{{ job.attempt }}/{{ job.max_attempts }}</td>
+                <td class="nowrap">{% if job.response_status %}HTTP {{ job.response_status }}{% else %}-{% endif %}</td>
+                <td class="nowrap">{{ job.finished_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td class="truncate">{{ job.error|default:"-" }}</td>
+                <td>
+                  <form method="post" action="{% url 'jobs:dead_letter_retry' job.id %}">
+                    {% csrf_token %}
+                    <button type="submit" class="button secondary">Retry</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% include "mailing/operator/_pagination.html" with page_obj=page querystring=pagination_querystring %}
+    </section>
+  {% else %}
+    <div class="empty-state">
+      <strong>No dead-letter tasks.</strong>
+      <p>Tasks that fail after all attempts will appear here with a retry action.</p>
+    </div>
+  {% endif %}
+{% endblock %}
