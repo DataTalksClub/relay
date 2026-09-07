@@ -1,0 +1,100 @@
+name: Deploy Relay Production
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: relay-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: eu-west-1
+  PROD_INSTANCE_ID: ${{ vars.RELAY_PRODUCTION_INSTANCE_ID }}
+  PROD_DEPLOY_ROLE_ARN: ${{ vars.RELAY_PRODUCTION_DEPLOY_ROLE_ARN || 'arn:aws:iam::387546586013:role/relay-production-github-deploy' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+      - name: Run lint and checks
+        run: |
+          uv run ruff check .
+          uv run python manage.py makemigrations --check --dry-run
+          uv run python manage.py check
+      - name: Run tests
+        run: uv run pytest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    # The production GitHub environment carries the required reviewer, so a
+    # dispatch only proceeds after an owner approves it.
+    environment: production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Check deployment variables
+        run: |
+          if [[ -z "$PROD_INSTANCE_ID" ]]; then
+            echo "Set the repository variable RELAY_PRODUCTION_INSTANCE_ID to the main/relay host instance id." >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy the complete Relay release
+        id: deploy
+        run: |
+          set -euo pipefail
+          command_id=$(
+            aws ssm send-command \
+              --region "$AWS_REGION" \
+              --instance-ids "$PROD_INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --comment "Deploy Relay production ${GITHUB_SHA}" \
+              --parameters "commands=[\"set -euo pipefail\",\"git config --system --get-all safe.directory | grep -Fxq /opt/relay || git config --system --add safe.directory /opt/relay\",\"if [[ ! -d /opt/relay/.git ]]; then if [[ -f /opt/relay/README ]]; then mv /opt/relay/README /var/lib/relay/bootstrap-readme; fi; git -C /opt/relay init; fi\",\"if git -C /opt/relay remote get-url origin >/dev/null 2>&1; then git -C /opt/relay remote set-url origin https://github.com/DataTalksClub/relay.git; else git -C /opt/relay remote add origin https://github.com/DataTalksClub/relay.git; fi\",\"git -C /opt/relay fetch origin ${GITHUB_SHA}\",\"git -C /opt/relay checkout --force ${GITHUB_SHA}\",\"bash /opt/relay/scripts/deploy_relay_sandbox.sh --environment production ${GITHUB_SHA}\"]" \
+              --query 'Command.CommandId' \
+              --output text
+          )
+          echo "command_id=$command_id" >>"$GITHUB_OUTPUT"
+          # The first production deploy builds the image cold on the host, so
+          # this waits up to 30 minutes.
+          for _ in $(seq 1 360); do
+            status=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$command_id" \
+              --instance-id "$PROD_INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || true)
+            case "$status" in
+              Success) exit 0 ;;
+              Failed|Cancelled|TimedOut|Cancelling) exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "Relay production deployment did not finish within 30 minutes" >&2
+          exit 1
+
+      - name: Show deployment output
+        if: always()
+        run: |
+          command_id="${{ steps.deploy.outputs.command_id }}"
+          if [[ -z "$command_id" ]]; then
+            echo "No SSM deployment command was created."
+            exit 0
+          fi
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$command_id" \
+            --instance-id "$PROD_INSTANCE_ID" \
+            --query '{Status:Status,ResponseCode:ResponseCode,Stdout:StandardOutputContent,Stderr:StandardErrorContent}'

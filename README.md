@@ -121,6 +121,10 @@ role.
 See [docs/relay-deployment.md](docs/relay-deployment.md) for deployment checks,
 logs and rollback commands.
 
+The production deploy path reuses the same script with
+`--environment production` and is described in
+[docs/production.md](docs/production.md). Production is not deployed yet.
+
 ## Migration safety
 
 Relay uses separate infrastructure and a separate database from Datamailer.
