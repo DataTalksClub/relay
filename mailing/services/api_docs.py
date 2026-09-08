@@ -61,6 +61,8 @@ API_DOC_PATHS = {
     "mailing:api_campaign_test_send": "/api/campaigns/{external_key}/test-send",
     "mailing:api_subscribe": "/api/subscriptions/subscribe",
     "mailing:api_unsubscribe": "/api/subscriptions/unsubscribe",
+    "mailing:api_request_verification": "/api/subscriptions/request-verification",
+    "mailing:api_confirm": "/api/subscriptions/confirm",
     "mailing:api_recipient_list": "/api/recipient-lists/{list_key}",
     "mailing:api_recipient_list_members": "/api/recipient-lists/{list_key}/members",
     "mailing:api_recipient_list_member": "/api/recipient-lists/{list_key}/members/{source_object_key}",
@@ -739,6 +741,12 @@ def endpoint_groups():
             "endpoints": [
                 ("POST", "/api/subscriptions/subscribe", "Subscribe one scoped contact."),
                 ("POST", "/api/subscriptions/unsubscribe", "Unsubscribe one scoped contact."),
+                (
+                    "POST",
+                    "/api/subscriptions/request-verification",
+                    "Send a double opt-in verification message for one category.",
+                ),
+                ("POST", "/api/subscriptions/confirm", "Confirm a double opt-in token and enable the category."),
                 ("PUT", "/api/contacts/{contact_id}/tags", "Replace one contact's scoped tags."),
                 ("POST", "/api/contacts/{contact_id}/tags/{tag_slug}", "Add one scoped tag."),
                 ("DELETE", "/api/contacts/{contact_id}/tags/{tag_slug}", "Remove one scoped tag."),
@@ -877,6 +885,8 @@ def route_path_map():
         ),
         API_DOC_PATHS["mailing:api_subscribe"]: reverse("mailing:api_subscribe"),
         API_DOC_PATHS["mailing:api_unsubscribe"]: reverse("mailing:api_unsubscribe"),
+        API_DOC_PATHS["mailing:api_request_verification"]: reverse("mailing:api_request_verification"),
+        API_DOC_PATHS["mailing:api_confirm"]: reverse("mailing:api_confirm"),
         API_DOC_PATHS["mailing:api_recipient_list"]: reverse(
             "mailing:api_recipient_list",
             args=["ml-zoomcamp-2026"],
@@ -1227,6 +1237,37 @@ OPENAPI_SPEC = {
                 "security": [{"BearerAuth": []}],
                 "requestBody": json_body("#/components/schemas/UnsubscribeRequest"),
                 "responses": bearer_responses(json_response("Contact state", "#/components/schemas/ContactStatus")),
+            }
+        },
+        "/api/subscriptions/request-verification": {
+            "post": {
+                "tags": ["Subscriptions"],
+                "summary": "Request category verification",
+                "description": (
+                    "Starts the double opt-in flow for one canonical category. Sends a verification "
+                    "message through a named client-owned transactional template whose context carries a "
+                    "confirm_url with an opaque, signed, expiring token; it is returned only inside the message."
+                ),
+                "security": [{"BearerAuth": []}],
+                "requestBody": json_body("#/components/schemas/CategoryVerificationRequest"),
+                "responses": bearer_responses(
+                    json_response("Verification request result", "#/components/schemas/CategoryVerificationResponse")
+                ),
+            }
+        },
+        "/api/subscriptions/confirm": {
+            "post": {
+                "tags": ["Subscriptions"],
+                "summary": "Confirm category verification",
+                "description": (
+                    "Validates the signed, expiring double opt-in token, enables the category preference "
+                    "(creating it when missing), and returns the resulting preference state. Idempotent."
+                ),
+                "security": [{"BearerAuth": []}],
+                "requestBody": json_body("#/components/schemas/CategoryConfirmRequest"),
+                "responses": bearer_responses(
+                    json_response("Resulting preference state", "#/components/schemas/CategoryConfirmResponse")
+                ),
             }
         },
         "/api/campaigns/{external_key}": {
@@ -1979,10 +2020,24 @@ OPENAPI_SPEC = {
                     },
                 ]
             },
+            "CanonicalCategory": {
+                "type": "string",
+                "enum": ["newsletter", "events", "courses", "product", "transactional"],
+                "description": (
+                    "Canonical preference category. The transactional category is always on: it cannot "
+                    "be opted out and a send tagged with it is never suppressed."
+                ),
+            },
             "SubscribeRequest": {
                 "allOf": [
                     {"$ref": "#/components/schemas/ContactUpsertRequest"},
-                    {"type": "object", "properties": {"tags": {"type": "array", "items": {"type": "string"}}}},
+                    {
+                        "type": "object",
+                        "properties": {
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                            "category": {"$ref": "#/components/schemas/CanonicalCategory"},
+                        },
+                    },
                 ]
             },
             "UnsubscribeRequest": {
@@ -1995,9 +2050,60 @@ OPENAPI_SPEC = {
                             "email": {"type": "string", "format": "email"},
                             "scope": {"type": "string", "enum": ["client", "audience", "global"]},
                             "reason": {"type": "string"},
+                            "category": {"$ref": "#/components/schemas/CanonicalCategory"},
                         },
                     },
                 ]
+            },
+            "CategoryVerificationRequest": {
+                "allOf": [
+                    {"$ref": "#/components/schemas/ScopedMutationRequest"},
+                    {
+                        "type": "object",
+                        "required": ["email", "category", "template_key"],
+                        "properties": {
+                            "email": {"type": "string", "format": "email"},
+                            "category": {
+                                "allOf": [{"$ref": "#/components/schemas/CanonicalCategory"}],
+                                "description": "Canonical category to verify. Never transactional.",
+                            },
+                            "template_key": {
+                                "type": "string",
+                                "description": "Transactional template owned by the authenticated client.",
+                            },
+                        },
+                    },
+                ]
+            },
+            "CategoryVerificationResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string"},
+                    "email": {"type": "string", "format": "email"},
+                    "audience": {"type": "string"},
+                    "client": {"type": "string"},
+                    "category": {"type": "string"},
+                    "template_key": {"type": "string"},
+                },
+            },
+            "CategoryConfirmRequest": {
+                "type": "object",
+                "required": ["token"],
+                "properties": {
+                    "token": {
+                        "type": "string",
+                        "description": "Opaque, signed, expiring value copied from the confirm_url query parameter.",
+                    },
+                },
+            },
+            "CategoryConfirmResponse": {
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "format": "email"},
+                    "audience": {"type": "string"},
+                    "client": {"type": "string"},
+                    "category": {"$ref": "#/components/schemas/CategoryPreference"},
+                },
             },
             "TagReplaceRequest": {
                 "allOf": [

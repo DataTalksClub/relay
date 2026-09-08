@@ -35,6 +35,7 @@ from mailing.models import (
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
 from mailing.services.campaigns import queue_campaign
+from mailing.services.categories import TRANSACTIONAL_CATEGORY, category_label, validate_canonical_category
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.services.contacts import (
     assign_tag,
@@ -854,6 +855,37 @@ def category_preference_payload(preference, tag):
     }
 
 
+def validate_optional_category(value):
+    """Return the canonical category for a request, or None when absent.
+
+    Without ``category`` the subscribe/unsubscribe endpoints keep their
+    historical behavior exactly.
+    """
+    if value in (None, ""):
+        return None
+    return validate_canonical_category(value)
+
+
+def apply_canonical_category_preference(contact, audience, client, category, *, enabled, reason):
+    """Enable or disable the canonical CategoryPreference tag for one scope.
+
+    The canonical category name is stored as the preference tag, so send-time
+    suppression keeps working through the same tag path.
+    """
+    preference, _ = CategoryPreference.objects.update_or_create(
+        contact=contact,
+        audience=audience,
+        client=client,
+        tag=category,
+        defaults={
+            "label": category_label(category),
+            "enabled": enabled,
+            "updated_reason": (reason or "")[:255],
+        },
+    )
+    return preference
+
+
 def preferences_suppression_payload(contact):
     if contact is None:
         return {
@@ -1211,8 +1243,19 @@ def erase_contact_for_client(data, authenticated_client):
 def subscribe_for_client(data, authenticated_client):
     scope = validate_contact_scope(data, authenticated_client)
     tags = validate_tags(data.get("tags"))
+    category = validate_optional_category(data.get("category"))
     contact, _ = upsert_contact(scope.email)
     subscribe_contact(contact, scope.audience, scope.client)
+
+    if category is not None:
+        apply_canonical_category_preference(
+            contact,
+            scope.audience,
+            scope.client,
+            category,
+            enabled=True,
+            reason="subscribe",
+        )
 
     for tag_name in tags:
         assign_tag(contact, scope.audience, tag_name)
@@ -1230,6 +1273,9 @@ def unsubscribe_for_client(data, authenticated_client):
     reason = data.get("reason", "")
     if reason is not None and not isinstance(reason, str):
         raise ApiValidationError({"reason": "must_be_string"})
+    category = validate_optional_category(data.get("category"))
+    if category == TRANSACTIONAL_CATEGORY:
+        raise ApiValidationError({"category": "transactional_cannot_be_disabled"})
 
     contact, _ = upsert_contact(scope.email)
     reason = reason or ""
@@ -1241,6 +1287,16 @@ def unsubscribe_for_client(data, authenticated_client):
         unsubscribe_contact(contact, scope.audience, reason=reason)
     else:
         unsubscribe_contact(contact, scope.audience, scope.client, reason=reason)
+
+    if category is not None:
+        apply_canonical_category_preference(
+            contact,
+            scope.audience,
+            scope.client,
+            category,
+            enabled=False,
+            reason=reason or "unsubscribe",
+        )
 
     return contact_status_payload(contact, scope.audience, scope.client, requested_email=scope.email) | {
         "scope": scope_name

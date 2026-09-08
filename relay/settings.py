@@ -213,6 +213,11 @@ AWS_SES_REGION = os.environ.get("AWS_SES_REGION", AWS_REGION)
 AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
 API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).rstrip("/")
+# Public base URL of the client site page that receives double opt-in confirm
+# links. Relay appends `?token=...`; the token never carries a raw email.
+SUBSCRIPTION_CONFIRM_BASE_URL = (
+    os.environ.get("SUBSCRIPTION_CONFIRM_BASE_URL", "").strip().rstrip("/") or PUBLIC_BASE_URL
+)
 AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0)
 SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = os.environ.get("SQS_TRANSACTIONAL_EMAIL_QUEUE_URL", "")

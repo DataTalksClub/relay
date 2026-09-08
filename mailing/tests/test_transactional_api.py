@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 from django.contrib import admin
@@ -438,6 +439,374 @@ def test_transactional_send_skips_category_opted_out_contact(
     assert message.status == TransactionalMessageStatus.SKIPPED
     assert message.last_error == "category_unsubscribe"
     assert enqueued == []
+
+
+def test_transactional_send_reports_suppressed_for_canonical_category_opt_out(
+    client,
+    audience,
+    api_client_record,
+    template,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    contact = Contact.objects.create(email="person@example.com")
+    CategoryPreference.objects.create(
+        contact=contact,
+        audience=audience,
+        client=api_client_record,
+        tag="events",
+        enabled=False,
+    )
+
+    response = post_transactional(
+        client,
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "template_key": template.key,
+            "idempotency_key": "event-announcement-123",
+            "context": {"product": "Datamailer"},
+            "category_tag": "events",
+        },
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["reason"] == "category_unsubscribe"
+    assert error["suppressed"] is True
+    message = TransactionalMessage.objects.get()
+    assert message.status == TransactionalMessageStatus.SKIPPED
+    assert enqueued == []
+
+
+def test_transactional_send_with_transactional_category_is_never_suppressed(
+    client,
+    audience,
+    api_client_record,
+    template,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    contact = Contact.objects.create(
+        email="person@example.com",
+        global_unsubscribed_at=timezone.now(),
+    )
+    CategoryPreference.objects.create(
+        contact=contact,
+        audience=audience,
+        client=api_client_record,
+        tag="transactional",
+        enabled=False,
+    )
+
+    response = post_transactional(
+        client,
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "template_key": template.key,
+            "idempotency_key": "verification-123",
+            "context": {"product": "Datamailer"},
+            "category_tag": "transactional",
+        },
+    )
+
+    assert response.status_code == 202
+    message = TransactionalMessage.objects.get()
+    assert message.status == TransactionalMessageStatus.QUEUED
+    assert message.metadata["category_tag"] == "transactional"
+    assert len(enqueued) == 1
+
+
+def post_subscriptions(django_client, url_name, payload, raw_key=API_KEY):
+    return django_client.post(
+        reverse(url_name),
+        data=payload,
+        content_type="application/json",
+        **auth_headers(raw_key),
+    )
+
+
+@override_settings(SUBSCRIPTION_CONFIRM_BASE_URL="https://site.example/opt-in/confirm")
+def test_double_optin_request_and_confirm_enable_category(
+    client,
+    audience,
+    api_client_record,
+    template,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+
+    requested = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "category": "events",
+            "template_key": template.key,
+        },
+    )
+
+    assert requested.status_code == 200
+    assert requested.json() == {
+        "status": "verification_requested",
+        "email": "person@example.com",
+        "audience": audience.slug,
+        "client": api_client_record.slug,
+        "category": "events",
+        "template_key": template.key,
+    }
+    assert len(enqueued) == 1
+    message = TransactionalMessage.objects.get()
+    assert message.status == TransactionalMessageStatus.QUEUED
+    assert message.template_key == template.key
+    assert message.metadata["category_tag"] == "transactional"
+    confirm_url = message.context["confirm_url"]
+    assert confirm_url.startswith("https://site.example/opt-in/confirm?token=")
+    assert "person@example.com" not in confirm_url
+    token = message.context["verification_token"]
+    assert message.context["category"] == "events"
+
+    confirmed = post_subscriptions(client, "mailing:api_confirm", {"token": token})
+    repeated = post_subscriptions(client, "mailing:api_confirm", {"token": token})
+
+    assert confirmed.status_code == 200
+    assert confirmed.json() == {
+        "email": "person@example.com",
+        "audience": audience.slug,
+        "client": api_client_record.slug,
+        "category": {"tag": "events", "label": "Events", "enabled": True},
+    }
+    assert repeated.status_code == 200
+    assert repeated.json() == confirmed.json()
+    assert CategoryPreference.objects.count() == 1
+    preference = CategoryPreference.objects.get()
+    assert preference.tag == "events"
+    assert preference.enabled is True
+
+
+def test_double_optin_confirm_rejects_expired_token(
+    client,
+    audience,
+    api_client_record,
+    template,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    requested = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "category": "events",
+            "template_key": template.key,
+        },
+    )
+    assert requested.status_code == 200
+    token = TransactionalMessage.objects.get().context["verification_token"]
+
+    real_time = time.time
+    monkeypatch.setattr("django.core.signing.time.time", lambda: real_time() + 60 * 60 * 48 + 60)
+    response = post_subscriptions(client, "mailing:api_confirm", {"token": token})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"token": "invalid"}
+    assert CategoryPreference.objects.count() == 0
+
+
+def test_double_optin_confirm_rejects_tampered_token(
+    client,
+    audience,
+    api_client_record,
+    template,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    requested = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "category": "courses",
+            "template_key": template.key,
+        },
+    )
+    assert requested.status_code == 200
+    token = TransactionalMessage.objects.get().context["verification_token"]
+    tampered = token[:-1] + ("x" if token[-1] != "x" else "y")
+
+    response = post_subscriptions(client, "mailing:api_confirm", {"token": tampered})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"token": "invalid"}
+    assert CategoryPreference.objects.count() == 0
+
+
+def test_double_optin_confirm_is_scoped_to_issuing_client(
+    client,
+    audience,
+    api_client_record,
+    template,
+    other_client,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    requested = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "category": "events",
+            "template_key": template.key,
+        },
+    )
+    assert requested.status_code == 200
+    token = TransactionalMessage.objects.get().context["verification_token"]
+
+    response = post_subscriptions(
+        client,
+        "mailing:api_confirm",
+        {"token": token},
+        raw_key="other-key",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"token": "invalid"}
+    assert CategoryPreference.objects.count() == 0
+
+
+def test_request_verification_rejects_transactional_unknown_and_unowned_templates(
+    client,
+    audience,
+    api_client_record,
+    template,
+    other_client,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    EmailTemplate.objects.create(
+        client=other_client,
+        key="other-client-template",
+        name="Other client template",
+        subject="Other {{ product }}",
+        html_body="<p>{{ product }}</p>",
+        text_body="{{ product }}",
+    )
+    EmailTemplate.objects.create(
+        client=api_client_record,
+        key="inactive-template",
+        name="Inactive template",
+        subject="Inactive {{ product }}",
+        html_body="<p>{{ product }}</p>",
+        text_body="{{ product }}",
+        is_active=False,
+    )
+    base = {
+        "email": "person@example.com",
+        "audience": audience.slug,
+        "client": api_client_record.slug,
+    }
+
+    transactional = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        base | {"category": "transactional", "template_key": template.key},
+    )
+    unknown = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        base | {"category": "webinars", "template_key": template.key},
+    )
+    missing_template = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        base | {"category": "events"},
+    )
+    unknown_template = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        base | {"category": "events", "template_key": "does-not-exist"},
+    )
+    foreign_template = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        base | {"category": "events", "template_key": "other-client-template"},
+    )
+    inactive_template = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        base | {"category": "events", "template_key": "inactive-template"},
+    )
+
+    assert transactional.status_code == 400
+    assert transactional.json()["error"]["fields"] == {"category": "transactional_not_allowed"}
+    assert unknown.status_code == 400
+    assert unknown.json()["error"]["fields"] == {"category": "unknown"}
+    assert missing_template.status_code == 400
+    assert missing_template.json()["error"]["fields"] == {"template_key": "required"}
+    assert unknown_template.status_code == 404
+    assert unknown_template.json()["error"]["fields"] == {"template_key": "not_found"}
+    assert foreign_template.status_code == 404
+    assert foreign_template.json()["error"]["fields"] == {"template_key": "not_found"}
+    assert inactive_template.status_code == 404
+    assert inactive_template.json()["error"]["fields"] == {"template_key": "not_found"}
+    assert enqueued == []
+    assert TransactionalMessage.objects.count() == 0
+    assert CategoryPreference.objects.count() == 0
+
+
+def test_request_verification_fails_closed_when_template_context_is_missing(
+    client,
+    audience,
+    api_client_record,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    EmailTemplate.objects.create(
+        client=api_client_record,
+        key="strict-template",
+        name="Strict template",
+        subject="Strict {{ product }}",
+        html_body="<p>{{ product }}</p>",
+        text_body="{{ product }}",
+        required_context=["product"],
+    )
+
+    response = post_subscriptions(
+        client,
+        "mailing:api_request_verification",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "category": "newsletter",
+            "template_key": "strict-template",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"context.product": "required"}
+    assert enqueued == []
+    assert TransactionalMessage.objects.count() == 0
+    assert CategoryPreference.objects.count() == 0
 
 
 @override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")

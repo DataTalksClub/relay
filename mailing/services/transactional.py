@@ -10,7 +10,9 @@ from django.db import transaction
 
 from mailing.enqueue import enqueue_transactional_email, enqueue_transactional_email_batch
 from mailing.models import (
+    Audience,
     CategoryPreference,
+    Contact,
     EmailEvent,
     EmailEventType,
     EmailTemplate,
@@ -19,7 +21,19 @@ from mailing.models import (
     TransactionalMessageStatus,
 )
 from mailing.queue_contracts import CONTRACT_VERSION, TRANSACTIONAL_EMAIL_CONTRACT, validate_transactional_email_message
-from mailing.services.api import ApiValidationError, isoformat, validate_contact_scope
+from mailing.services.api import (
+    ApiValidationError,
+    apply_canonical_category_preference,
+    category_preference_payload,
+    isoformat,
+    validate_contact_scope,
+)
+from mailing.services.categories import (
+    TRANSACTIONAL_CATEGORY,
+    is_canonical_category,
+    subscription_confirm_url,
+    validate_canonical_category,
+)
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.services.contacts import is_transactional_email_allowed, normalize_email, upsert_contact
 from mailing.services.recipient_lists import (
@@ -30,6 +44,7 @@ from mailing.services.recipient_lists import (
     validate_path_key,
 )
 from mailing.services.senders import normalize_sender_id, resolve_sender_email
+from mailing.services.tokens import issue_subscription_verification_token, read_subscription_verification_token
 from mailing.services.transactional_catalog import validate_context_requirements
 from mailing.services.transactional_versions import (
     preview_transactional_template,
@@ -150,6 +165,7 @@ def send_transactional_email_for_client(data, authenticated_client):
                 "code": "transactional_suppressed",
                 "message": "Contact is hard-suppressed for transactional email.",
                 "reason": message.last_error,
+                "suppressed": True,
             }
         },
         status_code=409,
@@ -178,6 +194,93 @@ def dry_run_response(rendered):
         },
         "would_deliver": rendered.delivery_decision["allowed"],
         "delivery_decision": rendered.delivery_decision,
+    }
+
+
+def request_category_verification_for_client(data, authenticated_client):
+    """Start the double opt-in flow for one canonical category.
+
+    Validates the scope and category, fails closed unless the named
+    transactional template exists and is owned by the authenticated client,
+    then enqueues a verification message through that template. The message
+    context carries a confirm_url built from ``SUBSCRIPTION_CONFIRM_BASE_URL``
+    plus an opaque signed token; the token itself is stateless, so no model or
+    migration is involved. The raw token is returned only inside the message.
+    """
+    scope = validate_contact_scope(data, authenticated_client)
+    category = validate_canonical_category(data.get("category"))
+    if category == TRANSACTIONAL_CATEGORY:
+        raise ApiValidationError({"category": "transactional_not_allowed"})
+
+    template_key = data.get("template_key")
+    if not isinstance(template_key, str) or not template_key.strip():
+        raise ApiValidationError({"template_key": "required"})
+    template = get_transactional_template(authenticated_client, template_key.strip())
+
+    contact, _ = upsert_contact(scope.email)
+    token = issue_subscription_verification_token(
+        contact_id=contact.id,
+        audience_id=scope.audience.id,
+        client_id=scope.client.id,
+        category=category,
+    )
+    send_transactional_email_for_client(
+        {
+            "email": scope.email,
+            "template_key": template.key,
+            "context": {
+                "confirm_url": subscription_confirm_url(token),
+                "verification_token": token,
+                "category": category,
+            },
+            "audience": scope.audience.slug,
+            "client": scope.client.slug,
+            # The verification message is transactional and always deliverable.
+            "category_tag": TRANSACTIONAL_CATEGORY,
+        },
+        authenticated_client,
+    )
+    return {
+        "status": "verification_requested",
+        "email": normalize_email(scope.email),
+        "audience": scope.audience.slug,
+        "client": scope.client.slug,
+        "category": category,
+        "template_key": template.key,
+    }
+
+
+def confirm_category_verification_for_client(data, authenticated_client):
+    """Confirm a double opt-in token and enable the category preference.
+
+    The token must be validly signed, unexpired, issued for the authenticated
+    client, and never for the always-on transactional category. Confirmation
+    is idempotent: repeating it returns the same enabled preference state.
+    """
+    payload = read_subscription_verification_token(data.get("token"))
+    if payload is None or payload["client_id"] != authenticated_client.id:
+        raise ApiValidationError({"token": "invalid"})
+    if payload["category"] == TRANSACTIONAL_CATEGORY or not is_canonical_category(payload["category"]):
+        raise ApiValidationError({"token": "invalid"})
+
+    contact = Contact.objects.filter(id=payload["contact_id"]).first()
+    audience = Audience.objects.filter(id=payload["audience_id"]).first()
+    if contact is None or audience is None:
+        raise ApiValidationError({"token": "invalid"})
+
+    preference = apply_canonical_category_preference(
+        contact,
+        audience,
+        authenticated_client,
+        payload["category"],
+        enabled=True,
+        reason="double_opt_in_confirm",
+    )
+    return {
+        "email": contact.normalized_email,
+        "audience": audience.slug,
+        "client": authenticated_client.slug,
+        "category": category_preference_payload(preference, payload["category"]),
     }
 
 
@@ -970,6 +1073,11 @@ def transactional_delivery_decision(contact, payload):
     audience = payload.get("audience")
     client = payload.get("client")
     if not category_tag:
+        return {"allowed": True, "reason": ""}
+
+    if category_tag == TRANSACTIONAL_CATEGORY:
+        # The canonical transactional category is always on: a send tagged
+        # with it is never suppressed by the category check.
         return {"allowed": True, "reason": ""}
 
     if contact.global_unsubscribed_at is not None:
