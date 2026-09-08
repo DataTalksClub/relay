@@ -53,7 +53,6 @@ CALLBACK_EVENT_TYPES = {
     EmailEventType.DELIVERED: "delivery.delivered",
     EmailEventType.BOUNCE: "delivery.bounced",
     EmailEventType.COMPLAINT: "delivery.complained",
-    EmailEventType.FAILED: "delivery.failed",
     EmailEventType.OPEN: "engagement.opened",
     EmailEventType.CLICK: "engagement.clicked",
     EmailEventType.SUBSCRIBE: "subscription.changed",
@@ -74,10 +73,6 @@ SUPPRESSION_REASON_CODES = {
     "suppressed",
     "category_unsubscribe",
     "missing_category_scope",
-}
-FAILURE_REASON_CODES = {
-    "ses_permanent_failure",
-    "queue_payload_mismatch",
 }
 
 MESSAGE_KIND_TRANSACTIONAL = "transactional"
@@ -132,13 +127,14 @@ def build_callback_payload(event, endpoint, *, sequence):
         "contract_version": endpoint.contract_version,
         "event_id": str(callback_event_id(event)),
         "event_type": event_type,
-        "occurred_at": event.created_at.isoformat(),
+        "timestamp": event.created_at.isoformat(),
         "sequence": sequence,
-        "message_id": message_ref,
-        "message_kind": message_kind,
-        "client_reference": client_reference,
+        "message_id": message_ref or None,
+        "client_reference": client_reference or None,
         "template_key": template_key,
     }
+    if event_type == "delivery.bounced":
+        payload["bounce_type"] = "hard" if is_hard_bounce(event.metadata or {}) else "soft"
     reason = safe_reason_code(event)
     if reason:
         payload["reason_code"] = reason
@@ -166,16 +162,9 @@ def safe_reason_code(event):
         return "hard_bounce" if is_hard_bounce(metadata) else "soft_bounce"
     if event.event_type == EmailEventType.COMPLAINT:
         return "complaint"
-    if event.event_type == EmailEventType.QUEUED:
-        return "queued"
-    if event.event_type == EmailEventType.SENT:
-        return "sent"
     if event.event_type == EmailEventType.SKIPPED:
         reason = str(metadata.get("reason", ""))
         return reason if reason in SUPPRESSION_REASON_CODES else "suppressed"
-    if event.event_type == EmailEventType.FAILED:
-        reason = str(metadata.get("reason", ""))
-        return reason if reason in FAILURE_REASON_CODES else "send_failed"
     if event.event_type == EmailEventType.SUBSCRIBE:
         return "subscribed"
     if event.event_type == EmailEventType.UNSUBSCRIBE:
@@ -213,6 +202,12 @@ def emit_client_callback(event):
     client = event.client
     if client is None or event.event_type not in CALLBACK_EVENT_TYPES:
         return None
+    if event.campaign_recipient_id is not None:
+        # Campaign-scoped transitions stay on the CMP channel. Client
+        # callbacks carry transactional deliveries and client-level
+        # subscription changes, the transitions whose receivers own a
+        # client_reference.
+        return None
     endpoint = CallbackEndpoint.objects.filter(client=client, enabled=True).first()
     if endpoint is None:
         return None
@@ -236,7 +231,7 @@ def emit_client_callback(event):
             "campaign_recipient_id": event.campaign_recipient_id,
             "event_type": payload["event_type"],
             "contract_version": payload["contract_version"],
-            "client_reference": payload["client_reference"],
+            "client_reference": payload["client_reference"] or "",
             "message_kind": message_kind,
             "message_ref": message_ref,
             "template_key": payload["template_key"],

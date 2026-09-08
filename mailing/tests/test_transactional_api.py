@@ -1,9 +1,12 @@
 import json
+from datetime import timedelta
 
 import pytest
 from django.contrib import admin
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from mailing.admin import EmailEventAdmin, EmailTemplateAdmin, TransactionalMessageAdmin
 from mailing.models import (
@@ -12,6 +15,8 @@ from mailing.models import (
     Client,
     ClientCallback,
     ClientCallbackStatus,
+    CmpCallback,
+    CmpCallbackStatus,
     Contact,
     EmailEvent,
     EmailEventType,
@@ -27,6 +32,7 @@ from mailing.models import (
 from mailing.queue_contracts import validate_transactional_email_message
 from mailing.services.auth import create_client_api_key
 from mailing.services.client_callbacks import process_due_client_callbacks
+from mailing.services.cmp_callbacks import process_due_cmp_callbacks
 from mailing.tests.callback_helpers import create_callback_endpoint, install_fake_opener
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -82,6 +88,18 @@ def template(api_client_record):
     )
 
 
+@pytest.fixture
+def contact():
+    return Contact.objects.create(email="reconcile@example.com")
+
+
+@pytest.fixture
+def other_client_record(organization):
+    other = Client.objects.create(organization=organization, name="Other Product", slug="other-product")
+    create_client_api_key(client=other, name="Other", raw_api_key="other-client-key")
+    return other
+
+
 def auth_headers(raw_key=API_KEY):
     return {"HTTP_AUTHORIZATION": f"Bearer {raw_key}"}
 
@@ -93,6 +111,32 @@ def post_transactional(django_client, payload, raw_key=API_KEY):
         content_type="application/json",
         **auth_headers(raw_key),
     )
+
+
+class CallbackResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+
+def collect_cmp_callbacks(monkeypatch):
+    posts = []
+
+    def fake_urlopen(request, *, timeout):
+        posts.append(
+            {
+                "url": request.full_url,
+                "json": json.loads(request.data.decode("utf-8")),
+                "headers": dict(request.header_items()),
+                "timeout": timeout,
+            }
+        )
+        return CallbackResponse()
+
+    monkeypatch.setattr("mailing.services.cmp_callbacks.urlopen", fake_urlopen)
+    return posts
 
 
 def post_recipient_list_transactional(django_client, list_key, payload, raw_key=API_KEY):
@@ -414,6 +458,7 @@ def test_transactional_send_skips_category_opted_out_contact(
     assert enqueued == []
 
 
+@override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
 def test_transactional_send_to_recipient_list_creates_per_member_messages(
     client,
     audience,
@@ -424,6 +469,7 @@ def test_transactional_send_to_recipient_list_creates_per_member_messages(
     create_callback_endpoint(api_client_record)
     enqueued = []
     opener = install_fake_opener(monkeypatch)
+    posts = collect_cmp_callbacks(monkeypatch)
     monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
     allowed_contact = Contact.objects.create(email="allowed@example.com")
     suppressed_contact = Contact.objects.create(
@@ -492,13 +538,30 @@ def test_transactional_send_to_recipient_list_creates_per_member_messages(
     assert messages[1].status == TransactionalMessageStatus.SKIPPED
     assert messages[1].last_error == "hard_bounce"
     assert len(enqueued) == 0
+    assert CmpCallback.objects.filter(status=CmpCallbackStatus.PENDING).count() == 2
     assert ClientCallback.objects.filter(status=ClientCallbackStatus.PENDING).count() == 2
+    process_due_cmp_callbacks()
     process_due_client_callbacks()
+    assert len(posts) == 2
     assert len(opener.requests) == 2
+    assert {post["json"]["event_type"] for post in posts} == {"transactional.skipped"}
+    assert posts[0]["url"] == "https://cmp.example.com/api/datamailer/events"
+    assert posts[0]["headers"]["Authorization"] == "Bearer secret"
+    assert {post["json"]["audience"] for post in posts} == {audience.slug}
+    assert {post["json"]["client"] for post in posts} == {api_client_record.slug}
+    reasons_by_email = {post["json"]["email"]: post["json"]["metadata"]["reason"] for post in posts}
+    assert reasons_by_email == {
+        "allowed@example.com": "category_unsubscribe",
+        "suppressed@example.com": "hard_bounce",
+    }
     bodies = [json.loads(request["body"].decode("utf-8")) for request in opener.requests]
     assert {body["event_type"] for body in bodies} == {"delivery.suppressed"}
     assert {body["reason_code"] for body in bodies} == {"category_unsubscribe", "hard_bounce"}
     assert {body["template_key"] for body in bodies} == {template.key}
+    assert {body["client_reference"] for body in bodies} == {
+        messages[0].idempotency_key,
+        messages[1].idempotency_key,
+    }
     joined = opener.requests[0]["body"].decode("utf-8") + opener.requests[1]["body"].decode("utf-8")
     assert "allowed@example.com" not in joined
     assert "suppressed@example.com" not in joined
@@ -1343,3 +1406,145 @@ def test_transactional_models_are_available_in_admin():
     assert isinstance(admin.site._registry[EmailTemplate], EmailTemplateAdmin)
     assert isinstance(admin.site._registry[TransactionalMessage], TransactionalMessageAdmin)
     assert isinstance(admin.site._registry[EmailEvent], EmailEventAdmin)
+
+
+# --- Reconciliation: GET /api/transactional/messages?since= ------------------
+
+
+def get_reconciliation(django_client, since, raw_key=API_KEY):
+    return django_client.get(
+        reverse("mailing:api_transactional_messages_reconcile"),
+        data={"since": since} if since is not None else {},
+        **auth_headers(raw_key),
+    )
+
+
+def seed_reconciliation_message(client_record, contact, template, *, key, status, **fields):
+    return TransactionalMessage.objects.create(
+        client=client_record,
+        contact=contact,
+        email=contact.email,
+        template=template,
+        template_key=template.key,
+        idempotency_key=key,
+        status=status,
+        **fields,
+    )
+
+
+def test_reconciliation_requires_auth(client):
+    response = client.get(reverse("mailing:api_transactional_messages_reconcile"), data={"since": "2026-01-01T00:00:00+00:00"})
+    assert response.status_code == 401
+
+
+def test_reconciliation_requires_since(api_client_record, client):
+    response = get_reconciliation(client, None)
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"since": "required"}
+
+
+def test_reconciliation_rejects_unparseable_since(api_client_record, client):
+    response = get_reconciliation(client, "not-a-date")
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"since": "must_be_iso_datetime"}
+
+
+def test_reconciliation_reports_only_this_clients_recent_messages(
+    api_client_record,
+    other_client_record,
+    client,
+    contact,
+    template,
+):
+    now = timezone.now()
+    # updated_at is an auto_now field: backdate through a queryset update.
+    bounced = seed_reconciliation_message(
+        api_client_record,
+        contact,
+        template,
+        key="reconcile-bounced",
+        status=TransactionalMessageStatus.BOUNCED,
+    )
+    TransactionalMessage.objects.filter(pk=bounced.pk).update(updated_at=now - timedelta(minutes=3))
+    old_message = seed_reconciliation_message(
+        api_client_record,
+        contact,
+        template,
+        key="reconcile-old",
+        status=TransactionalMessageStatus.SENT,
+    )
+    TransactionalMessage.objects.filter(pk=old_message.pk).update(updated_at=now - timedelta(days=2))
+    seed_reconciliation_message(
+        api_client_record,
+        contact,
+        template,
+        key="",
+        status=TransactionalMessageStatus.SENT,
+    )
+    seed_reconciliation_message(
+        other_client_record,
+        contact,
+        template,
+        key="reconcile-other-client",
+        status=TransactionalMessageStatus.SENT,
+    )
+
+    response = get_reconciliation(client, (now - timedelta(hours=1)).isoformat())
+
+    assert response.status_code == 200
+    rows = response.json()["messages"]
+    assert [row["id"] for row in rows] == [str(bounced.pk)]
+    assert rows[0]["client_reference"] == "reconcile-bounced"
+    assert rows[0]["status"] == "bounced"
+    assert rows[0]["template_key"] == template.key
+    assert rows[0]["template_version"] == 1
+    assert rows[0]["reason_code"] == "hard_bounce"
+    assert parse_datetime(rows[0]["updated_at"]) is not None
+
+
+def test_reconciliation_maps_statuses_for_the_package_vocabulary(
+    api_client_record,
+    client,
+    contact,
+    template,
+):
+    now = timezone.now()
+    cases = {
+        "reconcile-queued": (TransactionalMessageStatus.QUEUED, "queued", ""),
+        "reconcile-sending": (TransactionalMessageStatus.SENDING, "retrying", ""),
+        "reconcile-sent": (TransactionalMessageStatus.SENT, "sent", ""),
+        "reconcile-delivered": (TransactionalMessageStatus.SENT, "delivered", ""),
+        "reconcile-skipped": (TransactionalMessageStatus.SKIPPED, "suppressed", "category_unsubscribe"),
+        "reconcile-skipped-raw": (TransactionalMessageStatus.SKIPPED, "suppressed", "suppressed"),
+        "reconcile-failed": (TransactionalMessageStatus.FAILED, "failed", "send_failed"),
+        "reconcile-complained": (TransactionalMessageStatus.COMPLAINED, "complained", "complaint"),
+        "reconcile-soft": (TransactionalMessageStatus.SENT, "sent", "soft_bounce"),
+    }
+    for index, (key, (status, _, _)) in enumerate(cases.items()):
+        fields = {}
+        if key == "reconcile-delivered":
+            fields["delivered_at"] = now
+        if key == "reconcile-skipped":
+            fields["metadata"] = {"reason": "category_unsubscribe"}
+        if key == "reconcile-skipped-raw":
+            fields["metadata"] = {"reason": "some raw provider note"}
+        if key == "reconcile-soft":
+            fields["last_error"] = "soft_bounce"
+        seed_reconciliation_message(
+            api_client_record,
+            contact,
+            template,
+            key=key,
+            status=status,
+            updated_at=now - timedelta(minutes=index + 1),
+            **fields,
+        )
+
+    response = get_reconciliation(client, (now - timedelta(hours=1)).isoformat())
+
+    assert response.status_code == 200
+    rows = {row["client_reference"]: row for row in response.json()["messages"]}
+    assert set(rows) == set(cases)
+    for key, (_, expected_status, expected_reason) in cases.items():
+        assert rows[key]["status"] == expected_status, key
+        assert rows[key]["reason_code"] == expected_reason, key

@@ -15,6 +15,8 @@ from mailing.models import (
     Client,
     ClientCallback,
     ClientCallbackStatus,
+    CmpCallback,
+    CmpCallbackStatus,
     Contact,
     EmailEvent,
     EmailEventType,
@@ -59,10 +61,14 @@ def test_sandbox_worker_statuses_include_systemd_state_and_local_backlog(setting
     assert statuses["transactional"].pid == "123"
     assert statuses["campaign"].badge_label == "Running"
     assert statuses["campaign"].backlog_count == 1
+    assert statuses["cmp-callbacks"].badge_label == "Failed"
+    assert statuses["cmp-callbacks"].badge_tone == "danger"
+    assert statuses["cmp-callbacks"].detail == "failed; result=exit-code"
     assert statuses["client-callbacks"].badge_label == "Failed"
     assert statuses["client-callbacks"].badge_tone == "danger"
     assert statuses["client-callbacks"].detail == "failed; result=exit-code"
     assert statuses["ses-webhooks"].backlog_count is None
+    assert statuses["cmp-callbacks"].backlog_count == 1
     assert statuses["client-callbacks"].backlog_count == 1
     assert statuses["recipient-list-imports"].backlog_count == 1
 
@@ -83,6 +89,9 @@ def test_worker_status_api_returns_staff_only_json_status(client, settings, monk
     assert workers["transactional"]["alive"] is True
     assert workers["transactional"]["backlog"] == {"label": "Queued messages", "count": 1}
     assert workers["campaign"]["alive"] is True
+    assert workers["cmp-callbacks"]["alive"] is False
+    assert workers["cmp-callbacks"]["status"] == "failed"
+    assert workers["cmp-callbacks"]["detail"] == "failed; result=exit-code"
     assert workers["client-callbacks"]["alive"] is False
     assert workers["client-callbacks"]["status"] == "failed"
     assert workers["client-callbacks"]["detail"] == "failed; result=exit-code"
@@ -99,7 +108,7 @@ def test_worker_status_api_requires_staff(client):
 
 def _fake_systemd_run(args, **kwargs):
     service_name = args[2]
-    if service_name == "relay-client-callbacks-worker.service":
+    if service_name in ("relay-cmp-callbacks-worker.service", "relay-client-callbacks-worker.service"):
         stdout = "\n".join(
             [
                 "LoadState=loaded",
@@ -168,6 +177,18 @@ def _create_worker_backlog():
         client=client,
         url="https://callback.example.com/hooks",
         signing_secret="callback-signing-secret",
+    )
+    CmpCallback.objects.create(
+        email_event=event,
+        contact=contact,
+        client=client,
+        audience=audience,
+        event_id="datamailer-email-event:1",
+        event_type="subscription.unsubscribed",
+        callback_url="https://cmp.example/hooks/datamailer",
+        payload={"email": contact.email},
+        status=CmpCallbackStatus.PENDING,
+        next_attempt_at=timezone.now(),
     )
     ClientCallback.objects.create(
         email_event=event,

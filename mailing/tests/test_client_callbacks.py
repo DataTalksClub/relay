@@ -1,4 +1,4 @@
-"""Generic tenant-scoped client callbacks (plan issue R1.4, relay issue #3).
+"""Generic tenant-scoped client callbacks (plan issue R1.4, relay issue #17).
 
 Covers: the redacted versioned event payload, event-type mapping, row
 deduplication under repeated transition processing, the timestamped HMAC
@@ -17,9 +17,13 @@ from pathlib import Path
 import pytest
 from django.conf import settings
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from mailing.models import (
+    Audience,
     CallbackEndpoint,
+    Campaign,
+    CampaignRecipient,
     Client,
     ClientCallback,
     ClientCallbackStatus,
@@ -119,13 +123,12 @@ def transition_event(transactional_message, event_type=EmailEventType.BOUNCE, me
 @pytest.mark.parametrize(
     ("email_event_type", "callback_event_type", "reason_code"),
     [
-        (EmailEventType.QUEUED, "delivery.accepted", "queued"),
-        (EmailEventType.SENT, "delivery.accepted", "sent"),
+        (EmailEventType.QUEUED, "delivery.accepted", None),
+        (EmailEventType.SENT, "delivery.accepted", None),
         (EmailEventType.SKIPPED, "delivery.suppressed", "suppressed"),
         (EmailEventType.DELIVERED, "delivery.delivered", None),
         (EmailEventType.BOUNCE, "delivery.bounced", "soft_bounce"),
         (EmailEventType.COMPLAINT, "delivery.complained", "complaint"),
-        (EmailEventType.FAILED, "delivery.failed", "send_failed"),
         (EmailEventType.OPEN, "engagement.opened", None),
         (EmailEventType.CLICK, "engagement.clicked", None),
         (EmailEventType.SUBSCRIBE, "subscription.changed", "subscribed"),
@@ -169,22 +172,23 @@ def test_payload_carries_identifiers_and_never_redaction_canaries(
     body = callback.body
 
     assert set(callback.payload) == {
+        "bounce_type",
+        "client_reference",
         "contract_version",
         "event_id",
         "event_type",
-        "occurred_at",
+        "reason_code",
         "sequence",
         "message_id",
-        "message_kind",
-        "client_reference",
         "template_key",
-        "reason_code",
+        "timestamp",
     }
     assert callback.payload["message_id"] == str(transactional_message.pk)
-    assert callback.payload["message_kind"] == "transactional"
     assert callback.payload["client_reference"] == "registration-user-123"
     assert callback.payload["template_key"] == "registration-welcome"
+    assert callback.payload["bounce_type"] == "hard"
     assert callback.payload["reason_code"] == "hard_bounce"
+    assert parse_datetime(callback.payload["timestamp"]) is not None
     for canary in (
         "learner@example.com",
         "Welcome to the course",
@@ -194,6 +198,61 @@ def test_payload_carries_identifiers_and_never_redaction_canaries(
         assert canary not in body
     assert callback.body_hash == hashlib.sha256(body.encode("utf-8")).hexdigest()
     assert callback.body == canonical_callback_body(callback.payload).decode("utf-8")
+
+
+def test_soft_bounce_and_omitted_bounce_type_metadata_report_soft(transactional_message, app_client):
+    callback_endpoint(app_client)
+    soft = emit_client_callback(transition_event(transactional_message, metadata={"bounce_type": "Transient"}))
+    bare = emit_client_callback(transition_event(transactional_message))
+
+    assert soft.payload["bounce_type"] == "soft"
+    assert soft.payload["reason_code"] == "soft_bounce"
+    assert bare.payload["bounce_type"] == "soft"
+
+
+def test_contact_level_subscription_event_has_no_message_identity(app_client, contact):
+    callback_endpoint(app_client)
+    event = EmailEvent.objects.create(
+        contact=contact,
+        client=app_client,
+        event_type=EmailEventType.UNSUBSCRIBE,
+        metadata={"source": "api"},
+    )
+
+    callback = emit_client_callback(event)
+
+    assert callback is not None
+    assert callback.event_type == "subscription.changed"
+    assert callback.payload["message_id"] is None
+    assert callback.payload["client_reference"] is None
+    assert callback.payload["template_key"] == ""
+
+
+def test_campaign_and_send_failure_transitions_create_no_callback(
+    transactional_message,
+    app_client,
+    organization,
+    contact,
+):
+    callback_endpoint(app_client)
+    audience = Audience.objects.create(organization=organization, name="Newsletter", slug="newsletter")
+    campaign = Campaign.objects.create(audience=audience, client=app_client, subject="Weekly update")
+    recipient = CampaignRecipient.objects.create(
+        campaign=campaign,
+        contact=contact,
+        email=contact.email,
+        ses_message_id="ses-campaign-1",
+    )
+    campaign_event = EmailEvent.objects.create(
+        campaign_recipient=recipient,
+        client=app_client,
+        event_type=EmailEventType.DELIVERED,
+        metadata={},
+    )
+
+    assert emit_client_callback(campaign_event) is None
+    assert emit_client_callback(transition_event(transactional_message, EmailEventType.FAILED)) is None
+    assert ClientCallback.objects.count() == 0
 
 
 def test_emit_is_deduplicated_per_client_and_event(transactional_message, app_client):

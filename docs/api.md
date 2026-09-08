@@ -551,13 +551,57 @@ POST /webhooks/ses
 
 These are not client Bearer API routes.
 
+## CMP Contact Event Callbacks
+
+When configured, Datamailer queues hard-bounce, complaint, public unsubscribe,
+resubscribe, and transactional skipped/failed events for CMP after the local
+Datamailer transaction commits. A background dispatcher posts queued callbacks
+and retries failures with backoff.
+
+```text
+CMP_WEBHOOK_URL=https://courses.example.com/api/datamailer/events
+CMP_WEBHOOK_TOKEN=shared-secret
+```
+
+These global settings are the fallback. A Datamailer client can also configure
+its own CMP webhook URL and token from the operator client form.
+
+Datamailer sends:
+
+```text
+Authorization: Bearer <CMP_WEBHOOK_TOKEN>
+```
+
+Implemented callback event types:
+
+```text
+contact.hard_bounced
+contact.complained
+subscription.unsubscribed
+subscription.resubscribed
+transactional.skipped
+transactional.failed
+```
+
+Callbacks are stored in the `cmp_callbacks` outbox. Run the dispatcher with:
+
+```bash
+python manage.py process_cmp_callbacks --batch-size 25
+```
+
+Sandbox deploys install this dispatcher as `datamailer-cmp-callbacks-worker`.
+Operators can inspect recent callback status, attempt counts, next retry time,
+delivery time, and the last error from the client detail page and Django admin.
+
 ## Client Callbacks
 
 When a callback endpoint is configured for a client, Relay announces delivery
-and engagement transitions to that client's endpoint with signed, versioned,
-redacted JSON events. The CMP Bearer callback contract this replaces carried
-full recipient addresses and message metadata; the generic contract never
-carries them, so a consumer can log and store payloads as-is.
+and engagement transitions for that client with signed, versioned, redacted
+JSON events. This channel is additive to the CMP callback contract above. It
+carries transactional deliveries and client-level subscription changes for
+unification-plan clients; campaign-recipient transitions stay on the CMP
+channel. Payloads carry identifiers and safe reason codes only, so a consumer
+can log and store them as-is.
 
 ### Configuration
 
@@ -581,17 +625,18 @@ Relay posts these event types after the corresponding transport state commits:
 
 | Event type | Fired on | Reason codes |
 |---|---|---|
-| `delivery.accepted` | message queued, then handed to the provider | `queued`, `sent` |
+| `delivery.accepted` | message queued, then handed to the provider | none |
 | `delivery.delivered` | provider confirmed delivery | none |
 | `delivery.bounced` | provider reported a bounce | `hard_bounce`, `soft_bounce` |
 | `delivery.complained` | recipient filed a complaint | `complaint` |
 | `delivery.suppressed` | send was suppressed before delivery | `unverified`, `invalid_email`, `global_unsubscribe`, `client_unsubscribe`, `audience_unsubscribe`, `hard_bounce`, `complaint`, `duplicate`, `category_unsubscribe`, `missing_category_scope`, `suppressed` |
-| `delivery.failed` | the provider rejected or the send failed terminally | `ses_permanent_failure`, `queue_payload_mismatch`, `send_failed` |
 | `engagement.opened` | tracked open | none |
 | `engagement.clicked` | tracked click | none |
 | `subscription.changed` | subscribe or unsubscribe state changed | `subscribed`, `unsubscribed` |
 
-`reason_code` is omitted when the table shows "none".
+`reason_code` is omitted when the table shows "none". A permanently failed
+send is not announced on this channel; the synchronous send response and the
+reconciliation endpoint below carry that outcome.
 
 ### Payload
 
@@ -600,29 +645,30 @@ whitespace), signed exactly as sent on every attempt:
 
 ```json
 {
+  "bounce_type": "hard",
+  "client_reference": "registration-user-123",
   "contract_version": 1,
   "event_id": "dd8b8f17-6d55-5094-ae45-83cd8ac37b96",
-  "event_type": "delivery.delivered",
-  "occurred_at": "2026-09-08T12:00:00+00:00",
-  "sequence": 3,
+  "event_type": "delivery.bounced",
   "message_id": "1042",
-  "message_kind": "transactional",
-  "client_reference": "registration-user-123",
-  "template_key": "registration-welcome"
+  "reason_code": "hard_bounce",
+  "sequence": 3,
+  "template_key": "registration-welcome",
+  "timestamp": "2026-09-08T12:00:00+00:00"
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `contract_version` | Payload contract version. Additive changes do not bump it; removing or repurposing a field does. Reject nothing on an unknown major version silently: log it. |
+| `contract_version` | Payload contract version. Additive changes do not bump it; removing or repurposing a field does. |
 | `event_id` | Stable UUID for one transition. Duplicate deliveries of the same event reuse the id, so receivers can deduplicate on it. |
 | `event_type` | One of the types above. |
-| `occurred_at` | When the transition committed. |
+| `timestamp` | When the transition committed (ISO 8601). |
 | `sequence` | 1-based counter per message. Ordering of deliveries is best-effort (retries reorder); use `sequence` to reorder if you need strict ordering. |
-| `message_id` | Relay message id as a string: the transactional message id, or the campaign recipient id when `message_kind` is `campaign`. |
-| `message_kind` | `transactional`, `campaign`, or empty for contact-level transitions such as subscription changes. |
-| `client_reference` | Your idempotency key from the original send, when one exists. |
+| `message_id` | Relay transactional message id as a string; `null` for contact-level transitions such as subscription changes. |
+| `client_reference` | Your idempotency key from the original send; `null` when the transition has no transactional message. |
 | `template_key` | Template key for transactional messages, empty otherwise. |
+| `bounce_type` | `hard` or `soft`; present only on `delivery.bounced`. |
 | `reason_code` | Safe reason code from the table above, when applicable. |
 
 The payload contains nothing else. No recipient address, subject, body,
@@ -717,8 +763,8 @@ attempt time. Response bodies and headers are never stored.
 
 Callback failure never regresses Relay transport state: a delivered message
 stays delivered whether or not the callback succeeded. If callbacks are
-delayed or lost, reconcile against `GET /api/transactional/messages/{message_id}`,
-which remains authoritative.
+delayed or lost, reconcile against `GET /api/transactional/messages?since=`
+(described next).
 
 Run the dispatcher with:
 
@@ -726,10 +772,55 @@ Run the dispatcher with:
 python manage.py process_client_callbacks --batch-size 25
 ```
 
-Sandbox deploys install this dispatcher as `relay-client-callbacks-worker`.
-Operators can inspect recent callback status, attempt counts, next retry
-time, delivery time, and the last safe error from the client detail page and
-Django admin.
+Sandbox deploys install this dispatcher as
+`datamailer-client-callbacks-worker`. Operators can inspect recent callback
+status, attempt counts, next retry time, delivery time, and the last safe
+error from the client detail page and Django admin.
+
+## Transactional Message Reconciliation
+
+`GET /api/transactional/messages?since=<iso8601>` returns every transactional
+message of the authenticated client whose `updated_at` is at or after
+`since`, oldest first, capped at 1000 rows. It is the pull-based complement
+to client callbacks and the authoritative view for recovery after missed or
+failed callback deliveries.
+
+Authentication and errors are the same as the rest of the client API: Bearer
+client API key; a missing or unparseable `since` returns `validation_error`.
+
+```text
+GET /api/transactional/messages?since=2026-09-08T00:00:00%2B00:00
+```
+
+Response:
+
+```json
+{
+  "messages": [
+    {
+      "id": "1042",
+      "client_reference": "registration-user-123",
+      "status": "bounced",
+      "template_key": "registration-welcome",
+      "template_version": 1,
+      "reason_code": "hard_bounce",
+      "updated_at": "2026-09-08T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | Transactional message id as a string. |
+| `client_reference` | The idempotency key from the original send. |
+| `status` | `queued`, `retrying` (in flight to the provider), `sent` (accepted by the provider), `delivered`, `suppressed`, `failed`, `bounced` (hard bounce), or `complained`. |
+| `template_key` | Template key the message was sent with. |
+| `template_version` | `1` until the template catalog (R1.3) introduces versions. |
+| `reason_code` | Safe reason code, empty when there is nothing to report; provider diagnostics are never included. |
+| `updated_at` | ISO 8601; use it as the next poll's `since`. |
+
+Messages without an idempotency key are never reported.
 
 ## Mailchimp Sync
 

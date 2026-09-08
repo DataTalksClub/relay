@@ -94,6 +94,8 @@ def create_or_update_client(
     slug,
     default_sender_id,
     sender_emails,
+    cmp_webhook_url,
+    cmp_webhook_token,
     is_active,
     mailchimp_api_key="",
     mailchimp_list_id="",
@@ -106,6 +108,8 @@ def create_or_update_client(
             slug=slug,
             default_sender_id=default_sender_id,
             sender_emails=sender_emails,
+            cmp_webhook_url=cmp_webhook_url,
+            cmp_webhook_token=cmp_webhook_token,
             mailchimp_api_key=mailchimp_api_key,
             mailchimp_list_id=mailchimp_list_id,
             mailchimp_enabled=mailchimp_enabled,
@@ -120,6 +124,8 @@ def create_or_update_client(
                 "slug": slug,
                 "default_sender_id": default_sender_id,
                 "sender_emails": sender_emails,
+                "cmp_webhook_url": cmp_webhook_url,
+                "cmp_webhook_token_configured": bool(cmp_webhook_token),
                 "mailchimp_api_key_configured": bool(mailchimp_api_key),
                 "mailchimp_list_id": mailchimp_list_id,
                 "mailchimp_enabled": mailchimp_enabled,
@@ -142,6 +148,8 @@ def create_or_update_client(
         "slug": slug,
         "default_sender_id": default_sender_id,
         "sender_emails": sender_emails,
+        "cmp_webhook_url": cmp_webhook_url,
+        "cmp_webhook_token": cmp_webhook_token,
         "mailchimp_api_key": mailchimp_api_key,
         "mailchimp_list_id": mailchimp_list_id,
         "mailchimp_enabled": mailchimp_enabled,
@@ -149,7 +157,7 @@ def create_or_update_client(
     }.items():
         old = getattr(stored, field)
         if old != value:
-            if field in {"mailchimp_api_key"}:
+            if field in {"cmp_webhook_token", "mailchimp_api_key"}:
                 changed[f"{field}_configured"] = [
                     bool(old),
                     bool(value),

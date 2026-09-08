@@ -49,6 +49,8 @@ class Client(TimeStampedModel):
     allowed_from_emails = models.JSONField(default=list, blank=True)
     default_sender_id = models.SlugField(max_length=80, blank=True)
     sender_emails = models.JSONField(default=list, blank=True)
+    cmp_webhook_url = models.URLField(max_length=2048, blank=True)
+    cmp_webhook_token = models.CharField(max_length=255, blank=True)
     relay_webhook_signing_secret = models.CharField(max_length=255, blank=True)
     relay_webhook_allowed_origins = models.JSONField(default=list, blank=True)
     mailchimp_api_key = models.CharField(max_length=255, blank=True)
@@ -821,6 +823,68 @@ class ClientCallback(TimeStampedModel):
                 fields=["client", "message_kind", "message_ref", "sequence"],
                 name="client_cb_msg_seq_idx",
             ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} {self.event_id} ({self.status})"
+
+
+class CmpCallbackStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    DELIVERED = "delivered", "Delivered"
+    FAILED = "failed", "Failed"
+
+
+class CmpCallback(TimeStampedModel):
+    email_event = models.OneToOneField(
+        EmailEvent,
+        on_delete=models.CASCADE,
+        related_name="cmp_callback",
+    )
+    contact = models.ForeignKey(
+        Contact,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="cmp_callbacks",
+    )
+    client = models.ForeignKey(
+        Client,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="cmp_callbacks",
+    )
+    audience = models.ForeignKey(
+        Audience,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="cmp_callbacks",
+    )
+    event_id = models.CharField(max_length=120, unique=True)
+    event_type = models.CharField(max_length=80)
+    callback_url = models.URLField(max_length=2048)
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=CmpCallbackStatus.choices,
+        default=CmpCallbackStatus.PENDING,
+    )
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=8)
+    next_attempt_at = models.DateTimeField(db_index=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    response_status = models.PositiveIntegerField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "cmp_callbacks"
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="cmp_cb_status_next_idx"),
+            models.Index(fields=["client", "status", "created_at"], name="cmp_cb_client_status_idx"),
         ]
 
     def __str__(self):

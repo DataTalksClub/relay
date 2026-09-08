@@ -14,6 +14,8 @@ from mailing.models import (
     CampaignStatus,
     ClientCallback,
     ClientCallbackStatus,
+    CmpCallback,
+    CmpCallbackStatus,
     RecipientListImportJob,
     RecipientListImportJobStatus,
     TransactionalMessage,
@@ -81,6 +83,13 @@ WORKER_DEFINITIONS = (
         "relay-ses-webhooks-worker.service",
         "drain_sqs_ingress ses-webhooks",
         "SQS backlog",
+    ),
+    WorkerDefinition(
+        "cmp-callbacks",
+        "CMP callbacks",
+        "relay-cmp-callbacks-worker.service",
+        "process_cmp_callbacks",
+        "Due callbacks",
     ),
     WorkerDefinition(
         "client-callbacks",
@@ -214,6 +223,11 @@ def _backlog_count(worker_key: str) -> int | None:
         return CampaignRecipient.objects.filter(
             campaign__status__in=[CampaignStatus.QUEUED, CampaignStatus.SENDING],
             status=CampaignRecipientStatus.PENDING,
+        ).count()
+    if worker_key == "cmp-callbacks":
+        return CmpCallback.objects.filter(
+            Q(status=CmpCallbackStatus.PENDING, next_attempt_at__lte=timezone.now())
+            | Q(status=CmpCallbackStatus.FAILED)
         ).count()
     if worker_key == "client-callbacks":
         return ClientCallback.objects.filter(

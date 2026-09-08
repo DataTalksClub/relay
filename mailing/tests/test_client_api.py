@@ -15,6 +15,7 @@ from mailing.models import (
     Client,
     ClientApiKey,
     ClientCallback,
+    CmpCallback,
     Contact,
     ContactSourceMetadata,
     ContactTag,
@@ -1075,6 +1076,17 @@ def test_contact_erase_deletes_live_state_and_anonymizes_history(client, audienc
         body_hash="0" * 64,
         next_attempt_at=timezone.now(),
     )
+    cmp_callback = CmpCallback.objects.create(
+        email_event=event,
+        contact=contact,
+        audience=audience,
+        client=api_client_record,
+        event_id="evt_1",
+        event_type="sent",
+        callback_url="https://courses.example.com/webhook",
+        payload={"email": "person@example.com"},
+        next_attempt_at=timezone.now(),
+    )
 
     response = post_json(
         client,
@@ -1107,6 +1119,7 @@ def test_contact_erase_deletes_live_state_and_anonymizes_history(client, audienc
     recipient.refresh_from_db()
     event.refresh_from_db()
     callback.refresh_from_db()
+    cmp_callback.refresh_from_db()
     assert message.email == contact.email
     assert message.context == {}
     assert message.metadata == {"erased": True}
@@ -1114,6 +1127,7 @@ def test_contact_erase_deletes_live_state_and_anonymizes_history(client, audienc
     assert event.metadata == {"erased": True}
     # Callback rows are redacted at creation, so erasure has nothing to scrub.
     assert callback.payload == {}
+    assert cmp_callback.payload == {"erased": True}
     assert Contact.objects.filter(normalized_email="person@example.com").exists() is False
 
     second_response = post_json(

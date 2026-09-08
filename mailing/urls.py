@@ -153,6 +153,11 @@ urlpatterns = [
     ),
     path("api/transactional/send", views.api_transactional_send, name="api_transactional_send"),
     path(
+        "api/transactional/messages",
+        views.api_transactional_messages_reconcile,
+        name="api_transactional_messages_reconcile",
+    ),
+    path(
         "api/transactional/messages/<int:message_id>",
         views.api_transactional_message_status,
         name="api_transactional_message_status",

@@ -263,7 +263,7 @@ def test_worker_delivery_updates_transactional_message(transactional_message):
     )
 
 
-def test_worker_delivery_emits_client_callback(recipient, app_client, monkeypatch):
+def test_worker_campaign_delivery_emits_no_client_callback(recipient, app_client):
     create_callback_endpoint(app_client)
 
     response = ses_webhooks_handler(
@@ -272,13 +272,27 @@ def test_worker_delivery_emits_client_callback(recipient, app_client, monkeypatc
     )
 
     assert response == {"batchItemFailures": []}
+    # Campaign-recipient transitions stay on the CMP channel; the client
+    # callback contract carries transactional deliveries only.
+    assert ClientCallback.objects.count() == 0
+
+
+def test_worker_transactional_delivery_emits_client_callback(transactional_message, app_client):
+    create_callback_endpoint(app_client)
+
+    response = ses_webhooks_handler(
+        records_from_payloads([("message-1", webhook_payload("delivery", "sns-tx-cb-delivery", "ses-tx-1"))]),
+        None,
+    )
+
+    assert response == {"batchItemFailures": []}
     callback = ClientCallback.objects.get()
     assert callback.status == ClientCallbackStatus.PENDING
     assert callback.event_type == "delivery.delivered"
     assert callback.payload["event_type"] == "delivery.delivered"
-    assert callback.payload["message_kind"] == "campaign"
-    assert callback.payload["message_id"] == str(recipient.pk)
-    assert recipient.contact.normalized_email not in callback.body
+    assert callback.payload["message_id"] == str(transactional_message.pk)
+    assert callback.payload["client_reference"] == "tx-1"
+    assert transactional_message.contact.normalized_email not in callback.body
 
 
 def test_worker_hard_bounce_suppresses_campaign_contact(recipient, audience, app_client):
@@ -302,13 +316,13 @@ def test_worker_hard_bounce_suppresses_campaign_contact(recipient, audience, app
     assert EmailEvent.objects.filter(event_type=EmailEventType.BOUNCE, campaign_recipient=recipient).count() == 1
 
 
-def test_worker_hard_bounce_emits_signed_client_callback(recipient, app_client, monkeypatch):
+def test_worker_hard_bounce_emits_signed_client_callback(transactional_message, app_client, monkeypatch):
     endpoint = create_callback_endpoint(app_client)
     opener = install_fake_opener(monkeypatch)
     payload = webhook_payload(
         "bounce",
         "sns-bounce-cmp",
-        "ses-campaign-1",
+        "ses-tx-1",
         metadata={"bounce_type": "Permanent", "bounce_sub_type": "General"},
     )
 
@@ -324,8 +338,24 @@ def test_worker_hard_bounce_emits_signed_client_callback(recipient, app_client, 
     assert request["headers"]["x-relay-event-type"] == "delivery.bounced"
     body = json.loads(request["body"].decode("utf-8"))
     assert body["event_type"] == "delivery.bounced"
+    assert body["bounce_type"] == "hard"
     assert body["reason_code"] == "hard_bounce"
-    assert recipient.contact.normalized_email not in request["body"].decode("utf-8")
+    assert body["client_reference"] == "tx-1"
+    assert transactional_message.contact.normalized_email not in request["body"].decode("utf-8")
+
+
+def test_worker_campaign_hard_bounce_emits_no_client_callback(recipient, app_client):
+    create_callback_endpoint(app_client)
+    payload = webhook_payload(
+        "bounce",
+        "sns-bounce-cmp",
+        "ses-campaign-1",
+        metadata={"bounce_type": "Permanent", "bounce_sub_type": "General"},
+    )
+
+    ses_webhooks_handler(records_from_payloads([("message-1", payload)]), None)
+
+    assert ClientCallback.objects.count() == 0
 
 
 def test_worker_raw_sns_hard_bounce_suppresses_campaign_contact(recipient, audience, app_client):

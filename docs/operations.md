@@ -49,18 +49,21 @@ python manage.py db_worker
 python manage.py drain_sqs_ingress ses-webhooks --batch-size 10 --wait-time 20
 python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20
 python manage.py process_cmp_callbacks --batch-size 25 --idle-sleep 5
+python manage.py process_client_callbacks --batch-size 25 --idle-sleep 5
 ```
 
 The SQS workers use the same message contracts and handlers as Lambda. The CMP
 callback dispatcher reads the local `cmp_callbacks` outbox and retries failed
-HTTP callbacks with backoff. Once the sandbox uses shared Postgres/RDS, replace
+HTTP callbacks with backoff. The client callback dispatcher does the same for
+the `client_callbacks` outbox used by generic `CallbackEndpoint` consumers.
+Once the sandbox uses shared Postgres/RDS, replace
 the EC2 SQS worker services with SQS event-source Lambda workers; keep one
 scheduled or long-running callback dispatcher for the outbox.
 
 Staff operators can inspect the same worker state in the dashboard or as JSON at
 `/api/workers/status`. The endpoint reports systemd state where available plus
 local backlog counts for transactional messages, campaign recipients, and due
-CMP callbacks.
+CMP and client callbacks.
 
 Sandbox deploys must also provision the CMP client scope before configuring
 senders:

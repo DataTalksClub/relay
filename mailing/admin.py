@@ -9,6 +9,7 @@ from mailing.models import (
     Client,
     ClientApiKey,
     ClientCallback,
+    CmpCallback,
     Contact,
     ContactTag,
     EmailEvent,
@@ -294,6 +295,37 @@ class CallbackEndpointAdmin(admin.ModelAdmin):
     list_filter = ("enabled",)
     search_fields = ("client__name", "client__slug", "url")
     autocomplete_fields = ("client",)
+
+
+@admin.register(CmpCallback)
+class CmpCallbackAdmin(admin.ModelAdmin):
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+        "last_attempt_at",
+        "delivered_at",
+    )
+    list_display = (
+        "event_type",
+        "status",
+        "client",
+        "contact",
+        "attempt_count",
+        "next_attempt_at",
+        "delivered_at",
+        "created_at",
+    )
+    list_filter = ("status", "event_type", "client")
+    search_fields = (
+        "event_id",
+        "event_type",
+        "contact__email",
+        "contact__normalized_email",
+        "client__name",
+        "client__slug",
+        "last_error",
+    )
+    autocomplete_fields = ("email_event", "contact", "client", "audience")
 
 
 @admin.register(ClientCallback)

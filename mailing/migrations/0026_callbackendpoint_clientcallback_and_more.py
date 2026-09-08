@@ -63,22 +63,6 @@ class Migration(migrations.Migration):
                 'ordering': ['id'],
             },
         ),
-        migrations.RemoveIndex(
-            model_name='cmpcallback',
-            name='cmp_cb_status_next_idx',
-        ),
-        migrations.RemoveIndex(
-            model_name='cmpcallback',
-            name='cmp_cb_client_status_idx',
-        ),
-        migrations.RemoveField(
-            model_name='client',
-            name='cmp_webhook_token',
-        ),
-        migrations.RemoveField(
-            model_name='client',
-            name='cmp_webhook_url',
-        ),
         migrations.AddField(
             model_name='callbackendpoint',
             name='client',
@@ -109,22 +93,6 @@ class Migration(migrations.Migration):
             name='transactional_message',
             field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='client_callbacks', to='mailing.transactionalmessage'),
         ),
-        migrations.RemoveField(
-            model_name='cmpcallback',
-            name='audience',
-        ),
-        migrations.RemoveField(
-            model_name='cmpcallback',
-            name='client',
-        ),
-        migrations.RemoveField(
-            model_name='cmpcallback',
-            name='contact',
-        ),
-        migrations.RemoveField(
-            model_name='cmpcallback',
-            name='email_event',
-        ),
         migrations.AddIndex(
             model_name='clientcallback',
             index=models.Index(fields=['status', 'next_attempt_at'], name='client_cb_status_next_idx'),
@@ -140,8 +108,5 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='clientcallback',
             constraint=models.UniqueConstraint(fields=('client', 'event_id'), name='unique_client_callback_event'),
-        ),
-        migrations.DeleteModel(
-            name='CmpCallback',
         ),
     ]

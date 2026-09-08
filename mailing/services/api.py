@@ -15,6 +15,7 @@ from mailing.models import (
     CampaignRecipientStatus,
     CampaignStatus,
     CategoryPreference,
+    CmpCallback,
     Contact,
     ContactSourceMetadata,
     ContactTag,
@@ -26,6 +27,7 @@ from mailing.models import (
     Subscription,
     SubscriptionStatus,
     TransactionalMessage,
+    TransactionalMessageStatus,
     normalize_tag_filter,
 )
 from mailing.models import (
@@ -34,7 +36,8 @@ from mailing.models import (
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
 from mailing.services.campaigns import queue_campaign
-from mailing.services.client_callbacks import emit_client_callback
+from mailing.services.client_callbacks import SUPPRESSION_REASON_CODES, emit_client_callback
+from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.services.contacts import (
     assign_tag,
     is_marketing_email_allowed,
@@ -1057,6 +1060,7 @@ def upsert_contact_for_client(data, authenticated_client):
             event_type=EmailEventType.SUBSCRIBE,
             metadata={"source": "api"},
         )
+        emit_cmp_contact_event(event)
         emit_client_callback(event)
 
     for tag_name in tags:
@@ -1088,6 +1092,7 @@ def contact_has_scoped_relationship(contact, scope):
         ).exists()
         or TransactionalMessage.objects.filter(contact=contact, client=scope.client).exists()
         or EmailEvent.objects.filter(contact=contact, audience=scope.audience, client=scope.client).exists()
+        or CmpCallback.objects.filter(contact=contact, audience=scope.audience, client=scope.client).exists()
     )
 
 
@@ -1101,6 +1106,7 @@ def empty_erasure_counts():
         "transactional_messages_anonymized": 0,
         "campaign_recipients_anonymized": 0,
         "email_events_anonymized": 0,
+        "cmp_callbacks_anonymized": 0,
     }
 
 
@@ -1151,6 +1157,10 @@ def erase_contact_for_client(data, authenticated_client):
     )
     counts["email_events_anonymized"] = EmailEvent.objects.filter(contact=contact).update(
         metadata={"erased": True},
+    )
+    counts["cmp_callbacks_anonymized"] = CmpCallback.objects.filter(contact=contact).update(
+        payload={"erased": True},
+        updated_at=now,
     )
 
     contact.email = erased_email
@@ -1348,6 +1358,7 @@ def update_contact_suppression_for_client(contact_id, data, authenticated_client
                     event_type=event_map[field],
                     metadata={"source": "api", "reason": reason},
                 )
+                emit_cmp_contact_event(event)
                 emit_client_callback(event)
             elif field == "global_unsubscribed_at":
                 event = EmailEvent.objects.create(
@@ -1357,6 +1368,7 @@ def update_contact_suppression_for_client(contact_id, data, authenticated_client
                     event_type=EmailEventType.SUBSCRIBE,
                     metadata={"source": "api", "reason": reason},
                 )
+                emit_cmp_contact_event(event)
                 emit_client_callback(event)
     return contact_payload(contact, scope.audience, scope.client, requested_email=contact.email)
 
@@ -1483,6 +1495,81 @@ def get_transactional_message_status_for_client(message_id, authenticated_client
         "message": transactional_message_status_item(message),
         "events": event_items,
     }
+
+
+RECONCILIATION_MESSAGE_LIMIT = 1000
+
+# TransactionalMessage.status mapped onto the reconciliation vocabulary the
+# client packages understand. "sending" is in flight, so it is reported as
+# "retrying"; a sent message that already has a delivery timestamp is
+# reported as "delivered".
+RECONCILIATION_STATUS_BY_MESSAGE_STATUS = {
+    TransactionalMessageStatus.QUEUED: "queued",
+    TransactionalMessageStatus.SENDING: "retrying",
+    TransactionalMessageStatus.SENT: "sent",
+    TransactionalMessageStatus.FAILED: "failed",
+    TransactionalMessageStatus.SKIPPED: "suppressed",
+    TransactionalMessageStatus.BOUNCED: "bounced",
+    TransactionalMessageStatus.COMPLAINED: "complained",
+}
+
+
+def validate_reconciliation_since(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ApiValidationError({"since": "required"})
+    parsed = parse_datetime(value.strip())
+    if parsed is None:
+        raise ApiValidationError({"since": "must_be_iso_datetime"})
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone=timezone.get_current_timezone())
+    return parsed
+
+
+def reconciliation_reason_code(message):
+    """A safe, pattern-checked reason code; never raw provider diagnostics."""
+    metadata = message.metadata or {}
+    if message.status == TransactionalMessageStatus.SKIPPED:
+        reason = str(metadata.get("reason", ""))
+        return reason if reason in SUPPRESSION_REASON_CODES else "suppressed"
+    if message.status == TransactionalMessageStatus.BOUNCED:
+        return "hard_bounce"
+    if message.status == TransactionalMessageStatus.COMPLAINED:
+        return "complaint"
+    if message.status == TransactionalMessageStatus.FAILED:
+        return "send_failed"
+    if message.status == TransactionalMessageStatus.SENT and (message.last_error or "") == "soft_bounce":
+        return "soft_bounce"
+    return ""
+
+
+def reconciliation_message_item(message):
+    status = RECONCILIATION_STATUS_BY_MESSAGE_STATUS[message.status]
+    if message.status == TransactionalMessageStatus.SENT and message.delivered_at:
+        status = "delivered"
+    # The template catalog (R1.3) will introduce real versions; until then
+    # every message reports version 1, matching the send contract's fallback.
+    return {
+        "id": str(message.id),
+        "client_reference": message.idempotency_key,
+        "status": status,
+        "template_key": message.template_key,
+        "template_version": 1,
+        "reason_code": reconciliation_reason_code(message),
+        "updated_at": isoformat(message.updated_at),
+    }
+
+
+def get_transactional_messages_since_for_client(raw_since, authenticated_client):
+    since = validate_reconciliation_since(raw_since)
+    messages = (
+        TransactionalMessage.objects.filter(
+            client=authenticated_client,
+            idempotency_key__gt="",
+            updated_at__gte=since,
+        )
+        .order_by("updated_at", "id")[:RECONCILIATION_MESSAGE_LIMIT]
+    )
+    return {"messages": [reconciliation_message_item(message) for message in messages]}
 
 
 def get_contact_history_for_client(contact_id, data, authenticated_client):
