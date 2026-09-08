@@ -560,6 +560,8 @@ class EmailTemplate(TimeStampedModel):
     subject = models.CharField(max_length=255)
     html_body = models.TextField(blank=True)
     text_body = models.TextField(blank=True)
+    markdown_body = models.TextField(blank=True)
+    category = models.CharField(max_length=80, blank=True)
     required_context = models.JSONField(default=list, blank=True)
     example_context = models.JSONField(default=dict, blank=True)
     default_sender_id = models.CharField(max_length=80, blank=True)
@@ -581,6 +583,41 @@ class EmailTemplate(TimeStampedModel):
         return f"{self.key} ({self.client.slug})"
 
 
+class EmailTemplateVersion(TimeStampedModel):
+    """Immutable published snapshot of one email template draft.
+
+    Rows are write-once: ``publish`` always creates a new version number and
+    ``save``/``delete`` refuse to touch an existing row.
+    """
+
+    template = models.ForeignKey(EmailTemplate, on_delete=models.PROTECT, related_name="versions")
+    version = models.PositiveIntegerField()
+    subject = models.CharField(max_length=255)
+    html_body = models.TextField(blank=True)
+    text_body = models.TextField(blank=True)
+    markdown_body = models.TextField(blank=True)
+    required_context = models.JSONField(default=list, blank=True)
+    category = models.CharField(max_length=80, blank=True)
+
+    class Meta:
+        db_table = "email_template_versions"
+        ordering = ["template_id", "-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["template", "version"], name="unique_email_template_version"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("email template versions are immutable")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("email template versions are immutable")
+
+    def __str__(self):
+        return f"{self.template.key} v{self.version} ({self.template.client.slug})"
+
+
 class TransactionalMessageStatus(models.TextChoices):
     QUEUED = "queued", "Queued"
     SENDING = "sending", "Sending"
@@ -599,6 +636,7 @@ class TransactionalMessage(TimeStampedModel):
     from_email = models.EmailField(max_length=320, blank=True)
     template = models.ForeignKey(EmailTemplate, on_delete=models.PROTECT, related_name="transactional_messages")
     template_key = models.CharField(max_length=120)
+    template_version = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=TransactionalMessageStatus.choices,

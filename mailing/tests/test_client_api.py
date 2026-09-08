@@ -1521,6 +1521,141 @@ def test_unsubscribe_supports_client_audience_and_global_scopes_idempotently(cli
     assert contact.global_unsubscribed_at is not None
 
 
+def test_subscribe_with_category_enables_canonical_preference(client, audience, api_client_record):
+    payload = {"email": "person@example.com", "audience": audience.slug, "client": api_client_record.slug}
+
+    first = post_json(client, "mailing:api_subscribe", payload | {"category": "events"})
+    second = post_json(client, "mailing:api_subscribe", payload | {"category": "events"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    preference = CategoryPreference.objects.get()
+    assert preference.tag == "events"
+    assert preference.label == "Events"
+    assert preference.enabled is True
+    assert Subscription.objects.get(client=api_client_record).status == SubscriptionStatus.SUBSCRIBED
+
+
+def test_subscribe_without_category_creates_no_preferences(client, audience, api_client_record):
+    response = post_json(
+        client,
+        "mailing:api_subscribe",
+        {"email": "person@example.com", "audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert response.status_code == 200
+    assert CategoryPreference.objects.count() == 0
+    assert Subscription.objects.get(client=api_client_record).status == SubscriptionStatus.SUBSCRIBED
+
+
+def test_subscribe_with_unknown_category_is_rejected_without_mutation(client, audience, api_client_record):
+    response = post_json(
+        client,
+        "mailing:api_subscribe",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "category": "webinars",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"category": "unknown"}
+    assert CategoryPreference.objects.count() == 0
+    assert Subscription.objects.count() == 0
+
+
+def test_unsubscribe_with_category_disables_preference_in_scope_only(
+    client,
+    audience,
+    api_client_record,
+    other_audience,
+    other_client,
+):
+    contact = Contact.objects.create(email="person@example.com")
+    CategoryPreference.objects.create(
+        contact=contact,
+        audience=other_audience,
+        client=other_client,
+        tag="events",
+        enabled=True,
+    )
+
+    subscribed = post_json(
+        client,
+        "mailing:api_subscribe",
+        {"email": "person@example.com", "audience": audience.slug, "client": api_client_record.slug, "category": "events"},
+    )
+    unsubscribed = post_json(
+        client,
+        "mailing:api_unsubscribe",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "scope": "client",
+            "category": "events",
+            "reason": "opted_out",
+        },
+    )
+
+    assert subscribed.status_code == 200
+    assert unsubscribed.status_code == 200
+    scoped = CategoryPreference.objects.get(contact=contact, audience=audience, client=api_client_record)
+    assert scoped.tag == "events"
+    assert scoped.enabled is False
+    assert scoped.updated_reason == "opted_out"
+    foreign = CategoryPreference.objects.get(contact=contact, audience=other_audience, client=other_client)
+    assert foreign.enabled is True
+
+
+def test_unsubscribe_rejects_transactional_category_opt_out(client, audience, api_client_record):
+    contact = Contact.objects.create(email="person@example.com")
+    preference = CategoryPreference.objects.create(
+        contact=contact,
+        audience=audience,
+        client=api_client_record,
+        tag="transactional",
+        enabled=True,
+    )
+
+    response = post_json(
+        client,
+        "mailing:api_unsubscribe",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "scope": "client",
+            "category": "transactional",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"category": "transactional_cannot_be_disabled"}
+    preference.refresh_from_db()
+    assert preference.enabled is True
+
+
+def test_subscribe_accepts_transactional_category_as_always_on(client, audience, api_client_record):
+    response = post_json(
+        client,
+        "mailing:api_subscribe",
+        {
+            "email": "person@example.com",
+            "audience": audience.slug,
+            "client": api_client_record.slug,
+            "category": "transactional",
+        },
+    )
+
+    assert response.status_code == 200
+    preference = CategoryPreference.objects.get()
+    assert preference.tag == "transactional"
+    assert preference.enabled is True
+
+
 def test_contact_history_is_scoped_and_does_not_expose_tokens_or_secrets(client, audience, api_client_record):
     contact = Contact.objects.create(email="person@example.com")
     Subscription.objects.create(contact=contact, audience=audience, client=api_client_record)

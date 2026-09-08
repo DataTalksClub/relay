@@ -213,6 +213,11 @@ AWS_SES_REGION = os.environ.get("AWS_SES_REGION", AWS_REGION)
 AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
 API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).rstrip("/")
+# Public base URL of the client site page that receives double opt-in confirm
+# links. Relay appends `?token=...`; the token never carries a raw email.
+SUBSCRIPTION_CONFIRM_BASE_URL = (
+    os.environ.get("SUBSCRIPTION_CONFIRM_BASE_URL", "").strip().rstrip("/") or PUBLIC_BASE_URL
+)
 AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0)
 SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = os.environ.get("SQS_TRANSACTIONAL_EMAIL_QUEUE_URL", "")
@@ -264,3 +269,12 @@ SES_WEBHOOKS_SIGNATURE_MODE = os.environ.get(
     "mock" if DEBUG or TESTING else "strict",
 )
 SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION = bool_env("SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION", default=False)
+
+# Transactional template test sends go only to these addresses (R1.3).
+# Empty disables test-send entirely.
+TRANSACTIONAL_TEST_SEND_ALLOWLIST = csv_env("TRANSACTIONAL_TEST_SEND_ALLOWLIST", "", allow_empty=True)
+
+# Shared email shell branding and the site host treated as internal by the
+# markdown external-link rewriter (ported from the AISL email pipeline).
+RELAY_EMAIL_BRAND_NAME = os.environ.get("RELAY_EMAIL_BRAND_NAME", "Relay")
+RELAY_EMAIL_SITE_BASE_URL = os.environ.get("RELAY_EMAIL_SITE_BASE_URL", "")

@@ -127,15 +127,146 @@ Use `PUT` to replace the audience tag set. Use single-tag `POST` and `DELETE` fo
 ```text
 POST /api/subscriptions/subscribe
 POST /api/subscriptions/unsubscribe
+POST /api/subscriptions/request-verification
+POST /api/subscriptions/confirm
 ```
 
-Subscribe creates the contact if needed and marks the client-scoped subscription subscribed.
+### Canonical preference categories
+
+Subscription preferences use one canonical category vocabulary. A canonical
+category name is stored as the `CategoryPreference` tag, so send-time
+suppression works through the same tag path as free-form `category_tag`
+values.
+
+| Category | Opt-out | Meaning |
+|---|---|---|
+| `newsletter` | yes | Newsletter and marketing digest sends. |
+| `events` | yes | Event announcements, reminders, and recaps. |
+| `courses` | yes | Course announcements and cohort communication. |
+| `product` | yes | Product updates and release notes. |
+| `transactional` | never | Account, security, and delivery-critical messages. Always on. |
+
+The `transactional` category is always on: a contact cannot opt out of it, and
+a transactional send tagged with `category_tag: "transactional"` is never
+suppressed by the category check.
+
+### Subscribe and unsubscribe with a category
+
+Subscribe creates the contact if needed and marks the client-scoped subscription subscribed. The optional `category` field also enables the canonical category preference for the scoped contact:
+
+```json
+{
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "category": "events"
+}
+```
 
 Unsubscribe accepts `scope` values:
 
 - `client`: unsubscribe from one client.
 - `audience`: unsubscribe from the whole audience.
 - `global`: unsubscribe from all marketing email managed by Datamailer.
+
+The optional `category` field also disables the canonical category preference for the scoped contact:
+
+```json
+{
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "scope": "client",
+  "category": "events",
+  "reason": "user_requested"
+}
+```
+
+Validation rules for `category` on both endpoints:
+
+- Unknown values are rejected with `400` and `{"category": "unknown"}`.
+- `unsubscribe` with `category: "transactional"` is rejected with `400` and
+  `{"category": "transactional_cannot_be_disabled"}`.
+
+Requests without `category` behave exactly as before: no preference row is
+created or changed.
+
+### Double opt-in
+
+Double opt-in proves a recipient wants a category before it is enabled. The
+flow is stateless on the Datamailer side: the confirmation token is signed and
+expiring, carries only ids and the category name (never a raw email), and
+requires no database row.
+
+1. The client calls `POST /api/subscriptions/request-verification`:
+
+```json
+{
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "category": "newsletter",
+  "template_key": "newsletter-double-opt-in"
+}
+```
+
+   Datamailer validates the scope, rejects `category: "transactional"` with
+   `400` and `{"category": "transactional_not_allowed"}`, and fails closed
+   with `404` and `{"template_key": "not_found"}` when the template is
+   missing, inactive, or owned by another client. It then enqueues one
+   transactional message through that template. The message context carries
+   `confirm_url`, `verification_token`, and `category`; `confirm_url` is built
+   from the `SUBSCRIPTION_CONFIRM_BASE_URL` setting plus the token, so the
+   link lands on the client site's public confirm page:
+
+```text
+{SUBSCRIPTION_CONFIRM_BASE_URL}?token=<opaque signed token>
+```
+
+   The response repeats the request scope without the token:
+
+```json
+{
+  "status": "verification_requested",
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "category": "newsletter",
+  "template_key": "newsletter-double-opt-in"
+}
+```
+
+2. The recipient opens `confirm_url` on the client site. The site extracts the
+   `token` query parameter and calls
+   `POST /api/subscriptions/confirm` with its own API key:
+
+```json
+{
+  "token": "<opaque signed token from confirm_url>"
+}
+```
+
+   Datamailer validates the signature, expiry (48 hours), and that the token
+   was issued for the authenticated client, then enables the category
+   preference (creating it when needed) and returns the resulting preference
+   state:
+
+```json
+{
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "category": {
+    "tag": "newsletter",
+    "label": "Newsletter",
+    "enabled": true
+  }
+}
+```
+
+   Confirmation is idempotent: repeating it returns the same state. A
+   malformed, tampered, expired, or foreign-client token is rejected with
+   `400` and `{"token": "invalid"}`.
 
 ## Import and Export APIs
 
@@ -261,7 +392,7 @@ PUT /api/transactional/templates/{template_key}
 GET /api/transactional/templates/{template_key}
 ```
 
-Templates are scoped to the authenticated client. Use `PUT` to create or update a transactional template, and `GET` to verify the current configuration.
+Templates are scoped to the authenticated client. Use `PUT` to create or update a transactional template, and `GET` to verify the current configuration. `PUT` replaces the whole editable draft: a field omitted from the payload is cleared.
 
 ```json
 {
@@ -270,6 +401,8 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
   "subject": "Homework submission received: {{ homework_title }}",
   "html_body": "<p>Your homework submission for <strong>{{ homework_title }}</strong> in {{ course_title }} was saved.</p>",
   "text_body": "Your homework submission for {{ homework_title }} in {{ course_title }} was saved.",
+  "markdown_body": "",
+  "category": "homework",
   "required_context": [
     {"name": "course_title", "description": "Course title."},
     {"name": "homework_title", "description": "Homework title."}
@@ -281,6 +414,8 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
   "is_active": true
 }
 ```
+
+Set `markdown_body` to store a markdown draft instead of raw `html_body`/`text_body`. Markdown drafts are rendered at send and preview time with the shared email shell (header, footer, and external links opened in a new tab); the `text` part carries the substituted markdown source. `category` is a free-form label (for example `events` or `onboarding`). The `GET` response also reports `latest_version`, the newest published version number, or `null` when the template was never published.
 
 CMP transactional templates can be provisioned through the API with:
 
@@ -301,6 +436,140 @@ certificate-availability-notification
 deadline-reminder
 ```
 
+### Markdown Template Format
+
+Markdown templates are markdown bodies with a YAML frontmatter block. The frontmatter keys map to template fields:
+
+| Frontmatter key | Template field | Required |
+|---|---|---|
+| `subject` | `subject` | yes |
+| `required_context` | `required_context` | no |
+| `category` | `category` | no |
+| `name` | `name` | no, defaults to the file stem |
+| `example_context` | `example_context` | no |
+| body | `markdown_body` | yes |
+
+```markdown
+---
+subject: "You're registered: {{ event_title }}"
+category: events
+required_context:
+  - name: user_name
+    description: "Recipient name."
+  - join_url
+---
+
+Hi {{ user_name }},
+
+You're registered for **{{ event_title }}**.
+
+Join link: {{ join_url }}
+```
+
+`required_context` entries are either names or `name`/`description` mappings. Sends validate that every required key is present and non-empty in the context; missing keys fail the send with one `context.<name>: required` error per key before any contact, message, or queue work happens.
+
+Import a directory of these files as drafts with:
+
+```bash
+uv run python manage.py import_templates --dir <templates-directory> --client <client-slug>
+```
+
+The command creates one draft per `*.md` file, keyed by file stem. Re-running it updates the existing drafts. Files without a frontmatter `subject` are reported as errors and the command exits non-zero.
+
+### Publish a Template Version
+
+```text
+POST /api/transactional/templates/{template_key}/publish
+```
+
+Publishing snapshots the current draft into a new immutable version numbered `1`, `2`, ... Response `201`:
+
+```json
+{
+  "template_key": "event-registration",
+  "latest_version": 2,
+  "version": {
+    "version": 2,
+    "subject": "You're registered: {{ event_title }}",
+    "html_body": "",
+    "text_body": "",
+    "markdown_body": "Hi {{ user_name }} ...",
+    "required_context": [
+      {"name": "user_name", "description": "Recipient name."},
+      {"name": "join_url", "description": "Join link."}
+    ],
+    "category": "events",
+    "created_at": "2026-09-08T12:00:00Z"
+  }
+}
+```
+
+Published versions never change: editing the draft does not touch existing versions, and version rows cannot be updated or deleted.
+
+### List Template Versions
+
+```text
+GET /api/transactional/templates/{template_key}/versions
+```
+
+```json
+{
+  "template_key": "event-registration",
+  "latest_version": 2,
+  "versions": [
+    {"version": 2, "subject": "...", "...": "..."},
+    {"version": 1, "subject": "...", "...": "..."}
+  ]
+}
+```
+
+Versions are listed newest first. A template that was never published returns `"latest_version": null` and an empty list.
+
+### Preview a Template
+
+```text
+POST /api/transactional/templates/{template_key}/preview
+```
+
+```json
+{
+  "context": {"user_name": "Ada", "event_title": "Community Lunch", "join_url": "https://example.com/join"},
+  "template_version": 1
+}
+```
+
+`template_version` is optional; omit it to preview the current draft, or name an explicit version. The preview writes nothing and returns the rendered message plus which required context keys would have produced values:
+
+```json
+{
+  "template_key": "event-registration",
+  "template_version": 1,
+  "published": true,
+  "subject": "You're registered: Community Lunch",
+  "html_body": "<!DOCTYPE html> ... </html>",
+  "text_body": "Hi Ada, ...",
+  "missing_context": []
+}
+```
+
+Preview rendering matches sends exactly: for the same version and context, `subject`, `html_body`, and `text_body` equal what a send stores. `published` is `false` when the preview rendered the draft of a never-published template. Missing required context keys do not fail a preview; they are listed in `missing_context` (the affected placeholders render empty).
+
+### Test Send a Template
+
+```text
+POST /api/transactional/templates/{template_key}/test-send
+```
+
+```json
+{
+  "email": "staff@example.com",
+  "template_version": 1,
+  "context": {"user_name": "Ada", "event_title": "Community Lunch", "join_url": "https://example.com/join"}
+}
+```
+
+Sends one message through the normal transactional pipeline to the given address, with `"test_send": true` in the message metadata. The recipient must belong to the `TRANSACTIONAL_TEST_SEND_ALLOWLIST` deployment setting; an empty allowlist disables the endpoint entirely (`403 test_send: allowlist_not_configured`), and addresses outside the allowlist are rejected with `403 email: not_in_test_send_allowlist`. Required context is validated like a normal send.
+
 ### Send Transactional Email
 
 ```text
@@ -311,6 +580,7 @@ POST /api/transactional/send
 {
   "email": "learner@example.com",
   "template_key": "registration-welcome",
+  "template_version": 2,
   "idempotency_key": "registration-user-123",
   "context": {
     "name": "Learner",
@@ -322,11 +592,33 @@ POST /api/transactional/send
 }
 ```
 
+`template_version` is optional. With it, the send renders exactly that published version; without it, the send renders the latest published version, or the draft for templates that were never published. An unknown version fails with `404 template_version: not_found`. The created message records the version it rendered, and the queue payload carries the same `template_version`.
+
 Transactional sends validate required template context before Datamailer creates a contact, message, event, or queue payload. Reusing an idempotency key returns the existing message.
 
 Local transactional send examples require the Datamailer server to be started with `SQS_TRANSACTIONAL_EMAIL_QUEUE_URL` configured, for example through LocalStack. With the default empty queue URL, the endpoint is documented but is not runnable because queueing provider work will fail.
 
 Transactional sends do not require marketing subscription, but they are blocked for hard bounces and complaints.
+
+A send with a `category_tag` is also suppressed when the contact opted out of
+that category (the canonical categories from the Subscription APIs section use
+the same tag path). The send is rejected with `409`, the message is stored as
+`skipped`, and the error payload names the reason and confirms the
+suppression:
+
+```json
+{
+  "error": {
+    "code": "transactional_suppressed",
+    "message": "Contact is hard-suppressed for transactional email.",
+    "reason": "category_unsubscribe",
+    "suppressed": true
+  }
+}
+```
+
+A send with `category_tag: "transactional"` is never suppressed by the
+category check.
 
 ### Transactional Message Status
 
@@ -816,7 +1108,7 @@ Response:
 | `client_reference` | The idempotency key from the original send. |
 | `status` | `queued`, `retrying` (in flight to the provider), `sent` (accepted by the provider), `delivered`, `suppressed`, `failed`, `bounced` (hard bounce), or `complained`. |
 | `template_key` | Template key the message was sent with. |
-| `template_version` | `1` until the template catalog (R1.3) introduces versions. |
+| `template_version` | Published template version the message was sent with; `1` for messages sent before versions were recorded. |
 | `reason_code` | Safe reason code, empty when there is nothing to report; provider diagnostics are never included. |
 | `updated_at` | ISO 8601; use it as the next poll's `since`. |
 

@@ -2,17 +2,61 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 
+from django.core import signing
 from django.db import transaction
 
 from mailing.models import CampaignRecipient
 
 TOKEN_BYTES = 32
 
+# Double opt-in verification tokens are stateless: the scope is signed into
+# the token instead of stored, so no model or migration is involved. The
+# payload carries only ids and the category name, never a raw email, so the
+# confirm URL stays free of addresses.
+SUBSCRIPTION_VERIFICATION_SALT = "mailing.subscriptions.category_verification"
+SUBSCRIPTION_VERIFICATION_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 48
+
 
 @dataclass(frozen=True)
 class CampaignRecipientTokens:
     tracking_token: str | None
     unsubscribe_token: str | None
+
+
+def issue_subscription_verification_token(*, contact_id, audience_id, client_id, category):
+    payload = {
+        "contact_id": contact_id,
+        "audience_id": audience_id,
+        "client_id": client_id,
+        "category": category,
+    }
+    return signing.TimestampSigner(salt=SUBSCRIPTION_VERIFICATION_SALT).sign_object(payload)
+
+
+def read_subscription_verification_token(token):
+    """Return the signed payload for a valid, unexpired token, else None.
+
+    Any failure -- malformed, tampered, foreign salt, or expired -- returns
+    None so callers fail closed with a single opaque error.
+    """
+    if not isinstance(token, str) or not token.strip():
+        return None
+    signer = signing.TimestampSigner(salt=SUBSCRIPTION_VERIFICATION_SALT)
+    try:
+        payload = signer.unsign_object(
+            token,
+            max_age=SUBSCRIPTION_VERIFICATION_TOKEN_MAX_AGE_SECONDS,
+        )
+    except signing.BadSignature:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    expected_keys = {"contact_id", "audience_id", "client_id", "category"}
+    if set(payload) != expected_keys or not all(isinstance(payload[key], int) for key in expected_keys - {"category"}):
+        return None
+    if not isinstance(payload["category"], str):
+        return None
+    return payload
 
 
 def token_hash(raw_token):

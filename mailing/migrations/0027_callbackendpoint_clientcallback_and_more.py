@@ -8,6 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('mailing', '0025_client_relay_webhook_fields'),
+        ('mailing', '0026_emailtemplate_category_emailtemplate_markdown_body_and_more'),
     ]
 
     operations = [
