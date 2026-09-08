@@ -127,15 +127,146 @@ Use `PUT` to replace the audience tag set. Use single-tag `POST` and `DELETE` fo
 ```text
 POST /api/subscriptions/subscribe
 POST /api/subscriptions/unsubscribe
+POST /api/subscriptions/request-verification
+POST /api/subscriptions/confirm
 ```
 
-Subscribe creates the contact if needed and marks the client-scoped subscription subscribed.
+### Canonical preference categories
+
+Subscription preferences use one canonical category vocabulary. A canonical
+category name is stored as the `CategoryPreference` tag, so send-time
+suppression works through the same tag path as free-form `category_tag`
+values.
+
+| Category | Opt-out | Meaning |
+|---|---|---|
+| `newsletter` | yes | Newsletter and marketing digest sends. |
+| `events` | yes | Event announcements, reminders, and recaps. |
+| `courses` | yes | Course announcements and cohort communication. |
+| `product` | yes | Product updates and release notes. |
+| `transactional` | never | Account, security, and delivery-critical messages. Always on. |
+
+The `transactional` category is always on: a contact cannot opt out of it, and
+a transactional send tagged with `category_tag: "transactional"` is never
+suppressed by the category check.
+
+### Subscribe and unsubscribe with a category
+
+Subscribe creates the contact if needed and marks the client-scoped subscription subscribed. The optional `category` field also enables the canonical category preference for the scoped contact:
+
+```json
+{
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "category": "events"
+}
+```
 
 Unsubscribe accepts `scope` values:
 
 - `client`: unsubscribe from one client.
 - `audience`: unsubscribe from the whole audience.
 - `global`: unsubscribe from all marketing email managed by Datamailer.
+
+The optional `category` field also disables the canonical category preference for the scoped contact:
+
+```json
+{
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "scope": "client",
+  "category": "events",
+  "reason": "user_requested"
+}
+```
+
+Validation rules for `category` on both endpoints:
+
+- Unknown values are rejected with `400` and `{"category": "unknown"}`.
+- `unsubscribe` with `category: "transactional"` is rejected with `400` and
+  `{"category": "transactional_cannot_be_disabled"}`.
+
+Requests without `category` behave exactly as before: no preference row is
+created or changed.
+
+### Double opt-in
+
+Double opt-in proves a recipient wants a category before it is enabled. The
+flow is stateless on the Datamailer side: the confirmation token is signed and
+expiring, carries only ids and the category name (never a raw email), and
+requires no database row.
+
+1. The client calls `POST /api/subscriptions/request-verification`:
+
+```json
+{
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "category": "newsletter",
+  "template_key": "newsletter-double-opt-in"
+}
+```
+
+   Datamailer validates the scope, rejects `category: "transactional"` with
+   `400` and `{"category": "transactional_not_allowed"}`, and fails closed
+   with `404` and `{"template_key": "not_found"}` when the template is
+   missing, inactive, or owned by another client. It then enqueues one
+   transactional message through that template. The message context carries
+   `confirm_url`, `verification_token`, and `category`; `confirm_url` is built
+   from the `SUBSCRIPTION_CONFIRM_BASE_URL` setting plus the token, so the
+   link lands on the client site's public confirm page:
+
+```text
+{SUBSCRIPTION_CONFIRM_BASE_URL}?token=<opaque signed token>
+```
+
+   The response repeats the request scope without the token:
+
+```json
+{
+  "status": "verification_requested",
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "category": "newsletter",
+  "template_key": "newsletter-double-opt-in"
+}
+```
+
+2. The recipient opens `confirm_url` on the client site. The site extracts the
+   `token` query parameter and calls
+   `POST /api/subscriptions/confirm` with its own API key:
+
+```json
+{
+  "token": "<opaque signed token from confirm_url>"
+}
+```
+
+   Datamailer validates the signature, expiry (48 hours), and that the token
+   was issued for the authenticated client, then enables the category
+   preference (creating it when needed) and returns the resulting preference
+   state:
+
+```json
+{
+  "email": "subscriber@example.com",
+  "audience": "datatalks-club",
+  "client": "dtc-newsletter",
+  "category": {
+    "tag": "newsletter",
+    "label": "Newsletter",
+    "enabled": true
+  }
+}
+```
+
+   Confirmation is idempotent: repeating it returns the same state. A
+   malformed, tampered, expired, or foreign-client token is rejected with
+   `400` and `{"token": "invalid"}`.
 
 ## Import and Export APIs
 
@@ -327,6 +458,26 @@ Transactional sends validate required template context before Datamailer creates
 Local transactional send examples require the Datamailer server to be started with `SQS_TRANSACTIONAL_EMAIL_QUEUE_URL` configured, for example through LocalStack. With the default empty queue URL, the endpoint is documented but is not runnable because queueing provider work will fail.
 
 Transactional sends do not require marketing subscription, but they are blocked for hard bounces and complaints.
+
+A send with a `category_tag` is also suppressed when the contact opted out of
+that category (the canonical categories from the Subscription APIs section use
+the same tag path). The send is rejected with `409`, the message is stored as
+`skipped`, and the error payload names the reason and confirms the
+suppression:
+
+```json
+{
+  "error": {
+    "code": "transactional_suppressed",
+    "message": "Contact is hard-suppressed for transactional email.",
+    "reason": "category_unsubscribe",
+    "suppressed": true
+  }
+}
+```
+
+A send with `category_tag: "transactional"` is never suppressed by the
+category check.
 
 ### Transactional Message Status
 

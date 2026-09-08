@@ -105,6 +105,12 @@ urlpatterns = [
     path("api/campaigns/<str:external_key>/test-send", views.api_campaign_test_send, name="api_campaign_test_send"),
     path("api/subscriptions/subscribe", views.api_subscribe, name="api_subscribe"),
     path("api/subscriptions/unsubscribe", views.api_unsubscribe, name="api_unsubscribe"),
+    path(
+        "api/subscriptions/request-verification",
+        views.api_request_verification,
+        name="api_request_verification",
+    ),
+    path("api/subscriptions/confirm", views.api_confirm, name="api_confirm"),
     path("api/recipient-lists/<str:list_key>", views.api_recipient_list, name="api_recipient_list"),
     path(
         "api/recipient-lists/<str:list_key>/members",
