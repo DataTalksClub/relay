@@ -261,7 +261,7 @@ PUT /api/transactional/templates/{template_key}
 GET /api/transactional/templates/{template_key}
 ```
 
-Templates are scoped to the authenticated client. Use `PUT` to create or update a transactional template, and `GET` to verify the current configuration.
+Templates are scoped to the authenticated client. Use `PUT` to create or update a transactional template, and `GET` to verify the current configuration. `PUT` replaces the whole editable draft: a field omitted from the payload is cleared.
 
 ```json
 {
@@ -270,6 +270,8 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
   "subject": "Homework submission received: {{ homework_title }}",
   "html_body": "<p>Your homework submission for <strong>{{ homework_title }}</strong> in {{ course_title }} was saved.</p>",
   "text_body": "Your homework submission for {{ homework_title }} in {{ course_title }} was saved.",
+  "markdown_body": "",
+  "category": "homework",
   "required_context": [
     {"name": "course_title", "description": "Course title."},
     {"name": "homework_title", "description": "Homework title."}
@@ -281,6 +283,8 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
   "is_active": true
 }
 ```
+
+Set `markdown_body` to store a markdown draft instead of raw `html_body`/`text_body`. Markdown drafts are rendered at send and preview time with the shared email shell (header, footer, and external links opened in a new tab); the `text` part carries the substituted markdown source. `category` is a free-form label (for example `events` or `onboarding`). The `GET` response also reports `latest_version`, the newest published version number, or `null` when the template was never published.
 
 CMP transactional templates can be provisioned through the API with:
 
@@ -301,6 +305,140 @@ certificate-availability-notification
 deadline-reminder
 ```
 
+### Markdown Template Format
+
+Markdown templates are markdown bodies with a YAML frontmatter block. The frontmatter keys map to template fields:
+
+| Frontmatter key | Template field | Required |
+|---|---|---|
+| `subject` | `subject` | yes |
+| `required_context` | `required_context` | no |
+| `category` | `category` | no |
+| `name` | `name` | no, defaults to the file stem |
+| `example_context` | `example_context` | no |
+| body | `markdown_body` | yes |
+
+```markdown
+---
+subject: "You're registered: {{ event_title }}"
+category: events
+required_context:
+  - name: user_name
+    description: "Recipient name."
+  - join_url
+---
+
+Hi {{ user_name }},
+
+You're registered for **{{ event_title }}**.
+
+Join link: {{ join_url }}
+```
+
+`required_context` entries are either names or `name`/`description` mappings. Sends validate that every required key is present and non-empty in the context; missing keys fail the send with one `context.<name>: required` error per key before any contact, message, or queue work happens.
+
+Import a directory of these files as drafts with:
+
+```bash
+uv run python manage.py import_templates --dir <templates-directory> --client <client-slug>
+```
+
+The command creates one draft per `*.md` file, keyed by file stem. Re-running it updates the existing drafts. Files without a frontmatter `subject` are reported as errors and the command exits non-zero.
+
+### Publish a Template Version
+
+```text
+POST /api/transactional/templates/{template_key}/publish
+```
+
+Publishing snapshots the current draft into a new immutable version numbered `1`, `2`, ... Response `201`:
+
+```json
+{
+  "template_key": "event-registration",
+  "latest_version": 2,
+  "version": {
+    "version": 2,
+    "subject": "You're registered: {{ event_title }}",
+    "html_body": "",
+    "text_body": "",
+    "markdown_body": "Hi {{ user_name }} ...",
+    "required_context": [
+      {"name": "user_name", "description": "Recipient name."},
+      {"name": "join_url", "description": "Join link."}
+    ],
+    "category": "events",
+    "created_at": "2026-09-08T12:00:00Z"
+  }
+}
+```
+
+Published versions never change: editing the draft does not touch existing versions, and version rows cannot be updated or deleted.
+
+### List Template Versions
+
+```text
+GET /api/transactional/templates/{template_key}/versions
+```
+
+```json
+{
+  "template_key": "event-registration",
+  "latest_version": 2,
+  "versions": [
+    {"version": 2, "subject": "...", "...": "..."},
+    {"version": 1, "subject": "...", "...": "..."}
+  ]
+}
+```
+
+Versions are listed newest first. A template that was never published returns `"latest_version": null` and an empty list.
+
+### Preview a Template
+
+```text
+POST /api/transactional/templates/{template_key}/preview
+```
+
+```json
+{
+  "context": {"user_name": "Ada", "event_title": "Community Lunch", "join_url": "https://example.com/join"},
+  "template_version": 1
+}
+```
+
+`template_version` is optional; omit it to preview the current draft, or name an explicit version. The preview writes nothing and returns the rendered message plus which required context keys would have produced values:
+
+```json
+{
+  "template_key": "event-registration",
+  "template_version": 1,
+  "published": true,
+  "subject": "You're registered: Community Lunch",
+  "html_body": "<!DOCTYPE html> ... </html>",
+  "text_body": "Hi Ada, ...",
+  "missing_context": []
+}
+```
+
+Preview rendering matches sends exactly: for the same version and context, `subject`, `html_body`, and `text_body` equal what a send stores. `published` is `false` when the preview rendered the draft of a never-published template. Missing required context keys do not fail a preview; they are listed in `missing_context` (the affected placeholders render empty).
+
+### Test Send a Template
+
+```text
+POST /api/transactional/templates/{template_key}/test-send
+```
+
+```json
+{
+  "email": "staff@example.com",
+  "template_version": 1,
+  "context": {"user_name": "Ada", "event_title": "Community Lunch", "join_url": "https://example.com/join"}
+}
+```
+
+Sends one message through the normal transactional pipeline to the given address, with `"test_send": true` in the message metadata. The recipient must belong to the `TRANSACTIONAL_TEST_SEND_ALLOWLIST` deployment setting; an empty allowlist disables the endpoint entirely (`403 test_send: allowlist_not_configured`), and addresses outside the allowlist are rejected with `403 email: not_in_test_send_allowlist`. Required context is validated like a normal send.
+
 ### Send Transactional Email
 
 ```text
@@ -311,6 +449,7 @@ POST /api/transactional/send
 {
   "email": "learner@example.com",
   "template_key": "registration-welcome",
+  "template_version": 2,
   "idempotency_key": "registration-user-123",
   "context": {
     "name": "Learner",
@@ -321,6 +460,8 @@ POST /api/transactional/send
   }
 }
 ```
+
+`template_version` is optional. With it, the send renders exactly that published version; without it, the send renders the latest published version, or the draft for templates that were never published. An unknown version fails with `404 template_version: not_found`. The created message records the version it rendered, and the queue payload carries the same `template_version`.
 
 Transactional sends validate required template context before Datamailer creates a contact, message, event, or queue payload. Reusing an idempotency key returns the existing message.
 

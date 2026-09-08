@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from email.message import Message
 from uuid import uuid4
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
@@ -29,8 +30,17 @@ from mailing.services.recipient_lists import (
     validate_path_key,
 )
 from mailing.services.senders import normalize_sender_id, resolve_sender_email
-from mailing.services.transactional_catalog import validate_template_context
-from mailing.services.transactional_rendering import render_template_string
+from mailing.services.transactional_catalog import validate_context_requirements
+from mailing.services.transactional_versions import (
+    preview_transactional_template,
+    publish_transactional_template,
+    render_source_message_fields,
+    resolve_render_source,
+    validate_preview_payload,
+    validate_template_version_value,
+    version_payload,
+    versions_payload,
+)
 
 
 class TransactionalSendRejected(Exception):
@@ -82,11 +92,12 @@ def render_transactional_send(payload, template, authenticated_client):
     provider work -- lives in :func:`send_transactional_email_for_client` and is
     skipped for a dry run.
     """
+    source = resolve_render_source(template, payload["template_version"])
+    validate_context_requirements(source.required_context, payload["context"])
     sender = resolve_sender_email(
         authenticated_client,
         sender_id_for_payload(payload, template),
     )
-    validate_template_context(template, payload["context"])
     idempotency_key = payload["idempotency_key"] or build_internal_idempotency_key()
     contact, _ = upsert_contact(payload["email"])
     delivery_decision = transactional_delivery_decision(contact, payload)
@@ -94,6 +105,7 @@ def render_transactional_send(payload, template, authenticated_client):
         client=authenticated_client,
         contact=contact,
         template=template,
+        source=source,
         payload=payload,
         sender=sender,
         idempotency_key=idempotency_key,
@@ -172,6 +184,7 @@ def dry_run_response(rendered):
 def send_transactional_email_to_recipient_list_for_client(list_key, data, authenticated_client):
     payload = validate_recipient_list_send_payload(data, authenticated_client)
     template = get_transactional_template(authenticated_client, payload["template_key"])
+    source = resolve_render_source(template)
     sender = resolve_sender_email(
         authenticated_client,
         sender_id_for_payload(payload, template),
@@ -205,7 +218,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
             (member, recipient_list_member_context(payload["context"], member.metadata)) for member in members
         ]
         for _, context in member_contexts:
-            validate_template_context(template, context)
+            validate_context_requirements(source.required_context, context)
 
         for member, context in member_contexts:
             idempotency_key = f"{payload['idempotency_key']}:{member.source_object_key}"
@@ -241,6 +254,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
                     client=authenticated_client,
                     contact=member.contact,
                     template=template,
+                    source=source,
                     payload=message_payload,
                     sender=sender,
                     idempotency_key=idempotency_key,
@@ -263,6 +277,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
                 client=authenticated_client,
                 contact=member.contact,
                 template=template,
+                source=source,
                 payload=message_payload,
                 sender=sender,
                 idempotency_key=idempotency_key,
@@ -311,6 +326,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
 def send_transactional_email_to_transient_recipient_list_for_client(data, authenticated_client):
     payload = validate_transient_recipient_list_send_payload(data, authenticated_client)
     template = get_transactional_template(authenticated_client, payload["template_key"])
+    source = resolve_render_source(template)
     sender = resolve_sender_email(
         authenticated_client,
         sender_id_for_payload(payload, template),
@@ -322,7 +338,7 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
         for member in active_members
     ]
     for _, context in member_contexts:
-        validate_template_context(template, context)
+        validate_context_requirements(source.required_context, context)
 
     queued_message_ids = []
     created_count = 0
@@ -365,6 +381,7 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
                     client=authenticated_client,
                     contact=contact,
                     template=template,
+                    source=source,
                     payload=message_payload,
                     sender=sender,
                     idempotency_key=idempotency_key,
@@ -387,6 +404,7 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
                 client=authenticated_client,
                 contact=contact,
                 template=template,
+                source=source,
                 payload=message_payload,
                 sender=sender,
                 idempotency_key=idempotency_key,
@@ -473,6 +491,11 @@ def validate_transactional_send_payload(data, authenticated_client):
     if not isinstance(template_key, str) or not template_key.strip():
         errors["template_key"] = "required"
 
+    try:
+        template_version = validate_template_version_value(data.get("template_version"))
+    except ApiValidationError as exc:
+        errors.update(exc.errors)
+
     idempotency_key = data.get("idempotency_key", "")
     if idempotency_key in (None, ""):
         idempotency_key = ""
@@ -530,6 +553,7 @@ def validate_transactional_send_payload(data, authenticated_client):
     return {
         "email": email.strip(),
         "template_key": template_key.strip(),
+        "template_version": template_version,
         "idempotency_key": idempotency_key,
         "context": context,
         "metadata": metadata | ({"category_tag": category_tag} if category_tag else {}),
@@ -724,6 +748,68 @@ def get_transactional_template(client, template_key):
     return template
 
 
+def publish_transactional_template_for_client(template_key, authenticated_client):
+    """Snapshot the current draft of one client template into a new version."""
+    template = get_transactional_template(authenticated_client, template_key)
+    version = publish_transactional_template(template)
+    return {
+        "template_key": template.key,
+        "latest_version": version.version,
+        "version": version_payload(version),
+    }
+
+
+def get_transactional_template_versions_for_client(template_key, authenticated_client):
+    template = get_transactional_template(authenticated_client, template_key)
+    return versions_payload(template)
+
+
+def preview_transactional_template_for_client(template_key, data, authenticated_client):
+    template = get_transactional_template(authenticated_client, template_key)
+    context, version_number = validate_preview_payload(data)
+    return preview_transactional_template(template, context, version_number)
+
+
+def test_send_transactional_template_for_client(template_key, data, authenticated_client):
+    """Send one version (or the draft) to an allowlisted staff address.
+
+    The allowlist is the guard that keeps test sends off arbitrary recipients;
+    the send itself is a normal durable transactional send (contact, message,
+    events, queue payload). An empty allowlist disables test sends entirely.
+    """
+    template = get_transactional_template(authenticated_client, template_key)
+
+    email = data.get("email")
+    if not isinstance(email, str) or not email.strip():
+        raise ApiValidationError({"email": "required"})
+    email = normalize_email(email.strip())
+
+    allowlist = {normalize_email(item) for item in settings.TRANSACTIONAL_TEST_SEND_ALLOWLIST}
+    if not allowlist:
+        raise ApiValidationError({"test_send": "allowlist_not_configured"}, status_code=403)
+    if email not in allowlist:
+        raise ApiValidationError({"email": "not_in_test_send_allowlist"}, status_code=403)
+
+    context = data.get("context", {})
+    if context in (None, ""):
+        context = {}
+    if not isinstance(context, dict):
+        raise ApiValidationError({"context": "must_be_object"})
+
+    result = send_transactional_email_for_client(
+        {
+            "email": email,
+            "template_key": template.key,
+            "template_version": data.get("template_version"),
+            "idempotency_key": f"test-send:{uuid4()}",
+            "context": context,
+            "metadata": {"test_send": True},
+        },
+        authenticated_client,
+    )
+    return result | {"test_recipient": email}
+
+
 def validate_optional_email_address(data, field, errors):
     value = data.get(field, "")
     if value in (None, ""):
@@ -903,12 +989,13 @@ def transactional_delivery_decision(contact, payload):
     return {"allowed": True, "reason": ""}
 
 
-def build_transactional_message(*, client, contact, template, payload, sender, idempotency_key, status, last_error=""):
+def build_transactional_message(*, client, contact, template, source, payload, sender, idempotency_key, status, last_error=""):
     """Build a fully rendered TransactionalMessage WITHOUT saving it.
 
     Shared verbatim by a real send and a dry-run send: both render the same
-    subject/html/text from the same context. Only the real send persists the
-    result (see :func:`create_transactional_message`).
+    subject/html/text from the same render source (a published version, or the
+    draft for templates never published) and context. Only the real send
+    persists the result (see :func:`create_transactional_message`).
     """
     context = payload["context"]
     metadata = payload["metadata"]
@@ -922,6 +1009,7 @@ def build_transactional_message(*, client, contact, template, payload, sender, i
         metadata = metadata | {"headers": payload["headers"]}
     if payload.get("message_parts"):
         metadata = metadata | {"message_parts": payload["message_parts"]}
+    rendered = render_source_message_fields(source, context)
     return TransactionalMessage(
         client=client,
         contact=contact,
@@ -930,11 +1018,12 @@ def build_transactional_message(*, client, contact, template, payload, sender, i
         from_email=sender.email,
         template=template,
         template_key=template.key,
+        template_version=source.version_number,
         status=status,
         idempotency_key=idempotency_key,
-        subject=render_template_string(template.subject, context),
-        html_body=render_template_string(template.html_body, context),
-        text_body=render_template_string(template.text_body, context),
+        subject=rendered["subject"],
+        html_body=rendered["html_body"],
+        text_body=rendered["text_body"],
         context=context,
         metadata=metadata,
         last_error=last_error,
@@ -971,6 +1060,8 @@ def build_transactional_queue_payload(message):
         "idempotency_key": message.idempotency_key,
         "metadata": message.metadata,
     }
+    if message.template_version is not None:
+        payload["template_version"] = message.template_version
     return validate_transactional_email_message(payload)
 
 

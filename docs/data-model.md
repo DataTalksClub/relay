@@ -265,7 +265,7 @@ Growth plan:
 
 ### email_templates
 
-Reusable transactional and campaign templates.
+Reusable transactional and campaign templates. The row is the editable draft.
 
 Important fields:
 
@@ -276,9 +276,32 @@ Important fields:
 - `subject`
 - `html_body`
 - `text_body`
+- `markdown_body`: markdown source for imported markdown templates; rendered at send and preview time
+- `category`
+- `required_context`
 - `is_transactional`
 - `created_at`
 - `updated_at`
+
+### email_template_versions
+
+Immutable published snapshots of one template draft, created by `POST /api/transactional/templates/{key}/publish`.
+
+Important fields:
+
+- `id`
+- `template_id`
+- `version`: positive integer, unique per template, assigned as max version plus one
+- `subject`
+- `html_body`
+- `text_body`
+- `markdown_body`
+- `required_context`
+- `category`
+- `created_at`
+- `updated_at`
+
+Rows are write-once: publishes always create a new version number, and existing rows refuse update and delete.
 
 ### transactional_messages
 
@@ -292,6 +315,7 @@ Important fields:
 - `email`
 - `template_id`
 - `template_key`
+- `template_version`: published version the message rendered, `null` when the draft was used (template never published)
 - `status`: `queued`, `sent`, `failed`, `skipped`, `bounced`, `complained`
 - `idempotency_key`
 - `ses_message_id`
