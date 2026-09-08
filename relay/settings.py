@@ -260,3 +260,12 @@ SES_WEBHOOKS_SIGNATURE_MODE = os.environ.get(
     "mock" if DEBUG or TESTING else "strict",
 )
 SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION = bool_env("SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION", default=False)
+
+# Transactional template test sends go only to these addresses (R1.3).
+# Empty disables test-send entirely.
+TRANSACTIONAL_TEST_SEND_ALLOWLIST = csv_env("TRANSACTIONAL_TEST_SEND_ALLOWLIST", "", allow_empty=True)
+
+# Shared email shell branding and the site host treated as internal by the
+# markdown external-link rewriter (ported from the AISL email pipeline).
+RELAY_EMAIL_BRAND_NAME = os.environ.get("RELAY_EMAIL_BRAND_NAME", "Relay")
+RELAY_EMAIL_SITE_BASE_URL = os.environ.get("RELAY_EMAIL_SITE_BASE_URL", "")
