@@ -68,6 +68,21 @@ deploy script reuses that file and never prints its values.
 Terraform writes non-secret AWS resource names and the task-scoped email IAM
 role ARN to `/etc/relay/infrastructure.env`.
 
+## Operator sign-in
+
+Shared Cognito login is the only way into `/admin/` and the operator UI. There
+is no local password form and no address allowlist on a deployed host: every
+operator arrives through the identity provider, and the callback creates the
+Django user without a usable password. If the identity provider is unreachable,
+recovery is a shell on the host, not a login page.
+
+Each deployment therefore has to name its own pool and hostname. The host
+environment must set `AUTH_BASE_URL`, `AUTH_CLIENT_ID`, `AUTH_CALLBACK_URL` and
+`AUTH_ISSUER`; Django refuses to start with `DEBUG=False` and any of them
+missing. `AUTH_CALLBACK_URL` is `https://<this host>/auth/callback` and the user
+pool client must list it as an allowed redirect URI, otherwise sign-in stops at
+the provider. `AUTH_LOGOUT_URL` and `AUTH_JWKS_URL` are optional.
+
 ## Roll back
 
 Pick a known-good commit from the Relay repository, then run the same deploy
