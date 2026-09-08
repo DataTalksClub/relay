@@ -24,6 +24,7 @@ from mailing.models import (
     TransactionalMessageStatus,
 )
 from mailing.queue_contracts import CONTRACT_VERSION, SES_WEBHOOKS_CONTRACT, validate_ses_webhook_message
+from mailing.services.client_callbacks import emit_client_callback, is_hard_bounce
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 
 SNS_NOTIFICATION = "Notification"
@@ -305,6 +306,10 @@ def apply_correlated_updates(payload, source, event):
         notification_type == "bounce" and is_hard_bounce(metadata)
     ):
         emit_cmp_contact_event(event)
+    # Every correlated transactional transition is client-visible on the
+    # client callback channel, including soft bounces: reason_code carries
+    # the hard/soft distinction.
+    emit_client_callback(event)
 
 
 def apply_campaign_recipient_update(recipient, notification_type, occurred_at, metadata):
@@ -417,12 +422,6 @@ def mark_complained(contact, occurred_at):
         complained_at=occurred_at,
         updated_at=timezone.now(),
     )
-
-
-def is_hard_bounce(metadata):
-    bounce_type = (metadata.get("bounce_type") or "").casefold()
-    bounce_sub_type = (metadata.get("bounce_sub_type") or "").casefold()
-    return bounce_type == "permanent" or bounce_sub_type in {"general", "suppressed", "onaccountsuppressionlist"}
 
 
 def event_timestamp(payload):

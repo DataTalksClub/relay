@@ -245,6 +245,7 @@ set_memory_args() {
     relay-scheduler) memory_args=(--memory 96m) ;;
     relay-ses-ingress) memory_args=(--memory 128m) ;;
     relay-cmp-callbacks) memory_args=(--memory 96m) ;;
+    relay-client-callbacks) memory_args=(--memory 96m) ;;
     relay-recipient-imports) memory_args=(--memory 128m) ;;
   esac
 }
@@ -333,6 +334,9 @@ fi
 set_memory_args relay-cmp-callbacks
 replace_container relay-cmp-callbacks "${app_container_args[@]}" \
   python manage.py process_cmp_callbacks --batch-size 25 --idle-sleep 5
+set_memory_args relay-client-callbacks
+replace_container relay-client-callbacks "${app_container_args[@]}" \
+  python manage.py process_client_callbacks --batch-size 25 --idle-sleep 5
 set_memory_args relay-recipient-imports
 replace_container relay-recipient-imports "${app_container_args[@]}" \
   python manage.py process_recipient_list_imports --batch-size 10 --idle-sleep 5
@@ -356,6 +360,7 @@ if [[ "$environment" == sandbox ]]; then
     relay-ses-ingress
     relay-inbound-ingress
     relay-cmp-callbacks
+    relay-client-callbacks
     relay-recipient-imports
     relay-caddy
   )
@@ -366,6 +371,7 @@ else
     relay-scheduler
     relay-ses-ingress
     relay-cmp-callbacks
+    relay-client-callbacks
     relay-recipient-imports
   )
 fi

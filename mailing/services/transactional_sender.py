@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from mailing.aws import ses_client
 from mailing.models import EmailEvent, EmailEventType, TransactionalMessage, TransactionalMessageStatus
+from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.ses import send_email
 
@@ -191,6 +192,7 @@ def _append_event(message, event_type, metadata):
         metadata=metadata,
     )
     emit_cmp_contact_event(event)
+    emit_client_callback(event)
     return event
 
 

@@ -1,11 +1,14 @@
+from django import forms
 from django.contrib import admin
 
 from mailing.models import (
     Audience,
+    CallbackEndpoint,
     Campaign,
     CampaignRecipient,
     Client,
     ClientApiKey,
+    ClientCallback,
     CmpCallback,
     Contact,
     ContactTag,
@@ -269,6 +272,31 @@ class EmailEventAdmin(admin.ModelAdmin):
     autocomplete_fields = ("campaign", "campaign_recipient", "transactional_message", "contact", "client", "audience")
 
 
+class CallbackEndpointForm(forms.ModelForm):
+    """Keeps the signing secret write-only: blank keeps the current secret."""
+
+    class Meta:
+        model = CallbackEndpoint
+        fields = "__all__"
+        widgets = {"signing_secret": forms.PasswordInput(render_value=False)}
+
+    def clean_signing_secret(self):
+        new_secret = self.cleaned_data.get("signing_secret", "")
+        if not new_secret and self.instance and self.instance.pk:
+            return self.instance.signing_secret
+        return new_secret
+
+
+@admin.register(CallbackEndpoint)
+class CallbackEndpointAdmin(admin.ModelAdmin):
+    form = CallbackEndpointForm
+    readonly_fields = ("created_at", "updated_at", "secret_rotated_at", "disabled_at")
+    list_display = ("client", "enabled", "url", "contract_version", "secret_rotated_at", "updated_at")
+    list_filter = ("enabled",)
+    search_fields = ("client__name", "client__slug", "url")
+    autocomplete_fields = ("client",)
+
+
 @admin.register(CmpCallback)
 class CmpCallbackAdmin(admin.ModelAdmin):
     readonly_fields = (
@@ -298,6 +326,35 @@ class CmpCallbackAdmin(admin.ModelAdmin):
         "last_error",
     )
     autocomplete_fields = ("email_event", "contact", "client", "audience")
+
+
+@admin.register(ClientCallback)
+class ClientCallbackAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
+    readonly_fields = (
+        "updated_at",
+        "last_attempt_at",
+        "delivered_at",
+        "body_hash",
+    )
+    list_display = (
+        "event_type",
+        "status",
+        "client",
+        "attempt_count",
+        "next_attempt_at",
+        "delivered_at",
+        "created_at",
+    )
+    list_filter = ("status", "event_type", "client")
+    search_fields = (
+        "event_id",
+        "event_type",
+        "client_reference",
+        "client__name",
+        "client__slug",
+        "last_error",
+    )
+    autocomplete_fields = ("email_event", "transactional_message", "campaign_recipient", "client", "endpoint")
 
 
 @admin.register(MailchimpTagMapping)

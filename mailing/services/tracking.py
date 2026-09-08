@@ -5,6 +5,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from mailing.models import Campaign, CampaignRecipient, CampaignRecipientStatus, EmailEvent, EmailEventType
+from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.services.contacts import unsubscribe_contact
 from mailing.services.tokens import get_recipient_by_tracking_token, get_recipient_by_unsubscribe_token
@@ -50,6 +51,7 @@ def record_open(raw_token):
     recipient.save(update_fields=update_fields)
     event = _create_campaign_event(recipient, EmailEventType.OPEN)
     emit_cmp_contact_event(event)
+    emit_client_callback(event)
     refresh_campaign_engagement_counts(recipient.campaign)
     return recipient
 
@@ -81,6 +83,7 @@ def record_click(raw_token, destination_url):
     recipient.save(update_fields=update_fields)
     event = _create_campaign_event(recipient, EmailEventType.CLICK, url=destination_url)
     emit_cmp_contact_event(event)
+    emit_client_callback(event)
     refresh_campaign_engagement_counts(recipient.campaign)
     return recipient
 
@@ -128,6 +131,7 @@ def apply_unsubscribe(raw_token, scope):
         metadata={"scope": scope},
     )
     emit_cmp_contact_event(event)
+    emit_client_callback(event)
     refresh_campaign_engagement_counts(campaign)
     return recipient
 

@@ -26,10 +26,12 @@ from mailing.forms import (
 )
 from mailing.models import (
     Audience,
+    CallbackEndpoint,
     Campaign,
     CampaignStatus,
     Client,
     ClientApiKey,
+    ClientCallback,
     CmpCallback,
     EmailEvent,
     EmailEventType,
@@ -50,6 +52,7 @@ from mailing.services.api import (
     get_contact_preferences_for_client,
     get_contact_status_for_client,
     get_transactional_message_status_for_client,
+    get_transactional_messages_since_for_client,
     get_transactional_template_for_client,
     preview_campaign_for_client,
     queue_campaign_for_client,
@@ -342,7 +345,10 @@ def transactional_message_detail(request, message_id):
         {"event": event, "context": event_context(event), "metadata_summary": metadata_summary(event.metadata)}
         for event in events
     ]
-    callback_rows = CmpCallback.objects.filter(
+    callback_rows = ClientCallback.objects.filter(
+        transactional_message=message,
+    ).order_by("sequence")
+    cmp_callback_rows = CmpCallback.objects.filter(
         email_event__transactional_message=message,
     ).order_by("-created_at", "-id")
     return render(
@@ -353,6 +359,7 @@ def transactional_message_detail(request, message_id):
             "badge": Badge(message.get_status_display(), delivery_tone(message.status)),
             "event_rows": event_rows,
             "callback_rows": callback_rows,
+            "cmp_callback_rows": cmp_callback_rows,
             "metadata_summary": metadata_summary(message.metadata),
         },
     )
@@ -856,6 +863,11 @@ def client_detail(request, client_id):
         raw_api_key_context = request.session.pop("operator_raw_api_key")
     key_form = ClientApiKeyForm(client=client)
     api_keys = client_api_keys_for_detail(client)
+    client_callbacks = (
+        ClientCallback.objects.filter(client=client)
+        .select_related("endpoint")
+        .order_by("-created_at", "-id")[:10]
+    )
     cmp_callbacks = (
         CmpCallback.objects.filter(client=client)
         .select_related("contact", "email_event")
@@ -876,6 +888,8 @@ def client_detail(request, client_id):
             "revoked_key_count": sum(1 for api_key in api_keys if api_key.revoked_at is not None),
             "key_form": key_form,
             "raw_api_key_context": raw_api_key_context,
+            "client_callbacks": client_callbacks,
+            "callback_endpoint": CallbackEndpoint.objects.filter(client=client).first(),
             "cmp_callbacks": cmp_callbacks,
             "mailchimp_status": mailchimp_status_payload(client),
             "mailchimp_syncs": mailchimp_syncs,
@@ -1411,6 +1425,22 @@ def api_transactional_message_status(request, message_id):
             message_id,
             client,
         )
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+def api_transactional_messages_reconcile(request):
+    if request.method != "GET":
+        return method_not_allowed_response(["GET"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = get_transactional_messages_since_for_client(request.GET.get("since"), client)
     except ApiValidationError as exc:
         return validation_error_response(exc)
 

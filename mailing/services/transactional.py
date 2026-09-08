@@ -34,6 +34,7 @@ from mailing.services.categories import (
     subscription_confirm_url,
     validate_canonical_category,
 )
+from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.services.contacts import is_transactional_email_allowed, normalize_email, upsert_contact
 from mailing.services.recipient_lists import (
@@ -1153,6 +1154,7 @@ def append_transactional_event(message, event_type, metadata):
         metadata=metadata,
     )
     emit_cmp_contact_event(event)
+    emit_client_callback(event)
     return event
 
 

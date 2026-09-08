@@ -885,6 +885,235 @@ Sandbox deploys install this dispatcher as `datamailer-cmp-callbacks-worker`.
 Operators can inspect recent callback status, attempt counts, next retry time,
 delivery time, and the last error from the client detail page and Django admin.
 
+## Client Callbacks
+
+When a callback endpoint is configured for a client, Relay announces delivery
+and engagement transitions for that client with signed, versioned, redacted
+JSON events. This channel is additive to the CMP callback contract above. It
+carries transactional deliveries and client-level subscription changes for
+unification-plan clients; campaign-recipient transitions stay on the CMP
+channel. Payloads carry identifiers and safe reason codes only, so a consumer
+can log and store them as-is.
+
+### Configuration
+
+One endpoint per client, managed by operators on the client record:
+
+| Field | Meaning |
+|---|---|
+| URL | The one HTTPS endpoint Relay posts to. Per-message URLs and redirects to other origins are not permitted. |
+| Signing secret | Dedicated HMAC signing secret, separate from every client API key. Write-only: it is shown once at provisioning and never returned afterwards. |
+| Previous signing secret | Retained during a rotation for a bounded verification overlap; the receiver accepts either secret until the overlap ends. |
+| Contract version | Integer version of the event payload, currently `1`. |
+| Enabled | Disablement stops all deliveries immediately; in-flight pending callbacks fail terminally with `endpoint_disabled`. |
+
+Real secret provisioning is infrastructure work and uses approved
+server-side secret handling; secrets never appear in URLs, logs, errors, or
+docs examples.
+
+### Event types and reason codes
+
+Relay posts these event types after the corresponding transport state commits:
+
+| Event type | Fired on | Reason codes |
+|---|---|---|
+| `delivery.accepted` | message queued, then handed to the provider | none |
+| `delivery.delivered` | provider confirmed delivery | none |
+| `delivery.bounced` | provider reported a bounce | `hard_bounce`, `soft_bounce` |
+| `delivery.complained` | recipient filed a complaint | `complaint` |
+| `delivery.suppressed` | send was suppressed before delivery | `unverified`, `invalid_email`, `global_unsubscribe`, `client_unsubscribe`, `audience_unsubscribe`, `hard_bounce`, `complaint`, `duplicate`, `category_unsubscribe`, `missing_category_scope`, `suppressed` |
+| `engagement.opened` | tracked open | none |
+| `engagement.clicked` | tracked click | none |
+| `subscription.changed` | subscribe or unsubscribe state changed | `subscribed`, `unsubscribed` |
+
+`reason_code` is omitted when the table shows "none". A permanently failed
+send is not announced on this channel; the synchronous send response and the
+reconciliation endpoint below carry that outcome.
+
+### Payload
+
+The body is the canonical JSON serialization of the event (sorted keys, no
+whitespace), signed exactly as sent on every attempt:
+
+```json
+{
+  "bounce_type": "hard",
+  "client_reference": "registration-user-123",
+  "contract_version": 1,
+  "event_id": "dd8b8f17-6d55-5094-ae45-83cd8ac37b96",
+  "event_type": "delivery.bounced",
+  "message_id": "1042",
+  "reason_code": "hard_bounce",
+  "sequence": 3,
+  "template_key": "registration-welcome",
+  "timestamp": "2026-09-08T12:00:00+00:00"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `contract_version` | Payload contract version. Additive changes do not bump it; removing or repurposing a field does. |
+| `event_id` | Stable UUID for one transition. Duplicate deliveries of the same event reuse the id, so receivers can deduplicate on it. |
+| `event_type` | One of the types above. |
+| `timestamp` | When the transition committed (ISO 8601). |
+| `sequence` | 1-based counter per message. Ordering of deliveries is best-effort (retries reorder); use `sequence` to reorder if you need strict ordering. |
+| `message_id` | Relay transactional message id as a string; `null` for contact-level transitions such as subscription changes. |
+| `client_reference` | Your idempotency key from the original send; `null` when the transition has no transactional message. |
+| `template_key` | Template key for transactional messages, empty otherwise. |
+| `bounce_type` | `hard` or `soft`; present only on `delivery.bounced`. |
+| `reason_code` | Safe reason code from the table above, when applicable. |
+
+The payload contains nothing else. No recipient address, subject, body,
+template context, custom headers, credentials, raw provider payload, or
+arbitrary metadata is ever included.
+
+### Signature headers
+
+Every request carries:
+
+| Header | Meaning |
+|---|---|
+| `X-Relay-Timestamp` | Unix timestamp of the attempt |
+| `X-Relay-Signature` | `sha256=` + HMAC-SHA256 over `<timestamp>.<raw-json-body>` with the callback signing secret |
+| `X-Relay-Event-Id` | the `event_id`, for quick routing and dedup |
+| `X-Relay-Event-Type` | the `event_type` |
+| `X-Relay-Contract-Version` | the `contract_version` |
+| `X-Relay-Attempt` | 1-based attempt counter |
+
+There is no `Authorization` header and no Bearer credential. The signature
+scheme is identical to webhook task deliveries.
+
+A deterministic verification fixture lives at
+`tests/fixtures/client_callback_contract_v1.json`: it contains a canonical
+body, a signing secret, a timestamp, and the expected signature, plus a
+rotated-secret signature. Consumer contract tests should verify the fixture
+instead of inventing their own vectors.
+
+### Reference receiver
+
+The receiver verifies origin and freshness with the callback signing secret.
+The replay window is part of the receiver's contract; 5 minutes is a workable
+default. During a rotation, verify against the current secret and then the
+previous one.
+
+```python
+import hashlib
+import hmac
+import time
+
+REPLAY_WINDOW_SECONDS = 300
+
+
+class Reject(Exception):
+    pass
+
+
+def verify_relay_callback(body: bytes, headers: dict, secrets: list[str], *, now=None) -> None:
+    """Verify X-Relay-* headers on a client callback delivery. Raises Reject."""
+    now = now or time.time()
+    timestamp = headers.get("X-Relay-Timestamp", "")
+    signature = headers.get("X-Relay-Signature", "")
+    try:
+        stamp = int(timestamp)
+    except ValueError:
+        raise Reject("missing or malformed timestamp") from None
+    if abs(now - stamp) > REPLAY_WINDOW_SECONDS:
+        raise Reject("timestamp outside replay window")
+    expected = [
+        "sha256="
+        + hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+        for secret in secrets
+    ]
+    if not any(hmac.compare_digest(candidate, signature) for candidate in expected):
+        raise Reject("bad signature")
+```
+
+### Delivery, retries, and deduplication
+
+Callback rows are created in the same transaction as the transport state they
+announce and dispatched only after that transaction commits, so a committed
+transition is never silently missing its callback. A duplicate transition
+never creates a second row: work is deduplicated on client plus `event_id`.
+
+Delivery responds to a receiver that answers `2xx`. Duplicate successful
+acknowledgements are treated as success. Relay retries:
+
+| Outcome | Class |
+|---|---|
+| Connection error or timeout | retry with bounded exponential backoff |
+| HTTP `429` | retry with bounded exponential backoff |
+| HTTP `5xx` | retry with bounded exponential backoff |
+| Any other `4xx` | fail terminally |
+| Redirect (`3xx`) | fail terminally; redirects are never followed |
+| Endpoint disabled | fail terminally as `endpoint_disabled` |
+| Retry exhaustion | fail terminally |
+
+Backoff starts at 60 seconds and doubles per attempt, capped at 6 hours, with
+a small deterministic jitter. Relay records the attempt count, the response
+status class (`2xx`/`3xx`/`4xx`/`5xx`), a safe error code, and the next
+attempt time. Response bodies and headers are never stored.
+
+Callback failure never regresses Relay transport state: a delivered message
+stays delivered whether or not the callback succeeded. If callbacks are
+delayed or lost, reconcile against `GET /api/transactional/messages?since=`
+(described next).
+
+Run the dispatcher with:
+
+```bash
+python manage.py process_client_callbacks --batch-size 25
+```
+
+Sandbox deploys install this dispatcher as
+`datamailer-client-callbacks-worker`. Operators can inspect recent callback
+status, attempt counts, next retry time, delivery time, and the last safe
+error from the client detail page and Django admin.
+
+## Transactional Message Reconciliation
+
+`GET /api/transactional/messages?since=<iso8601>` returns every transactional
+message of the authenticated client whose `updated_at` is at or after
+`since`, oldest first, capped at 1000 rows. It is the pull-based complement
+to client callbacks and the authoritative view for recovery after missed or
+failed callback deliveries.
+
+Authentication and errors are the same as the rest of the client API: Bearer
+client API key; a missing or unparseable `since` returns `validation_error`.
+
+```text
+GET /api/transactional/messages?since=2026-09-08T00:00:00%2B00:00
+```
+
+Response:
+
+```json
+{
+  "messages": [
+    {
+      "id": "1042",
+      "client_reference": "registration-user-123",
+      "status": "bounced",
+      "template_key": "registration-welcome",
+      "template_version": 1,
+      "reason_code": "hard_bounce",
+      "updated_at": "2026-09-08T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | Transactional message id as a string. |
+| `client_reference` | The idempotency key from the original send. |
+| `status` | `queued`, `retrying` (in flight to the provider), `sent` (accepted by the provider), `delivered`, `suppressed`, `failed`, `bounced` (hard bounce), or `complained`. |
+| `template_key` | Template key the message was sent with. |
+| `template_version` | Published template version the message was sent with; `1` for messages sent before versions were recorded. |
+| `reason_code` | Safe reason code, empty when there is nothing to report; provider diagnostics are never included. |
+| `updated_at` | ISO 8601; use it as the next poll's `since`. |
+
+Messages without an idempotency key are never reported.
+
 ## Mailchimp Sync
 
 Datamailer can push contacts into a client's Mailchimp audience with a tag when

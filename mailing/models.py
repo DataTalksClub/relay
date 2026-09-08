@@ -737,6 +737,136 @@ class EmailEvent(models.Model):
         return f"{self.event_type} at {self.created_at}"
 
 
+class CallbackEndpoint(TimeStampedModel):
+    """Tenant-scoped callback destination and signing secret.
+
+    One endpoint per client. The signing secret is a dedicated callback
+    credential, separate from every client API key, and is write-only once
+    provisioned: it is never serialized by any API or operator view. Rotation
+    keeps the previous secret for a bounded verification overlap so a receiver
+    can verify either secret while the switch propagates.
+    """
+
+    client = models.OneToOneField(Client, on_delete=models.CASCADE, related_name="callback_endpoint")
+    url = models.URLField(max_length=2048)
+    signing_secret = models.CharField(max_length=255)
+    previous_signing_secret = models.CharField(max_length=255, blank=True)
+    secret_rotated_at = models.DateTimeField(null=True, blank=True)
+    contract_version = models.PositiveIntegerField(default=1)
+    enabled = models.BooleanField(default=True)
+    disabled_at = models.DateTimeField(null=True, blank=True)
+    disabled_reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = "callback_endpoints"
+        ordering = ["client__organization__slug", "client__slug"]
+
+    def rotate_secret(self, new_secret, *, rotated_at):
+        self.previous_signing_secret = self.signing_secret
+        self.signing_secret = new_secret
+        self.secret_rotated_at = rotated_at
+        self.save(update_fields=["previous_signing_secret", "signing_secret", "secret_rotated_at", "updated_at"])
+
+    def disable(self, reason, *, disabled_at):
+        self.enabled = False
+        self.disabled_at = disabled_at
+        self.disabled_reason = reason[:255]
+        self.save(update_fields=["enabled", "disabled_at", "disabled_reason", "updated_at"])
+
+    def enable(self):
+        self.enabled = True
+        self.disabled_at = None
+        self.disabled_reason = ""
+        self.save(update_fields=["enabled", "disabled_at", "disabled_reason", "updated_at"])
+
+    def __str__(self):
+        state = "enabled" if self.enabled else "disabled"
+        return f"{self.client.slug} callback endpoint ({state})"
+
+
+class ClientCallbackStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    DELIVERED = "delivered", "Delivered"
+    FAILED = "failed", "Failed"
+
+
+class ClientCallback(TimeStampedModel):
+    """Outbox row for one tenant-scoped, versioned, redacted callback event.
+
+    Created in the same transaction as the transport transition it announces
+    and dispatched only after that transaction commits. The exact canonical
+    body and its hash are persisted, so every attempt signs and sends the same
+    logical event. Rows carry no recipient, body, context, credential, or raw
+    provider data: redaction is enforced at creation, not at delivery.
+    """
+
+    client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="client_callbacks")
+    endpoint = models.ForeignKey(CallbackEndpoint, on_delete=models.PROTECT, related_name="callbacks")
+    email_event = models.ForeignKey(
+        EmailEvent,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="client_callbacks",
+    )
+    transactional_message = models.ForeignKey(
+        TransactionalMessage,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="client_callbacks",
+    )
+    campaign_recipient = models.ForeignKey(
+        CampaignRecipient,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="client_callbacks",
+    )
+    event_id = models.UUIDField(unique=True, editable=False)
+    event_type = models.CharField(max_length=80)
+    contract_version = models.PositiveIntegerField(default=1)
+    client_reference = models.CharField(max_length=255, blank=True)
+    message_kind = models.CharField(max_length=20, blank=True)
+    message_ref = models.CharField(max_length=64, blank=True)
+    template_key = models.CharField(max_length=120, blank=True)
+    sequence = models.PositiveIntegerField(default=0)
+    payload = models.JSONField(default=dict)
+    body = models.TextField()
+    body_hash = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=20,
+        choices=ClientCallbackStatus.choices,
+        default=ClientCallbackStatus.PENDING,
+    )
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=8)
+    next_attempt_at = models.DateTimeField(db_index=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    response_status_class = models.CharField(max_length=8, blank=True)
+    last_error_code = models.CharField(max_length=64, blank=True)
+    last_error = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        db_table = "client_callbacks"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["client", "event_id"], name="unique_client_callback_event"),
+        ]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="client_cb_status_next_idx"),
+            models.Index(fields=["client", "status", "created_at"], name="client_cb_cli_status_idx"),
+            models.Index(
+                fields=["client", "message_kind", "message_ref", "sequence"],
+                name="client_cb_msg_seq_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} {self.event_id} ({self.status})"
+
+
 class CmpCallbackStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     DELIVERED = "delivered", "Delivered"

@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from mailing.models import (
     Client,
+    ClientCallback,
     CmpCallback,
     CmpCallbackStatus,
     Contact,
@@ -22,6 +23,7 @@ from mailing.models import (
 from mailing.services.cmp_callbacks import process_due_cmp_callbacks
 from mailing.services.transactional import build_transactional_queue_payload
 from mailing.sqs import records_from_messages
+from mailing.tests.callback_helpers import create_callback_endpoint
 from mailing.workers import transactional_email_handler
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -399,6 +401,7 @@ def test_post_ses_failure_does_not_send_again_on_retry(transactional_message, mo
 @override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
 def test_permanent_ses_failure_marks_failed_and_acknowledges(transactional_message, monkeypatch):
     posts = collect_cmp_callbacks(monkeypatch)
+    create_callback_endpoint(transactional_message.client)
 
     class PermanentSesClient:
         def send_email(self, **params):
@@ -420,6 +423,8 @@ def test_permanent_ses_failure_marks_failed_and_acknowledges(transactional_messa
     assert transactional_message.ses_message_id == ""
     assert transactional_message.last_error == "MessageRejected: Address rejected"
     assert event.metadata["reason"] == "ses_permanent_failure"
+    # A permanently failed send is CMP-channel only; the client callback
+    # contract announces it through reconciliation instead.
     assert CmpCallback.objects.filter(status=CmpCallbackStatus.PENDING).count() == 1
     process_due_cmp_callbacks()
     assert len(posts) == 1
@@ -429,6 +434,7 @@ def test_permanent_ses_failure_marks_failed_and_acknowledges(transactional_messa
     assert posts[0]["json"]["email"] == transactional_message.email
     assert posts[0]["json"]["client"] == transactional_message.client.slug
     assert posts[0]["json"]["metadata"]["reason"] == "ses_permanent_failure"
+    assert ClientCallback.objects.count() == 0
 
 
 def test_mixed_batch_retries_only_invalid_and_transient_records(transactional_message, monkeypatch):

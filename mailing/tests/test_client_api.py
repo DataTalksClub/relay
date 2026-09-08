@@ -7,12 +7,14 @@ from django.utils import timezone
 
 from mailing.models import (
     Audience,
+    CallbackEndpoint,
     Campaign,
     CampaignRecipient,
     CampaignRecipientStatus,
     CategoryPreference,
     Client,
     ClientApiKey,
+    ClientCallback,
     CmpCallback,
     Contact,
     ContactSourceMetadata,
@@ -1057,7 +1059,24 @@ def test_contact_erase_deletes_live_state_and_anonymizes_history(client, audienc
         event_type=EmailEventType.SENT,
         metadata={"email": "person@example.com"},
     )
-    callback = CmpCallback.objects.create(
+    endpoint = CallbackEndpoint.objects.create(
+        client=api_client_record,
+        url="https://courses.example.com/webhook",
+        signing_secret="callback-signing-secret",
+    )
+    callback = ClientCallback.objects.create(
+        email_event=event,
+        transactional_message=message,
+        client=api_client_record,
+        endpoint=endpoint,
+        event_id="00000000-0000-5000-8000-000000000001",
+        event_type="delivery.accepted",
+        payload={},
+        body="{}",
+        body_hash="0" * 64,
+        next_attempt_at=timezone.now(),
+    )
+    cmp_callback = CmpCallback.objects.create(
         email_event=event,
         contact=contact,
         audience=audience,
@@ -1100,12 +1119,15 @@ def test_contact_erase_deletes_live_state_and_anonymizes_history(client, audienc
     recipient.refresh_from_db()
     event.refresh_from_db()
     callback.refresh_from_db()
+    cmp_callback.refresh_from_db()
     assert message.email == contact.email
     assert message.context == {}
     assert message.metadata == {"erased": True}
     assert recipient.email == contact.email
     assert event.metadata == {"erased": True}
-    assert callback.payload == {"erased": True}
+    # Callback rows are redacted at creation, so erasure has nothing to scrub.
+    assert callback.payload == {}
+    assert cmp_callback.payload == {"erased": True}
     assert Contact.objects.filter(normalized_email="person@example.com").exists() is False
 
     second_response = post_json(

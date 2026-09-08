@@ -78,6 +78,7 @@
       <div class="meta-item"><span class="meta-label">Slug</span><code>{{ client.slug }}</code></div>
       <div class="meta-item"><span class="meta-label">Default sender ID</span>{{ client.default_sender_id|default:"-" }}</div>
       <div class="meta-item"><span class="meta-label">CMP webhook URL</span>{{ client.cmp_webhook_url|default:"Global/default" }}</div>
+      <div class="meta-item"><span class="meta-label">Callback endpoint</span>{% if callback_endpoint %}<code>{{ callback_endpoint.url }}</code>{% if not callback_endpoint.enabled %} (disabled){% endif %}{% else %}-{% endif %}</div>
       <div class="meta-item">
         <span class="meta-label">Configured senders</span>
         {% if client.sender_emails %}
@@ -137,6 +138,57 @@
     {% else %}
       <div class="empty-state">
         <strong>No CMP callbacks recorded.</strong>
+        <div class="muted">Delivery, suppression, unsubscribe, and transactional failure callbacks will appear here.</div>
+      </div>
+    {% endif %}
+  </section>
+  <section class="detail-section" aria-labelledby="client-callbacks">
+    <div class="section-header">
+      <div>
+        <h2 id="client-callbacks">Client callbacks</h2>
+        <p class="muted">Recent signed callback delivery attempts for this client.</p>
+      </div>
+    </div>
+    {% if client_callbacks %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Event</th>
+              <th scope="col">Contact</th>
+              <th scope="col">Status</th>
+              <th scope="col">Attempts</th>
+              <th scope="col">Next retry</th>
+              <th scope="col">Delivered</th>
+              <th scope="col">Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for callback in client_callbacks %}
+              <tr>
+                <td><code>{{ callback.event_type }}</code></td>
+                <td>
+                  {% if callback.transactional_message_id %}
+                    <span class="muted">message {{ callback.transactional_message_id }}</span>
+                  {% elif callback.campaign_recipient_id %}
+                    <span class="muted">recipient {{ callback.campaign_recipient_id }}</span>
+                  {% else %}
+                    <span class="muted">-</span>
+                  {% endif %}
+                </td>
+                <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
+                <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
+                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td class="truncate">{{ callback.last_error|default:"-" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>No client callbacks recorded.</strong>
         <div class="muted">Delivery, suppression, unsubscribe, and transactional failure callbacks will appear here.</div>
       </div>
     {% endif %}

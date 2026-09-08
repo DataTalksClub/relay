@@ -1,4 +1,3 @@
-import json
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -12,8 +11,9 @@ from mailing.models import (
     CampaignRecipient,
     CampaignRecipientStatus,
     Client,
+    ClientCallback,
+    ClientCallbackStatus,
     CmpCallback,
-    CmpCallbackStatus,
     Contact,
     EmailEvent,
     EmailEventType,
@@ -21,7 +21,6 @@ from mailing.models import (
     Subscription,
     SubscriptionStatus,
 )
-from mailing.services.cmp_callbacks import process_due_cmp_callbacks
 from mailing.services.public_urls import (
     campaign_recipient_public_urls,
     click_redirect_url,
@@ -30,6 +29,7 @@ from mailing.services.public_urls import (
 )
 from mailing.services.tokens import ensure_campaign_recipient_tokens, get_recipient_by_tracking_token, token_hash
 from mailing.services.tracking import TRANSPARENT_GIF
+from mailing.tests.callback_helpers import create_callback_endpoint
 
 pytestmark = pytest.mark.django_db
 
@@ -216,7 +216,8 @@ def test_click_redirect_records_repeated_clicks_and_redirects(client, recipient)
 
 
 @override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
-def test_tracking_open_and_click_emit_cmp_callbacks(client, recipient, monkeypatch):
+def test_tracking_open_and_click_emit_cmp_callbacks_only(client, recipient, app_client, monkeypatch):
+    create_callback_endpoint(app_client)
     monkeypatch.setattr(
         "mailing.services.cmp_callbacks.transaction.on_commit",
         lambda callback: callback(),
@@ -231,10 +232,13 @@ def test_tracking_open_and_click_emit_cmp_callbacks(client, recipient, monkeypat
 
     assert open_response.status_code == 200
     assert click_response.status_code == 302
+    # Campaign-recipient engagement stays on the CMP channel; the client
+    # callback contract carries transactional deliveries only.
     assert list(CmpCallback.objects.order_by("id").values_list("event_type", flat=True)) == [
         "message.opened",
         "message.clicked",
     ]
+    assert ClientCallback.objects.count() == 0
 
 
 @pytest.mark.parametrize(
@@ -319,31 +323,8 @@ def test_unsubscribe_post_applies_scope_idempotently_and_records_events(client, 
 
 
 @override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
-def test_unsubscribe_post_emits_cmp_callback(client, recipient, monkeypatch):
-    posts = []
-
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_urlopen(request, *, timeout):
-        posts.append(
-            {
-                "url": request.full_url,
-                "json": json.loads(request.data.decode("utf-8")),
-                "headers": dict(request.header_items()),
-                "timeout": timeout,
-            }
-        )
-        return Response()
-
-    monkeypatch.setattr(
-        "mailing.services.cmp_callbacks.urlopen",
-        fake_urlopen,
-    )
+def test_unsubscribe_post_emits_cmp_callback_only(client, recipient, app_client, monkeypatch):
+    create_callback_endpoint(app_client)
     monkeypatch.setattr(
         "mailing.services.cmp_callbacks.transaction.on_commit",
         lambda callback: callback(),
@@ -356,17 +337,13 @@ def test_unsubscribe_post_emits_cmp_callback(client, recipient, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert CmpCallback.objects.filter(status=CmpCallbackStatus.PENDING).count() == 1
-    process_due_cmp_callbacks()
-    assert len(posts) == 1
-    body = posts[0]["json"]
-    assert posts[0]["url"] == "https://cmp.example.com/api/datamailer/events"
-    assert posts[0]["headers"]["Authorization"] == "Bearer secret"
-    assert body["event_type"] == "subscription.unsubscribed"
-    assert body["email"] == recipient.contact.normalized_email
-    assert body["audience"] == recipient.campaign.audience.slug
-    assert body["client"] == recipient.campaign.client.slug
-    assert body["metadata"]["scope"] == "client"
+    # A campaign unsubscribe link is a CMP-channel contact event; the client
+    # callback contract carries client-level subscription changes made
+    # through the subscription APIs.
+    callback = ClientCallback.objects.filter(status=ClientCallbackStatus.PENDING).first()
+    assert callback is None
+    cmp_body = CmpCallback.objects.order_by("-id").first()
+    assert cmp_body is not None and cmp_body.event_type == "subscription.unsubscribed"
 
 
 def test_unsubscribe_invalid_token_and_invalid_scope_do_not_mutate(client, recipient):

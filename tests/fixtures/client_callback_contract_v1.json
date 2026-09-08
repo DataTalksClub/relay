@@ -1,0 +1,21 @@
+{
+  "contract": "relay-client-callback",
+  "contract_version": 1,
+  "note": "Deterministic verification fixture for Relay client callbacks. canonical_body is the exact bytes Relay signs and posts; expected_signature is HMAC-SHA256 over '<timestamp>.<canonical_body>' with signing_secret.",
+  "signing_secret": "fixture-callback-signing-secret",
+  "rotated_signing_secret": "fixture-rotated-callback-secret",
+  "timestamp": "1788868800",
+  "canonical_body": "{\"client_reference\":\"registration-user-123\",\"contract_version\":1,\"event_id\":\"dd8b8f17-6d55-5094-ae45-83cd8ac37b96\",\"event_type\":\"delivery.delivered\",\"message_id\":\"1042\",\"sequence\":3,\"template_key\":\"registration-welcome\",\"timestamp\":\"2026-09-08T12:00:00+00:00\"}",
+  "expected_signature": "sha256=b5bafe45177dc8254cfd1aa44d196478126e1f34137eaa213e9a783996db315e",
+  "rotated_expected_signature": "sha256=738904b33e67b96277205c68d5d17cba424dd8a6575c257b8e741d24ece32324",
+  "event": {
+    "contract_version": 1,
+    "event_id": "dd8b8f17-6d55-5094-ae45-83cd8ac37b96",
+    "event_type": "delivery.delivered",
+    "timestamp": "2026-09-08T12:00:00+00:00",
+    "sequence": 3,
+    "message_id": "1042",
+    "client_reference": "registration-user-123",
+    "template_key": "registration-welcome"
+  }
+}
