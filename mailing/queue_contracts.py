@@ -38,6 +38,7 @@ def validate_transactional_email_message(payload):
                 "contact_id": _positive_int,
                 "template_id": _positive_int,
                 "template_key": _non_empty_str,
+                "template_version": _positive_int,
                 "metadata": _dict,
             },
         ),

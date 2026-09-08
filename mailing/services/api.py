@@ -58,6 +58,7 @@ class ScopedRequest:
 
 
 def template_payload(template):
+    latest_version = template.versions.order_by("-version").values_list("version", flat=True).first()
     return {
         "key": template.key,
         "client": template.client.slug,
@@ -66,9 +67,12 @@ def template_payload(template):
         "subject": template.subject,
         "html_body": template.html_body,
         "text_body": template.text_body,
+        "markdown_body": template.markdown_body,
+        "category": template.category,
         "required_context": template.required_context,
         "example_context": template.example_context,
         "default_sender_id": template.default_sender_id,
+        "latest_version": latest_version,
         "is_transactional": template.is_transactional,
         "is_active": template.is_active,
         "created_at": isoformat(template.created_at),
@@ -492,10 +496,19 @@ def validate_transactional_template_payload(data, template_key):
         "description": data.get("description", ""),
         "html_body": data.get("html_body", ""),
         "text_body": data.get("text_body", ""),
+        "markdown_body": data.get("markdown_body", ""),
     }
     for field_name, value in fields.items():
         if not isinstance(value, str):
             errors[field_name] = "must_be_string"
+
+    category = data.get("category", "")
+    if category in (None, ""):
+        category = ""
+    elif not isinstance(category, str) or not category.strip():
+        errors["category"] = "must_be_non_empty_string"
+    else:
+        category = category.strip()
 
     required_context = data.get("required_context", [])
     if required_context in (None, ""):
@@ -534,6 +547,8 @@ def validate_transactional_template_payload(data, template_key):
         "description": fields["description"].strip(),
         "html_body": fields["html_body"],
         "text_body": fields["text_body"],
+        "markdown_body": fields["markdown_body"],
+        "category": category,
         "required_context": required_context,
         "example_context": example_context,
         "default_sender_id": default_sender_id,

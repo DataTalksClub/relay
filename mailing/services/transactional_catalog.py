@@ -47,13 +47,18 @@ def required_context_names(template):
     return tuple(requirement.name for requirement in normalize_required_context(template.required_context))
 
 
-def validate_template_context(template, context):
+def validate_context_requirements(required_context, context):
+    """Fail with one clear error per missing required context key."""
     errors = {}
-    for name in required_context_names(template):
-        if name not in context or context[name] in (None, ""):
-            errors[f"context.{name}"] = "required"
+    for requirement in normalize_required_context(required_context):
+        if requirement.name not in context or context[requirement.name] in (None, ""):
+            errors[f"context.{requirement.name}"] = "required"
     if errors:
         raise ApiValidationError(errors)
+
+
+def validate_template_context(template, context):
+    validate_context_requirements(template.required_context, context)
 
 
 def transactional_template_queryset():
