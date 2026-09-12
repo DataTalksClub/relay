@@ -7,10 +7,15 @@ from mailing.context_processors import ACTIVE_CLIENT_SESSION_KEY
 from mailing.models import (
     Audience,
     Campaign,
+    CampaignRecipient,
+    CampaignRecipientStatus,
+    CampaignStatus,
     Client,
     ClientApiKey,
     Contact,
     ContactTag,
+    EmailEvent,
+    EmailEventType,
     EmailValidationStatus,
     OperatorAudit,
     Organization,
@@ -19,7 +24,12 @@ from mailing.models import (
     Tag,
 )
 from mailing.services.auth import authenticate_bearer_token, check_api_key, create_client_api_key
-from mailing.services.campaigns import estimate_campaign_recipients, snapshot_campaign_recipients
+from mailing.services.campaigns import (
+    CampaignRecipientConflict,
+    estimate_campaign_recipients,
+    snapshot_campaign_recipients,
+)
+from mailing.services.operator_management import assume_recipient_sent
 
 pytestmark = pytest.mark.django_db
 
@@ -397,3 +407,141 @@ def test_contact_tag_form_rejects_cross_audience_tag(client, operator, organizat
     assert response.status_code == 200
     assert ContactTag.objects.filter(contact=contact).count() == 0
     assert b"Tag was not added" in response.content
+
+
+def create_campaign_recipient(campaign, email, *, contact_kwargs=None, **kwargs):
+    contact = Contact.objects.create(email=email, **(contact_kwargs or {}))
+    return CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=email, **kwargs)
+
+
+def test_assume_recipient_sent_marks_failed_recipient_sent_without_resending(
+    operator,
+    audience,
+    client_record,
+):
+    campaign = Campaign.objects.create(
+        client=client_record,
+        audience=audience,
+        external_key="assume-campaign",
+        subject="Assume sent",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.QUEUED,
+    )
+    recipient = create_campaign_recipient(
+        campaign,
+        "assume@example.com",
+        contact_kwargs={"verified_at": timezone.now()},
+        status=CampaignRecipientStatus.FAILED,
+        last_error="ses unavailable",
+    )
+
+    result = assume_recipient_sent(actor=operator, campaign=campaign, recipient=recipient)
+
+    recipient.refresh_from_db()
+    campaign.refresh_from_db()
+    assert result.status == CampaignRecipientStatus.SENT
+    assert recipient.sent_at is not None
+    assert recipient.ses_message_id == ""
+    assert recipient.last_error == "ses unavailable"
+    assert campaign.sent_count == 1
+    event = EmailEvent.objects.get(campaign_recipient=recipient)
+    assert event.event_type == EmailEventType.SENT
+    assert event.metadata == {"assumed_sent": True}
+    audit_row = OperatorAudit.objects.get(action="campaign.recipient.assume_sent")
+    assert audit_row.actor == operator
+    assert audit_row.target_type == "campaignrecipient"
+    assert audit_row.target_id == recipient.id
+    assert audit_row.metadata == {"campaign": campaign.id, "prior_status": "failed"}
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        CampaignRecipientStatus.PENDING,
+        CampaignRecipientStatus.SENT,
+        CampaignRecipientStatus.BOUNCED,
+    ],
+)
+def test_assume_recipient_sent_rejects_non_failed_recipients(
+    operator,
+    audience,
+    client_record,
+    status,
+):
+    campaign = Campaign.objects.create(
+        client=client_record,
+        audience=audience,
+        external_key="assume-invalid-campaign",
+        subject="Assume sent invalid",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.QUEUED,
+    )
+    recipient = create_campaign_recipient(
+        campaign,
+        f"assume-{status}@example.com",
+        contact_kwargs={"verified_at": timezone.now()},
+        status=status,
+        ses_message_id="ses-already" if status == CampaignRecipientStatus.SENT else "",
+    )
+
+    with pytest.raises(CampaignRecipientConflict):
+        assume_recipient_sent(actor=operator, campaign=campaign, recipient=recipient)
+
+    recipient.refresh_from_db()
+    assert recipient.status == status
+    assert not EmailEvent.objects.filter(campaign_recipient=recipient).exists()
+    assert not OperatorAudit.objects.filter(action="campaign.recipient.assume_sent").exists()
+
+
+def test_campaign_recipient_assume_sent_view_marks_failed_recipient_without_resending(
+    client,
+    operator,
+    nonstaff,
+    audience,
+    client_record,
+):
+    campaign = Campaign.objects.create(
+        client=client_record,
+        audience=audience,
+        external_key="assume-view-campaign",
+        subject="Assume sent view",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.QUEUED,
+    )
+    recipient = create_campaign_recipient(
+        campaign,
+        "assume-view@example.com",
+        contact_kwargs={"verified_at": timezone.now()},
+        status=CampaignRecipientStatus.FAILED,
+        last_error="ses unavailable",
+    )
+    url = reverse("mailing:campaign_recipient_assume_sent", args=[campaign.id, recipient.id])
+
+    anonymous = client.post(url)
+    assert anonymous.status_code == 302
+    assert "/admin/login/" in anonymous["Location"]
+
+    client.force_login(nonstaff)
+    assert client.post(url).status_code == 302
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.FAILED
+
+    client.force_login(operator)
+    select_active_client(client, client_record)
+    assert client.get(url).status_code == 405
+
+    response = client.post(url, follow=True)
+
+    assert response.status_code == 200
+    assert "Recipient marked as assumed sent without resending." in response.content.decode()
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.SENT
+
+    repeat = client.post(url, follow=True)
+
+    assert "Only failed recipients can be marked as assumed sent." in repeat.content.decode()
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.SENT
+    assert OperatorAudit.objects.filter(action="campaign.recipient.assume_sent").count() == 1
+
+

@@ -255,6 +255,7 @@
               <th scope="col">Delivery</th>
               <th scope="col">Engagement</th>
               <th scope="col">Provider data</th>
+              <th scope="col">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -289,6 +290,16 @@
                     </details>
                   {% else %}
                     <span class="muted">None</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if recipient.status == "failed" %}
+                    <form method="post" action="{% url 'mailing:campaign_recipient_assume_sent' campaign.id recipient.id %}">
+                      {% csrf_token %}
+                      <button type="submit" class="secondary" onclick="return confirm('Mark {{ recipient.email|escapejs }} as assumed sent without resending?');">Assume sent</button>
+                    </form>
+                  {% else %}
+                    <span class="muted">-</span>
                   {% endif %}
                 </td>
               </tr>

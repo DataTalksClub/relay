@@ -6,16 +6,23 @@ from mailing.models import (
     Audience,
     Campaign,
     CampaignRecipient,
+    CampaignRecipientSkipReason,
     CampaignRecipientStatus,
     CampaignStatus,
     Client,
     Contact,
+    ContactTag,
+    EmailEvent,
+    EmailEventType,
     Organization,
     Subscription,
     SubscriptionStatus,
+    Tag,
 )
+from mailing.services.api import isoformat
 from mailing.services.auth import create_client_api_key
 from mailing.services.campaign_sender import send_campaign_batch
+from mailing.services.campaigns import estimate_campaign_recipients
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -98,6 +105,31 @@ def preview_campaign_api(django_client, external_key, payload, raw_key=API_KEY):
 def post_campaign_test_send(django_client, external_key, payload, raw_key=API_KEY):
     return django_client.post(
         reverse("mailing:api_campaign_test_send", args=[external_key]),
+        data=payload,
+        content_type="application/json",
+        **auth_headers(raw_key),
+    )
+
+
+def post_campaign_recount(django_client, external_key, payload, raw_key=API_KEY):
+    return django_client.post(
+        reverse("mailing:api_campaign_recount", args=[external_key]),
+        data=payload,
+        content_type="application/json",
+        **auth_headers(raw_key),
+    )
+
+
+def get_campaign_recipients(django_client, external_key, query="", raw_key=API_KEY):
+    return django_client.get(
+        reverse("mailing:api_campaign_recipients", args=[external_key]) + query,
+        **auth_headers(raw_key),
+    )
+
+
+def post_campaign_recipient_retry(django_client, external_key, recipient_id, payload, raw_key=API_KEY):
+    return django_client.post(
+        reverse("mailing:api_campaign_recipient_retry", args=[external_key, recipient_id]),
         data=payload,
         content_type="application/json",
         **auth_headers(raw_key),
@@ -437,6 +469,384 @@ def test_campaign_api_test_send_sends_explicit_recipients_without_campaign_recip
         ("test-send-campaign", "b@example.com"),
     ]
     assert CampaignRecipient.objects.count() == 0
+
+
+def campaign_recipient_row(campaign, email, *, contact_kwargs=None, **kwargs):
+    contact = Contact.objects.create(email=email, **(contact_kwargs or {}))
+    return CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=email, **kwargs)
+
+
+def scope_query(audience, api_client_record, extra=""):
+    return f"?audience={audience.slug}&client={api_client_record.slug}{extra}"
+
+
+def test_campaign_api_recount_matches_send_estimate_without_exposing_identities(
+    client,
+    audience,
+    api_client_record,
+):
+    now = timezone.now()
+    for index, status in enumerate(
+        [SubscriptionStatus.SUBSCRIBED, SubscriptionStatus.SUBSCRIBED, SubscriptionStatus.UNSUBSCRIBED]
+    ):
+        contact = Contact.objects.create(email=f"learner-{index}@example.com", verified_at=now)
+        Subscription.objects.create(
+            contact=contact,
+            audience=audience,
+            client=api_client_record,
+            status=status,
+        )
+    tagged_contact = Contact.objects.create(email="tagged@example.com", verified_at=now)
+    Subscription.objects.create(
+        contact=tagged_contact,
+        audience=audience,
+        client=api_client_record,
+        status=SubscriptionStatus.SUBSCRIBED,
+    )
+    tag = Tag.objects.create(audience=audience, name="Python", slug="python")
+    ContactTag.objects.create(contact=tagged_contact, tag=tag)
+
+    unfiltered = Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key="recount-campaign",
+        subject="Recount",
+        html_body="<p>Hello</p>",
+    )
+    filtered = Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key="recount-tagged-campaign",
+        subject="Recount tagged",
+        html_body="<p>Hello</p>",
+        include_tags=["python"],
+    )
+
+    response = post_campaign_recount(
+        client,
+        "recount-campaign",
+        {"audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    estimate = estimate_campaign_recipients(unfiltered)
+    assert body["campaign"]["external_key"] == "recount-campaign"
+    assert body["total_candidates"] == estimate.total_candidates == 4
+    assert body["tag_filtered_count"] == estimate.tag_filtered_count == 0
+    assert body["recipient_count"] == estimate.recipient_count == 3
+    assert body["skipped_count"] == estimate.skipped_count == 1
+    assert body["skip_reason_counts"] == estimate.skip_reason_counts == {"client_unsubscribe": 1}
+    assert "recipients" not in body
+    assert "learner-0@example.com" not in response.content.decode()
+
+    tagged_response = post_campaign_recount(
+        client,
+        "recount-tagged-campaign",
+        {"audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert tagged_response.status_code == 200
+    tagged_body = tagged_response.json()
+    tagged_estimate = estimate_campaign_recipients(filtered)
+    assert tagged_body["total_candidates"] == tagged_estimate.total_candidates == 4
+    assert tagged_body["tag_filtered_count"] == tagged_estimate.tag_filtered_count == 3
+    assert tagged_body["recipient_count"] == tagged_estimate.recipient_count == 1
+    assert tagged_body["skipped_count"] == tagged_estimate.skipped_count == 0
+    assert "@example.com" not in tagged_response.content.decode()
+
+
+def test_campaign_api_recount_requires_known_campaign(client, audience, api_client_record):
+    response = post_campaign_recount(
+        client,
+        "missing-campaign",
+        {"audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["fields"] == {"external_key": "not_found"}
+
+
+def test_campaign_api_recipients_list_dispositions_and_status_filter(
+    client,
+    audience,
+    api_client_record,
+):
+    campaign = Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key="recipients-campaign",
+        subject="Recipients",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.QUEUED,
+    )
+    sent_at = timezone.now() - timezone.timedelta(minutes=5)
+    sent_recipient = campaign_recipient_row(
+        campaign,
+        "a-sent@example.com",
+        status=CampaignRecipientStatus.SENT,
+        ses_message_id="ses-1",
+        sent_at=sent_at,
+    )
+    failed_recipient = campaign_recipient_row(
+        campaign,
+        "b-failed@example.com",
+        status=CampaignRecipientStatus.FAILED,
+        last_error="connection reset",
+    )
+    campaign_recipient_row(
+        campaign,
+        "c-skipped@example.com",
+        status=CampaignRecipientStatus.SKIPPED,
+        skip_reason=CampaignRecipientSkipReason.GLOBAL_UNSUBSCRIBE,
+    )
+
+    response = get_campaign_recipients(
+        client,
+        "recipients-campaign",
+        scope_query(audience, api_client_record),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["campaign"]["external_key"] == "recipients-campaign"
+    assert body["count"] == 3
+    assert body["status_counts"] == {"sent": 1, "failed": 1, "skipped": 1}
+    assert [row["email"] for row in body["recipients"]] == sorted(row["email"] for row in body["recipients"])
+    sent_row = next(row for row in body["recipients"] if row["id"] == sent_recipient.id)
+    assert sent_row["status"] == CampaignRecipientStatus.SENT
+    assert sent_row["ses_message_id"] == "ses-1"
+    assert sent_row["sent_at"] == isoformat(sent_at)
+    failed_row = next(row for row in body["recipients"] if row["id"] == failed_recipient.id)
+    assert failed_row["status"] == CampaignRecipientStatus.FAILED
+    assert failed_row["last_error"] == "connection reset"
+    assert failed_row["ses_message_id"] == ""
+    skipped_row = next(row for row in body["recipients"] if row["status"] == CampaignRecipientStatus.SKIPPED)
+    assert skipped_row["skip_reason"] == CampaignRecipientSkipReason.GLOBAL_UNSUBSCRIBE
+
+    filtered = get_campaign_recipients(
+        client,
+        "recipients-campaign",
+        scope_query(audience, api_client_record, "&status=failed"),
+    )
+
+    assert filtered.status_code == 200
+    filtered_body = filtered.json()
+    assert filtered_body["count"] == 1
+    assert [row["id"] for row in filtered_body["recipients"]] == [failed_recipient.id]
+    assert filtered_body["status_counts"] == {"sent": 1, "failed": 1, "skipped": 1}
+
+    invalid = get_campaign_recipients(
+        client,
+        "recipients-campaign",
+        scope_query(audience, api_client_record, "&status=not-a-status"),
+    )
+
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["fields"] == {"status": "invalid"}
+
+
+def test_campaign_api_retry_requeues_failed_recipient(
+    client,
+    audience,
+    api_client_record,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.campaigns.enqueue_campaign_email", enqueued.append)
+    campaign = Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key="retry-campaign",
+        subject="Retry",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.QUEUED,
+        recipient_count=1,
+    )
+    recipient = campaign_recipient_row(
+        campaign,
+        "retry@example.com",
+        status=CampaignRecipientStatus.FAILED,
+        last_error="ses unavailable",
+    )
+
+    response = post_campaign_recipient_retry(
+        client,
+        "retry-campaign",
+        recipient.id,
+        {"audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["retried"] is True
+    assert body["recipient"]["id"] == recipient.id
+    assert body["recipient"]["status"] == CampaignRecipientStatus.PENDING
+    assert body["campaign"]["status"] == CampaignStatus.QUEUED
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.PENDING
+    assert recipient.last_error == "ses unavailable [retried from failed]"
+    assert len(enqueued) == 1
+    assert enqueued[0]["campaign_id"] == campaign.id
+    assert enqueued[0]["campaign_recipient_ids"] == [recipient.id]
+    assert enqueued[0]["idempotency_key"] == f"campaign-{campaign.id}-retry-{recipient.id}"
+    event = EmailEvent.objects.get(campaign_recipient=recipient, event_type=EmailEventType.QUEUED)
+    assert event.metadata == {"retry": True}
+
+
+def test_campaign_api_retry_from_sent_campaign_reopens_sending(
+    client,
+    audience,
+    api_client_record,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.campaigns.enqueue_campaign_email", enqueued.append)
+    campaign = Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key="sent-campaign",
+        subject="Sent",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.SENT,
+    )
+    recipient = campaign_recipient_row(
+        campaign,
+        "late-retry@example.com",
+        status=CampaignRecipientStatus.FAILED,
+        last_error="timeout",
+    )
+
+    response = post_campaign_recipient_retry(
+        client,
+        "sent-campaign",
+        recipient.id,
+        {"audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert response.status_code == 202
+    campaign.refresh_from_db()
+    assert campaign.status == CampaignStatus.SENDING
+
+
+def test_campaign_api_retry_rejects_non_failed_recipient(
+    client,
+    audience,
+    api_client_record,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.campaigns.enqueue_campaign_email", enqueued.append)
+    campaign = Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key="sent-recipient-campaign",
+        subject="Sent recipient",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.QUEUED,
+    )
+    recipient = campaign_recipient_row(
+        campaign,
+        "already-sent@example.com",
+        status=CampaignRecipientStatus.SENT,
+        ses_message_id="ses-delivered",
+    )
+
+    response = post_campaign_recipient_retry(
+        client,
+        "sent-recipient-campaign",
+        recipient.id,
+        {"audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["fields"] == {"recipient": "recipient_not_failed"}
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.SENT
+    assert enqueued == []
+
+
+@pytest.mark.parametrize("campaign_status", [CampaignStatus.DRAFT, CampaignStatus.CANCELLED])
+def test_campaign_api_retry_rejects_campaign_that_cannot_send(
+    client,
+    audience,
+    api_client_record,
+    monkeypatch,
+    campaign_status,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.campaigns.enqueue_campaign_email", enqueued.append)
+    campaign = Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key=f"blocked-{campaign_status}-campaign",
+        subject="Blocked",
+        html_body="<p>Hello</p>",
+        status=campaign_status,
+    )
+    recipient = campaign_recipient_row(
+        campaign,
+        "blocked@example.com",
+        status=CampaignRecipientStatus.FAILED,
+        last_error="ses unavailable",
+    )
+
+    response = post_campaign_recipient_retry(
+        client,
+        f"blocked-{campaign_status}-campaign",
+        recipient.id,
+        {"audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["fields"] == {"recipient": "campaign_cannot_send"}
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.FAILED
+    assert enqueued == []
+
+
+def test_campaign_api_retry_rejects_recipient_from_another_campaign(
+    client,
+    audience,
+    api_client_record,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.campaigns.enqueue_campaign_email", enqueued.append)
+    Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key="target-campaign",
+        subject="Target",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.QUEUED,
+    )
+    other_campaign = Campaign.objects.create(
+        client=api_client_record,
+        audience=audience,
+        external_key="other-campaign",
+        subject="Other",
+        html_body="<p>Hello</p>",
+        status=CampaignStatus.QUEUED,
+    )
+    recipient = campaign_recipient_row(
+        other_campaign,
+        "elsewhere@example.com",
+        status=CampaignRecipientStatus.FAILED,
+    )
+
+    response = post_campaign_recipient_retry(
+        client,
+        "target-campaign",
+        recipient.id,
+        {"audience": audience.slug, "client": api_client_record.slug},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["fields"] == {"recipient": "not_found"}
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.FAILED
+    assert enqueued == []
 
 
 class _FailingIfCalledSes:

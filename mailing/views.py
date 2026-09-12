@@ -28,6 +28,7 @@ from mailing.models import (
     Audience,
     CallbackEndpoint,
     Campaign,
+    CampaignRecipient,
     CampaignStatus,
     Client,
     ClientApiKey,
@@ -44,6 +45,7 @@ from mailing.models import (
 from mailing.services.api import (
     ApiValidationError,
     add_contact_tag_for_client,
+    campaign_recipients_for_client,
     cancel_campaign_for_client,
     erase_contact_for_client,
     get_campaign_for_client,
@@ -56,8 +58,10 @@ from mailing.services.api import (
     get_transactional_template_for_client,
     preview_campaign_for_client,
     queue_campaign_for_client,
+    recount_campaign_for_client,
     remove_contact_tag_for_client,
     replace_contact_tags_for_client,
+    retry_campaign_recipient_for_client,
     subscribe_for_client,
     test_send_campaign_for_client,
     unsubscribe_for_client,
@@ -79,7 +83,11 @@ from mailing.services.api_docs import (
     workflow_examples,
 )
 from mailing.services.auth import authenticate_bearer_token
-from mailing.services.campaigns import estimate_campaign_recipients, queue_campaign
+from mailing.services.campaigns import (
+    CampaignRecipientConflict,
+    estimate_campaign_recipients,
+    queue_campaign,
+)
 from mailing.services.contact_import_export import (
     bulk_import_contacts_for_client,
     csv_import_contacts_for_client,
@@ -93,6 +101,7 @@ from mailing.services.mailchimp import (
 )
 from mailing.services.operator_management import (
     add_contact_tag,
+    assume_recipient_sent,
     client_api_keys_for_detail,
     create_api_key,
     create_or_update_audience,
@@ -482,6 +491,26 @@ def campaign_queue(request, campaign_id):
         )
     else:
         messages.info(request, "Campaign was already queued or locked for sending.")
+    return redirect("mailing:campaign_detail", campaign_id=campaign.id)
+
+
+@staff_member_required
+@require_POST
+def campaign_recipient_assume_sent(request, campaign_id, recipient_id):
+    """Operator resolution: mark one recipient as sent without resending."""
+    active_client = require_active_client(request)
+    if active_client is None:
+        return redirect("mailing:dashboard")
+    campaign = get_object_or_404(Campaign, pk=campaign_id, client=active_client)
+    recipient = get_object_or_404(CampaignRecipient, pk=recipient_id, campaign=campaign)
+    try:
+        assume_recipient_sent(actor=request.user, campaign=campaign, recipient=recipient)
+    except CampaignRecipientConflict:
+        messages.error(request, "Only failed recipients can be marked as assumed sent.")
+        return redirect(
+            f"{reverse('mailing:campaign_detail', args=[campaign.id])}?filter=failed"
+        )
+    messages.success(request, "Recipient marked as assumed sent without resending.")
     return redirect("mailing:campaign_detail", campaign_id=campaign.id)
 
 
@@ -1845,6 +1874,70 @@ def api_campaign_test_send(request, external_key):
     try:
         payload = test_send_campaign_for_client(
             external_key,
+            json_request_body(request),
+            client,
+        )
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=202)
+
+
+@csrf_exempt
+def api_campaign_recount(request, external_key):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = recount_campaign_for_client(
+            external_key,
+            json_request_body(request),
+            client,
+        )
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_campaign_recipients(request, external_key):
+    if request.method != "GET":
+        return method_not_allowed_response(["GET"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = campaign_recipients_for_client(
+            external_key,
+            request.GET,
+            client,
+        )
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_campaign_recipient_retry(request, external_key, recipient_id):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = retry_campaign_recipient_for_client(
+            external_key,
+            recipient_id,
             json_request_body(request),
             client,
         )

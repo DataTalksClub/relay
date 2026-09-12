@@ -64,6 +64,108 @@ class QueueCampaignResult:
     skipped_count: int
 
 
+class CampaignRecipientConflict(Exception):
+    """The requested recipient transition is not allowed from its current state."""
+
+
+@dataclass(frozen=True)
+class RecountResult:
+    campaign_id: int
+    total_candidates: int
+    tag_filtered_count: int
+    recipient_count: int
+    skipped_count: int
+    skip_reason_counts: dict[str, int]
+
+
+@dataclass(frozen=True)
+class RetryRecipientResult:
+    campaign_id: int
+    recipient_id: int
+    retried: bool
+
+
+def recount_campaign_audience(campaign):
+    """Count the filtered audience without exposing any identity.
+
+    The parity target is AISL's operator recount: the same queryset the send
+    path will snapshot, reduced to numbers only. ``preview_limit=0`` keeps
+    preview rows (recipient addresses) out of the result entirely.
+    """
+    estimate = estimate_campaign_recipients(campaign, preview_limit=0)
+    return RecountResult(
+        campaign_id=campaign.id,
+        total_candidates=estimate.total_candidates,
+        tag_filtered_count=estimate.tag_filtered_count,
+        recipient_count=estimate.recipient_count,
+        skipped_count=estimate.skipped_count,
+        skip_reason_counts=estimate.skip_reason_counts,
+    )
+
+
+@transaction.atomic
+def retry_campaign_recipient(campaign, recipient_id):
+    """Requeue one failed delivery for sending.
+
+    Only ``failed`` recipients are retryable: ``sent`` really went out,
+    ``skipped`` was never meant to go out, and provider-level ``bounced`` and
+    ``complained`` outcomes must not be mailed again. The campaign must still
+    be able to send (anything but draft or cancelled). Like the original
+    queueing, the batch is dispatched only after the transaction commits.
+    """
+    campaign = (
+        Campaign.objects.select_for_update()
+        .select_related("audience", "client")
+        .get(pk=campaign.pk)
+    )
+    recipient = (
+        CampaignRecipient.objects.select_for_update()
+        .select_related("contact")
+        .get(pk=recipient_id, campaign=campaign)
+    )
+
+    if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.CANCELLED}:
+        raise CampaignRecipientConflict("campaign_cannot_send")
+
+    if recipient.status != CampaignRecipientStatus.FAILED:
+        raise CampaignRecipientConflict("recipient_not_failed")
+
+    prior_error = recipient.last_error
+    recipient.status = CampaignRecipientStatus.PENDING
+    recipient.last_error = f"{prior_error} [retried from failed]".strip()[:2000]
+    recipient.save(update_fields=["status", "last_error", "updated_at"])
+
+    if campaign.status in {CampaignStatus.SENT, CampaignStatus.FAILED}:
+        campaign.status = CampaignStatus.SENDING
+        campaign.save(update_fields=["status", "updated_at"])
+
+    now = timezone.now()
+    EmailEvent.objects.create(
+        campaign=campaign,
+        campaign_recipient=recipient,
+        contact=recipient.contact,
+        client=campaign.client,
+        audience=campaign.audience,
+        event_type=EmailEventType.QUEUED,
+        metadata={"retry": True},
+        created_at=now,
+    )
+
+    payload = {
+        "contract": CAMPAIGN_EMAIL_CONTRACT,
+        "version": CONTRACT_VERSION,
+        "campaign_id": campaign.id,
+        "batch_id": f"campaign-{campaign.id}-retry-{recipient.id}",
+        "campaign_recipient_ids": [recipient.id],
+        "idempotency_key": f"campaign-{campaign.id}-retry-{recipient.id}",
+    }
+    validate_campaign_email_message(payload)
+    send_correlation_id = uuid.uuid4()
+    taskdeck.enqueue_on_commit(_enqueue_campaign_batch, send_correlation_id, payload)
+
+    return RetryRecipientResult(campaign_id=campaign.id, recipient_id=recipient.id, retried=True)
+
+
 @transaction.atomic
 def snapshot_campaign_recipients(campaign):
     campaign = (
