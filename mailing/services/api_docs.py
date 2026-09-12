@@ -5,6 +5,7 @@ from django.conf import settings
 from django.urls import reverse
 
 from mailing.models import (
+    CampaignRecipientStatus,
     CampaignStatus,
     EmailValidationStatus,
     RecipientListImportJobStatus,
@@ -59,6 +60,9 @@ API_DOC_PATHS = {
     "mailing:api_campaign_cancel": "/api/campaigns/{external_key}/cancel",
     "mailing:api_campaign_preview": "/api/campaigns/{external_key}/preview",
     "mailing:api_campaign_test_send": "/api/campaigns/{external_key}/test-send",
+    "mailing:api_campaign_recount": "/api/campaigns/{external_key}/recount",
+    "mailing:api_campaign_recipients": "/api/campaigns/{external_key}/recipients",
+    "mailing:api_campaign_recipient_retry": "/api/campaigns/{external_key}/recipients/{recipient_id}/retry",
     "mailing:api_subscribe": "/api/subscriptions/subscribe",
     "mailing:api_unsubscribe": "/api/subscriptions/unsubscribe",
     "mailing:api_request_verification": "/api/subscriptions/request-verification",
@@ -783,6 +787,21 @@ def endpoint_groups():
                 ("POST", "/api/campaigns/{external_key}/cancel", "Cancel one draft or unsent queued campaign."),
                 ("POST", "/api/campaigns/{external_key}/preview", "Render one campaign without recipients."),
                 ("POST", "/api/campaigns/{external_key}/test-send", "Send one campaign to explicit test addresses."),
+                (
+                    "POST",
+                    "/api/campaigns/{external_key}/recount",
+                    "Count the filtered audience for one campaign without exposing recipient identities.",
+                ),
+                (
+                    "GET",
+                    "/api/campaigns/{external_key}/recipients",
+                    "List per-recipient dispositions for one campaign with an optional status filter.",
+                ),
+                (
+                    "POST",
+                    "/api/campaigns/{external_key}/recipients/{recipient_id}/retry",
+                    "Requeue one failed recipient of a sendable campaign for delivery.",
+                ),
             ],
         },
         {
@@ -883,6 +902,18 @@ def route_path_map():
             "mailing:api_campaign_test_send",
             args=["cmp-course-start-2026"],
         ),
+        API_DOC_PATHS["mailing:api_campaign_recount"]: reverse(
+            "mailing:api_campaign_recount",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_recipients"]: reverse(
+            "mailing:api_campaign_recipients",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_recipient_retry"]: reverse(
+            "mailing:api_campaign_recipient_retry",
+            args=["cmp-course-start-2026", 101],
+        ),
         API_DOC_PATHS["mailing:api_subscribe"]: reverse("mailing:api_subscribe"),
         API_DOC_PATHS["mailing:api_unsubscribe"]: reverse("mailing:api_unsubscribe"),
         API_DOC_PATHS["mailing:api_request_verification"]: reverse("mailing:api_request_verification"),
@@ -976,6 +1007,12 @@ CAMPAIGN_EXTERNAL_KEY_PARAM = {
     "in": "path",
     "required": True,
     "schema": {"type": "string", "maxLength": 180},
+}
+CAMPAIGN_RECIPIENT_ID_PARAM = {
+    "name": "recipient_id",
+    "in": "path",
+    "required": True,
+    "schema": {"type": "integer"},
 }
 SOURCE_OBJECT_KEY_PARAM = {
     "name": "source_object_key",
@@ -1346,6 +1383,65 @@ OPENAPI_SPEC = {
                     json_response("Campaign test sent", "#/components/schemas/CampaignTestSendResponse"),
                     accepted=True,
                 ),
+            }
+        },
+        "/api/campaigns/{external_key}/recount": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Recount campaign audience",
+                "description": (
+                    "Counts the audience one send would snapshot, after the same tag, subscription, "
+                    "and recipient-list filters, without returning any recipient identities."
+                ),
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(
+                    json_response("Audience recount", "#/components/schemas/CampaignRecountResponse"),
+                ),
+            }
+        },
+        "/api/campaigns/{external_key}/recipients": {
+            "get": {
+                "tags": ["Campaigns"],
+                "summary": "List campaign recipients",
+                "description": "Returns per-recipient delivery dispositions for one campaign, optionally filtered by status, with counts per status.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [
+                    CAMPAIGN_EXTERNAL_KEY_PARAM,
+                    {"name": "audience", "in": "query", "required": True, "schema": {"type": "string"}},
+                    {"name": "client", "in": "query", "required": True, "schema": {"type": "string"}},
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"$ref": "#/components/schemas/CampaignRecipientStatus"},
+                    },
+                ],
+                "responses": bearer_responses(
+                    json_response("Campaign recipients", "#/components/schemas/CampaignRecipientListResponse"),
+                ),
+            }
+        },
+        "/api/campaigns/{external_key}/recipients/{recipient_id}/retry": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Retry failed campaign recipient",
+                "description": (
+                    "Requeues one failed recipient for delivery on a campaign that can still send. "
+                    "Only failed recipients are retryable; sent, skipped, bounced, and complained outcomes are rejected."
+                ),
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM, CAMPAIGN_RECIPIENT_ID_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(
+                    json_response("Recipient retried", "#/components/schemas/CampaignRetryResponse"),
+                    accepted=True,
+                )
+                | {
+                    "404": {"$ref": "#/components/responses/ValidationError"},
+                    "409": {"$ref": "#/components/responses/ValidationError"},
+                },
             }
         },
         "/api/recipient-lists/{list_key}": {
@@ -1821,6 +1917,66 @@ OPENAPI_SPEC = {
                             },
                         },
                     },
+                },
+            },
+            "CampaignRecipientStatus": {
+                "type": "string",
+                "enum": [choice.value for choice in CampaignRecipientStatus],
+            },
+            "CampaignRecipient": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "email": {"type": "string", "format": "email"},
+                    "status": {"$ref": "#/components/schemas/CampaignRecipientStatus"},
+                    "skip_reason": {"type": "string"},
+                    "sent_at": {"type": ["string", "null"], "format": "date-time"},
+                    "delivered_at": {"type": ["string", "null"], "format": "date-time"},
+                    "first_opened_at": {"type": ["string", "null"], "format": "date-time"},
+                    "first_clicked_at": {"type": ["string", "null"], "format": "date-time"},
+                    "open_count": {"type": "integer"},
+                    "click_count": {"type": "integer"},
+                    "ses_message_id": {"type": "string"},
+                    "last_error": {"type": "string"},
+                    "created_at": {"type": "string", "format": "date-time"},
+                    "updated_at": {"type": "string", "format": "date-time"},
+                },
+            },
+            "CampaignRecipientListResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "count": {"type": "integer"},
+                    "status_counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    },
+                    "recipients": {
+                        "type": "array",
+                        "items": {"$ref": "#/components/schemas/CampaignRecipient"},
+                    },
+                },
+            },
+            "CampaignRecountResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "total_candidates": {"type": "integer"},
+                    "tag_filtered_count": {"type": "integer"},
+                    "recipient_count": {"type": "integer"},
+                    "skipped_count": {"type": "integer"},
+                    "skip_reason_counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    },
+                },
+            },
+            "CampaignRetryResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "recipient": {"$ref": "#/components/schemas/CampaignRecipient"},
+                    "retried": {"type": "boolean"},
                 },
             },
             "RecipientListType": {"type": "string", "enum": [choice.value for choice in RecipientListType]},

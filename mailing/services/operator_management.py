@@ -3,9 +3,13 @@ from django.utils import timezone
 
 from mailing.models import (
     Audience,
+    CampaignRecipient,
+    CampaignRecipientStatus,
     Client,
     ClientApiKey,
     ContactTag,
+    EmailEvent,
+    EmailEventType,
     EmailValidationStatus,
     OperatorAudit,
     Subscription,
@@ -13,6 +17,8 @@ from mailing.models import (
     Tag,
 )
 from mailing.services.auth import create_client_api_key
+from mailing.services.campaign_sender import refresh_campaign_send_counts
+from mailing.services.campaigns import CampaignRecipientConflict
 from mailing.services.contacts import normalize_tag_slug
 
 SECRET_METADATA_KEYS = {"api_key", "raw_api_key", "api_key_hash", "token", "secret", "password"}
@@ -312,3 +318,49 @@ def remove_contact_tag(*, actor, contact, tag):
     if deleted:
         audit(actor, "contact.tag.remove", contact, {"audience": tag.audience.slug, "tag": tag.slug})
     return bool(deleted)
+
+
+@transaction.atomic
+def assume_recipient_sent(*, actor, campaign, recipient):
+    """Resolve one failed recipient as sent without another delivery attempt.
+
+    Relay has no ambiguous delivery state; the failed row is where an operator
+    records that the message actually reached the recipient despite the send
+    error. The provider is never called: the recipient keeps its empty
+    ``ses_message_id`` and its original error text as diagnostics, while the
+    disposition moves to ``sent`` through an explicit email event and an
+    operator audit entry.
+    """
+    recipient = (
+        CampaignRecipient.objects.select_for_update()
+        .select_related("campaign", "campaign__client", "campaign__audience", "contact")
+        .get(pk=recipient.pk, campaign=campaign)
+    )
+    if recipient.status != CampaignRecipientStatus.FAILED:
+        raise CampaignRecipientConflict("recipient_not_failed")
+
+    prior_status = recipient.status
+    now = timezone.now()
+    recipient.status = CampaignRecipientStatus.SENT
+    if recipient.sent_at is None:
+        recipient.sent_at = now
+    recipient.save(update_fields=["status", "sent_at", "updated_at"])
+
+    EmailEvent.objects.create(
+        campaign=recipient.campaign,
+        campaign_recipient=recipient,
+        contact=recipient.contact,
+        client=recipient.campaign.client,
+        audience=recipient.campaign.audience,
+        event_type=EmailEventType.SENT,
+        metadata={"assumed_sent": True},
+        created_at=now,
+    )
+    audit(
+        actor,
+        "campaign.recipient.assume_sent",
+        recipient,
+        {"campaign": campaign.id, "prior_status": prior_status},
+    )
+    refresh_campaign_send_counts(campaign.id)
+    return recipient

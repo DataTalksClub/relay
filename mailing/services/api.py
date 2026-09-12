@@ -4,7 +4,7 @@ from email.utils import parseaddr
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email, validate_slug
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -35,7 +35,12 @@ from mailing.models import (
 )
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
-from mailing.services.campaigns import queue_campaign
+from mailing.services.campaigns import (
+    CampaignRecipientConflict,
+    queue_campaign,
+    recount_campaign_audience,
+    retry_campaign_recipient,
+)
 from mailing.services.categories import TRANSACTIONAL_CATEGORY, category_label, validate_canonical_category
 from mailing.services.client_callbacks import SUPPRESSION_REASON_CODES, emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
@@ -466,6 +471,94 @@ def test_send_campaign_for_client(external_key, data, authenticated_client):
         "campaign": campaign_payload(campaign),
         "sent_count": len(sent),
         "recipients": sent,
+    }
+
+
+def campaign_recipient_payload(recipient):
+    return {
+        "id": recipient.id,
+        "email": recipient.email,
+        "status": recipient.status,
+        "skip_reason": recipient.skip_reason,
+        "sent_at": isoformat(recipient.sent_at),
+        "delivered_at": isoformat(recipient.delivered_at),
+        "first_opened_at": isoformat(recipient.first_opened_at),
+        "first_clicked_at": isoformat(recipient.first_clicked_at),
+        "open_count": recipient.open_count,
+        "click_count": recipient.click_count,
+        "ses_message_id": recipient.ses_message_id,
+        "last_error": recipient.last_error,
+        "created_at": isoformat(recipient.created_at),
+        "updated_at": isoformat(recipient.updated_at),
+    }
+
+
+def recount_campaign_for_client(external_key, data, authenticated_client):
+    """Recount the filtered audience without exposing identities."""
+    campaign = campaign_for_client(external_key, data, authenticated_client)
+    recount = recount_campaign_audience(campaign)
+    campaign.refresh_from_db()
+    return {
+        "campaign": campaign_payload(campaign),
+        "total_candidates": recount.total_candidates,
+        "tag_filtered_count": recount.tag_filtered_count,
+        "recipient_count": recount.recipient_count,
+        "skipped_count": recount.skipped_count,
+        "skip_reason_counts": recount.skip_reason_counts,
+    }
+
+
+def validate_campaign_recipient_status_filter(value):
+    if value in (None, ""):
+        return ""
+    if value not in CampaignRecipientStatus.values:
+        raise ApiValidationError({"status": "invalid"})
+    return value
+
+
+def campaign_recipients_for_client(external_key, data, authenticated_client):
+    """Per-recipient dispositions for one campaign, as AISL's studio shows them."""
+    campaign = campaign_for_client(external_key, data, authenticated_client)
+    status_filter = validate_campaign_recipient_status_filter(data.get("status"))
+    recipients = (
+        CampaignRecipient.objects.filter(campaign=campaign)
+        .select_related("contact")
+        .order_by("contact__normalized_email", "id")
+    )
+    if status_filter:
+        recipients = recipients.filter(status=status_filter)
+    status_counts = {
+        status: 0 for status in CampaignRecipientStatus.values
+    }
+    for row in (
+        CampaignRecipient.objects.filter(campaign=campaign)
+        .values("status")
+        .annotate(total=Count("id"))
+    ):
+        status_counts[row["status"]] = row["total"]
+    return {
+        "campaign": campaign_payload(campaign),
+        "count": recipients.count(),
+        "status_counts": {status: count for status, count in status_counts.items() if count},
+        "recipients": [campaign_recipient_payload(recipient) for recipient in recipients],
+    }
+
+
+@transaction.atomic
+def retry_campaign_recipient_for_client(external_key, recipient_id, data, authenticated_client):
+    campaign = campaign_for_client(external_key, data, authenticated_client, for_update=True)
+    try:
+        result = retry_campaign_recipient(campaign, recipient_id)
+    except CampaignRecipientConflict as exc:
+        raise ApiValidationError({"recipient": str(exc)}, status_code=409) from exc
+    except CampaignRecipient.DoesNotExist as exc:
+        raise ApiValidationError({"recipient": "not_found"}, status_code=404) from exc
+    campaign.refresh_from_db()
+    recipient = CampaignRecipient.objects.get(pk=result.recipient_id)
+    return {
+        "campaign": campaign_payload(campaign),
+        "recipient": campaign_recipient_payload(recipient),
+        "retried": result.retried,
     }
 
 

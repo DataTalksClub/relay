@@ -14,6 +14,11 @@ urlpatterns = [
     path("campaigns/<int:campaign_id>/", views.campaign_detail, name="campaign_detail"),
     path("campaigns/<int:campaign_id>/edit/", views.campaign_edit, name="campaign_edit"),
     path("campaigns/<int:campaign_id>/queue/", views.campaign_queue, name="campaign_queue"),
+    path(
+        "campaigns/<int:campaign_id>/recipients/<int:recipient_id>/assume-sent/",
+        views.campaign_recipient_assume_sent,
+        name="campaign_recipient_assume_sent",
+    ),
     path("audiences/", views.audience_list, name="audience_list"),
     path("audiences/new/", views.audience_create, name="audience_create"),
     path("audiences/<int:audience_id>/", views.audience_detail, name="audience_detail"),
@@ -103,6 +108,17 @@ urlpatterns = [
     path("api/campaigns/<str:external_key>/cancel", views.api_campaign_cancel, name="api_campaign_cancel"),
     path("api/campaigns/<str:external_key>/preview", views.api_campaign_preview, name="api_campaign_preview"),
     path("api/campaigns/<str:external_key>/test-send", views.api_campaign_test_send, name="api_campaign_test_send"),
+    path("api/campaigns/<str:external_key>/recount", views.api_campaign_recount, name="api_campaign_recount"),
+    path(
+        "api/campaigns/<str:external_key>/recipients",
+        views.api_campaign_recipients,
+        name="api_campaign_recipients",
+    ),
+    path(
+        "api/campaigns/<str:external_key>/recipients/<int:recipient_id>/retry",
+        views.api_campaign_recipient_retry,
+        name="api_campaign_recipient_retry",
+    ),
     path("api/subscriptions/subscribe", views.api_subscribe, name="api_subscribe"),
     path("api/subscriptions/unsubscribe", views.api_unsubscribe, name="api_unsubscribe"),
     path(

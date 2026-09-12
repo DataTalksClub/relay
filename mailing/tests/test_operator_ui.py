@@ -2267,3 +2267,35 @@ def test_contact_detail_paginates_events(client, operator, campaign, client_reco
     assert response.status_code == 200
     assert b"Page 1 of 2" in response.content
     assert response.content.count(b"<strong>Open</strong>") == 50
+
+
+def test_campaign_detail_offers_assume_sent_only_for_failed_recipients(client, operator, campaign):
+    client.force_login(operator)
+    failed = create_recipient(
+        campaign,
+        "failed@example.com",
+        status=CampaignRecipientStatus.FAILED,
+        last_error="ses unavailable",
+    )
+    sent = create_recipient(
+        campaign,
+        "delivered@example.com",
+        status=CampaignRecipientStatus.SENT,
+        ses_message_id="ses-1",
+    )
+
+    filtered = client.get(reverse("mailing:campaign_detail", args=[campaign.id]), {"filter": "failed"})
+    html = filtered.content.decode()
+
+    assert filtered.status_code == 200
+    assert f"/campaigns/{campaign.id}/recipients/{failed.id}/assume-sent/" in html
+    assert "Assume sent" in html
+    assert f"/campaigns/{campaign.id}/recipients/{sent.id}/assume-sent/" not in html
+
+    unfiltered = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
+    unfiltered_html = unfiltered.content.decode()
+
+    assert f"/campaigns/{campaign.id}/recipients/{failed.id}/assume-sent/" in unfiltered_html
+    assert f"/campaigns/{campaign.id}/recipients/{sent.id}/assume-sent/" not in unfiltered_html
+
+
