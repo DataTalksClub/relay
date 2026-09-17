@@ -265,7 +265,7 @@ Growth plan:
 
 ### email_templates
 
-Reusable transactional and campaign templates.
+The editable draft of one reusable transactional or campaign template. Sends never render from this row directly; they render published `template_versions` snapshots.
 
 Important fields:
 
@@ -274,11 +274,43 @@ Important fields:
 - `key`
 - `name`
 - `subject`
+- `content_format`: `html` or `markdown`
 - `html_body`
 - `text_body`
+- `markdown_body`: canonical markdown source when `content_format` is `markdown`
+- `category`: optional template metadata carried onto published versions
+- `required_context`
+- `example_context`
 - `is_transactional`
 - `created_at`
 - `updated_at`
+
+Constraints and indexes:
+
+- Unique `(client_id, key)`.
+
+### template_versions
+
+Immutable published snapshots of an `email_templates` draft. Publishing writes version N+1 (1-based per template); republishing unchanged content returns the latest existing row. Rows are write-once: no API, management command, or admin action modifies a published version.
+
+Important fields:
+
+- `id`
+- `template_id`
+- `version`: 1-based per template
+- `subject`
+- `content_format`: `html` or `markdown`
+- `html_body`
+- `text_body`
+- `markdown_body`
+- `category`
+- `required_context`: normalized `[{name, description}]`
+- `published_at`
+
+Constraints and indexes:
+
+- Unique `(template_id, version)`.
+- Index `(template_id, version)` supports latest-version resolution for sends.
 
 ### transactional_messages
 
@@ -292,6 +324,7 @@ Important fields:
 - `email`
 - `template_id`
 - `template_key`
+- `template_version`: resolved published version number at send time
 - `status`: `queued`, `sent`, `failed`, `skipped`, `bounced`, `complained`
 - `idempotency_key`
 - `ses_message_id`

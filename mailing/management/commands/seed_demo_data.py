@@ -27,6 +27,7 @@ from mailing.models import (
     TransactionalMessageStatus,
 )
 from mailing.services.auth import hash_api_key
+from mailing.services.transactional_versions import publish_template_draft
 
 ADMIN_USERNAME = "admin"
 ADMIN_EMAIL = "admin@example.com"
@@ -84,9 +85,10 @@ def seed_demo_data():
     upsert_subscriptions(contacts, audiences, clients, now)
     upsert_contact_tags(contacts, tags)
     templates = upsert_templates(clients)
+    versions = publish_templates(templates)
     campaigns = upsert_campaigns(audiences, clients, now)
     recipients = upsert_campaign_recipients(campaigns, contacts, now)
-    messages = upsert_transactional_messages(clients, contacts, templates, now)
+    messages = upsert_transactional_messages(clients, contacts, templates, versions, now)
     upsert_campaign_events(recipients)
     upsert_transactional_events(messages)
     refresh_campaign_counts(campaigns.values())
@@ -423,6 +425,15 @@ def upsert_templates(clients):
     }
 
 
+def publish_templates(templates):
+    """Publish each demo template draft so demo sends resolve a version.
+
+    Publishing is idempotent: republishing unchanged content returns the
+    existing version instead of creating a new row.
+    """
+    return {key: publish_template_draft(template)[0] for key, template in templates.items()}
+
+
 def upsert_campaigns(audiences, clients, now):
     specs = [
         (
@@ -574,7 +585,7 @@ def upsert_campaign_recipients(campaigns, contacts, now):
     return recipients
 
 
-def upsert_transactional_messages(clients, contacts, templates, now):
+def upsert_transactional_messages(clients, contacts, templates, versions, now):
     specs = [
         (
             "queued",
@@ -640,6 +651,7 @@ def upsert_transactional_messages(clients, contacts, templates, now):
                 "from_email": client.default_from_email,
                 "template": template,
                 "template_key": template.key,
+                "template_version": versions[template_key].version,
                 "status": status,
                 "subject": template.subject,
                 "html_body": template.html_body,

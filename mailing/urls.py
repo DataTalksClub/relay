@@ -151,6 +151,26 @@ urlpatterns = [
         views.api_transactional_template,
         name="api_transactional_template",
     ),
+    path(
+        "api/transactional/templates/<slug:template_key>/publish",
+        views.api_transactional_template_publish,
+        name="api_transactional_template_publish",
+    ),
+    path(
+        "api/transactional/templates/<slug:template_key>/versions",
+        views.api_transactional_template_versions,
+        name="api_transactional_template_versions",
+    ),
+    path(
+        "api/transactional/templates/<slug:template_key>/preview",
+        views.api_transactional_template_preview,
+        name="api_transactional_template_preview",
+    ),
+    path(
+        "api/transactional/templates/<slug:template_key>/test-send",
+        views.api_transactional_template_test_send,
+        name="api_transactional_template_test_send",
+    ),
     path("api/transactional/send", views.api_transactional_send, name="api_transactional_send"),
     path(
         "api/transactional/messages/<int:message_id>",

@@ -12,6 +12,7 @@ from mailing.models import (
     TransactionalMessageStatus,
 )
 from mailing.services.auth import create_client_api_key
+from mailing.services.transactional_versions import publish_template_draft
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -38,7 +39,7 @@ def api_client_record(organization):
 
 @pytest.fixture
 def template(api_client_record):
-    return EmailTemplate.objects.create(
+    template = EmailTemplate.objects.create(
         client=api_client_record,
         key="email-verification",
         name="Email verification",
@@ -46,6 +47,8 @@ def template(api_client_record):
         html_body="<p>Verify at {{ verification_url }}</p>",
         text_body="Verify at {{ verification_url }}",
     )
+    publish_template_draft(template)
+    return template
 
 
 def auth_headers(raw_key=API_KEY):

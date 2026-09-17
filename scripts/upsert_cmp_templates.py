@@ -434,11 +434,18 @@ def main():
     for template_key in template_keys:
         url = f"{base_url}/api/transactional/templates/{template_key}"
         status, payload = request_json("PUT", url, args.api_key, TEMPLATES[template_key])
+
+        # Sends render only published versions, so publish after every upsert.
+        # Publishing unchanged content returns the existing version.
+        publish_url = f"{base_url}/api/transactional/templates/{template_key}/publish"
+        publish_status, publish_payload = request_json("POST", publish_url, args.api_key, {})
         results.append(
             {
                 "template_key": template_key,
                 "status": status,
                 "response": payload,
+                "publish_status": publish_status,
+                "publish_response": publish_payload,
             }
         )
 

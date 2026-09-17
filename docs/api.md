@@ -263,6 +263,8 @@ GET /api/transactional/templates/{template_key}
 
 Templates are scoped to the authenticated client. Use `PUT` to create or update a transactional template, and `GET` to verify the current configuration.
 
+`PUT` always writes the editable draft. Sends never render the draft: they render immutable published versions (see Publish below). `GET` returns the draft plus `latest_published_version` (`null` when nothing has been published yet).
+
 ```json
 {
   "name": "Homework Submission Confirmation",
@@ -282,6 +284,85 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
 }
 ```
 
+### Template Content Forms
+
+A draft has a `content_format` with two first-class forms:
+
+- `html` (default): `html_body`/`text_body` are the content. Subject, HTML, and text each render as Django template strings with the send context. This is the form CMP provisioning uses, and raw HTML with Django filters stays fully supported.
+- `markdown`: `markdown_body` (markdown without frontmatter) is the content. Rendering runs context substitution first (so Django template tags such as `{% if %}` blocks still apply), then converts markdown to sanitized HTML, then wraps it in the shared HTML email chrome with the client footer; plain text derives from the same context-rendered source. This is the form the AISL markdown import uses.
+
+Set them with `PUT`:
+
+```json
+{
+  "name": "Registration Confirmation",
+  "subject": "You're registered: {{ event_title }}",
+  "content_format": "markdown",
+  "markdown_body": "Hi {{ user_name }},\n\nYou're registered for **{{ event_title }}**.",
+  "category": "events"
+}
+```
+
+`category` is template metadata carried on versions (optional, shown in version lists). It is not the send-level `category_tag` subscription preference that sends already accept.
+
+#### Markdown Import Format
+
+The portable markdown format is a markdown file with YAML frontmatter. `subject` is required; `required_context` (a list) and `category` are optional. The file body is the markdown template. This matches the AI Shipping Labs email template format, and `python manage.py import_templates --dir <path> --client <slug>` imports a directory of such files as drafts (key = file stem).
+
+```markdown
+---
+subject: "You're registered: {{ event_title }}"
+category: events
+---
+
+Hi {{ user_name }},
+
+You're registered for **{{ event_title }}**.
+```
+
+### Publish, Versions, Preview, and Test Send
+
+```text
+POST /api/transactional/templates/{template_key}/publish
+GET  /api/transactional/templates/{template_key}/versions
+POST /api/transactional/templates/{template_key}/preview
+POST /api/transactional/templates/{template_key}/test-send
+```
+
+Publish snapshots the current draft as immutable version N (1-based per client and key), storing subject, the canonical content source (markdown body and/or html/text), `required_context`, `category`, and the publish timestamp. Republishing a draft whose content matches the latest published version returns that version (`"created": false`) instead of creating a new row. No API, management command, or admin action can modify a published version; `PUT` and later republishes touch only the draft.
+
+```json
+{
+  "template_key": "registration-welcome",
+  "created": true,
+  "latest_published_version": 2,
+  "version": {
+    "version": 2,
+    "subject": "Welcome to DataTalksClub",
+    "content_format": "html",
+    "category": "",
+    "required_context": [],
+    "published_at": "2026-09-07T12:00:00Z",
+    "is_latest": true
+  }
+}
+```
+
+`GET .../versions` lists published versions newest first, each with version number, subject, `category`, published timestamp, and `is_latest`.
+
+Preview renders `{subject, html, text}` for the draft (no `template_version` given) or one published version:
+
+```json
+{
+  "context": {"name": "Alex", "course_name": "ML Zoomcamp"},
+  "template_version": 2
+}
+```
+
+Missing required context keys return `400` with one `context.<name>: required` field per missing key. Preview and sends share one render code path: the same version plus the same context produce identical `subject`/`html`/`text` through preview and a `dry_run` send.
+
+Test send delivers one published version (default: latest published) to an allowlisted staff address. The allowlist is deny by default and configured with the `TRANSACTIONAL_TEST_SEND_ADDRESSES` comma-separated environment setting. A non-allowlisted address is rejected with `403` (`{"email": "not_allowlisted"}`) and nothing is created or enqueued. An allowed request goes through the normal enqueue path and marks the message as a test send in its message metadata.
+
 CMP transactional templates can be provisioned through the API with:
 
 ```bash
@@ -290,7 +371,7 @@ DATAMAILER_API_KEY="<client-api-key>" \
 python scripts/upsert_cmp_templates.py
 ```
 
-The script provisions these template keys:
+The script PUTs each template and then publishes it, because sends resolve published versions only. It provisions these template keys:
 
 ```text
 homework-submission-confirmation
@@ -311,6 +392,7 @@ POST /api/transactional/send
 {
   "email": "learner@example.com",
   "template_key": "registration-welcome",
+  "template_version": 2,
   "idempotency_key": "registration-user-123",
   "context": {
     "name": "Learner",
@@ -323,6 +405,8 @@ POST /api/transactional/send
 ```
 
 Transactional sends validate required template context before Datamailer creates a contact, message, event, or queue payload. Reusing an idempotency key returns the existing message.
+
+`template_version` is optional on every transactional send path (single send, recipient-list send, and transient-list send). Omitted, it means the latest published version. An unknown version returns `404`; a template with no published version returns `409` with a `no_published_version` error, and a failed resolution creates no contact, no message row, and no queue payload. Required context is validated against the resolved version. The resolved version is stored on the message and returned as `template_version` next to `template_key` in the send and dry-run responses. The worker/queue contract is unchanged: rendered bodies are snapshotted at enqueue time, so versions affect request-time resolution and rendering only.
 
 Local transactional send examples require the Datamailer server to be started with `SQS_TRANSACTIONAL_EMAIL_QUEUE_URL` configured, for example through LocalStack. With the default empty queue URL, the endpoint is documented but is not runnable because queueing provider work will fail.
 
@@ -512,6 +596,7 @@ is stored, and `enqueued` is always `false`.
     "bcc": [],
     "status": "queued",
     "template_key": "registration-welcome",
+    "template_version": 2,
     "idempotency_key": "registration-user-123",
     "created_at": null
   },

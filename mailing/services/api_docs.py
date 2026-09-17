@@ -73,6 +73,10 @@ API_DOC_PATHS = {
         "/api/transient-recipient-lists/transactional-send"
     ),
     "mailing:api_transactional_template": "/api/transactional/templates/{template_key}",
+    "mailing:api_transactional_template_publish": "/api/transactional/templates/{template_key}/publish",
+    "mailing:api_transactional_template_versions": "/api/transactional/templates/{template_key}/versions",
+    "mailing:api_transactional_template_preview": "/api/transactional/templates/{template_key}/preview",
+    "mailing:api_transactional_template_test_send": "/api/transactional/templates/{template_key}/test-send",
     "mailing:api_transactional_send": "/api/transactional/send",
     "mailing:api_transactional_message_status": "/api/transactional/messages/{message_id}",
     "mailing:tracking_open": "/t/o/{tracking_token}.gif",
@@ -617,6 +621,53 @@ requests.post(
                     "error": code_json(validation_error({"context.course_name": "required"})),
                 },
                 {
+                    "id": "template-publish-preview",
+                    "title": "Publish and preview a template version",
+                    "method": "POST",
+                    "path": "/api/transactional/templates/{template_key}/publish",
+                    "summary": "PUT keeps editing the draft; publish snapshots it as the next immutable version (republishing unchanged content returns the existing version). Preview renders the draft or one version with context and shares the send render path.",
+                    "request": code_json(
+                        {
+                            "context": {"name": "Alex", "course_name": "ML Zoomcamp"},
+                            "template_version": 2,
+                        }
+                    ),
+                    "curl": """curl -sS -X POST "$DATAMAILER_URL/api/transactional/templates/registration-welcome/publish" \\
+  -H "Authorization: Bearer $DATAMAILER_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{}'
+
+curl -sS -X POST "$DATAMAILER_URL/api/transactional/templates/registration-welcome/preview" \\
+  -H "Authorization: Bearer $DATAMAILER_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"context": {"name": "Alex", "course_name": "ML Zoomcamp"}}'""",
+                    "python": """requests.post(
+    f"{base_url}/api/transactional/templates/registration-welcome/publish",
+    headers=headers,
+    json={},
+    timeout=10,
+)
+
+requests.post(
+    f"{base_url}/api/transactional/templates/registration-welcome/preview",
+    headers=headers,
+    json={"context": {"name": "Alex", "course_name": "ML Zoomcamp"}},
+    timeout=10,
+)""",
+                    "success": code_json(
+                        {
+                            "template_key": "registration-welcome",
+                            "template_version": None,
+                            "preview": {
+                                "subject": "Welcome to DataTalksClub",
+                                "html": "<p>Hello Alex, your ML Zoomcamp registration is confirmed.</p>",
+                                "text": "Hello Alex, your ML Zoomcamp registration is confirmed.",
+                            },
+                        }
+                    ),
+                    "error": code_json(validation_error({"context.course_name": "required"})),
+                },
+                {
                     "id": "json-import",
                     "title": "Import contacts with JSON",
                     "method": "POST",
@@ -762,6 +813,10 @@ def endpoint_groups():
                 ("POST", "/api/contacts/imports/csv", "CSV upload/import."),
                 ("PUT", "/api/transactional/templates/{template_key}", "Create or update a transactional template."),
                 ("GET", "/api/transactional/templates/{template_key}", "Get one transactional template."),
+                ("POST", "/api/transactional/templates/{template_key}/publish", "Publish the draft as an immutable version."),
+                ("GET", "/api/transactional/templates/{template_key}/versions", "List published versions of one template."),
+                ("POST", "/api/transactional/templates/{template_key}/preview", "Render the draft or one version with context."),
+                ("POST", "/api/transactional/templates/{template_key}/test-send", "Send one version to an allowlisted staff address."),
                 ("POST", "/api/transactional/send", "Queue one transactional email (dry_run renders without sending)."),
                 ("GET", "/api/transactional/messages/{message_id}", "Get transactional message status."),
             ],
@@ -916,6 +971,22 @@ def route_path_map():
             "mailing:api_transactional_template",
             args=["homework-submission-confirmation"],
         ),
+        API_DOC_PATHS["mailing:api_transactional_template_publish"]: reverse(
+            "mailing:api_transactional_template_publish",
+            args=["homework-submission-confirmation"],
+        ),
+        API_DOC_PATHS["mailing:api_transactional_template_versions"]: reverse(
+            "mailing:api_transactional_template_versions",
+            args=["homework-submission-confirmation"],
+        ),
+        API_DOC_PATHS["mailing:api_transactional_template_preview"]: reverse(
+            "mailing:api_transactional_template_preview",
+            args=["homework-submission-confirmation"],
+        ),
+        API_DOC_PATHS["mailing:api_transactional_template_test_send"]: reverse(
+            "mailing:api_transactional_template_test_send",
+            args=["homework-submission-confirmation"],
+        ),
         API_DOC_PATHS["mailing:api_transactional_send"]: reverse("mailing:api_transactional_send"),
         API_DOC_PATHS["mailing:api_transactional_message_status"]: reverse(
             "mailing:api_transactional_message_status",
@@ -961,6 +1032,7 @@ CONTACT_ID_PARAM = {"name": "contact_id", "in": "path", "required": True, "schem
 TAG_SLUG_PARAM = {"name": "tag_slug", "in": "path", "required": True, "schema": {"type": "string"}}
 LIST_KEY_PARAM = {"name": "list_key", "in": "path", "required": True, "schema": {"type": "string"}}
 JOB_ID_PARAM = {"name": "job_id", "in": "path", "required": True, "schema": {"type": "integer"}}
+TEMPLATE_KEY_PARAM = {"name": "template_key", "in": "path", "required": True, "schema": {"type": "string"}}
 CAMPAIGN_EXTERNAL_KEY_PARAM = {
     "name": "external_key",
     "in": "path",
@@ -1535,6 +1607,68 @@ OPENAPI_SPEC = {
                 ),
             },
         },
+        "/api/transactional/templates/{template_key}/publish": {
+            "post": {
+                "tags": ["Transactional"],
+                "summary": "Publish transactional template version",
+                "description": "Snapshots the current draft as a new immutable version (1-based per client and key). Republishing content identical to the latest published version returns that version without creating a new row. PUT continues to edit the draft; published versions can never be modified.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [TEMPLATE_KEY_PARAM],
+                "responses": bearer_responses(
+                    json_response(
+                        "Published template version",
+                        "#/components/schemas/TransactionalTemplatePublishResponse",
+                    )
+                ),
+            }
+        },
+        "/api/transactional/templates/{template_key}/versions": {
+            "get": {
+                "tags": ["Transactional"],
+                "summary": "List transactional template versions",
+                "description": "Lists published versions of one template, newest first, with version number, subject, category, publish timestamp, and which version is latest.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [TEMPLATE_KEY_PARAM],
+                "responses": bearer_responses(
+                    json_response(
+                        "Template versions",
+                        "#/components/schemas/TransactionalTemplateVersionsResponse",
+                    )
+                ),
+            }
+        },
+        "/api/transactional/templates/{template_key}/preview": {
+            "post": {
+                "tags": ["Transactional"],
+                "summary": "Preview transactional template",
+                "description": "Renders subject, HTML, and text for the draft (no template_version given) or one published version, using the provided context. Missing required context keys are rejected with a 400 naming each one. Preview shares the send render code path: the same version and context produce identical output through preview and dry_run send.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [TEMPLATE_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/TransactionalTemplatePreviewRequest"),
+                "responses": bearer_responses(
+                    json_response(
+                        "Rendered template preview",
+                        "#/components/schemas/TransactionalTemplatePreviewResponse",
+                    )
+                )
+                | {"404": {"$ref": "#/components/responses/ValidationError"}},
+            }
+        },
+        "/api/transactional/templates/{template_key}/test-send": {
+            "post": {
+                "tags": ["Transactional"],
+                "summary": "Test send transactional template",
+                "description": "Sends one published version (default: latest published) of the template to one allowlisted staff address. The address allowlist is deny by default (TRANSACTIONAL_TEST_SEND_ADDRESSES); a non-allowlisted address is rejected with 403 and nothing is enqueued. Allowed requests take the normal enqueue path and mark the message as a test send in metadata.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [TEMPLATE_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/TransactionalTemplateTestSendRequest"),
+                "responses": bearer_responses(
+                    json_response("Test send accepted", "#/components/schemas/TransactionalSendResponse"),
+                    accepted=True,
+                )
+                | {"403": {"$ref": "#/components/responses/ValidationError"}},
+            }
+        },
         "/api/transactional/messages/{message_id}": {
             "get": {
                 "tags": ["Transactional"],
@@ -1874,6 +2008,7 @@ OPENAPI_SPEC = {
                         "required": ["template_key", "idempotency_key"],
                         "properties": {
                             "template_key": {"type": "string"},
+                            "template_version": {"type": "integer", "minimum": 1},
                             "idempotency_key": {"type": "string"},
                             "category_tag": {"type": "string"},
                             "context": {"type": "object"},
@@ -1923,6 +2058,7 @@ OPENAPI_SPEC = {
                         "required": ["template_key", "idempotency_key", "members"],
                         "properties": {
                             "template_key": {"type": "string"},
+                            "template_version": {"type": "integer", "minimum": 1},
                             "idempotency_key": {"type": "string"},
                             "category_tag": {"type": "string"},
                             "context": {"type": "object"},
@@ -2457,6 +2593,11 @@ OPENAPI_SPEC = {
                         "items": {"$ref": "#/components/schemas/StructuredMessagePart"},
                     },
                     "template_key": {"type": "string"},
+                    "template_version": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional published version to render. Defaults to the latest published version. An unknown version is a 404; a template with no published version is a 409 no_published_version.",
+                    },
                     "idempotency_key": {"type": "string"},
                     "category_tag": {"type": "string"},
                     "context": {"type": "object"},
@@ -2474,6 +2615,7 @@ OPENAPI_SPEC = {
                     "message": {"type": "object"},
                     "idempotent_replay": {"type": "boolean"},
                     "enqueued": {"type": "boolean"},
+                    "test_send": {"type": "boolean", "description": "Present on template test sends."},
                 },
             },
             "StructuredMessagePart": {
@@ -2500,8 +2642,16 @@ OPENAPI_SPEC = {
                     "name": {"type": "string"},
                     "description": {"type": "string"},
                     "subject": {"type": "string"},
+                    "content_format": {
+                        "type": "string",
+                        "enum": ["html", "markdown"],
+                        "default": "html",
+                        "description": "Which content form the draft uses. html renders html_body/text_body as Django template strings. markdown renders markdown_body: context substitution first, then markdown to sanitized HTML wrapped in the shared email chrome, with plain text derived from the same source.",
+                    },
                     "html_body": {"type": "string"},
                     "text_body": {"type": "string"},
+                    "markdown_body": {"type": "string"},
+                    "category": {"type": "string", "maxLength": 120},
                     "required_context": {"type": "array", "items": {"type": "object"}},
                     "example_context": {"type": "object"},
                     "default_sender_id": {"type": "string"},
@@ -2516,13 +2666,101 @@ OPENAPI_SPEC = {
                     "name": {"type": "string"},
                     "description": {"type": "string"},
                     "subject": {"type": "string"},
+                    "content_format": {"type": "string", "enum": ["html", "markdown"]},
                     "html_body": {"type": "string"},
                     "text_body": {"type": "string"},
+                    "markdown_body": {"type": "string"},
+                    "category": {"type": "string"},
                     "required_context": {"type": "array", "items": {"type": "object"}},
                     "example_context": {"type": "object"},
                     "default_sender_id": {"type": "string"},
+                    "latest_published_version": {
+                        "type": ["integer", "null"],
+                        "description": "Latest published version number, or null when nothing has been published yet.",
+                    },
                     "is_transactional": {"type": "boolean"},
                     "is_active": {"type": "boolean"},
+                },
+            },
+            "TransactionalTemplateVersion": {
+                "type": "object",
+                "properties": {
+                    "version": {"type": "integer", "minimum": 1},
+                    "subject": {"type": "string"},
+                    "content_format": {"type": "string", "enum": ["html", "markdown"]},
+                    "category": {"type": "string"},
+                    "required_context": {"type": "array", "items": {"type": "object"}},
+                    "published_at": {"type": "string", "format": "date-time"},
+                    "is_latest": {"type": "boolean"},
+                },
+            },
+            "TransactionalTemplatePublishResponse": {
+                "type": "object",
+                "properties": {
+                    "template_key": {"type": "string"},
+                    "created": {
+                        "type": "boolean",
+                        "description": "False when the draft matched the latest published version and the existing version was returned.",
+                    },
+                    "latest_published_version": {"type": "integer"},
+                    "version": {"$ref": "#/components/schemas/TransactionalTemplateVersion"},
+                },
+            },
+            "TransactionalTemplateVersionsResponse": {
+                "type": "object",
+                "properties": {
+                    "template_key": {"type": "string"},
+                    "latest_published_version": {"type": ["integer", "null"]},
+                    "versions": {
+                        "type": "array",
+                        "items": {"$ref": "#/components/schemas/TransactionalTemplateVersion"},
+                    },
+                },
+            },
+            "TransactionalTemplatePreviewRequest": {
+                "type": "object",
+                "properties": {
+                    "context": {"type": "object"},
+                    "template_version": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional published version to render. Omit to preview the current draft.",
+                    },
+                },
+            },
+            "TransactionalTemplatePreviewResponse": {
+                "type": "object",
+                "properties": {
+                    "template_key": {"type": "string"},
+                    "template_version": {
+                        "type": ["integer", "null"],
+                        "description": "Rendered version number, or null for a draft preview.",
+                    },
+                    "preview": {
+                        "type": "object",
+                        "properties": {
+                            "subject": {"type": "string"},
+                            "html": {"type": "string"},
+                            "text": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "TransactionalTemplateTestSendRequest": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email",
+                        "description": "Must be on the TRANSACTIONAL_TEST_SEND_ADDRESSES allowlist (deny by default).",
+                    },
+                    "context": {"type": "object"},
+                    "template_version": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional published version to send. Defaults to the latest published version.",
+                    },
                 },
             },
             "TransactionalTemplateUpsertResponse": {

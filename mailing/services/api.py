@@ -26,13 +26,14 @@ from mailing.models import (
     RecipientListMember,
     Subscription,
     SubscriptionStatus,
+    TemplateContentFormat,
     TransactionalMessage,
     normalize_tag_filter,
 )
 from mailing.models import (
     normalize_category_tag as normalize_campaign_category_tag,
 )
-from mailing.services.api_errors import ApiValidationError
+from mailing.services.api_errors import ApiValidationError, isoformat
 from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
 from mailing.services.campaigns import queue_campaign
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
@@ -47,6 +48,8 @@ from mailing.services.contacts import (
     unsubscribe_contact,
     upsert_contact,
 )
+from mailing.services.transactional_content import CONTENT_FORMATS
+from mailing.services.transactional_versions import latest_published_version_number
 
 
 @dataclass(frozen=True)
@@ -63,11 +66,15 @@ def template_payload(template):
         "name": template.name,
         "description": template.description,
         "subject": template.subject,
+        "content_format": template.content_format,
         "html_body": template.html_body,
         "text_body": template.text_body,
+        "markdown_body": template.markdown_body,
+        "category": template.category,
         "required_context": template.required_context,
         "example_context": template.example_context,
         "default_sender_id": template.default_sender_id,
+        "latest_published_version": latest_published_version_number(template),
         "is_transactional": template.is_transactional,
         "is_active": template.is_active,
         "created_at": isoformat(template.created_at),
@@ -487,14 +494,35 @@ def validate_transactional_template_payload(data, template_key):
     if not isinstance(subject, str) or not subject.strip():
         errors["subject"] = "required"
 
+    content_format = data.get("content_format", TemplateContentFormat.HTML)
+    if content_format in (None, ""):
+        content_format = TemplateContentFormat.HTML
+    elif content_format not in CONTENT_FORMATS:
+        errors["content_format"] = "invalid"
+        content_format = TemplateContentFormat.HTML
+
     fields = {
         "description": data.get("description", ""),
         "html_body": data.get("html_body", ""),
         "text_body": data.get("text_body", ""),
+        "markdown_body": data.get("markdown_body", ""),
     }
     for field_name, value in fields.items():
         if not isinstance(value, str):
             errors[field_name] = "must_be_string"
+
+    category = data.get("category", "")
+    if category in (None, ""):
+        category = ""
+    elif not isinstance(category, str) or not category.strip():
+        errors["category"] = "must_be_non_empty_string"
+    else:
+        category = category.strip()
+        if len(category) > 120:
+            errors["category"] = "too_long"
+
+    if content_format == TemplateContentFormat.MARKDOWN and not fields["markdown_body"].strip():
+        errors["markdown_body"] = "required"
 
     required_context = data.get("required_context", [])
     if required_context in (None, ""):
@@ -531,8 +559,11 @@ def validate_transactional_template_payload(data, template_key):
         "name": name.strip(),
         "subject": subject.strip(),
         "description": fields["description"].strip(),
+        "content_format": content_format,
         "html_body": fields["html_body"],
         "text_body": fields["text_body"],
+        "markdown_body": fields["markdown_body"],
+        "category": category,
         "required_context": required_context,
         "example_context": example_context,
         "default_sender_id": default_sender_id,
@@ -1433,6 +1464,7 @@ def transactional_history_item(message):
         "from_email": message.from_email_id,
         "from_email_address": message.from_email,
         "template_key": message.template_key,
+        "template_version": message.template_version,
         "status": message.status,
         "subject": message.subject,
         "sent_at": isoformat(message.sent_at),
@@ -1537,9 +1569,3 @@ def get_contact_history_for_client(contact_id, data, authenticated_client):
         "events": event_items,
         "next_cursor": str(next_cursor) if next_cursor else None,
     }
-
-
-def isoformat(value):
-    if value is None:
-        return None
-    return value.isoformat().replace("+00:00", "Z")

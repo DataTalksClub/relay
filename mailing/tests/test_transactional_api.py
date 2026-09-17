@@ -28,6 +28,7 @@ from mailing.models import (
 from mailing.queue_contracts import validate_transactional_email_message
 from mailing.services.auth import create_client_api_key
 from mailing.services.cmp_callbacks import process_due_cmp_callbacks
+from mailing.services.transactional_versions import publish_template_draft
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -72,7 +73,7 @@ def other_client(organization):
 
 @pytest.fixture
 def template(api_client_record):
-    return EmailTemplate.objects.create(
+    template = EmailTemplate.objects.create(
         client=api_client_record,
         key="email-verification",
         name="Email verification",
@@ -80,6 +81,8 @@ def template(api_client_record):
         html_body="<p>Verify at {{ verification_url }}</p>",
         text_body="Verify at {{ verification_url }}",
     )
+    publish_template_draft(template)
+    return template
 
 
 def auth_headers(raw_key=API_KEY):
@@ -572,6 +575,7 @@ def test_recipient_list_send_can_sync_members_and_render_member_context(
             {"name": "total_score"},
         ],
     )
+    publish_template_draft(score_template)
     old_contact = Contact.objects.create(email="old@example.com")
     recipient_list = RecipientList.objects.create(
         client=api_client_record,
@@ -670,6 +674,7 @@ def test_transient_recipient_list_send_renders_members_without_persisting_list(
             {"name": "deadline_at"},
         ],
     )
+    publish_template_draft(reminder_template)
     opted_out_contact = Contact.objects.create(email="opted-out@example.com")
     CategoryPreference.objects.create(
         contact=opted_out_contact,
@@ -1107,6 +1112,7 @@ def test_transactional_required_context_rejects_before_mutation_or_enqueue(clien
         required_context=[{"name": "reset_url", "description": "Client-generated reset URL."}],
         example_context={"reset_url": "https://client.example/reset/placeholder"},
     )
+    publish_template_draft(template)
 
     response = post_transactional(
         client,
@@ -1136,6 +1142,7 @@ def test_transactional_idempotent_replay_does_not_revalidate_required_context(cl
         subject="Verify",
         required_context=["verification_url"],
     )
+    publish_template_draft(template)
     payload = {
         "email": "person@example.com",
         "template_key": template.key,
@@ -1243,6 +1250,7 @@ def test_transactional_template_key_is_scoped_to_authenticated_client(
         name="Own reset",
         subject="Reset {{ product }}",
     )
+    publish_template_draft(own_template)
 
     response = post_transactional(
         client,

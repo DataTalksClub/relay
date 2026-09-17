@@ -3,15 +3,14 @@ from dataclasses import dataclass
 from django.db.models import Count, Q
 
 from mailing.models import EmailTemplate, TransactionalMessage, TransactionalMessageStatus
-from mailing.services.api import ApiValidationError
 from mailing.services.operator_ui import Badge, delivery_tone
-from mailing.services.transactional_rendering import render_template_string
-
-
-@dataclass(frozen=True)
-class ContextRequirement:
-    name: str
-    description: str = ""
+from mailing.services.transactional_content import (
+    ContextRequirement,
+    TemplateContent,
+    normalize_required_context,
+    required_context_names,
+    validate_required_context_names,
+)
 
 
 @dataclass(frozen=True)
@@ -27,33 +26,8 @@ class RecentMessageRow:
     badge: Badge
 
 
-def normalize_required_context(value):
-    requirements = []
-    for item in value or []:
-        if isinstance(item, str):
-            name = item.strip()
-            description = ""
-        elif isinstance(item, dict):
-            name = str(item.get("name") or "").strip()
-            description = str(item.get("description") or "").strip()
-        else:
-            continue
-        if name:
-            requirements.append(ContextRequirement(name=name, description=description))
-    return tuple(requirements)
-
-
-def required_context_names(template):
-    return tuple(requirement.name for requirement in normalize_required_context(template.required_context))
-
-
 def validate_template_context(template, context):
-    errors = {}
-    for name in required_context_names(template):
-        if name not in context or context[name] in (None, ""):
-            errors[f"context.{name}"] = "required"
-    if errors:
-        raise ApiValidationError(errors)
+    validate_required_context_names(required_context_names(template.required_context), context)
 
 
 def transactional_template_queryset():
@@ -137,10 +111,12 @@ def catalog_context(template):
 
 
 def render_preview(template, example_context, *, max_chars=1200):
+    """Operator UI preview of the draft via the one shared render path."""
+    rendered = TemplateContent.from_draft(template).render(example_context, client_name=template.client.name)
     preview = {
-        "subject": render_template_string(template.subject, example_context),
-        "text_body": render_template_string(template.text_body, example_context),
-        "html_body": render_template_string(template.html_body, example_context),
+        "subject": rendered["subject"],
+        "text_body": rendered["text"],
+        "html_body": rendered["html"],
     }
     return {key: truncate(value, max_chars) for key, value in preview.items() if value}
 

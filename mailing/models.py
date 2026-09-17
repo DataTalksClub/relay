@@ -552,14 +552,32 @@ class CampaignRecipient(TimeStampedModel):
         return f"{self.campaign_id}: {self.email} ({self.status})"
 
 
+class TemplateContentFormat(models.TextChoices):
+    HTML = "html", "HTML"
+    MARKDOWN = "markdown", "Markdown"
+
+
 class EmailTemplate(TimeStampedModel):
+    """The editable draft of one client template.
+
+    Sends never render from this row directly: they render from immutable
+    :class:`TemplateVersion` snapshots created by publishing this draft.
+    """
+
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="email_templates")
     key = models.SlugField(max_length=120)
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     subject = models.CharField(max_length=255)
+    content_format = models.CharField(
+        max_length=20,
+        choices=TemplateContentFormat.choices,
+        default=TemplateContentFormat.HTML,
+    )
     html_body = models.TextField(blank=True)
     text_body = models.TextField(blank=True)
+    markdown_body = models.TextField(blank=True)
+    category = models.CharField(max_length=120, blank=True)
     required_context = models.JSONField(default=list, blank=True)
     example_context = models.JSONField(default=dict, blank=True)
     default_sender_id = models.CharField(max_length=80, blank=True)
@@ -581,6 +599,49 @@ class EmailTemplate(TimeStampedModel):
         return f"{self.key} ({self.client.slug})"
 
 
+class TemplateVersion(models.Model):
+    """An immutable published snapshot of an :class:`EmailTemplate` draft.
+
+    Rows are write-once: :meth:`save` refuses updates, the model is not
+    registered in the admin, and no API or management command mutates a
+    published version. Republishing unchanged content returns the existing
+    row instead of writing a new one.
+    """
+
+    template = models.ForeignKey(EmailTemplate, on_delete=models.PROTECT, related_name="versions")
+    version = models.PositiveIntegerField()
+    subject = models.CharField(max_length=255)
+    content_format = models.CharField(
+        max_length=20,
+        choices=TemplateContentFormat.choices,
+        default=TemplateContentFormat.HTML,
+    )
+    html_body = models.TextField(blank=True)
+    text_body = models.TextField(blank=True)
+    markdown_body = models.TextField(blank=True)
+    category = models.CharField(max_length=120, blank=True)
+    required_context = models.JSONField(default=list, blank=True)
+    published_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "template_versions"
+        ordering = ["template_id", "-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["template", "version"], name="unique_template_version_number"),
+        ]
+        indexes = [
+            models.Index(fields=["template", "-version"], name="template_version_latest_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("TemplateVersion rows are immutable and cannot be updated.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.template.key} v{self.version}"
+
+
 class TransactionalMessageStatus(models.TextChoices):
     QUEUED = "queued", "Queued"
     SENDING = "sending", "Sending"
@@ -599,6 +660,7 @@ class TransactionalMessage(TimeStampedModel):
     from_email = models.EmailField(max_length=320, blank=True)
     template = models.ForeignKey(EmailTemplate, on_delete=models.PROTECT, related_name="transactional_messages")
     template_key = models.CharField(max_length=120)
+    template_version = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=TransactionalMessageStatus.choices,

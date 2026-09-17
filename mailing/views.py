@@ -153,6 +153,7 @@ from mailing.services.transactional import (
     send_transactional_email_for_client,
     send_transactional_email_to_recipient_list_for_client,
     send_transactional_email_to_transient_recipient_list_for_client,
+    test_send_transactional_template_for_client,
 )
 from mailing.services.transactional_catalog import (
     catalog_context,
@@ -161,6 +162,11 @@ from mailing.services.transactional_catalog import (
     template_catalog_rows,
     transactional_queue_queryset,
     transactional_template_queryset,
+)
+from mailing.services.transactional_versions import (
+    list_template_versions_for_client,
+    preview_transactional_template_for_client,
+    publish_transactional_template_for_client,
 )
 from mailing.services.worker_status import worker_status_payload
 
@@ -1588,6 +1594,70 @@ def api_transactional_send(request):
 
     try:
         payload = send_transactional_email_for_client(json_request_body(request), client)
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+    except TransactionalSendRejected as exc:
+        return JsonResponse(exc.payload, status=exc.status_code)
+
+    return JsonResponse(payload, status=202)
+
+
+@csrf_exempt
+@require_POST
+def api_transactional_template_publish(request, template_key):
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = publish_transactional_template_for_client(template_key, client)
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_transactional_template_versions(request, template_key):
+    if request.method != "GET":
+        return method_not_allowed_response(["GET"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = list_template_versions_for_client(template_key, client)
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+@require_POST
+def api_transactional_template_preview(request, template_key):
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = preview_transactional_template_for_client(template_key, json_request_body(request), client)
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+@require_POST
+def api_transactional_template_test_send(request, template_key):
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = test_send_transactional_template_for_client(template_key, json_request_body(request), client)
     except ApiValidationError as exc:
         return validation_error_response(exc)
     except TransactionalSendRejected as exc:
