@@ -1760,11 +1760,20 @@ def get_contact_history_for_client(contact_id, data, authenticated_client):
     event_queryset = EmailEvent.objects.filter(contact=contact).filter(
         (Q(client=scope.client) | Q(client__isnull=True)) & (Q(audience=scope.audience) | Q(audience__isnull=True))
     )
+    # Newest first by when the event happened, not by insertion order: an
+    # imported history row carries its original timestamp but gets a fresh id,
+    # so ordering on the id alone would file years-old events above today's.
+    # The cursor stays an opaque row id and keysets on (created_at, id).
     if cursor is not None:
-        event_queryset = event_queryset.filter(id__lt=cursor)
+        anchor = EmailEvent.objects.filter(id=cursor).values("created_at", "id").first()
+        if anchor is None:
+            raise ApiValidationError({"cursor": "not_found"}, status_code=404)
+        event_queryset = event_queryset.filter(
+            Q(created_at__lt=anchor["created_at"]) | Q(created_at=anchor["created_at"], id__lt=anchor["id"])
+        )
     event_items = [
         event_history_item(event)
-        for event in event_queryset.select_related("client", "audience").order_by("-id")[: limit + 1]
+        for event in event_queryset.select_related("client", "audience").order_by("-created_at", "-id")[: limit + 1]
     ]
     next_cursor = None
     if len(event_items) > limit:
