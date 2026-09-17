@@ -182,8 +182,7 @@ def resolve_contacts(emails):
         return {}
 
     contacts = {
-        contact.normalized_email: contact
-        for contact in Contact.objects.filter(normalized_email__in=list(wanted))
+        contact.normalized_email: contact for contact in Contact.objects.filter(normalized_email__in=list(wanted))
     }
     missing = [
         Contact(email=original, normalized_email=normalized)
@@ -208,9 +207,7 @@ def resolve_templates(client, template_keys):
     if not keys:
         return {}
 
-    templates = {
-        template.key: template for template in EmailTemplate.objects.filter(client=client, key__in=list(keys))
-    }
+    templates = {template.key: template for template in EmailTemplate.objects.filter(client=client, key__in=list(keys))}
     missing = [
         EmailTemplate(
             client=client,

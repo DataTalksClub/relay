@@ -4,6 +4,15 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+    """Add the history import's per-client idempotency key on email events.
+
+    Reversible: reversing drops the column and its partial unique constraint
+    and keeps every email_events row. Reversing does not preserve the column's
+    values, so an operator who reverses this after a history import and then
+    re-applies it has lost the event idempotency keys, and re-running that
+    import would create duplicate events. Re-import from the source export
+    only against a database that still holds them.
+    """
 
     dependencies = [
         ('mailing', '0027_callbackendpoint_clientcallback_and_more'),
