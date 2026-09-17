@@ -29,10 +29,10 @@ operational description sent to AWS are recorded in the infrastructure
 repository:
 
 - [`DataTalksClub/aws-infra/docs/aws-support/2026-08-09-ses-newsletter-quota-increase.md`](https://github.com/DataTalksClub/aws-infra/blob/main/docs/aws-support/2026-08-09-ses-newsletter-quota-increase.md)
-- daily sending quota case: `178628060500737`;
-- sending-rate case: `178628058900407`;
-- requested quotas in the main account, `eu-west-1`: 200,000 recipients per
-  rolling 24 hours and 200 recipients per second.
+
+That record carries the support case identifiers, the request identifiers, the
+account identifiers and the exact requested quotas. They are not repeated here:
+this repository is public and that one is not.
 
 The support record is the source of truth for AWS's response and the final
 approved limits. Relay must read and enforce the live approved rate rather than
@@ -42,10 +42,10 @@ assuming the requested values were granted.
 
 Do not begin the production audience split until all of these are complete:
 
-1. Deploy a production Relay sending path in AWS account `387546586013`, region
-   `eu-west-1`. The current Relay sandbox sends through the sandbox account's
-   `dtcdev.click` identity in `us-east-1`; it cannot consume the quota requested
-   for the main account.
+1. Deploy a production Relay sending path in the main AWS account and region
+   named in the support record above. The current Relay sandbox sends through the
+   sandbox account's own identity in a different region; it cannot consume the
+   quota requested for the main account.
 2. Send from an authenticated DataTalksClub newsletter identity with aligned
    DKIM, SPF, DMARC, and custom MAIL FROM configuration.
 3. Route SES configuration-set delivery, bounce, complaint, reject, and
