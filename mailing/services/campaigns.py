@@ -191,7 +191,7 @@ def snapshot_campaign_recipients(campaign):
         if created:
             created_count += 1
 
-    counts = _refresh_campaign_counts(campaign)
+    counts = refresh_campaign_counts(campaign)
     return SnapshotResult(
         campaign_id=campaign.id,
         created_count=created_count,
@@ -450,7 +450,7 @@ def _has_disabled_category_preference(contact, campaign):
     ).exists()
 
 
-def _refresh_campaign_counts(campaign):
+def refresh_campaign_counts(campaign):
     recipient_count = CampaignRecipient.objects.filter(campaign=campaign).exclude(
         status=CampaignRecipientStatus.SKIPPED
     ).count()

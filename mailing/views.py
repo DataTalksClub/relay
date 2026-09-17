@@ -94,6 +94,11 @@ from mailing.services.contact_import_export import (
     export_contacts_csv_for_client,
     export_contacts_for_client,
 )
+from mailing.services.history_import import (
+    import_campaigns_for_client,
+    import_events_for_client,
+    import_messages_for_client,
+)
 from mailing.services.mailchimp import (
     mailchimp_status_payload,
     reconcile_tag_mappings_for_client,
@@ -2027,3 +2032,54 @@ def ses_webhook(request):
         },
         status=200,
     )
+
+
+@csrf_exempt
+def api_import_messages(request):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = import_messages_for_client(json_request_body(request), client)
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_import_events(request):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = import_events_for_client(json_request_body(request), client)
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_import_campaigns(request):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = import_campaigns_for_client(json_request_body(request), client)
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)

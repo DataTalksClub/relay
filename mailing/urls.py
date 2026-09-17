@@ -193,6 +193,9 @@ urlpatterns = [
         views.api_transactional_template_test_send,
         name="api_transactional_template_test_send",
     ),
+    path("api/import/messages", views.api_import_messages, name="api_import_messages"),
+    path("api/import/events", views.api_import_events, name="api_import_events"),
+    path("api/import/campaigns", views.api_import_campaigns, name="api_import_campaigns"),
     path("api/transactional/send", views.api_transactional_send, name="api_transactional_send"),
     path(
         "api/transactional/messages",

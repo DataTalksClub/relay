@@ -711,6 +711,10 @@ class EmailEvent(models.Model):
     audience = models.ForeignKey(Audience, on_delete=models.PROTECT, null=True, blank=True, related_name="email_events")
     event_type = models.CharField(max_length=20, choices=EmailEventType.choices)
     provider_event_id = models.CharField(max_length=255, blank=True)
+    # Caller-supplied idempotency key. Only history imports set it today: an
+    # operator can replay the same export without duplicating rows. Blank for
+    # events Relay produces itself, so the uniqueness constraint is partial.
+    client_reference = models.CharField(max_length=255, blank=True)
     url = models.URLField(max_length=2048, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -730,6 +734,11 @@ class EmailEvent(models.Model):
                 fields=["provider_event_id"],
                 condition=~models.Q(provider_event_id=""),
                 name="unique_nonempty_provider_event_id",
+            ),
+            models.UniqueConstraint(
+                fields=["client", "client_reference"],
+                condition=~models.Q(client_reference=""),
+                name="unique_email_event_client_reference",
             ),
         ]
 
