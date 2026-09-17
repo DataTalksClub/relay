@@ -192,6 +192,16 @@ if [[ "$environment" == sandbox ]]; then
   set_runtime_value RELAY_SES_MAX_SEND_RATE 14
 fi
 
+# Shared Cognito login for this sandbox host. Relay refuses to start with
+# DEBUG=False and these unset, because guessing them is how a deployment ends up
+# sending its operators to another host's callback. They are host identity, not
+# secrets: the same sandbox pool and public client the authorize URL shows.
+set_runtime_value AUTH_BASE_URL https://auth.dtcdev.click
+set_runtime_value AUTH_CLIENT_ID 41gcnc18qjtq61rsag9iqoepmk
+set_runtime_value AUTH_CALLBACK_URL https://relay.dtcdev.click/auth/callback
+set_runtime_value AUTH_LOGOUT_URL https://relay.dtcdev.click/
+set_runtime_value AUTH_ISSUER https://cognito-idp.us-east-1.amazonaws.com/us-east-1_H7nJu52Bs
+
 grep -q '^RELAY_EMAIL_SEND_ROLE_ARN=' "$infra_env" || {
   echo "RELAY_EMAIL_SEND_ROLE_ARN is missing from $infra_env" >&2
   exit 1
