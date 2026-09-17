@@ -443,6 +443,43 @@ def test_import_events_rejects_an_unknown_message_reference(client, api_client_r
     assert EmailEvent.objects.count() == 0
 
 
+def test_import_events_rejects_a_provider_event_id_relay_already_holds(client, api_client_record, audience):
+    def event(reference, provider_event_id):
+        return {
+            "client_reference": reference,
+            "email": "learner@example.com",
+            "event_type": EmailEventType.BOUNCE,
+            "created_at": "2024-02-03T09:05:00Z",
+            "provider_event_id": provider_event_id,
+        }
+
+    accepted = post_json(
+        client,
+        "mailing:api_import_events",
+        {"audience": audience.slug, "events": [event("sesevent-1", "sns-abc")]},
+    )
+    reused = post_json(
+        client,
+        "mailing:api_import_events",
+        {"audience": audience.slug, "events": [event("sesevent-2", "sns-abc")]},
+    )
+    duplicated = post_json(
+        client,
+        "mailing:api_import_events",
+        {
+            "audience": audience.slug,
+            "events": [event("sesevent-3", "sns-def"), event("sesevent-4", "sns-def")],
+        },
+    )
+
+    assert accepted.json() == {"total": 1, "created": 1, "skipped": 0}
+    assert reused.status_code == 400
+    assert reused.json()["error"]["fields"] == {"events.0.provider_event_id": "already_recorded"}
+    assert duplicated.status_code == 400
+    assert duplicated.json()["error"]["fields"] == {"events.1.provider_event_id": "duplicate_in_batch"}
+    assert EmailEvent.objects.count() == 1
+
+
 def test_import_events_rejects_an_unsupported_event_type(client, api_client_record, audience):
     response = post_json(
         client,

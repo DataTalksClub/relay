@@ -378,6 +378,8 @@ def import_events_for_client(data, authenticated_client):
     if not new_rows:
         return import_result(len(parsed), 0, len(parsed))
 
+    reject_reused_provider_event_ids(new_rows)
+
     contacts = resolve_contacts([row["email"] for row in new_rows])
     messages = message_index(authenticated_client, new_rows)
     campaigns = campaign_index(authenticated_client, new_rows)
@@ -421,6 +423,31 @@ def import_events_for_client(data, authenticated_client):
     apply_original_created_at(EmailEvent, events)
 
     return import_result(len(parsed), len(events), len(parsed) - len(events))
+
+
+def reject_reused_provider_event_ids(rows):
+    """Fail the batch rather than the insert on a reused provider event id.
+
+    ``provider_event_id`` is unique across every client, so an SNS message id
+    that Relay already holds would abort the insert with a database error. Rows
+    this import has already seen never reach here: they are skipped on
+    ``client_reference`` first.
+    """
+    wanted = [row["provider_event_id"] for row in rows if row["provider_event_id"]]
+    if not wanted:
+        return
+
+    seen = set()
+    for row in rows:
+        provider_event_id = row["provider_event_id"]
+        if provider_event_id and provider_event_id in seen:
+            raise ApiValidationError({f"events.{row['index']}.provider_event_id": "duplicate_in_batch"})
+        seen.add(provider_event_id)
+
+    taken = set(EmailEvent.objects.filter(provider_event_id__in=wanted).values_list("provider_event_id", flat=True))
+    for row in rows:
+        if row["provider_event_id"] in taken:
+            raise ApiValidationError({f"events.{row['index']}.provider_event_id": "already_recorded"})
 
 
 def message_index(client, rows):
