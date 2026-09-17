@@ -769,6 +769,129 @@ def verify_relay_webhook(body: bytes, headers: dict, secret: str, *, now=None) -
 Relay's own test suite replays a correctly signed request with an old timestamp
 against this exact function and asserts the rejection.
 
+## History Import APIs
+
+For a client migrating an existing mailing system onto Relay. The endpoints record
+what already happened elsewhere: they send nothing, queue nothing, and never change
+suppression state.
+
+```text
+POST /api/import/campaigns
+POST /api/import/messages
+POST /api/import/events
+```
+
+Import campaigns first, then messages, then events, so an event can name the campaign
+or message it belongs to.
+
+Every row carries a `client_reference`, the caller's own key for that row, and every
+endpoint is idempotent on it within the authenticated client. Re-posting a batch
+creates zero rows and reports them as `skipped`, so an interrupted import is safe to
+replay. Messages store it in the existing per-client `idempotency_key` (the same field
+the reconciliation API returns as `client_reference`); campaigns store it in
+`external_key`; events store it in their own `client_reference` column. Imported
+campaign recipients are keyed by campaign plus contact.
+
+Each row's `created_at` is the original timestamp, not the import time, and contact
+history orders on it, so imported rows interleave correctly with rows Relay produced
+itself.
+
+```json
+{
+  "messages": [
+    {
+      "client_reference": "emaillog-91233",
+      "email": "learner@example.com",
+      "template_key": "registration-welcome",
+      "subject": "Welcome",
+      "status": "sent",
+      "created_at": "2024-11-02T10:15:00Z",
+      "sent_at": "2024-11-02T10:15:00Z",
+      "delivered_at": "2024-11-02T10:15:30Z",
+      "first_opened_at": "2024-11-03T07:00:00Z",
+      "open_count": 2,
+      "click_count": 0,
+      "ses_message_id": "0100018c..."
+    }
+  ]
+}
+```
+
+`status` uses Relay's own vocabulary (`queued`, `sending`, `sent`, `failed`, `skipped`,
+`bounced`, `complained`); the exporting system maps its statuses onto it. A
+`template_key` Relay has never seen creates an inactive placeholder template, so the
+history reads correctly without making the template available for new sends.
+
+Events take `audience` alongside the batch, plus an optional `message_reference` or
+`campaign_reference` naming an already-imported row:
+
+```json
+{
+  "audience": "aisl",
+  "events": [
+    {
+      "client_reference": "sns-8a41...",
+      "email": "learner@example.com",
+      "event_type": "bounce",
+      "created_at": "2024-11-02T10:16:00Z",
+      "message_reference": "emaillog-91233",
+      "metadata": {"bounce_type": "Permanent"}
+    }
+  ]
+}
+```
+
+Campaigns require `audience` and carry their recipient rows inline:
+
+```json
+{
+  "audience": "aisl",
+  "campaigns": [
+    {
+      "client_reference": "campaign-412",
+      "subject": "November newsletter",
+      "status": "sent",
+      "created_at": "2024-11-01T08:00:00Z",
+      "sent_at": "2024-11-01T08:00:00Z",
+      "recipients": [
+        {
+          "email": "learner@example.com",
+          "status": "sent",
+          "sent_at": "2024-11-01T08:01:00Z",
+          "delivered_at": "2024-11-01T08:01:20Z",
+          "open_count": 3
+        }
+      ]
+    }
+  ]
+}
+```
+
+Responses count the batch:
+
+```json
+{"total": 2, "created": 1, "skipped": 1}
+```
+
+Campaign responses add `recipients_total`, `recipients_created` and
+`recipients_skipped`. A batch holds at most 10,000 rows; larger exports are sent in
+several batches. A batch is validated in full before anything is written, so a bad row
+rejects the whole batch with a 400 naming the offending index, for example
+`{"messages.17.created_at": "must_be_iso_datetime"}`. A `message_reference` or
+`campaign_reference` that names a row Relay does not hold returns 404.
+
+Operators can import the same payloads from a file instead:
+
+```bash
+uv run python manage.py import_history --from-json /secure/path/history.json \
+  --client aisl-website --audience aisl
+```
+
+The file is one JSON object with optional `client` and `audience` keys and any of the
+`campaigns`, `messages` and `events` lists, using the shapes above. The command imports
+the sections in that order and prints a JSON summary. `--client` and `--audience`
+override the keys in the file.
+
 ## Contact History
 
 ```text
@@ -776,6 +899,8 @@ GET /api/contacts/{contact_id}/history?audience=dtc-courses&client=dtc-courses&l
 ```
 
 Returns safe scoped campaign recipient, transactional message, and event history. Secret hashes and delivery link tokens are never returned.
+
+All three lists are newest first by `created_at`, which for an imported row is the original timestamp rather than the import time, so history imported from a migrating system interleaves correctly with rows Relay produced itself. The event `cursor` is the opaque `id` of the last event on the previous page; paging follows the same time order.
 
 ## Transactional Dry-Run (test-only)
 
