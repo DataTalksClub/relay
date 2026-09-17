@@ -841,6 +841,12 @@ Events take `audience` alongside the batch, plus an optional `message_reference`
 }
 ```
 
+An event may also carry the provider's own id as `provider_event_id`, for example the
+SNS `MessageId`. That id is unique across every client, so an id Relay already holds
+rejects the batch with `{"events.N.provider_event_id": "already_recorded"}` rather than
+failing the insert. `client_reference` is the idempotency key; `provider_event_id` is
+correlation only and can be left out.
+
 Campaigns require `audience` and carry their recipient rows inline:
 
 ```json
