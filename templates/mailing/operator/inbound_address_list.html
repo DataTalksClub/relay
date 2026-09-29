@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Receiving addresses | Relay{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Receiving addresses</h1>
+      <p>
+        Addresses Relay receives for. Creating one here is the whole change: no
+        Terraform edit, no apply, no redeploy.
+      </p>
+    </div>
+    <div class="actions">
+      <a class="button secondary" href="{% url 'mailing:inbound_list' %}">Inbound mail</a>
+      <a class="button" href="{% url 'mailing:inbound_address_create' %}">New address</a>
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="section">
+      <div class="muted">Active</div>
+      <div class="stat-value">{{ active_count }}</div>
+    </div>
+    <div class="section">
+      <div class="muted">Retired</div>
+      <div class="stat-value">{{ retired_count }}</div>
+    </div>
+  </div>
+
+  <section class="section" aria-labelledby="addresses-table">
+    <div class="section-header">
+      <div>
+        <h2 id="addresses-table">Addresses</h2>
+        <p class="muted">
+          A retired address stops receiving but keeps its mail. Messages are
+          discarded, not rerouted, when they arrive for an address that does not
+          exist.
+        </p>
+      </div>
+    </div>
+    {% if addresses %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Address</th>
+              <th scope="col">Note</th>
+              <th scope="col">Messages</th>
+              <th scope="col">State</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in addresses %}
+              <tr>
+                <td class="nowrap">{{ row.address }}</td>
+                <td class="truncate">{{ row.note|default:"-" }}</td>
+                <td>
+                  {% if row.message_count %}
+                    <a href="{% url 'mailing:inbound_list' %}?address={{ row.address|urlencode }}&amp;state=all">{{ row.message_count }}</a>
+                  {% else %}
+                    <span class="muted">0</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.is_active %}
+                    <span class="badge success">Receiving</span>
+                  {% else %}
+                    <span class="badge neutral">Retired</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <form method="post" action="{% url 'mailing:inbound_address_archive' row.id %}">
+                    {% csrf_token %}
+                    <button class="button secondary" type="submit">
+                      {% if row.is_active %}Retire{% else %}Reactivate{% endif %}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>No addresses yet.</strong>
+        <p>
+          Until an address exists here, inbound mail falls back to
+          <code>INBOUND_EMAIL_ROUTES</code> from the environment.
+          {% if routes %}
+            Currently configured there: {{ routes|join:", " }}.
+          {% endif %}
+        </p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="section" aria-labelledby="blocked-table">
+    <div class="section-header">
+      <div>
+        <h2 id="blocked-table">Blocked senders</h2>
+        <p class="muted">
+          Checked before storage. A blocked message is recorded without its body
+          so the block is auditable, and so unblocking does not resurrect
+          something nobody read.
+        </p>
+      </div>
+    </div>
+    {% if blocked_rules %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Scope</th>
+              <th scope="col">Value</th>
+              <th scope="col">Reason</th>
+              <th scope="col">Discarded</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rule in blocked_rules %}
+              <tr>
+                <td>{{ rule.get_scope_display }}</td>
+                <td class="nowrap">{{ rule.value }}</td>
+                <td class="truncate">{{ rule.reason|default:"-" }}</td>
+                <td class="nowrap">{{ rule.blocked_message_count }}</td>
+                <td>
+                  <form method="post" action="{% url 'mailing:blocked_sender_delete' rule.id %}">
+                    {% csrf_token %}
+                    <button class="button secondary" type="submit">Unblock</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>Nothing is blocked.</strong>
+        <p>Mark a message as spam from the mailbox to add a rule here.</p>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

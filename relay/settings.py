@@ -226,9 +226,11 @@ SQS_EMAIL_EVENTS_QUEUE_URL = os.environ.get("SQS_EMAIL_EVENTS_QUEUE_URL", "")
 SQS_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SES_WEBHOOKS_QUEUE_URL", "")
 SQS_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_INBOUND_EMAIL_QUEUE_URL", "")
 INBOUND_EMAIL_EVENTS_TOPIC_ARN = os.environ.get("INBOUND_EMAIL_EVENTS_TOPIC_ARN", "")
-INBOUND_EMAIL_IDEMPOTENCY_TABLE = os.environ.get("INBOUND_EMAIL_IDEMPOTENCY_TABLE", "")
+# INBOUND_EMAIL_IDEMPOTENCY_TABLE is deliberately not read any more. Idempotency
+# is a unique constraint on inbound_messages.message_id, inside the transaction
+# that was already happening, so it needs no table and cannot half-succeed. The
+# env var is left set in deployed environments until nobody reads it.
 INBOUND_EMAIL_ARTIFACT_PREFIX = os.environ.get("INBOUND_EMAIL_ARTIFACT_PREFIX", "processed/")
-INBOUND_EMAIL_INLINE_BODY_MAX_BYTES = int(os.environ.get("INBOUND_EMAIL_INLINE_BODY_MAX_BYTES", "65536"))
 INBOUND_EMAIL_ROUTES = {
     address.strip().lower(): route.strip()
     for address, separator, route in (

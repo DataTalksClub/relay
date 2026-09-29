@@ -20,8 +20,9 @@ The environment selects the CloudWatch log group, the web listener address,
 the release health check, and the environment-specific bootstrap of
 /etc/relay/runtime.env. Sandbox keeps a local PostgreSQL container and Caddy;
 production uses the RDS database and the shared load balancer, publishes the
-web container on all interfaces, starts no PostgreSQL or Caddy, no inbound
-mail ingress, and gives every container an explicit memory limit.
+web container on all interfaces, starts no PostgreSQL or Caddy, drains the
+inbound mail queue against RDS rather than a local database, and gives every
+container an explicit memory limit.
 HELP
 }
 
@@ -247,6 +248,12 @@ set_memory_args() {
     relay-cmp-callbacks) memory_args=(--memory 96m) ;;
     relay-client-callbacks) memory_args=(--memory 96m) ;;
     relay-recipient-imports) memory_args=(--memory 128m) ;;
+    # The inbound drain is bounded like every other container. It parses a
+    # message in memory and writes one row, so it needs no more than the SES
+    # ingress drain -- but it needs a limit at all: a container without one can
+    # still take a 2 GiB host down, and inbound is what was blamed for that
+    # last time.
+    relay-inbound-ingress) memory_args=(--memory 128m) ;;
   esac
 }
 
@@ -326,11 +333,14 @@ replace_container relay-scheduler "${app_container_args[@]}" \
 set_memory_args relay-ses-ingress
 replace_container relay-ses-ingress "${app_container_args[@]}" \
   python manage.py drain_sqs_ingress ses-webhooks --batch-size 10 --wait-time 20
-if [[ "$environment" == sandbox ]]; then
-  set_memory_args relay-inbound-ingress
-  replace_container relay-inbound-ingress "${app_container_args[@]}" \
-    python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20
-fi
+# The inbound drain runs in both environments. It is the same code path: poll,
+# hand each notification to the same task, delete. In production it writes to RDS
+# rather than to a local PostgreSQL, so a database that is briefly unreachable
+# makes the message fail and retry, which is the correct outcome -- the message
+# stays in the queue and the raw MIME stays in the bucket.
+set_memory_args relay-inbound-ingress
+replace_container relay-inbound-ingress "${app_container_args[@]}" \
+  python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20
 set_memory_args relay-cmp-callbacks
 replace_container relay-cmp-callbacks "${app_container_args[@]}" \
   python manage.py process_cmp_callbacks --batch-size 25 --idle-sleep 5
@@ -370,6 +380,7 @@ else
     relay-worker
     relay-scheduler
     relay-ses-ingress
+    relay-inbound-ingress
     relay-cmp-callbacks
     relay-client-callbacks
     relay-recipient-imports

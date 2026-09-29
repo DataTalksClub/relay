@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}{{ message.subject|default:"Inbound message" }} | Relay{% endblock %}
+
+{% block content %}
+  <nav class="breadcrumbs" aria-label="Breadcrumb">
+    <a href="{% url 'mailing:inbound_list' %}">Inbound mail</a>
+  </nav>
+
+  <div class="page-header">
+    <div>
+      <h1>{{ message.subject|default:"(no subject)" }}</h1>
+      <p class="muted">
+        From {{ message.sender_address|default:message.from_header|default:"unknown sender" }}
+        to {{ message.recipient_address|default:"an unknown address" }}
+        &middot; received {{ message.created_at|date:"Y-m-d H:i" }}
+      </p>
+    </div>
+    <div class="actions">
+      <span class="badge {{ badge.tone }}">{{ badge.label }}</span>
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <section class="section" aria-labelledby="summary-heading">
+      <div class="section-header">
+        <div><h2 id="summary-heading">Summary</h2></div>
+      </div>
+      <div class="meta-grid">
+        <div><div class="muted">From</div><div class="truncate">{{ message.from_header|default:"-" }}</div></div>
+        <div><div class="muted">Sender address</div><div class="truncate">{{ message.sender_address|default:"-" }}</div></div>
+        <div><div class="muted">To</div><div class="truncate">{{ message.to_header|default:"-" }}</div></div>
+        <div><div class="muted">Cc</div><div class="truncate">{{ message.cc_header|default:"-" }}</div></div>
+        <div><div class="muted">Claimed sent</div><div>{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</div></div>
+        <div><div class="muted">Size</div><div>{{ message.size_bytes }} bytes</div></div>
+        <div><div class="muted">Attachments</div><div>{{ message.attachment_count }}</div></div>
+        <div><div class="muted">Message-ID</div><div class="truncate">{{ message.message_id|default:"-" }}</div></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="signal-heading">
+      <div class="section-header">
+        <div><h2 id="signal-heading">Authentication and spam signals</h2></div>
+      </div>
+      <div class="meta-grid">
+        <div><div class="muted">SES spam</div><div>{{ message.spam_verdict|default:"-" }}</div></div>
+        <div><div class="muted">SES virus</div><div>{{ message.virus_verdict|default:"-" }}</div></div>
+        <div><div class="muted">SPF</div><div>{{ message.spf_verdict|default:"-" }}</div></div>
+        <div><div class="muted">DKIM</div><div>{{ message.dkim_verdict|default:"-" }}</div></div>
+        <div><div class="muted">DMARC</div><div>{{ message.dmarc_verdict|default:"-" }}</div></div>
+      </div>
+      <p class="helptext">
+        A verdict is the sending domain's own claim, not a judgement. SES reporting
+        spam means SES thinks so; it does not mean the message is.
+      </p>
+    </section>
+  </div>
+
+  <section class="section" aria-labelledby="body-heading">
+    <div class="section-header">
+      <div><h2 id="body-heading">Body</h2></div>
+    </div>
+    {% if message.state == "blocked" %}
+      <div class="message warning">
+        This sender is blocked, so the body was not kept. That is the point of
+        blocking: future mail is discarded rather than filed.
+      </div>
+    {% elif body %}
+      <pre>{{ body }}</pre>
+    {% elif message.has_body %}
+      <div class="message warning">
+        The body is stored in object storage and could not be read right now.
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>No text body.</strong>
+        <p>This message had no <code>text/plain</code> part. The raw MIME is retained in object storage.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="section" aria-labelledby="actions-heading">
+    <div class="section-header">
+      <div><h2 id="actions-heading">Manage this sender</h2></div>
+    </div>
+    <p class="helptext">
+      Blocking stops future mail from this sender at ingest. It does not delete
+      what is already stored, and it does not send anything back to the sender.
+    </p>
+    <div class="actions">
+      {% if message.state == "blocked" %}
+        <form method="post" class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="unblock">
+          <button class="button secondary" type="submit">Unblock this sender</button>
+        </form>
+      {% elif message.sender_address %}
+        <form method="post" class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="mark_as_spam">
+          <input type="hidden" name="scope" value="address">
+          <button class="button danger" type="submit">Mark as spam: block {{ message.sender_address }}</button>
+        </form>
+        {% if message.sender_domain %}
+          <form method="post" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="mark_as_spam">
+            <input type="hidden" name="scope" value="domain">
+            <button class="button danger" type="submit">Block the whole domain {{ message.sender_domain }}</button>
+          </form>
+        {% endif %}
+      {% else %}
+        <p class="muted">This message has no parsable sender address, so there is nothing to block.</p>
+      {% endif %}
+    </div>
+    {% if blocked_rule %}
+      <div class="message warning">
+        Blocked by the rule <strong>{{ blocked_rule.value }}</strong>
+        ({{ blocked_rule.get_scope_display|lower }}), created {{ blocked_rule.created_at|date:"Y-m-d H:i" }}.
+      </div>
+    {% endif %}
+  </section>
+
+  <details class="detail-section secondary-section">
+    <summary>Storage locations</summary>
+    <div class="meta-grid">
+      <div><div class="muted">Raw MIME bucket</div><div class="truncate">{{ message.raw_bucket|default:"-" }}</div></div>
+      <div><div class="muted">Raw MIME key</div><div class="truncate">{{ message.raw_key|default:"-" }}</div></div>
+      <div><div class="muted">Text body key</div><div class="truncate">{{ message.body_text_key|default:"-" }}</div></div>
+      <div><div class="muted">HTML body key</div><div class="truncate">{{ message.body_html_key|default:"-" }}</div></div>
+    </div>
+    <p class="helptext">
+      The raw message and both body parts live in object storage, not the
+      database. Headers are indexed because the console lists and searches on
+      them; bodies are read one at a time, by an operator who has decided to
+      open one.
+    </p>
+  </details>
+{% endblock %}
