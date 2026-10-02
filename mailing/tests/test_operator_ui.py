@@ -210,13 +210,12 @@ def test_dashboard_renders_operational_summary_links_and_seeded_style_data(
     html = response.content.decode()
 
     assert response.status_code == 200
-    assert "Operational Summary" in html
     assert "Background processing" in html
     assert "Processing diagnostics" in html
     assert html.index("Processing diagnostics") < html.index("relay-db-worker.service")
-    assert "Recent Campaign Activity" in html
-    assert "Deliverability Attention" in html
-    assert "Quick Links" in html
+    assert "Recent campaign activity" in html
+    assert "Deliverability attention" in html
+    assert "Common workflows" in html
     assert "Weekly update" in html
     assert f'href="{reverse("mailing:campaign_detail", args=[campaign.id])}"' in html
     assert "Bounce" in html
@@ -934,7 +933,7 @@ def test_contact_detail_renders_summary_before_management_and_debug_sections(
     assert html.index('id="sendability">Send Eligibility') < html.index('id="membership">Membership and Tags')
     assert html.index('id="membership">Membership and Tags') < html.index('id="manage-contact-heading">Manage contact')
     assert html.index('id="manage-contact-heading">Manage contact') < html.index('id="recent-activity">Recent Activity')
-    manage_html = html[html.index('<section class="detail-section manage-contact-panel"') :]
+    manage_html = html[html.index('<section class="detail-section panel manage-contact-panel"') :]
     assert manage_html.index("Subscription") < manage_html.index("State") < manage_html.index("Add tag")
     assert manage_html.index("Add tag") < manage_html.index("Remove tag")
     assert html.index("Full event timeline and audit details") > html.index("Recent Activity")
@@ -1084,7 +1083,7 @@ def test_audience_create_and_edit_forms_use_operational_layout(client, operator,
     assert create_response.status_code == 200
     assert edit_response.status_code == 200
     for html in (create_response.content.decode(), edit_response.content.decode()):
-        assert '<form class="form-page" method="post" novalidate>' in html
+        assert '<form class="form-page form-panel" method="post" novalidate>' in html
         assert "Organization scope" in html
         assert "Audience identity" in html
         assert "The selected organization scopes this audience and its slug." in html
@@ -1108,7 +1107,7 @@ def test_tag_create_and_edit_forms_show_parent_scope_and_actions(client, operato
     assert create_response.status_code == 200
     assert edit_response.status_code == 200
     for html in (create_response.content.decode(), edit_response.content.decode()):
-        assert '<form class="form-page" method="post" novalidate>' in html
+        assert '<form class="form-page form-panel" method="post" novalidate>' in html
         assert "Parent audience" in html
         assert "This tag belongs to exactly one audience." in html
         assert "Tag identity" in html
@@ -1195,7 +1194,7 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert summary["hard_bounced"] == 1
     assert list_response.status_code == 200
     list_html = list_response.content.decode()
-    assert "Audience Health" in list_html
+    assert "Audience health" in list_html
     assert "3 members" in list_html
     assert "3 subscribed" in list_html
     assert "1 inactive" in list_html
@@ -1235,8 +1234,8 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert 'href="/contacts/invalid@example.com/"' in detail_html
     assert '<div class="helptext">invalid@example.com</div>' not in detail_html
     assert "/operator/" not in detail_html
-    assert "Campaign History" in detail_html
-    assert "Recent Events" in detail_html
+    assert "Campaign history" in detail_html
+    assert "Recent events" in detail_html
     assert "Tracking" in detail_html
     assert "reason: tracking" not in detail_html
     assert "Provider details" in detail_html
@@ -2179,7 +2178,7 @@ def test_transactional_queue_paginates_and_preserves_query_params(client, operat
 
     assert response.status_code == 200
     assert "Page 2 of 2" in html
-    assert "<strong>26</strong> messages queued" in html
+    assert "26 messages queued" in html
 
 
 def test_transactional_queue_empty_state(client, operator, client_record, other_client):
@@ -2208,7 +2207,7 @@ def test_transactional_queue_total_matches_scoped_count(client, operator, client
         client=client_record, status=TransactionalMessageStatus.QUEUED
     ).count()
     assert scoped_count == 2
-    assert f"<strong>{scoped_count}</strong> message" in html
+    assert f"{scoped_count} message" in html
 
 
 def test_transactional_queue_queryset_filters_and_orders(client_record, other_client):
