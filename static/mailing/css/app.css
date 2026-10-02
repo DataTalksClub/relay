@@ -396,8 +396,9 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+summary:focus-visible,
 .button:focus-visible {
-  outline: 3px solid var(--dk-focus-ring);
+  outline: 2px solid var(--dk-focus-ring);
   outline-offset: 2px;
 }
 
@@ -460,38 +461,68 @@ textarea:focus-visible,
 }
 
 .meta-grid,
-.stats-grid,
 .detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--dk-space-3);
   margin: var(--dk-space-4) 0 var(--dk-space-6);
+}
+
+.meta-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .detail-grid {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
-/* Summary counts read as data: quiet bordered cells with mono values.
-   Cells keep their own hairline borders so wrapped rows stay clean. */
+/* Summary counts render as one segmented strip: a single bordered container
+   whose cells are divided by hairlines (the dataops count-strip pattern),
+   not as separate cards. */
 .stats-grid {
-  gap: var(--dk-space-3);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  margin: var(--dk-space-4) 0 var(--dk-space-6);
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-border-default);
+  overflow: hidden;
 }
 
-.meta-item,
-.stat,
-.empty-state {
+.meta-item {
+  min-width: 0;
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
   padding: var(--dk-space-3);
   background: var(--dk-bg-page);
 }
 
+.meta-item dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.stat {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--dk-space-3) var(--dk-space-4);
+  background: var(--dk-bg-page);
+}
+
+.stats-grid .stat {
+  border: 0;
+  border-radius: 0;
+}
+
 .stat-value {
   display: block;
   font-family: var(--dk-font-mono);
   font-size: 22px;
-  font-weight: 500;
+  font-weight: var(--dk-weight-medium);
   line-height: 1.2;
 }
 
@@ -505,7 +536,13 @@ a.stat-link:focus {
   text-decoration: underline;
 }
 
-.stat-label,
+.stat-label {
+  order: -1;
+  display: block;
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-sm);
+}
+
 .meta-label {
   display: block;
   margin-top: 2px;
@@ -517,24 +554,18 @@ a.stat-link:focus {
   margin-top: 0;
 }
 
-.meta-item dd {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
 .badge {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
-  padding: 0 var(--dk-space-2);
+  gap: var(--dk-space-1);
+  padding: 1px var(--dk-space-2);
   border: 1px solid var(--dk-border-default);
-  border-radius: 999px;
+  border-radius: var(--dk-radius-sm);
   color: var(--dk-text-muted);
   background: var(--dk-bg-muted);
   font-family: var(--dk-font-sans);
-  font-size: var(--dk-text-sm);
-  font-weight: 500;
+  font-size: var(--dk-text-xs);
+  font-weight: var(--dk-weight-medium);
   white-space: nowrap;
 }
 
@@ -650,6 +681,69 @@ a.stat-link:focus {
 .compact-list .compact-row:hover {
   background: var(--dk-bg-muted);
   border-color: var(--dk-border-default);
+}
+
+/* Empty states explain and offer the next action — plain copy, no box. */
+.empty-state {
+  padding: var(--dk-space-4) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--dk-text-muted);
+}
+
+.empty-state strong {
+  color: var(--dk-text-primary);
+}
+
+/* Banded container, the dataops panel: one bordered container whose
+   header/footer bands sit on the muted surface; content rows carry the
+   hairline dividers. */
+.panel {
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-bg-surface);
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dk-space-2) var(--dk-space-3);
+  padding: var(--dk-space-3) var(--dk-space-4);
+  border-bottom: 1px solid var(--dk-border-default);
+  background: var(--dk-bg-muted);
+}
+
+.panel-header h2,
+.panel-header h3 {
+  margin: 0;
+}
+
+.panel-header p {
+  margin: 2px 0 0;
+  font-size: var(--dk-text-sm);
+}
+
+.panel-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding: var(--dk-space-2) var(--dk-space-4);
+  border-top: 1px solid var(--dk-border-default);
+  background: var(--dk-bg-muted);
+}
+
+.panel .empty-state {
+  padding: var(--dk-space-4);
+}
+
+.compact-list-flush {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .manage-form-grid {
@@ -1017,7 +1111,6 @@ select:focus,
 textarea:focus {
   border-color: var(--dk-accent-default);
   outline: none;
-  box-shadow: 0 0 0 3px var(--dk-accent-soft);
 }
 
 button,
@@ -1115,10 +1208,16 @@ td {
 }
 
 th {
+  padding: var(--dk-space-2) var(--dk-space-3);
+  border-bottom: 1px solid var(--dk-border-default);
+  text-align: left;
+  vertical-align: top;
   color: var(--dk-text-muted);
-  background: var(--dk-bg-muted);
-  font-size: var(--dk-text-sm);
-  font-weight: 600;
+  background: transparent;
+  font-size: var(--dk-text-xs);
+  font-weight: var(--dk-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   white-space: nowrap;
 }
 
@@ -1363,14 +1462,17 @@ tr:last-child td {
 
 .timeline {
   display: grid;
-  gap: var(--dk-space-2);
+  gap: 1px;
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-border-default);
+  overflow: hidden;
 }
 
 .timeline-item,
 .audit-row {
-  border: 1px solid var(--dk-border-default);
-  border-left: 3px solid var(--dk-border-strong);
-  border-radius: var(--dk-radius-sm);
+  border: 0;
+  border-radius: 0;
   padding: var(--dk-space-2) var(--dk-space-3);
   background: var(--dk-bg-page);
 }
@@ -1937,11 +2039,6 @@ pre {
   background: var(--dk-bg-hover);
 }
 
-:where(button, .button, a, summary):focus-visible {
-  outline: 2px solid var(--dk-accent-default);
-  outline-offset: 3px;
-}
-
 [id] {
   scroll-margin-top: var(--dk-space-4);
 }
@@ -2047,14 +2144,9 @@ pre {
   height: 420px;
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
+  /* Emails render on paper in both themes; the preview frame is content,
+     not chrome, so it stays light when the app is dark. */
   background: #fff;
-}
-
-.header-client-context {
-  min-width: 0;
-  color: var(--dk-text-muted);
-  font-size: 13px;
-  overflow-wrap: anywhere;
 }
 
 .inbox-counts {

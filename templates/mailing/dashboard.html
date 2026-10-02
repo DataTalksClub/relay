@@ -214,39 +214,41 @@
     </section>
 
     <section class="section" aria-labelledby="deliverability-attention">
-      <div class="section-header">
-        <div>
-          <h2 id="deliverability-attention">Deliverability Attention</h2>
-          <p class="muted">Failures, suppressions, bounces, complaints, and skips to review.</p>
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 id="deliverability-attention">Deliverability Attention</h2>
+            <p class="muted">Failures, suppressions, bounces, complaints, and skips to review.</p>
+          </div>
+          <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
         </div>
-        <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
+        {% if dashboard.attention_items %}
+          <div class="compact-list compact-list-flush">
+            {% for item in dashboard.attention_items %}
+              <div class="compact-row">
+                <div class="compact-row-main">
+                  <span class="badge {{ item.badge.tone }}">{{ item.badge.label }}</span>
+                  {% if item.href %}
+                    <a href="{{ item.href }}"><strong>{{ item.title }}</strong></a>
+                  {% else %}
+                    <strong>{{ item.title }}</strong>
+                  {% endif %}
+                </div>
+                <div class="compact-row-meta">
+                  {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
+                  <span class="muted">{{ item.detail }}</span>
+                  {% if item.occurred_at %}<span class="helptext">{{ item.occurred_at|date:"M j, Y H:i" }}</span>{% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty-state">
+            <strong>No deliverability issues found</strong>
+            <p>Bounces, complaints, failed sends, skipped recipients, and suppressed contacts will appear here.</p>
+          </div>
+        {% endif %}
       </div>
-      {% if dashboard.attention_items %}
-        <div class="compact-list">
-          {% for item in dashboard.attention_items %}
-            <div class="compact-row">
-              <div class="compact-row-main">
-                <span class="badge {{ item.badge.tone }}">{{ item.badge.label }}</span>
-                {% if item.href %}
-                  <a href="{{ item.href }}"><strong>{{ item.title }}</strong></a>
-                {% else %}
-                  <strong>{{ item.title }}</strong>
-                {% endif %}
-              </div>
-              <div class="compact-row-meta">
-                {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
-                <span class="muted">{{ item.detail }}</span>
-                {% if item.occurred_at %}<span class="helptext">{{ item.occurred_at|date:"M j, Y H:i" }}</span>{% endif %}
-              </div>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="empty-state">
-          <strong>No deliverability issues found</strong>
-          <p>Bounces, complaints, failed sends, skipped recipients, and suppressed contacts will appear here.</p>
-        </div>
-      {% endif %}
     </section>
   </div>
 
