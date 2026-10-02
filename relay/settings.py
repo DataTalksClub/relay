@@ -218,6 +218,14 @@ API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).r
 SUBSCRIPTION_CONFIRM_BASE_URL = (
     os.environ.get("SUBSCRIPTION_CONFIRM_BASE_URL", "").strip().rstrip("/") or PUBLIC_BASE_URL
 )
+# Static sites call these lists without a client API key. The value is parsed
+# by mailing.services.public_lists. Empty disables the public routes' lists.
+RELAY_PUBLIC_LISTS = os.environ.get("RELAY_PUBLIC_LISTS", "")
+RELAY_PUBLIC_SUBSCRIBE_ORIGINS = frozenset(csv_env("RELAY_PUBLIC_SUBSCRIBE_ORIGINS", "", allow_empty=True))
+RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT", "3"))
+RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS = int(
+    os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS", "3600")
+)
 AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0)
 SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = os.environ.get("SQS_TRANSACTIONAL_EMAIL_QUEUE_URL", "")

@@ -127,6 +127,16 @@ urlpatterns = [
         name="api_request_verification",
     ),
     path("api/subscriptions/confirm", views.api_confirm, name="api_confirm"),
+    path(
+        "api/public/lists/<slug:list_key>/subscribe",
+        views.api_public_subscribe,
+        name="api_public_subscribe",
+    ),
+    path(
+        "api/public/lists/<slug:list_key>/confirm",
+        views.api_public_confirm,
+        name="api_public_confirm",
+    ),
     path("api/recipient-lists/<str:list_key>", views.api_recipient_list, name="api_recipient_list"),
     path(
         "api/recipient-lists/<str:list_key>/members",
