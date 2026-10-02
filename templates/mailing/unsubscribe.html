@@ -5,6 +5,27 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Email preferences | Datamailer</title>
+    <script>
+      (function () {
+        try {
+          let stored = localStorage.getItem("dakit-theme");
+          if (stored !== "dark" && stored !== "light") {
+            const legacy = localStorage.getItem("datamailer.theme");
+            if (legacy === "dark" || legacy === "light") {
+              stored = legacy;
+              localStorage.setItem("dakit-theme", legacy);
+            }
+          }
+          document.documentElement.dataset.theme =
+            stored === "dark" || stored === "light"
+              ? stored
+              : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        } catch (error) {
+          return;
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="{% static 'dakit/dist/dakit.css' %}">
     <link rel="stylesheet" href="{% static 'mailing/css/app.css' %}">
   </head>
   <body class="unsubscribe-page">

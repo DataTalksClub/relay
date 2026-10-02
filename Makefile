@@ -1,7 +1,7 @@
 TERRAFORM_SANDBOX_DIR ?= ../datamailer-infra/datamailer-sandbox
 LOCALSTACK_WAIT_SECONDS ?= 60
 
-.PHONY: setup migrate run demo-up demo-down localstack localstack-up localstack-down test test-aws-local lint validate-infra smoke-sandbox smoke-sandbox-ses-events format
+.PHONY: setup migrate run demo-up demo-down localstack localstack-up localstack-down test test-aws-local lint validate-infra smoke-sandbox smoke-sandbox-ses-events format sync-dakit
 
 setup:
 	@test -f .env || cp .env.example .env
@@ -10,6 +10,9 @@ setup:
 
 migrate:
 	uv run python manage.py migrate
+
+sync-dakit:
+	scripts/sync_dakit.sh
 
 run:
 	uv run python manage.py runserver
