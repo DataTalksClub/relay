@@ -2219,21 +2219,23 @@ pre {
     width: auto;
   }
 
-  /* Narrow tables become labelled rows instead of a clipped grid. */
-  .stack-table {
+  /* Every table converts to labelled rows at phone widths — one recipe for
+     all .table-wrap tables, per the family spec ("on mobile convert to
+     labelled rows"). Each value repeats its column header as a label. */
+  .table-wrap {
     overflow: visible;
     box-shadow: none;
   }
 
-  .stack-table table,
-  .stack-table tbody,
-  .stack-table tr {
+  .table-wrap table,
+  .table-wrap tbody,
+  .table-wrap tr {
     display: block;
     width: 100%;
     min-width: 0;
   }
 
-  .stack-table thead {
+  .table-wrap thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -2241,34 +2243,55 @@ pre {
     clip-path: inset(50%);
   }
 
-  .stack-table tr {
+  .table-wrap tr {
     display: grid;
     gap: var(--dk-space-2);
-    padding: var(--dk-space-3) 0;
+    padding: var(--dk-space-3) var(--dk-space-4);
     border-bottom: 1px solid var(--dk-border-muted);
   }
 
-  .stack-table tr:last-child {
+  .table-wrap tr:last-child {
     border-bottom: 0;
   }
 
-  .stack-table td {
+  .table-wrap th,
+  .table-wrap td {
     display: block;
-    width: auto;
-    min-width: 0;
     padding: 0;
     border: 0;
     /* Labelled rows read as sentences; cell-level nowrap no longer applies. */
     white-space: normal;
   }
 
-  .stack-table td[data-label]::before {
+  /* Desktop column sizing (percent widths, min-width cells, truncate caps)
+     must not constrain labelled rows; nth-child(n) out-specifies the
+     per-table column rules above. */
+  .table-wrap td:nth-child(n) {
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .table-wrap td[data-label]::before {
     display: block;
     margin-bottom: 2px;
     color: var(--dk-text-muted);
+    /* Labels are chrome, not data: never inherit a mono data face. */
+    font-family: var(--dk-font-sans);
     font-size: var(--dk-text-sm);
     font-weight: var(--dk-weight-semibold);
     content: attr(data-label);
+  }
+
+  /* Truncation is a wide-viewport affordance; values take the full card
+     width and long tokens wrap anywhere. */
+  .table-wrap .truncate,
+  .table-wrap .truncate a,
+  .table-wrap .data-truncate {
+    max-width: none;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 }
 
@@ -2509,77 +2532,8 @@ pre {
   white-space: normal;
 }
 
-@media (max-width: 860px) {
-  .triage-table {
-    overflow: visible;
-    box-shadow: none;
-  }
-
-  .triage-table table,
-  .triage-table tbody,
-  .triage-table tr {
-    display: block;
-    width: 100%;
-  }
-
-  .triage-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-
-  .triage-table tr {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: var(--dk-space-3);
-    padding: var(--dk-space-4);
-    border-bottom: 1px solid var(--dk-border-default);
-  }
-
-  .triage-table tr:last-child {
-    border-bottom: 0;
-  }
-
-  .triage-table td:nth-child(n) {
-    display: block;
-    width: auto;
-    min-width: 0;
-    max-width: none;
-    padding: 0;
-    border: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  .triage-table td:first-child,
-  .triage-table td:last-child {
-    grid-column: 1 / -1;
-  }
-
-  .triage-table td[data-label]::before {
-    display: block;
-    margin-bottom: var(--dk-space-1);
-    color: var(--dk-text-muted);
-    font-size: var(--dk-text-sm);
-    font-weight: 600;
-    content: attr(data-label);
-  }
-
-  .triage-table .nowrap,
-  .triage-table .data-truncate {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-}
-
-@media (max-width: 480px) {
-  .triage-table tr {
-    grid-template-columns: minmax(0, 1fr);
-    padding: var(--dk-space-3);
-  }
-}
+/* The recipient table shares the universal mobile labelled-row recipe from
+   the 640px block above; no per-table mobile rules. */
 
 .email-preview-frame {
   display: block;
