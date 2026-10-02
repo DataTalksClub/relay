@@ -2,21 +2,25 @@
 
 Datamailer is an operational email tool. The interface should be clean, easy to scan, and calm under production pressure.
 
-We use our own lightweight CSS system. Do not add Bootstrap, Tailwind, React, a SPA framework, or a required frontend build pipeline unless a future issue explicitly changes this decision.
+We build on dakit, the shared design system for the internal tools
+(`../dakit`; its generated bundle is vendored in `static/dakit/` — run
+`make sync-dakit` after changing dakit, then commit both repos). Keep the
+app itself plain Django templates and CSS: do not add Bootstrap, Tailwind, React, a SPA framework, or a required frontend build pipeline unless a future issue explicitly changes this decision.
 
 ## References
 
 Use these references for UI elements and interaction quality:
 
-- DataOps design system (`../dataops/frontend/DESIGN_SYSTEM.md`) and the
-  Course Management Platform system it builds on: the primary visual
-  reference. GitHub Primer neutrals, restrained borders, compact row-based
-  content, content-width actions, and the CMP blue accent.
+- dakit (`../dakit`, vendored in `static/dakit/`): the primary reference.
+  It is the shared token set and component vocabulary extracted from the
+  DataOps look — GitHub Primer neutrals, restrained borders, compact
+  row-based content, and the CMP blue accent. App styles use its semantic
+  `--dk-*` tokens only, in both themes.
 - GitHub Primer: primary reference for product UI foundations, compact navigation, subdued surfaces, tables, forms, labels, focus states, and status treatment.
 - Shopify Polaris: secondary reference for admin workflow discipline, especially promoted filters vs advanced filters and clear page actions.
 - Resend: secondary reference for API docs, API keys, developer-facing settings, sparse examples, and transactional email vocabulary.
 - Dapier ("Operator's Ledger") is a sibling look, not the reference here; keep
-  Datamailer aligned with DataOps.
+  Datamailer aligned with dakit.
 
 Use Postmark only for product concepts, not visual styling:
 
@@ -50,7 +54,8 @@ Core questions by page:
 
 Keep CSS small and explicit:
 
-- design tokens in one place, under `:root`
+- design tokens come from dakit's semantic `--dk-*` roles (both themes);
+  `app.css` defines no tokens of its own
 - reusable layout primitives
 - reusable form/table/badge/button/disclosure patterns
 - page-specific CSS only when a reusable primitive is not enough
@@ -59,9 +64,11 @@ The default implementation should work with plain Django templates and static CS
 
 Preferred file direction:
 
-- `static/mailing/css/app.css` for the design system and product UI
+- `static/mailing/css/app.css` for the product UI on top of dakit
 - no large inline CSS in templates
-- no generated CSS checked in unless a future build process is approved
+- the vendored dakit bundle (`static/dakit/`) is the only generated CSS
+  checked in; it is a dependency snapshot, not app build output — refresh
+  it with `make sync-dakit` and commit alongside the dakit change
 
 Current shared primitive hooks:
 
@@ -75,85 +82,50 @@ Current shared primitive hooks:
 
 ## Tokens
 
-All reusable styling must flow through tokens before page-specific CSS is added. Add a token only when at least two components can use it or when it represents a system-level decision.
+All reusable styling must flow through dakit's semantic tokens before page-specific CSS is added. If a style needs a color dakit doesn't have, add the role in dakit (light and dark values, contrast pair, rebuild) rather than hardcoding it — that is how `--dk-danger-hover` was added for relay's solid danger buttons.
 
 ### Color Tokens
 
-Core surface and text tokens (values follow the DataOps/Primer palette; the
-light page canvas is white, the sidebar and secondary surfaces use `#f6f8fa`,
-and the action/link accent is CMP blue `#315f8f`):
+App styles use dakit's semantic `--dk-*` roles only — never the primitive
+ramps (`--dk-gray-*`, `--dk-blue-*`, …) and never raw hex values. dakit's
+build verifies AA contrast for every text/background pair in both themes.
 
-- `--dm-color-text`
-- `--dm-color-heading`
-- `--dm-color-muted`
-- `--dm-color-faint`
-- `--dm-color-border`
-- `--dm-color-border-strong`
-- `--dm-color-background`
-- `--dm-color-surface`
-- `--dm-color-surface-strong` (hover/active tone)
-- `--dm-color-accent-soft` (selected navigation and focus wash)
-- `--dm-color-focus`
+Surfaces and text:
 
-Action tokens:
+- `--dk-bg-page` (canvas), `--dk-bg-muted` (sidebar and secondary
+  surfaces), `--dk-bg-hover` (hover/active tone)
+- `--dk-text-primary`, `--dk-text-heading`, `--dk-text-muted`,
+  `--dk-text-faint` — the text hierarchy
+- `--dk-border-default`, `--dk-border-strong`
 
-- `--dm-color-primary` (filled controls; dark mode uses a lighter fill)
-- `--dm-color-primary-hover`
-- `--dm-color-link` (links and selected-nav text; stays readable in dark mode)
-- `--dm-color-link-hover`
-- `--dm-color-on-primary`
+Actions:
 
-State tokens:
+- `--dk-accent-default` / `--dk-accent-hover` — filled controls (dark mode
+  flips to a lighter fill with dark on-accent text)
+- `--dk-text-on-accent` — foreground on filled controls
+- `--dk-text-link` / `--dk-text-link-hover` — links and selected-nav text
+- `--dk-accent-soft` — selected navigation and focus wash
+- `--dk-focus-ring` — keyboard focus outline
+- `--dk-danger-hover` — hover fill of solid danger buttons
 
-- `--dm-color-success`
-- `--dm-color-success-surface`
-- `--dm-color-success-border`
-- `--dm-color-warning`
-- `--dm-color-warning-surface`
-- `--dm-color-warning-border`
-- `--dm-color-danger`
-- `--dm-color-danger-hover`
-- `--dm-color-danger-surface`
-- `--dm-color-danger-border`
-- `--dm-color-info`
-- `--dm-color-info-surface`
-- `--dm-color-info-border`
-- `--dm-color-neutral`
-- `--dm-color-neutral-surface`
-- `--dm-color-neutral-border`
+State: the `--dk-{success,warning,danger,info}-{text,bg,border}`
+triplets. Neutral badges use `--dk-text-muted` on `--dk-bg-muted` with
+`--dk-border-default`.
 
-Do not use raw hex values outside `:root` unless there is a documented exception.
+### Spacing, Shape, And Type Tokens
 
-### Spacing Tokens
-
-Use the spacing scale for layout and component gaps:
-
-- `--dm-space-1`: 4px
-- `--dm-space-2`: 8px
-- `--dm-space-3`: 12px
-- `--dm-space-4`: 16px
-- `--dm-space-5`: 20px
-- `--dm-space-6`: 24px
-- `--dm-space-8`: 32px
-
-Do not introduce one-off spacing values for page layout. If a repeated spacing need appears, add a token.
-
-### Shape And Type Tokens
-
-- `--dm-radius-sm`: controls, badges, nav items
-- `--dm-radius-md`: panels, empty states, table wrappers
-- `--dm-font-sans`: Inter (self-hosted, SIL OFL)
-- `--dm-font-mono`: IBM Plex Mono (self-hosted, SIL OFL); quantities, timings, and IDs render as data, not prose
-- `--dm-font-size-sm`: labels, help text, table headers
-- `--dm-font-size-base`: body and form controls
-- `--dm-font-size-lg`: section headings
-- `--dm-font-size-xl`: page headings
-- `--dm-control-height`: inputs and buttons
-- `--dm-content-width`: readable main-column width
-- `--dm-sidebar-width`: persistent sidebar width
+- `--dk-space-1…8` — the 4px grid; relay layouts on the old 32px step use
+  `--dk-space-7`
+- `--dk-radius-sm` (4px: inputs, nav items, small inset surfaces) and
+  `--dk-radius-md` (6px: buttons, panels, empty states, table wrappers)
+- `--dk-text-sm` / `--dk-text-body` / `--dk-text-lg` / `--dk-text-page`
+  and `--dk-font-sans` / `--dk-font-mono`
+- `--dk-size-control-md` (34px inputs and buttons),
+  `--dk-size-content-max` (main column), `--dk-size-sidebar`
 
 Letter spacing stays normal. Font sizes do not scale with viewport width.
-The shared component radius is 6px. Normal surfaces carry no shadow; shadows
+Inputs and other inset surfaces use the 4px radius step; buttons and
+panels use the 6px step. Normal surfaces carry no shadow; shadows
 are reserved for overlays.
 
 ## Component Contract
@@ -199,9 +171,10 @@ Use these primitives before creating page-specific classes.
 
 ## Typography
 
-- Use the self-hosted Inter stack (`--dm-font-sans`) for UI text and IBM Plex
-  Mono (`--dm-font-mono`) for quantities, timings, IDs, and code. Fonts must
-  not make third-party requests.
+- Use dakit's self-hosted Inter stack (`--dk-font-sans`) for UI text and IBM
+  Plex Mono (`--dk-font-mono`) for quantities, timings, IDs, and code. dakit
+  ships both fonts from `static/dakit/fonts/` (SIL OFL); the app declares no
+  `@font-face` rules of its own, and fonts must not make third-party requests.
 - Keep letter spacing normal.
 - Do not scale font size with viewport width.
 - Page titles are 32px semibold on desktop and 22px on mobile.
