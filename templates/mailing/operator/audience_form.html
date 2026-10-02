@@ -5,14 +5,16 @@
 {% block content %}
   <div class="page-header">
     <div>
-      <div class="breadcrumbs"><a href="{% url 'mailing:audience_list' %}">Audiences</a></div>
       <h1>{% if mode == "create" %}Create audience{% else %}Edit audience{% endif %}</h1>
       <p>{% if mode == "create" %}Define a new organization-scoped audience for contacts and campaigns.{% else %}Update this audience without changing memberships or campaign history.{% endif %}</p>
     </div>
     <a class="button secondary" href="{% url 'mailing:audience_list' %}">Cancel</a>
   </div>
 
-  <form class="form-page" method="post" novalidate>
+  <form class="form-page form-panel" method="post" novalidate>
+    <div class="form-panel-header">
+      <h2>{% if mode == "create" %}New audience{% else %}Edit audience{% endif %}</h2>
+    </div>
     {% csrf_token %}
     {% if form.non_field_errors %}
       <div class="form-errors">{{ form.non_field_errors }}</div>

@@ -6,13 +6,6 @@
 {% block content %}
   <div class="page-header">
     <div>
-      <div class="breadcrumbs">
-        <a href="{% url 'mailing:client_list' %}">Clients</a>
-        {% if mode == "edit" %}
-          <span>/</span>
-          <a href="{% url 'mailing:client_detail' client.id %}">{{ client.name }}</a>
-        {% endif %}
-      </div>
       <h1>{% if mode == "create" %}Create client{% else %}Edit client{% endif %}</h1>
       <p>
         {% if mode == "create" %}
@@ -29,7 +22,10 @@
     {% endif %}
   </div>
 
-  <form class="form-page" method="post" novalidate>
+  <form class="form-page form-panel" method="post" novalidate>
+    <div class="form-panel-header">
+      <h2>{% if mode == "create" %}New client{% else %}Edit client{% endif %}</h2>
+    </div>
     {% csrf_token %}
     {% if form.non_field_errors %}
       <div class="form-errors">{{ form.non_field_errors }}</div>

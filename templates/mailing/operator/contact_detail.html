@@ -4,12 +4,6 @@
   {% block topbar_title %}{{ contact.email }}{% endblock %}
 
 {% block content %}
-  <nav class="breadcrumbs" aria-label="Breadcrumb">
-    <a href="{% url 'mailing:contact_search' %}?q={{ contact.normalized_email }}">Contacts</a>
-    <span aria-hidden="true">/</span>
-    <span>{{ contact.normalized_email }}</span>
-  </nav>
-
   <div class="page-header contact-header">
     <div>
       <h1>{{ contact.email }}</h1>
@@ -25,8 +19,8 @@
     <a class="button secondary" href="#manage-contact">Manage contact</a>
   </div>
 
-  <section class="detail-section contact-summary" aria-labelledby="sendability">
-    <div class="section-header">
+  <section class="detail-section panel contact-summary" aria-labelledby="sendability">
+    <div class="panel-header">
       <div>
         <h2 id="sendability">Send Eligibility</h2>
         <p>Can Datamailer email this contact, and why?</p>
@@ -56,8 +50,8 @@
     </div>
   </section>
 
-  <section class="detail-section" aria-labelledby="engagement">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="engagement">
+    <div class="panel-header">
       <h2 id="engagement">Engagement and Delivery</h2>
     </div>
     <div class="stats-grid contact-metrics">
@@ -74,8 +68,8 @@
     </div>
   </section>
 
-  <section class="detail-section" aria-labelledby="membership">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="membership">
+    <div class="panel-header">
       <h2 id="membership">Membership and Tags</h2>
     </div>
     <div class="detail-grid">
@@ -128,8 +122,8 @@
     </div>
   </section>
 
-  <section class="detail-section manage-contact-panel" id="manage-contact" aria-labelledby="manage-contact-heading">
-    <div class="section-header">
+  <section class="detail-section panel manage-contact-panel" id="manage-contact" aria-labelledby="manage-contact-heading">
+    <div class="panel-header">
       <h2 id="manage-contact-heading">Manage contact</h2>
     </div>
     <div class="manage-form-grid">
@@ -163,8 +157,8 @@
     </div>
   </section>
 
-  <section class="detail-section" aria-labelledby="recent-activity">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="recent-activity">
+    <div class="panel-header">
       <h2 id="recent-activity">Recent Activity</h2>
     </div>
     {% if recent_activity %}

@@ -6,18 +6,16 @@
 {% block content %}
   <div class="page-header">
     <div>
-      <div class="breadcrumbs">
-        <a href="{% url 'mailing:audience_list' %}">Audiences</a>
-        <span>/</span>
-        <a href="{% url 'mailing:audience_detail' audience.id %}">{{ audience.name }}</a>
-      </div>
       <h1>{% if mode == "create" %}Create tag{% else %}Edit tag{% endif %}</h1>
       <p>{% if mode == "create" %}Add a reusable segment tag to this audience.{% else %}Update this tag without moving it to another audience.{% endif %}</p>
     </div>
     <a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">Cancel</a>
   </div>
 
-  <form class="form-page" method="post" novalidate>
+  <form class="form-page form-panel" method="post" novalidate>
+    <div class="form-panel-header">
+      <h2>{% if mode == "create" %}New tag{% else %}Edit tag{% endif %}</h2>
+    </div>
     {% csrf_token %}
     {% if form.non_field_errors %}
       <div class="form-errors">{{ form.non_field_errors }}</div>

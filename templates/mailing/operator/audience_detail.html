@@ -4,12 +4,6 @@
   {% block topbar_title %}{{ audience.name }}{% endblock %}
 
 {% block content %}
-  <nav class="breadcrumbs" aria-label="Breadcrumb">
-    <a href="{% url 'mailing:audience_list' %}">Audiences</a>
-    <span>/</span>
-    <span>{{ audience.name }}</span>
-  </nav>
-
   <div class="page-header">
     <div>
       <h1>{{ audience.name }}</h1>
@@ -31,8 +25,8 @@
     </div>
   </div>
 
-  <section class="section audience-summary" aria-labelledby="audience-summary">
-    <div class="section-header">
+  <section class="section panel audience-summary" aria-labelledby="audience-summary">
+    <div class="panel-header">
       <div>
         <h2 id="audience-summary">Summary</h2>
         <p class="muted">Membership health, sendability signals, and engagement at a glance.</p>
@@ -52,8 +46,8 @@
     </div>
   </section>
 
-  <section class="section" aria-labelledby="audience-segmentation">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="audience-segmentation">
+    <div class="panel-header">
       <div>
         <h2 id="audience-segmentation">Segmentation</h2>
         <p class="muted">Tags, validation health, campaign recipient states, and skip reasons.</p>
@@ -91,21 +85,21 @@
     </div>
   </section>
 
-  <section class="section" aria-labelledby="audience-members">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="audience-members">
+    <div class="panel-header">
       <div>
         <h2 id="audience-members">Membership</h2>
         <p class="muted">Audience-scoped contact exploration with the same filter language as Contact Explorer.</p>
       </div>
     </div>
     <form class="contact-explorer-form audience-member-form" method="get">
-      <div class="section-header">
+      <div class="filter-bar">
         <div>
           <h3>Filters</h3>
           <p class="muted">Start with email, client, or subscription. Use advanced filters only when needed.</p>
         </div>
         <div class="actions">
-          <button class="secondary" type="submit">Apply filters</button>
+          <button type="submit">Apply filters</button>
           <a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">Clear</a>
         </div>
       </div>
@@ -283,10 +277,10 @@
     {% endif %}
   </section>
 
-  <section class="section" aria-labelledby="audience-campaigns">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="audience-campaigns">
+    <div class="panel-header">
       <div>
-        <h2 id="audience-campaigns">Campaign History</h2>
+        <h2 id="audience-campaigns">Campaign history</h2>
         <p class="muted">Recent broadcasts using this audience and their delivery/engagement totals.</p>
       </div>
     </div>
@@ -328,8 +322,8 @@
     {% endif %}
   </section>
 
-  <section class="detail-section secondary-section" aria-labelledby="audience-events">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="audience-events">
+    <div class="panel-header">
       <div>
         <h2 id="audience-events">Recent Events</h2>
         <p class="muted">Latest delivery, engagement, and unsubscribe events tied to this audience.</p>

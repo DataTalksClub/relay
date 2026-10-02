@@ -6,20 +6,22 @@
 {% block content %}
   <div class="page-header">
     <div>
-      <div class="breadcrumbs"><a href="{% url 'mailing:campaign_list' %}">Campaigns</a></div>
       <h1>{% if mode == "create" %}Create campaign{% else %}Edit campaign{% endif %}</h1>
       <p>Prepare a campaign draft, choose the recipient filters, and paste final email content.</p>
     </div>
     <a class="button secondary" href="{% if campaign %}{% url 'mailing:campaign_detail' campaign.id %}{% else %}{% url 'mailing:campaign_list' %}{% endif %}">Cancel</a>
   </div>
 
-  <form method="post" novalidate>
+  <form method="post" novalidate class="form-panel">
     {% csrf_token %}
     {% if form.non_field_errors %}
       <div class="form-errors">{{ form.non_field_errors }}</div>
     {% endif %}
+    <div class="form-panel-header">
+      <h2>{% if mode == "create" %}New campaign draft{% else %}Edit draft{% endif %}</h2>
+    </div>
 
-    <section class="section" aria-labelledby="campaign-audience-heading">
+    <section class="form-section" aria-labelledby="campaign-audience-heading">
       <div class="section-header">
         <div>
           <h2 id="campaign-audience-heading">Audience and sender</h2>
@@ -42,7 +44,7 @@
       </div>
     </section>
 
-    <section class="section" aria-labelledby="campaign-filters-heading">
+    <section class="form-section" aria-labelledby="campaign-filters-heading">
       <div class="section-header">
         <div>
           <h2 id="campaign-filters-heading">Recipient filters</h2>
@@ -65,7 +67,7 @@
       </div>
     </section>
 
-    <section class="section" aria-labelledby="campaign-metadata-heading">
+    <section class="form-section" aria-labelledby="campaign-metadata-heading">
       <div class="section-header">
         <div>
           <h2 id="campaign-metadata-heading">Campaign metadata</h2>
@@ -88,7 +90,7 @@
       </div>
     </section>
 
-    <section class="section" aria-labelledby="campaign-content-heading">
+    <section class="form-section" aria-labelledby="campaign-content-heading">
       <div class="section-header">
         <div>
           <h2 id="campaign-content-heading">Final pasted content</h2>
@@ -111,7 +113,7 @@
       </div>
     </section>
 
-    <section class="section" aria-labelledby="campaign-sending-heading">
+    <section class="form-section" aria-labelledby="campaign-sending-heading">
       <div class="section-header">
         <div>
           <h2 id="campaign-sending-heading">Sending controls</h2>

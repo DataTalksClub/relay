@@ -6,11 +6,6 @@
 {% block content %}
   <div class="page-header">
     <div>
-      <p class="breadcrumbs">
-        <a href="{% url 'mailing:template_catalog' %}">Templates</a>
-        / <a href="{% url 'mailing:template_detail' message.template_id %}">{{ message.template.name }}</a>
-        / Message {{ message.id }}
-      </p>
       <h1>{{ message.email }}</h1>
       <p>{{ message.client.name }} / {{ message.template.name }}</p>
       <div class="helptext">Integration key: {{ message.template_key }}</div>
@@ -22,8 +17,8 @@
     </div>
   </div>
 
-  <section class="detail-section" aria-labelledby="message-summary">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="message-summary">
+    <div class="panel-header">
       <h2 id="message-summary">Message Summary</h2>
     </div>
     <div class="meta-grid">
@@ -46,8 +41,8 @@
     {% endif %}
   </section>
 
-  <section class="detail-section" aria-labelledby="message-content">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="message-content">
+    <div class="panel-header">
       <h2 id="message-content">Rendered Content</h2>
     </div>
     <div class="template-preview-subject"><span class="meta-label">Subject</span>{{ message.subject|default:"-" }}</div>
@@ -67,8 +62,8 @@
     {% endif %}
   </section>
 
-  <section class="detail-section" aria-labelledby="message-data">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="message-data">
+    <div class="panel-header">
       <h2 id="message-data">Payload Data</h2>
     </div>
     <div class="detail-grid">
@@ -88,8 +83,8 @@
     </div>
   </section>
 
-  <section class="detail-section" aria-labelledby="message-events">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="message-events">
+    <div class="panel-header">
       <h2 id="message-events">Events</h2>
     </div>
     {% if event_rows %}
@@ -123,8 +118,8 @@
     {% endif %}
   </section>
 
-  <section class="detail-section" aria-labelledby="cmp-callbacks">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="cmp-callbacks">
+    <div class="panel-header">
       <h2 id="cmp-callbacks">CMP Callbacks</h2>
     </div>
     {% if cmp_callback_rows %}
@@ -162,8 +157,8 @@
     {% endif %}
   </section>
 
-  <section class="detail-section" aria-labelledby="client-callbacks">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="client-callbacks">
+    <div class="panel-header">
       <h2 id="client-callbacks">Client Callbacks</h2>
     </div>
     {% if callback_rows %}

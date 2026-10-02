@@ -18,8 +18,11 @@
   </div>
 
   <section class="section">
-    <form method="post" novalidate>
+    <form method="post" novalidate class="form-panel">
       {% csrf_token %}
+      <div class="form-panel-header">
+        <h2>New receiving address</h2>
+      </div>
       <div class="form-grid">
         <div class="form-field">
           <label for="local_part">Local part</label>
@@ -49,8 +52,8 @@
   </section>
 
   {% if domain_hint %}
-    <section class="section">
-      <div class="section-header">
+    <section class="section panel">
+      <div class="panel-header">
         <div>
           <h2>Currently receiving through the environment</h2>
           <p class="muted">
