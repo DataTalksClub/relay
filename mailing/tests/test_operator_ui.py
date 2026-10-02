@@ -143,7 +143,7 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     response = client.get(reverse("mailing:dashboard"))
 
     assert response.status_code == 200
-    assert b'href="/static/dakit/dakit.css"' in response.content
+    assert b'href="/static/dakit/dist/dakit.css"' in response.content
     assert b'href="/static/mailing/css/app.css"' in response.content
     assert b"<style>" not in response.content
     assert b'aria-current="page">Datamailer' in response.content
@@ -151,9 +151,9 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     assert b'data-sidebar-toggle aria-expanded="true"' in response.content
     assert b'matchMedia("(max-width: 860px)")' in response.content
     assert b"dakit-theme" in response.content
-    assert finders.find("dakit/dakit.css") is not None
+    assert finders.find("dakit/dist/dakit.css") is not None
     assert finders.find("mailing/css/app.css") is not None
-    dakit_css = Path(finders.find("dakit/dakit.css")).read_text()
+    dakit_css = Path(finders.find("dakit/dist/dakit.css")).read_text()
     assert "--dk-text-primary" in dakit_css
     css = Path(finders.find("mailing/css/app.css")).read_text()
     assert ".client-table,\n  .campaign-table,\n  .audience-table,\n  .audience-member-table" in css

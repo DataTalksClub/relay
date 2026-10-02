@@ -19,8 +19,10 @@ if [[ ! -f "$DAKIT_DIR/dist/dakit.css" ]]; then
   exit 1
 fi
 
-mkdir -p static/dakit/fonts
-cp "$DAKIT_DIR/dist/dakit.css" static/dakit/dakit.css
+# Mirror dakit's own layout: dist/ holds the bundle, fonts/ sits next to it,
+# because the bundle's @font-face rules use ../fonts/ relative URLs.
+mkdir -p static/dakit/dist static/dakit/fonts
+cp "$DAKIT_DIR/dist/dakit.css" static/dakit/dist/dakit.css
 cp "$DAKIT_DIR"/fonts/inter-var.woff2 \
    "$DAKIT_DIR"/fonts/ibm-plex-mono-400.woff2 \
    "$DAKIT_DIR"/fonts/ibm-plex-mono-500.woff2 \
