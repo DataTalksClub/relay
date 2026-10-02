@@ -126,6 +126,10 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Local convenience only: with DEBUG on, every request is pre-authenticated
+    # as the seeded superuser instead of hitting the admin login. Deployed
+    # environments run with DEBUG off and authenticate through relay.oidc.
+    "relay.dev_auth.DevAutoLoginMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -187,6 +191,11 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+# Where the stock auth views send an already-authenticated visitor (e.g. after
+# logging out locally, the admin login page bounces here). The OIDC flow keeps
+# its own explicit return_to handling and never reads this.
+LOGIN_REDIRECT_URL = "/"
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
