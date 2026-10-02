@@ -34,7 +34,7 @@
         <a class="button secondary" href="{% url 'mailing:client_create' %}">Create client</a>
       </div>
       {% if clients %}
-        <div class="table-wrap">
+        <div class="table-wrap stack-table">
           <table>
             <thead>
               <tr>
@@ -47,19 +47,19 @@
             <tbody>
               {% for client in clients %}
                 <tr>
-                  <td>
+                  <td data-label="Client">
                     <strong>{{ client.name }}</strong>
                     <div class="helptext">{{ client.slug }}</div>
                   </td>
-                  <td>{{ client.organization.name }}</td>
-                  <td>
+                  <td data-label="Organization">{{ client.organization.name }}</td>
+                  <td data-label="Status">
                     {% if client.is_active %}
                       <span class="badge success">Active</span>
                     {% else %}
                       <span class="badge danger">Inactive</span>
                     {% endif %}
                   </td>
-                  <td>
+                  <td data-label="Action">
                     <form method="post" action="{% url 'mailing:client_select' %}">
                       {% csrf_token %}
                       <input type="hidden" name="client_id" value="{{ client.id }}">

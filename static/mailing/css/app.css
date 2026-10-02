@@ -1753,6 +1753,8 @@ pre {
 
   .table-wrap {
     scrollbar-width: thin;
+    /* A right-edge fade hints that narrow viewports scroll sideways. */
+    box-shadow: inset -14px 0 14px -16px var(--dk-border-strong);
   }
 
   .client-table,
@@ -1791,6 +1793,22 @@ pre {
   .app-toolbar {
     padding-right: 14px;
     padding-left: 14px;
+  }
+
+  /* At phone widths the global controls go icon-only so the top bar
+     never overflows the viewport. */
+  .toolbar-nav {
+    gap: var(--dk-space-1);
+  }
+
+  .toolbar-nav a {
+    padding: 0 var(--dk-space-2);
+    white-space: nowrap;
+  }
+
+  .toolbar-nav a span,
+  .theme-toggle span {
+    display: none;
   }
 
   h1 {
@@ -1851,6 +1869,56 @@ pre {
   input[type="checkbox"],
   input[type="radio"] {
     width: auto;
+  }
+
+  /* Narrow tables become labelled rows instead of a clipped grid. */
+  .stack-table {
+    overflow: visible;
+    box-shadow: none;
+  }
+
+  .stack-table table,
+  .stack-table tbody,
+  .stack-table tr {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .stack-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .stack-table tr {
+    display: grid;
+    gap: var(--dk-space-2);
+    padding: var(--dk-space-3) 0;
+    border-bottom: 1px solid var(--dk-border-muted);
+  }
+
+  .stack-table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .stack-table td {
+    display: block;
+    width: auto;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .stack-table td[data-label]::before {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--dk-text-muted);
+    font-size: var(--dk-text-sm);
+    font-weight: var(--dk-weight-semibold);
+    content: attr(data-label);
   }
 }
 
