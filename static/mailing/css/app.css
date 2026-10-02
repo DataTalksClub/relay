@@ -2254,12 +2254,6 @@ pre {
   min-width: 0;
 }
 
-.triage-table .badge {
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
 .triage-table .helptext,
 .triage-table .data-truncate {
   max-width: none;
