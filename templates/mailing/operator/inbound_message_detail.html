@@ -24,14 +24,14 @@
         <div><h2 id="summary-heading">Summary</h2></div>
       </div>
       <div class="meta-grid">
-        <div><div class="muted">From</div><div class="truncate">{{ message.from_header|default:"-" }}</div></div>
-        <div><div class="muted">Sender address</div><div class="truncate">{{ message.sender_address|default:"-" }}</div></div>
-        <div><div class="muted">To</div><div class="truncate">{{ message.to_header|default:"-" }}</div></div>
-        <div><div class="muted">Cc</div><div class="truncate">{{ message.cc_header|default:"-" }}</div></div>
-        <div><div class="muted">Claimed sent</div><div>{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</div></div>
+        <div><div class="muted">From</div><div class="truncate">{{ message.from_header|default:"—" }}</div></div>
+        <div><div class="muted">Sender address</div><div class="truncate">{{ message.sender_address|default:"—" }}</div></div>
+        <div><div class="muted">To</div><div class="truncate">{{ message.to_header|default:"—" }}</div></div>
+        <div><div class="muted">Cc</div><div class="truncate">{{ message.cc_header|default:"—" }}</div></div>
+        <div><div class="muted">Claimed sent</div><div>{{ message.sent_at|date:"Y-m-d H:i"|default:"—" }}</div></div>
         <div><div class="muted">Size</div><div>{{ message.size_bytes }} bytes</div></div>
         <div><div class="muted">Attachments</div><div>{{ message.attachment_count }}</div></div>
-        <div><div class="muted">Message-ID</div><div class="truncate">{{ message.message_id|default:"-" }}</div></div>
+        <div><div class="muted">Message-ID</div><div class="truncate">{{ message.message_id|default:"—" }}</div></div>
       </div>
     </section>
 
@@ -40,11 +40,11 @@
         <div><h2 id="signal-heading">Authentication and spam signals</h2></div>
       </div>
       <div class="meta-grid">
-        <div><div class="muted">SES spam</div><div>{{ message.spam_verdict|default:"-" }}</div></div>
-        <div><div class="muted">SES virus</div><div>{{ message.virus_verdict|default:"-" }}</div></div>
-        <div><div class="muted">SPF</div><div>{{ message.spf_verdict|default:"-" }}</div></div>
-        <div><div class="muted">DKIM</div><div>{{ message.dkim_verdict|default:"-" }}</div></div>
-        <div><div class="muted">DMARC</div><div>{{ message.dmarc_verdict|default:"-" }}</div></div>
+        <div><div class="muted">SES spam</div><div>{{ message.spam_verdict|default:"—" }}</div></div>
+        <div><div class="muted">SES virus</div><div>{{ message.virus_verdict|default:"—" }}</div></div>
+        <div><div class="muted">SPF</div><div>{{ message.spf_verdict|default:"—" }}</div></div>
+        <div><div class="muted">DKIM</div><div>{{ message.dkim_verdict|default:"—" }}</div></div>
+        <div><div class="muted">DMARC</div><div>{{ message.dmarc_verdict|default:"—" }}</div></div>
       </div>
       <p class="helptext">
         A verdict is the sending domain's own claim, not a judgement. SES reporting
@@ -121,10 +121,10 @@
   <details class="detail-section secondary-section">
     <summary>Storage locations</summary>
     <div class="meta-grid">
-      <div><div class="muted">Raw MIME bucket</div><div class="truncate">{{ message.raw_bucket|default:"-" }}</div></div>
-      <div><div class="muted">Raw MIME key</div><div class="truncate">{{ message.raw_key|default:"-" }}</div></div>
-      <div><div class="muted">Text body key</div><div class="truncate">{{ message.body_text_key|default:"-" }}</div></div>
-      <div><div class="muted">HTML body key</div><div class="truncate">{{ message.body_html_key|default:"-" }}</div></div>
+      <div><div class="muted">Raw MIME bucket</div><div class="truncate">{{ message.raw_bucket|default:"—" }}</div></div>
+      <div><div class="muted">Raw MIME key</div><div class="truncate">{{ message.raw_key|default:"—" }}</div></div>
+      <div><div class="muted">Text body key</div><div class="truncate">{{ message.body_text_key|default:"—" }}</div></div>
+      <div><div class="muted">HTML body key</div><div class="truncate">{{ message.body_html_key|default:"—" }}</div></div>
     </div>
     <p class="helptext">
       The raw message and both body parts live in object storage, not the

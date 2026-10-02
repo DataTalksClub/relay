@@ -247,14 +247,14 @@
                   <div class="muted">{{ recipient.campaign.client.name }} / {{ recipient.campaign.audience.name }}</div>
                 </td>
                 <td><span class="badge">{{ recipient.get_status_display }}</span></td>
-                <td>{{ recipient.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ recipient.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ recipient.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ recipient.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ recipient.get_skip_reason_display|default:"-" }}</td>
-                <td class="truncate">{{ recipient.ses_message_id|default:"-" }}</td>
+                <td>{{ recipient.sent_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ recipient.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ recipient.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ recipient.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ recipient.get_skip_reason_display|default:"—" }}</td>
+                <td class="truncate">{{ recipient.ses_message_id|default:"—" }}</td>
                 <td class="nowrap">{{ recipient.open_count }} opens / {{ recipient.click_count }} clicks</td>
-                <td class="truncate">{{ recipient.last_error|default:"-" }}</td>
+                <td class="truncate">{{ recipient.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -300,14 +300,14 @@
                 <td><span class="badge">{{ message.get_status_display }}</span></td>
                 <td class="truncate">{{ message.subject }}</td>
                 <td>{{ message.created_at|date:"Y-m-d H:i" }}</td>
-                <td>{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ message.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td>{{ message.sent_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ message.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</td>
                 <td class="nowrap">{{ message.open_count }} opens / {{ message.click_count }} clicks</td>
-                <td class="truncate">{{ message.ses_message_id|default:"-" }}</td>
-                <td class="truncate">{{ row.metadata_summary|default:"-" }}</td>
-                <td class="truncate">{{ message.last_error|default:"-" }}</td>
+                <td class="truncate">{{ message.ses_message_id|default:"—" }}</td>
+                <td class="truncate">{{ row.metadata_summary|default:"—" }}</td>
+                <td class="truncate">{{ message.last_error|default:"—" }}</td>
               </tr>
               {% endwith %}
             {% endfor %}
@@ -331,7 +331,7 @@
             <span class="muted">{{ row.event.created_at|date:"Y-m-d H:i:s" }}</span>
             <div>{{ row.context }}</div>
             {% if row.event.client or row.event.audience %}
-              <div class="muted">{{ row.event.client.name|default:"-" }} / {{ row.event.audience.name|default:"-" }}</div>
+              <div class="muted">{{ row.event.client.name|default:"—" }} / {{ row.event.audience.name|default:"—" }}</div>
             {% endif %}
             {% if row.event.url %}
               <div class="truncate"><a href="{{ row.event.url }}">{{ row.event.url }}</a></div>

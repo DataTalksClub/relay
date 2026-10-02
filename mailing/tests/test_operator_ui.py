@@ -1242,14 +1242,14 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert '<th scope="col">Tags</th>' not in detail_html
     assert ">+2</span>" in detail_html
     assert "Missing email DNS" in detail_html
-    assert "No MX: 1" not in detail_html
-    assert "Valid email: 1" in detail_html
-    assert "No validation data: 1" in detail_html
+    assert "No MX 1" not in detail_html
+    assert "Valid email 1" in detail_html
+    assert "No validation data 1" in detail_html
     assert "Malformed email: 0" not in detail_html
-    assert "Sent: 2" in detail_html
-    assert "Skipped: 1" in detail_html
+    assert "Sent 2" in detail_html
+    assert "Skipped 1" in detail_html
     assert "Failed: 0" not in detail_html
-    assert "Invalid email: 1" in detail_html
+    assert "Invalid email 1" in detail_html
     assert "Client unsubscribe: 0" not in detail_html
     assert "Hard bounced" in detail_html
     assert "invalid@example.com" in detail_html
@@ -1413,7 +1413,7 @@ def test_audience_detail_renders_clickable_and_deferred_summary_stats(
         "?suppression=hard_bounced#audience-members",
         "?suppression=complained#audience-members",
     ):
-        assert f'class="stat-value stat-link" href="{href}"' in html
+        assert f'class="stat-value" href="{href}"' in html
     # Deferred stats are present as labels but never rendered as links.
     assert "Inactive" in html
     assert "Opened" in html

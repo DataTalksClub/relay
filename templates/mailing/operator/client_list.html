@@ -27,7 +27,7 @@
             <th scope="col">API keys</th>
             <th scope="col">Last used</th>
             <th scope="col">Updated</th>
-            <th scope="col">Actions</th>
+            <th scope="col"><span class="sr-only">Action</span></th>
           </tr>
         </thead>
         <tbody>
@@ -65,20 +65,17 @@
                 {% endif %}
               </td>
               <td class="nowrap" data-label="Updated">{{ client.updated_at|date:"Y-m-d H:i" }}</td>
-              <td data-label="Actions">
-                <div class="actions">
-                  {% if operator_active_client and operator_active_client.id == client.id %}
-                    <span class="badge success">Current</span>
-                  {% else %}
-                    <form method="post" action="{% url 'mailing:client_select' %}">
-                      {% csrf_token %}
-                      <input type="hidden" name="client_id" value="{{ client.id }}">
-                      <input type="hidden" name="next" value="{% url 'mailing:dashboard' %}">
-                      <button class="secondary" type="submit">Use client</button>
-                    </form>
-                  {% endif %}
+              <td data-label="Action">
+                {% if operator_active_client and operator_active_client.id == client.id %}
                   <a class="button secondary" href="{% url 'mailing:client_detail' client.id %}">View keys</a>
-                </div>
+                {% else %}
+                  <form method="post" action="{% url 'mailing:client_select' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="client_id" value="{{ client.id }}">
+                    <input type="hidden" name="next" value="{% url 'mailing:dashboard' %}">
+                    <button class="secondary" type="submit">Use client</button>
+                  </form>
+                {% endif %}
               </td>
             </tr>
           {% endfor %}
@@ -89,7 +86,7 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <span class="badge neutral">Empty</span>
+      <span class="badge neutral">EMPTY</span>
       <p><strong>No clients found.</strong> Create a client before issuing named API keys for an integration.</p>
       <a class="button secondary" href="{% url 'mailing:client_create' %}">Create client</a>
     </div>

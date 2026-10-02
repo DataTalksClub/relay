@@ -10,9 +10,6 @@
       <p>{{ audience.organization.name }} / {{ audience.slug }}</p>
       <div class="badge-row" aria-label="Audience state">
         {% for stat in summary %}
-          {% if stat.key == "members" %}<span class="badge neutral">{{ stat.value }} members</span>{% endif %}
-          {% if stat.key == "subscribed" %}<span class="badge success">{{ stat.value }} subscribed</span>{% endif %}
-          {% if stat.key == "inactive" %}<span class="badge neutral">{{ stat.value }} inactive</span>{% endif %}
           {% if stat.key == "hard_bounced" and stat.value %}<span class="badge danger">{{ stat.value }} hard bounced</span>{% endif %}
           {% if stat.key == "complained" and stat.value %}<span class="badge danger">{{ stat.value }} complained</span>{% endif %}
         {% endfor %}
@@ -35,9 +32,9 @@
     <div class="stats-grid">
       {% for stat in summary %}
         <div class="stat">
-          <span class="stat-label">{{ stat.label }}</span>
+          <span class="stat-label"><span class="stat-dot {% if stat.key == "hard_bounced" or stat.key == "complained" %}danger{% elif stat.key == "inactive" %}warning{% endif %}"></span>{{ stat.label }}</span>
           {% if stat.href %}
-            <a class="stat-value stat-link" href="{{ stat.href }}">{{ stat.value }}</a>
+            <a class="stat-value" href="{{ stat.href }}">{{ stat.value }}</a>
           {% else %}
             <span class="stat-value">{{ stat.value }}</span>
           {% endif %}
@@ -56,31 +53,19 @@
     <div class="meta-grid">
       <div class="meta-item">
         <span class="meta-label">Validation</span>
-        <div class="badge-row">
-          {% for label, count in breakdowns.validation %}<span class="badge neutral">{{ label }}: {{ count }}</span>{% empty %}<span class="badge neutral">No contacts</span>{% endfor %}
-        </div>
+        {% for label, count in breakdowns.validation %}<span class="seg-fact">{{ label }} {{ count }}</span>{% empty %}<span class="muted">No contacts</span>{% endfor %}
       </div>
       <div class="meta-item">
         <span class="meta-label">Tags</span>
-        <div class="tag-cloud">
-          {% for tag in breakdowns.tags %}
-            <a class="badge neutral" href="{% url 'mailing:tag_detail' tag.id %}">{{ tag.slug }}: {{ tag.count }}</a>
-          {% empty %}
-            <span class="badge neutral">No tags</span>
-          {% endfor %}
-        </div>
+        {% for tag in breakdowns.tags %}<a class="seg-fact" href="{% url 'mailing:tag_detail' tag.id %}">{{ tag.slug }} {{ tag.count }}</a>{% empty %}<span class="muted">No tags</span>{% endfor %}
       </div>
       <div class="meta-item">
         <span class="meta-label">Campaign statuses</span>
-        <div class="badge-row">
-          {% for label, count in breakdowns.campaign_statuses %}<span class="badge neutral">{{ label }}: {{ count }}</span>{% empty %}<span class="badge neutral">No campaign recipients</span>{% endfor %}
-        </div>
+        {% for label, count in breakdowns.campaign_statuses %}<span class="seg-fact">{{ label }} {{ count }}</span>{% empty %}<span class="muted">No campaign recipients</span>{% endfor %}
       </div>
       <div class="meta-item">
         <span class="meta-label">Skip reasons</span>
-        <div class="badge-row">
-          {% for label, count in breakdowns.skip_reasons %}<span class="badge warning">{{ label }}: {{ count }}</span>{% empty %}<span class="badge success">No skips</span>{% endfor %}
-        </div>
+        {% for label, count in breakdowns.skip_reasons %}<span class="seg-fact">{{ label }} {{ count }}</span>{% empty %}<span class="muted">No skips</span>{% endfor %}
       </div>
     </div>
   </section>
@@ -261,11 +246,11 @@
                   {% if row.contact.email_validation_reason %}<div class="helptext truncate">{{ row.contact.email_validation_reason }}</div>{% endif %}
                 </td>
                 <td>
-                  <div class="nowrap">Sent: {{ row.last_sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Opened: {{ row.last_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Clicked: {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  <div class="nowrap">Sent: {{ row.last_sent_at|date:"Y-m-d H:i"|default:"—" }}</div>
+                  <div class="nowrap">Opened: {{ row.last_opened_at|date:"Y-m-d H:i"|default:"—" }}</div>
+                  <div class="nowrap">Clicked: {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"—" }}</div>
                 </td>
-                <td><span class="data-truncate" title="{{ row.recent_issue|default:'-' }}">{{ row.recent_issue|default:"-" }}</span></td>
+                <td><span class="data-truncate" title="{{ row.recent_issue|default:'-' }}">{{ row.recent_issue|default:"—" }}</span></td>
               </tr>
             {% endfor %}
           </tbody>
@@ -306,8 +291,8 @@
                   <div class="helptext">{{ campaign.updated_at|date:"Y-m-d H:i" }}</div>
                 </td>
                 <td>{{ campaign.client.name }}</td>
-                <td><span class="badge">{{ campaign.get_status_display }}</span></td>
-                <td>{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td><span class="badge {% if campaign.status == "sent" %}success{% elif campaign.status == "sending" or campaign.status == "queued" or campaign.status == "snapshotting" %}warning{% elif campaign.status == "failed" or campaign.status == "cancelled" %}danger{% endif %}">{{ campaign.get_status_display }}</span></td>
+                <td>{{ campaign.sent_at|date:"Y-m-d H:i"|default:"—" }}</td>
                 <td>{{ campaign.recipient_count }}</td>
                 <td>{{ campaign.unique_open_count }} / {{ campaign.open_count }}</td>
                 <td>{{ campaign.unique_click_count }} / {{ campaign.click_count }}</td>
@@ -345,7 +330,7 @@
       <div class="timeline">
         {% for row in event_rows %}
           <article class="timeline-item">
-            <strong>{{ row.event.get_event_type_display }}</strong>
+            <span class="badge {% if row.event.event_type == "delivered" or row.event.event_type == "sent" %}success{% elif row.event.event_type == "bounce" or row.event.event_type == "complaint" or row.event.event_type == "failed" %}danger{% elif row.event.event_type == "unsubscribe" %}warning{% endif %}">{{ row.event.get_event_type_display }}</span>
             <span class="muted">{{ row.event.created_at|date:"Y-m-d H:i:s" }}</span>
             <div>{{ row.context }}</div>
             {% if row.event.contact %}
@@ -373,7 +358,7 @@
     {% endif %}
   </section>
 
-  <details class="detail-section secondary-section">
+  <details class="panel-diagnostics">
     <summary>Audit</summary>
     {% include "mailing/operator/_audit.html" with audit_rows=audit_rows %}
   </details>

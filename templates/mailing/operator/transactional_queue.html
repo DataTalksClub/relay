@@ -9,10 +9,6 @@
       <h1>Transactional queue</h1>
       <p>Queued transactional messages awaiting send for {{ active_client.name }}, oldest first.</p>
     </div>
-    <div class="actions">
-      <a class="button secondary" href="{% url 'mailing:dashboard' %}">Dashboard</a>
-      <a class="button secondary" href="{% url 'mailing:template_catalog' %}">Templates</a>
-    </div>
   </div>
 
   {% if message_rows %}
@@ -46,7 +42,7 @@
                   {{ row.message.template.name }}
                   <div class="muted">Integration key: {{ row.message.template_key }}</div>
                 </td>
-                <td class="truncate">{{ row.message.subject|default:"-" }}</td>
+                <td class="truncate">{{ row.message.subject|default:"—" }}</td>
                 <td class="nowrap">{{ row.message.created_at|date:"Y-m-d H:i" }}</td>
                 <td class="nowrap">{{ row.message.created_at|timesince }}</td>
                 <td><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
@@ -59,7 +55,7 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <span class="badge neutral">Empty</span>
+      <span class="badge neutral">EMPTY</span>
       <p><strong>No queued transactional messages.</strong> Accepted transactional messages waiting to be sent for {{ active_client.name }} will appear here.</p>
       {% if other_clients_queued_total %}
         {% if other_clients_queued_total == 1 %}

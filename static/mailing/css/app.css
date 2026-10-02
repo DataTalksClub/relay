@@ -103,6 +103,11 @@ body {
   margin-left: auto;
 }
 
+.toolbar-actions .icon-button .icon {
+  width: 18px;
+  height: 18px;
+}
+
 .toolbar-actions .icon-button {
   width: 32px;
   min-width: 32px;
@@ -228,7 +233,19 @@ body {
   text-transform: uppercase;
 }
 
-.client-switcher select {
+.client-switcher select[multiple] {
+  height: auto;
+  min-height: var(--dk-size-control-md);
+  /* Native multi-selects size to their options; the 34px control height
+     slices the second option in half. */
+  padding: 6px 10px;
+}
+
+select[multiple] option {
+  padding: 3px 4px;
+}
+
+select {
   width: 100%;
   height: var(--dk-size-control-md);
   font-size: var(--dk-text-md);
@@ -317,6 +334,7 @@ main,
 }
 
 .brand-name {
+  font-weight: var(--dk-weight-medium);
   overflow: hidden;
   color: var(--dk-text-heading);
   font-size: 16px;
@@ -336,14 +354,31 @@ main,
   white-space: nowrap;
 }
 
-/* The workspace collapse control is a 36px quiet square, the family's
+/* The workspace collapse control is a 36px bordered square, the family's
    sidebar-header button. */
 .sidebar-toggle {
+  border: 1px solid var(--dk-border-default);
+  background: var(--dk-bg-surface);
   flex: none;
   width: 36px;
   min-width: 36px;
   height: 36px;
   color: var(--dk-text-muted);
+}
+
+/* The drawer close control shows only while the mobile drawer is open. */
+.sidebar-drawer-close {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  html.js .has-sidebar.sidebar-open .sidebar-drawer-close {
+    display: inline-flex;
+  }
+
+  html.js .has-sidebar.sidebar-open .sidebar-toggle {
+    display: none;
+  }
 }
 
 /* The drawer open control lives in the toolbar on phones. */
@@ -371,11 +406,17 @@ main,
   gap: 2px;
 }
 
+.sidebar-nav-label,
+.sidebar-context {
+  padding-left: var(--dk-space-3);
+  padding-right: var(--dk-space-3);
+}
+
 .sidebar-nav-label {
   margin: 0 0 var(--dk-space-1);
-  padding: 0 var(--dk-space-3);
+  padding-left: var(--dk-space-3);
   color: var(--dk-text-muted);
-  font-size: var(--dk-text-xs);
+  font-size: 12px;
   font-weight: var(--dk-weight-semibold);
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -398,6 +439,7 @@ main,
 }
 
 .sidebar-nav a .icon {
+  color: var(--dk-text-primary);
   color: var(--dk-text-muted);
 }
 
@@ -495,12 +537,44 @@ p {
   color: var(--dk-text-muted);
 }
 
+/* Table row titles read as content, not as a link farm: ink text that
+   underlines on hover, the reference queue-row treatment. */
+.table-wrap a {
+  color: var(--dk-text-primary);
+  text-decoration: none;
+  font-weight: var(--dk-weight-semibold);
+}
+
+.table-wrap a:hover {
+  text-decoration: underline;
+}
+
+.table-wrap td .helptext a,
+.table-wrap td .muted a {
+  font-weight: var(--dk-weight-normal);
+}
+
+.table-wrap a.button {
+  font-weight: var(--dk-weight-medium);
+}
+
 a {
   color: var(--dk-text-link);
+  text-decoration: none;
 }
 
 a:hover {
   color: var(--dk-text-link-hover);
+  text-decoration: underline;
+}
+
+.compact-row-main a {
+  color: var(--dk-text-heading);
+  font-weight: var(--dk-weight-semibold);
+}
+
+.compact-row-main a:hover {
+  text-decoration: underline;
 }
 
 a:focus-visible,
@@ -525,7 +599,6 @@ summary:focus-visible,
 }
 
 .page-header p {
-  max-width: 60ch;
   margin: 0;
 }
 
@@ -591,6 +664,37 @@ summary:focus-visible,
   padding: var(--dk-space-3) var(--dk-space-4) var(--dk-space-4);
 }
 
+/* Loose content (form stacks, prose) inside a panel keeps the band inset. */
+.panel-body-pad,
+.panel > .form-stack {
+  padding: var(--dk-space-4);
+}
+
+.panel .stacked-form textarea,
+.panel .stacked-form input,
+.panel .form-stack textarea,
+.panel .form-stack input,
+.panel .form-stack select {
+  width: 100%;
+}
+
+.action-row-start,
+.panel .action-row,
+.panel .actions {
+  justify-content: flex-start;
+}
+
+/* The last column keeps the panel's horizontal inset. */
+.panel th:last-child,
+.panel td:last-child {
+  padding-right: var(--dk-space-4);
+}
+
+.panel .secondary-section .empty-state,
+.panel .panel-body-pad .empty-state {
+  padding: var(--dk-space-2) 0 0;
+}
+
 .panel .summary-panel {
   border: 0;
   border-radius: 0;
@@ -603,36 +707,27 @@ summary:focus-visible,
    pattern), not as separate cards. Cells carry right/bottom hairlines pulled
    1px past their track so wrapped rows stay divided and the outer edge stays
    clean; the wrapping flex cells fill each row, so a partial last row never
-   leaves a ghost box around empty space. Cells must stay transparent: the
-   container paints the surface color, and an opaque cell background would
-   paint over the previous cell's hairline across the 1px overlap. */
+   leaves a ghost box around empty space. */
 .meta-grid {
   display: flex;
   flex-wrap: wrap;
+  gap: 1px;
   margin: var(--dk-space-4) 0 var(--dk-space-6);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  background: var(--dk-bg-surface);
+  background: var(--dk-border-default);
   overflow: hidden;
 }
 
 .meta-grid > * {
-  flex: 1 1 150px;
+  flex: 1 1 220px;
   min-width: 0;
   margin: 0;
   padding: var(--dk-space-3) var(--dk-space-4);
+  background: var(--dk-bg-surface);
   border: 0;
-  border-right: 1px solid var(--dk-border-default);
-  border-bottom: 1px solid var(--dk-border-default);
-  margin-right: -1px;
-  margin-bottom: -1px;
   border-radius: 0;
   overflow-wrap: anywhere;
-}
-
-.meta-grid > *:last-child {
-  border-right: 0;
-  margin-right: 0;
 }
 
 /* Summary counts render as one segmented strip: a single bordered container
@@ -640,17 +735,18 @@ summary:focus-visible,
    not as separate cards. Cells carry right/bottom hairlines pulled 1px past
    their track so wrapped rows stay divided and the outer edge stays clean;
    the wrapping flex cells fill each row, so a partial last row stretches to
-   the full width and never leaves a ghost box around empty space. Cells must
-   stay transparent: the container paints the page color, and an opaque cell
-   background would paint over the previous cell's hairline across the 1px
-   overlap. */
+   the full width and never leaves a ghost box around empty space. */
 .stats-grid {
   display: flex;
   flex-wrap: wrap;
+  gap: 1px;
   margin: var(--dk-space-4) 0 var(--dk-space-6);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  background: var(--dk-bg-page);
+  /* The container carries the hairline colour; the 1px gaps between surface
+     cells are the dividers, so they render identically in both themes and
+     inside panels (where the cells keep the panel surface). */
+  background: var(--dk-border-default);
   overflow: hidden;
 }
 
@@ -667,16 +763,14 @@ summary:focus-visible,
   align-items: flex-start;
   gap: 2px;
   padding: var(--dk-space-3) var(--dk-space-4);
+  background: var(--dk-bg-page);
 }
 
 .stats-grid .stat {
   flex: 1 1 150px;
   border: 0;
-  border-right: 1px solid var(--dk-border-default);
-  border-bottom: 1px solid var(--dk-border-default);
-  margin-right: -1px;
-  margin-bottom: -1px;
   border-radius: 0;
+  background: var(--dk-bg-surface);
 }
 
 .stat-value {
@@ -888,6 +982,8 @@ a.stat-link:focus {
 }
 
 .empty-state > p {
+  flex: 1 1 240px;
+  min-width: 0;
   margin: 0;
 }
 
@@ -924,7 +1020,7 @@ a.stat-link:focus {
 .panel-header h2,
 .panel-header h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .panel-header p {
@@ -957,7 +1053,8 @@ a.stat-link:focus {
 }
 
 /* Content surfaces sit flush inside a panel: the panel owns the border and
-   the radius, the inner strip/table/list drops both. */
+   the radius, the inner strip/table/list drops both. Panel tables keep the
+   panel surface under their rows (never the canvas) in both themes. */
 .panel > .stats-grid,
 .panel > .meta-grid,
 .panel > .table-wrap,
@@ -968,12 +1065,40 @@ a.stat-link:focus {
   margin: 0;
 }
 
+.panel .table-wrap,
+.panel .timeline {
+  background: var(--dk-bg-surface);
+}
+
 /* Filter/action rows between a panel band and its body rows. */
 .panel > .toolbar,
-.panel > .filter-bar {
+.panel > .filter-bar,
+.panel form > .filter-bar {
   margin: 0;
   padding: var(--dk-space-3) var(--dk-space-4);
   border-bottom: 1px solid var(--dk-border-default);
+}
+
+/* Filter groups inside a panel keep the band padding on all sides. */
+.panel .filter-panel {
+  border: 0;
+  padding: var(--dk-space-4);
+}
+
+.panel .advanced-panel {
+  border: 0;
+  border-top: 1px solid var(--dk-border-default);
+  border-radius: 0;
+  background: transparent;
+  margin-top: 0;
+}
+
+.panel .advanced-panel > summary {
+  padding: var(--dk-space-3) 0;
+}
+
+.panel .advanced-panel[open] {
+  padding-bottom: var(--dk-space-2);
 }
 
 .panel > .pagination {
@@ -1026,14 +1151,21 @@ a.stat-link:focus {
   margin-bottom: 0;
 }
 
-/* The reference home's footer hint line: one muted sentence with inline links. */
+/* The reference home's footer hint line: one muted sentence per question
+   with plain links, 13px. */
 .quick-links {
   margin: var(--dk-space-6) 0;
-  font-size: var(--dk-text-sm);
+  color: var(--dk-text-muted);
+  font-size: 13px;
 }
 
 .quick-links a {
-  margin-left: var(--dk-space-2);
+  margin-right: var(--dk-space-3);
+  color: var(--dk-text-link);
+}
+
+.quick-links a:hover {
+  text-decoration: underline;
 }
 
 .compact-list-flush {
@@ -1378,17 +1510,18 @@ a.compact-row:hover {
 
 .form-panel > .form-panel-header h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 16px;
 }
 
-.form-panel .form-section {
+.form-panel .form-section,
+.form-panel > .form-section:first-of-type {
   padding: var(--dk-space-4) var(--dk-space-5);
 }
 
 .form-panel .form-section h2,
 .form-panel .section-header h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .form-panel .section-header {
@@ -1407,7 +1540,7 @@ a.compact-row:hover {
   border-top: 1px solid var(--dk-border-default);
 }
 
-.form-section:first-of-type {
+.form-page > .form-section:first-of-type {
   padding-top: 0;
   border-top: 0;
 }
@@ -1465,7 +1598,12 @@ select,
 textarea,
 button,
 .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dk-space-2);
   min-height: var(--dk-size-control-md);
+  white-space: nowrap;
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
   padding: 5px 10px;
@@ -1625,7 +1763,6 @@ tr:last-child td {
 }
 
 .table-wrap td.nowrap {
-  font-family: var(--dk-font-mono);
   font-size: 12.5px;
 }
 
@@ -1835,6 +1972,13 @@ code {
   font-size: 0.9em;
 }
 
+pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
 pre {
   overflow-x: auto;
   border: 1px solid var(--dk-border-default);
@@ -1984,11 +2128,15 @@ pre {
   display: inline-flex;
   min-height: 26px;
   align-items: center;
-  margin-bottom: 0;
-  padding: 0 var(--dk-space-2);
-  border: 1px solid var(--dk-border-default);
-  border-bottom: 0;
-  border-radius: var(--dk-radius-sm) var(--dk-radius-sm) 0 0;
+  margin-bottom: var(--dk-space-2);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--dk-text-muted);
+  font-size: 11px;
+  font-weight: var(--dk-weight-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
   color: var(--dk-text-muted);
   background: var(--dk-bg-muted);
   font-size: var(--dk-text-sm);
@@ -2003,14 +2151,20 @@ pre {
   word-break: normal;
 }
 
-.code-block.success pre {
-  border-color: var(--dk-success-border);
-  background: var(--dk-success-bg);
+/* Response examples stay on the neutral code surface — the label names the
+   tone, the block stays quiet (dataops has no tinted code surfaces). */
+.code-block.success pre,
+.code-block.danger pre {
+  border-color: var(--dk-border-default);
+  background: var(--dk-bg-muted);
 }
 
-.code-block.danger pre {
-  border-color: var(--dk-danger-border);
-  background: var(--dk-danger-bg);
+.code-block.success .code-label {
+  color: var(--dk-success-text);
+}
+
+.code-block.danger .code-label {
+  color: var(--dk-danger-text);
 }
 
 @media (max-width: 860px) {
@@ -2038,6 +2192,23 @@ pre {
     width: 44px;
     min-width: 44px;
     height: 44px;
+    border: 1px solid var(--dk-border-default);
+    border-radius: var(--dk-radius-md);
+    background: var(--dk-bg-surface);
+  }
+
+  .toolbar-actions .icon-button .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.toolbar-actions .icon-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    border: 1px solid var(--dk-border-default);
+    border-radius: var(--dk-radius-md);
+    background: var(--dk-bg-surface);
   }
 
   .toolbar-actions {
@@ -2211,10 +2382,18 @@ pre {
 
   input,
   select,
+  /* Controls stay content-width on phones — the reference keeps bordered,
+     content-width buttons in the header and top bar; only stacked-form
+     footers and record actions go full-width. */
   textarea,
+  select,
+  input:not([type="checkbox"]):not([type="radio"]) {
+    width: 100%;
+  }
+
   button,
   .button {
-    width: 100%;
+    width: auto;
   }
 
   input[type="checkbox"],
@@ -2222,10 +2401,19 @@ pre {
     width: auto;
   }
 
-  /* Narrow tables become labelled rows instead of a clipped grid. */
+  /* Narrow tables become bordered record cards — the family's mobile
+     record: a title-first line, then compact "Label value" meta lines in one
+     sans font, then the row action. */
   .stack-table {
     overflow: visible;
     box-shadow: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .panel > .stack-table {
+    padding: var(--dk-space-3);
   }
 
   .stack-table table,
@@ -2246,13 +2434,16 @@ pre {
 
   .stack-table tr {
     display: grid;
-    gap: var(--dk-space-2);
-    padding: var(--dk-space-3) 0;
-    border-bottom: 1px solid var(--dk-border-muted);
+    gap: var(--dk-space-1);
+    margin: 0 0 var(--dk-space-3);
+    padding: var(--dk-space-3);
+    border: 1px solid var(--dk-border-default);
+    border-radius: var(--dk-radius-md);
+    background: var(--dk-bg-surface);
   }
 
   .stack-table tr:last-child {
-    border-bottom: 0;
+    margin-bottom: 0;
   }
 
   .stack-table td {
@@ -2263,15 +2454,59 @@ pre {
     border: 0;
     /* Labelled rows read as sentences; cell-level nowrap no longer applies. */
     white-space: normal;
+    font-family: var(--dk-font-sans);
+  }
+
+  /* The first column is the record title: ink, semibold, no label. */
+  .stack-table td:first-child {
+    font-weight: var(--dk-weight-semibold);
+  }
+
+  .stack-table td:first-child::before {
+    display: none;
   }
 
   .stack-table td[data-label]::before {
     display: block;
-    margin-bottom: 2px;
+    margin-bottom: 1px;
     color: var(--dk-text-muted);
-    font-size: var(--dk-text-sm);
-    font-weight: var(--dk-weight-semibold);
+    font-size: var(--dk-text-xs);
+    font-weight: var(--dk-weight-medium);
     content: attr(data-label);
+  }
+
+  .stack-table .truncate,
+  .stack-table .data-truncate {
+    max-width: 100%;
+  }
+
+  /* Row actions and badges keep family geometry: content-width controls,
+     full-width only for the record's own action buttons. */
+  .stack-table td .actions,
+  .stack-table td .action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--dk-space-2);
+  }
+
+  .stack-table td form {
+    margin: 0;
+  }
+
+  .stack-table td .button {
+    width: auto;
+  }
+
+  /* Strips wrap to a clean 2-column grid: no stretched orphans. */
+  .stats-grid,
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stats-grid > .stat:last-child:nth-child(odd),
+  .meta-grid > *:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 }
 
