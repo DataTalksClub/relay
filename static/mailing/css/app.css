@@ -1,165 +1,76 @@
-/* Datamailer operator UI. Visual foundation follows the DataOps design
-   system (GitHub Primer neutrals, CMP blue accent, calm row-based content).
-   Fonts are self-hosted (SIL OFL): Inter variable and IBM Plex Mono. */
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 400 700;
-  font-display: swap;
-  src: url("../fonts/inter-var.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("../fonts/ibm-plex-mono-400.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("../fonts/ibm-plex-mono-500.woff2") format("woff2");
-}
+/* Datamailer operator UI. Visual foundation follows dakit — the shared
+   design system for the internal tools, extracted from DataOps (GitHub
+   Primer neutrals, blue accent, calm row-based content). base.html links
+   the vendored bundle (static/dakit/dakit.css) before this file; the
+   --dm-* names below alias dakit's semantic tokens (alias strategy per
+   dakit docs/adoption.md) until call sites migrate to --dk-* directly.
+   Fonts are self-hosted by dakit (SIL OFL). */
 
 :root {
   color-scheme: light;
-  --dm-color-text: #24292f;
-  --dm-color-heading: #0f172a;
-  --dm-color-muted: #57606a;
-  --dm-color-faint: #6e7681;
-  --dm-color-border: #d0d7de;
-  --dm-color-border-strong: #afb8c1;
-  --dm-color-background: #ffffff;
-  --dm-color-surface: #f6f8fa;
-  --dm-color-surface-strong: #eef1f4;
-  --dm-color-accent-soft: #edf5ff;
-  --dm-color-focus: rgba(49, 95, 143, 0.6);
-  --dm-color-primary: #315f8f;
-  --dm-color-primary-hover: #244d78;
-  --dm-color-link: #315f8f;
-  --dm-color-link-hover: #244d78;
-  --dm-color-on-primary: #ffffff;
-  --dm-color-success: #116329;
-  --dm-color-success-surface: #e6f6ea;
-  --dm-color-success-border: #b7dfc2;
-  --dm-color-warning: #7a5c00;
-  --dm-color-warning-surface: #fff8c5;
-  --dm-color-warning-border: #d4a72c;
-  --dm-color-danger: #cf222e;
-  --dm-color-danger-hover: #a40e26;
-  --dm-color-danger-surface: #fff0ee;
-  --dm-color-danger-border: rgba(207, 34, 46, 0.24);
-  --dm-color-info: #315f8f;
-  --dm-color-info-surface: #edf5ff;
-  --dm-color-info-border: rgba(49, 95, 143, 0.22);
-  --dm-color-neutral: #57606a;
-  --dm-color-neutral-surface: #f6f8fa;
-  --dm-color-neutral-border: #d0d7de;
-  --dm-space-1: 4px;
-  --dm-space-2: 8px;
-  --dm-space-3: 12px;
-  --dm-space-4: 16px;
-  --dm-space-5: 20px;
-  --dm-space-6: 24px;
-  --dm-space-8: 32px;
-  --dm-radius-sm: 6px;
-  --dm-radius-md: 6px;
-  --dm-font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --dm-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --dm-font-size-sm: 12px;
-  --dm-font-size-base: 14px;
-  --dm-font-size-lg: 16px;
-  --dm-font-size-xl: 32px;
-  --dm-control-height: 34px;
-  --dm-content-width: 1120px;
-  --dm-sidebar-width: 268px;
-
-  --border: var(--dm-color-border);
-  --ink: var(--dm-color-text);
-  --muted: var(--dm-color-muted);
-  --surface: var(--dm-color-surface);
-  --surface-strong: var(--dm-color-surface-strong);
-  --accent: var(--dm-color-link);
-  --danger: var(--dm-color-danger);
-  --success: var(--dm-color-success);
+  /* Compat shim (dakit alias strategy): the --dm-* names keep working, their
+     values come from the vendored dakit tokens, in both themes. Migrate call
+     sites to --dk-* directly, then delete this block. */
+  --dm-color-text: var(--dk-text-primary);
+  --dm-color-heading: var(--dk-text-heading);
+  --dm-color-muted: var(--dk-text-muted);
+  --dm-color-faint: var(--dk-text-faint);
+  --dm-color-border: var(--dk-border-default);
+  --dm-color-border-strong: var(--dk-border-strong);
+  --dm-color-background: var(--dk-bg-page);
+  --dm-color-surface: var(--dk-bg-muted);
+  --dm-color-surface-strong: var(--dk-bg-hover);
+  --dm-color-accent-soft: var(--dk-accent-soft);
+  --dm-color-focus: var(--dk-focus-ring);
+  --dm-color-primary: var(--dk-accent-default);
+  --dm-color-primary-hover: var(--dk-accent-hover);
+  --dm-color-link: var(--dk-text-link);
+  --dm-color-link-hover: var(--dk-text-link-hover);
+  --dm-color-on-primary: var(--dk-text-on-accent);
+  --dm-color-success: var(--dk-success-text);
+  --dm-color-success-surface: var(--dk-success-bg);
+  --dm-color-success-border: var(--dk-success-border);
+  --dm-color-warning: var(--dk-warning-text);
+  --dm-color-warning-surface: var(--dk-warning-bg);
+  --dm-color-warning-border: var(--dk-warning-border);
+  --dm-color-danger: var(--dk-danger-text);
+  --dm-color-danger-hover: var(--dk-danger-hover);
+  --dm-color-danger-surface: var(--dk-danger-bg);
+  --dm-color-danger-border: var(--dk-danger-border);
+  --dm-color-info: var(--dk-info-text);
+  --dm-color-info-surface: var(--dk-info-bg);
+  --dm-color-info-border: var(--dk-info-border);
+  --dm-color-neutral: var(--dk-text-muted);
+  --dm-color-neutral-surface: var(--dk-bg-muted);
+  --dm-color-neutral-border: var(--dk-border-default);
+  --dm-space-1: var(--dk-space-1);
+  --dm-space-2: var(--dk-space-2);
+  --dm-space-3: var(--dk-space-3);
+  --dm-space-4: var(--dk-space-4);
+  --dm-space-5: var(--dk-space-5);
+  --dm-space-6: var(--dk-space-6);
+  /* Relay's scale jumps from 6 to 8; 32px is dakit's space-7. */
+  --dm-space-8: var(--dk-space-7);
+  /* Relay uses 6px for both steps; dakit's small step is 4px. */
+  --dm-radius-sm: var(--dk-radius-md);
+  --dm-radius-md: var(--dk-radius-md);
+  --dm-font-sans: var(--dk-font-sans);
+  --dm-font-mono: var(--dk-font-mono);
+  --dm-font-size-sm: var(--dk-text-sm);
+  --dm-font-size-base: var(--dk-text-body);
+  --dm-font-size-lg: var(--dk-text-lg);
+  --dm-font-size-xl: var(--dk-text-page);
+  --dm-control-height: var(--dk-size-control-md);
+  --dm-content-width: var(--dk-size-content-max);
+  --dm-sidebar-width: var(--dk-size-sidebar);
 }
 
+/* Dark theme: dakit's dark remap carries the same roles (contrast-verified
+   by the dakit build). The boot script in base.html always sets data-theme
+   before first paint — OS preference when nothing is stored — so no media
+   fallback is needed. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --dm-color-text: #e6edf3;
-  --dm-color-heading: #e6edf3;
-  --dm-color-muted: #8b949e;
-  --dm-color-faint: #6e7681;
-  --dm-color-border: #30363d;
-  --dm-color-border-strong: #484f58;
-  --dm-color-background: #0d1117;
-  --dm-color-surface: #161b22;
-  --dm-color-surface-strong: #21262d;
-  --dm-color-accent-soft: rgba(77, 127, 168, 0.22);
-  --dm-color-focus: rgba(139, 183, 223, 0.6);
-  --dm-color-primary: #4d7fa8;
-  --dm-color-primary-hover: #6d99c2;
-  --dm-color-link: #8bb7df;
-  --dm-color-link-hover: #a7cbed;
-  --dm-color-on-primary: #ffffff;
-  --dm-color-success: #7ee787;
-  --dm-color-success-surface: rgba(31, 111, 59, 0.3);
-  --dm-color-success-border: rgba(35, 134, 54, 0.4);
-  --dm-color-warning: #f0d98c;
-  --dm-color-warning-surface: #2d2516;
-  --dm-color-warning-border: rgba(187, 128, 9, 0.5);
-  --dm-color-danger: #ff7b72;
-  --dm-color-danger-hover: #ffa198;
-  --dm-color-danger-surface: rgba(218, 54, 51, 0.2);
-  --dm-color-danger-border: rgba(218, 54, 51, 0.4);
-  --dm-color-info: #8bb7df;
-  --dm-color-info-surface: rgba(77, 127, 168, 0.22);
-  --dm-color-info-border: rgba(77, 127, 168, 0.42);
-  --dm-color-neutral: #8b949e;
-  --dm-color-neutral-surface: #21262d;
-  --dm-color-neutral-border: #30363d;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    color-scheme: dark;
-    --dm-color-text: #e6edf3;
-    --dm-color-heading: #e6edf3;
-    --dm-color-muted: #8b949e;
-    --dm-color-faint: #6e7681;
-    --dm-color-border: #30363d;
-    --dm-color-border-strong: #484f58;
-    --dm-color-background: #0d1117;
-    --dm-color-surface: #161b22;
-    --dm-color-surface-strong: #21262d;
-    --dm-color-accent-soft: rgba(77, 127, 168, 0.22);
-    --dm-color-focus: rgba(139, 183, 223, 0.6);
-    --dm-color-primary: #4d7fa8;
-    --dm-color-primary-hover: #6d99c2;
-    --dm-color-link: #8bb7df;
-    --dm-color-link-hover: #a7cbed;
-    --dm-color-on-primary: #ffffff;
-    --dm-color-success: #7ee787;
-    --dm-color-success-surface: rgba(31, 111, 59, 0.3);
-    --dm-color-success-border: rgba(35, 134, 54, 0.4);
-    --dm-color-warning: #f0d98c;
-    --dm-color-warning-surface: #2d2516;
-    --dm-color-warning-border: rgba(187, 128, 9, 0.5);
-    --dm-color-danger: #ff7b72;
-    --dm-color-danger-hover: #ffa198;
-    --dm-color-danger-surface: rgba(218, 54, 51, 0.2);
-    --dm-color-danger-border: rgba(218, 54, 51, 0.4);
-    --dm-color-info: #8bb7df;
-    --dm-color-info-surface: rgba(77, 127, 168, 0.22);
-    --dm-color-info-border: rgba(77, 127, 168, 0.42);
-    --dm-color-neutral: #8b949e;
-    --dm-color-neutral-surface: #21262d;
-    --dm-color-neutral-border: #30363d;
-  }
 }
 
 * {
