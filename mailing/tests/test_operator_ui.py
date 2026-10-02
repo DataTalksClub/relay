@@ -143,18 +143,24 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     response = client.get(reverse("mailing:dashboard"))
 
     assert response.status_code == 200
+    assert b'href="/static/dakit/dist/dakit.css"' in response.content
     assert b'href="/static/mailing/css/app.css"' in response.content
     assert b"<style>" not in response.content
-    assert b'aria-current="page">Datamailer' in response.content
+    assert b'class="brand-name">Datamailer</span>' in response.content
     assert b'data-theme-toggle aria-label="Toggle dark mode"' in response.content
     assert b'data-sidebar-toggle aria-expanded="true"' in response.content
+    assert b'data-sidebar-menu-toggle aria-expanded="false"' in response.content
     assert b'matchMedia("(max-width: 860px)")' in response.content
-    assert b"datamailer.theme" in response.content
+    assert b"dakit-theme" in response.content
+    assert finders.find("dakit/dist/dakit.css") is not None
     assert finders.find("mailing/css/app.css") is not None
+    dakit_css = Path(finders.find("dakit/dist/dakit.css")).read_text()
+    assert "--dk-text-primary" in dakit_css
     css = Path(finders.find("mailing/css/app.css")).read_text()
     assert ".client-table,\n  .campaign-table,\n  .audience-table,\n  .audience-member-table" in css
     assert "scrollbar-width: thin" in css
-    assert ".sidebar-collapsed .sidebar-context,\n  .sidebar-collapsed .sidebar-nav" in css
+    assert ".app-shell.has-sidebar.sidebar-collapsed" in css
+    assert "html.js .has-sidebar.sidebar-open .app-sidebar" in css
 
 
 def test_sidebar_links_transactional_queue(client, operator, client_record):
@@ -204,13 +210,12 @@ def test_dashboard_renders_operational_summary_links_and_seeded_style_data(
     html = response.content.decode()
 
     assert response.status_code == 200
-    assert "Operational Summary" in html
     assert "Background processing" in html
     assert "Processing diagnostics" in html
     assert html.index("Processing diagnostics") < html.index("relay-db-worker.service")
-    assert "Recent Campaign Activity" in html
-    assert "Deliverability Attention" in html
-    assert "Quick Links" in html
+    assert "Recent campaign activity" in html
+    assert "Deliverability attention" in html
+    assert "Common workflows" in html
     assert "Weekly update" in html
     assert f'href="{reverse("mailing:campaign_detail", args=[campaign.id])}"' in html
     assert "Bounce" in html
@@ -928,7 +933,7 @@ def test_contact_detail_renders_summary_before_management_and_debug_sections(
     assert html.index('id="sendability">Send Eligibility') < html.index('id="membership">Membership and Tags')
     assert html.index('id="membership">Membership and Tags') < html.index('id="manage-contact-heading">Manage contact')
     assert html.index('id="manage-contact-heading">Manage contact') < html.index('id="recent-activity">Recent Activity')
-    manage_html = html[html.index('<section class="detail-section manage-contact-panel"') :]
+    manage_html = html[html.index('<section class="detail-section panel manage-contact-panel"') :]
     assert manage_html.index("Subscription") < manage_html.index("State") < manage_html.index("Add tag")
     assert manage_html.index("Add tag") < manage_html.index("Remove tag")
     assert html.index("Full event timeline and audit details") > html.index("Recent Activity")
@@ -1078,7 +1083,7 @@ def test_audience_create_and_edit_forms_use_operational_layout(client, operator,
     assert create_response.status_code == 200
     assert edit_response.status_code == 200
     for html in (create_response.content.decode(), edit_response.content.decode()):
-        assert '<form class="form-page" method="post" novalidate>' in html
+        assert '<form class="form-page form-panel" method="post" novalidate>' in html
         assert "Organization scope" in html
         assert "Audience identity" in html
         assert "The selected organization scopes this audience and its slug." in html
@@ -1086,7 +1091,7 @@ def test_audience_create_and_edit_forms_use_operational_layout(client, operator,
         assert "Audience name" in html
         assert "Audience slug" in html
         assert f'href="{reverse("mailing:audience_list")}"' in html
-        assert 'class="action-row"' in html
+        assert 'class="form-actions"' in html
         assert 'class="button secondary"' in html
     assert "Create audience" in create_response.content.decode()
     assert "Save audience" in edit_response.content.decode()
@@ -1102,7 +1107,7 @@ def test_tag_create_and_edit_forms_show_parent_scope_and_actions(client, operato
     assert create_response.status_code == 200
     assert edit_response.status_code == 200
     for html in (create_response.content.decode(), edit_response.content.decode()):
-        assert '<form class="form-page" method="post" novalidate>' in html
+        assert '<form class="form-page form-panel" method="post" novalidate>' in html
         assert "Parent audience" in html
         assert "This tag belongs to exactly one audience." in html
         assert "Tag identity" in html
@@ -1113,7 +1118,7 @@ def test_tag_create_and_edit_forms_show_parent_scope_and_actions(client, operato
         assert audience.slug in html
         assert audience.organization.name in html
         assert f'href="{reverse("mailing:audience_detail", args=[audience.id])}"' in html
-        assert 'class="action-row"' in html
+        assert 'class="form-actions"' in html
         assert 'class="button secondary"' in html
     assert "Create tag" in create_response.content.decode()
     assert "Save tag" in edit_response.content.decode()
@@ -1189,7 +1194,7 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert summary["hard_bounced"] == 1
     assert list_response.status_code == 200
     list_html = list_response.content.decode()
-    assert "Audience Health" in list_html
+    assert "Audience health" in list_html
     assert "3 members" in list_html
     assert "3 subscribed" in list_html
     assert "1 inactive" in list_html
@@ -1229,8 +1234,8 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert 'href="/contacts/invalid@example.com/"' in detail_html
     assert '<div class="helptext">invalid@example.com</div>' not in detail_html
     assert "/operator/" not in detail_html
-    assert "Campaign History" in detail_html
-    assert "Recent Events" in detail_html
+    assert "Campaign history" in detail_html
+    assert "Recent events" in detail_html
     assert "Tracking" in detail_html
     assert "reason: tracking" not in detail_html
     assert "Provider details" in detail_html
@@ -1537,7 +1542,7 @@ def test_campaign_create_form_uses_sectioned_operational_layout(client, operator
     assert 'rows="18"' in html
     assert 'name="text_body"' in html
     assert 'rows="12"' in html
-    assert 'class="action-row"' in html
+    assert 'class="form-actions"' in html
     assert f'href="{reverse("mailing:campaign_list")}"' in html
 
 
@@ -1728,29 +1733,30 @@ def test_campaign_detail_shows_draft_estimate_and_state_dependent_controls(clien
     draft_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
 
     assert draft_response.status_code == 200
-    assert b"Queue Preview" in draft_response.content
+    assert b"Recipient review" in draft_response.content
     assert b"Stats" not in draft_response.content
     assert b"Send progress" not in draft_response.content
-    assert b"Queue send" in draft_response.content
-    assert b"Snapshot and queue" not in draft_response.content
+    assert b"Review and send" in draft_response.content
+    assert b"Send this campaign now?" not in draft_response.content
     assert b"Edit draft" in draft_response.content
-    assert b"No campaign email events found yet" in draft_response.content
     confirm_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]), {"confirm_send": "1"})
-    assert b"Queue this send?" in confirm_response.content
-    assert b"Queue send to approximately 1 recipient" in confirm_response.content
-    assert b"Send campaign" in confirm_response.content
+    assert b"Send this campaign now?" in confirm_response.content
+    assert b"1 recipient" in confirm_response.content
+    assert b"will be queued for sending" in confirm_response.content
+    assert b"Send to 1 recipient" in confirm_response.content
 
     campaign.status = "queued"
     campaign.save()
     queued_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
-    assert b"Queue Preview" not in queued_response.content
-    assert b"Queue send" not in queued_response.content
+    assert b"Recipient review" not in queued_response.content
+    assert b"Send this campaign now?" not in queued_response.content
     assert b"Edit draft" not in queued_response.content
+    assert b"No campaign email events found yet" in queued_response.content
 
     campaign.status = "snapshotting"
     campaign.save()
     snapshotting_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
-    assert b"Preparing recipients" in snapshotting_response.content
+    assert b"Sending is in progress" in snapshotting_response.content
     assert b"Snapshotting" not in snapshotting_response.content
 
 
@@ -2172,7 +2178,7 @@ def test_transactional_queue_paginates_and_preserves_query_params(client, operat
 
     assert response.status_code == 200
     assert "Page 2 of 2" in html
-    assert "<strong>26</strong> messages queued" in html
+    assert "26 messages queued" in html
 
 
 def test_transactional_queue_empty_state(client, operator, client_record, other_client):
@@ -2201,7 +2207,7 @@ def test_transactional_queue_total_matches_scoped_count(client, operator, client
         client=client_record, status=TransactionalMessageStatus.QUEUED
     ).count()
     assert scoped_count == 2
-    assert f"<strong>{scoped_count}</strong> message" in html
+    assert f"{scoped_count} message" in html
 
 
 def test_transactional_queue_queryset_filters_and_orders(client_record, other_client):

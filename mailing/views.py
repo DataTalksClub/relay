@@ -31,6 +31,7 @@ from mailing.models import (
     CallbackEndpoint,
     Campaign,
     CampaignRecipient,
+    CampaignRecipientStatus,
     CampaignStatus,
     Client,
     ClientApiKey,
@@ -621,7 +622,15 @@ def campaign_detail(request, campaign_id):
     )
     active_filter = request.GET.get("filter", "")
     recipients = paginate(request, campaign_recipient_queryset(campaign, active_filter), per_page=50)
+    recipient_rows = [
+        {"recipient": recipient, "badge": Badge(recipient.get_status_display(), delivery_tone(recipient.status))}
+        for recipient in recipients.object_list
+    ]
     estimate = estimate_campaign_recipients(campaign) if campaign.status == CampaignStatus.DRAFT else None
+    preview_rows = [
+        {"row": row, "tone": "success" if row.status == CampaignRecipientStatus.PENDING else "warning"}
+        for row in (estimate.preview_rows if estimate else [])
+    ]
     confirm_queue = request.GET.get("confirm_send") == "1" and campaign.status == CampaignStatus.DRAFT
     stat_groups = campaign_stat_groups(campaign)
     events = campaign_recent_events(campaign)[:10]
@@ -640,6 +649,8 @@ def campaign_detail(request, campaign_id):
             "stat_groups": stat_groups,
             "send_progress": campaign_send_progress(campaign),
             "recipients": recipients,
+            "recipient_rows": recipient_rows,
+            "preview_rows": preview_rows,
             "event_rows": event_rows,
             "recipient_filter_labels": RECIPIENT_FILTER_LABELS,
             "active_filter": active_filter if active_filter in RECIPIENT_FILTER_LABELS else "",
