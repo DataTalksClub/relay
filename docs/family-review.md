@@ -124,8 +124,19 @@ and `tmp-family-judge-r6/`).
   hardcoded `font-size` literals instead of `--dk-text-*` tokens — the
   dataops reference shares this habit; re-point them in a later
   token-discipline pass).
+- **Round 7 — PASS, the icon-geometry migration** (evidence:
+  `tmp-family-judge-r7-icons/`, 34 renders, both themes, 1440 and 390):
+  dakit `71a39d3` retired the 16-box/stroke-1.5 set, so all twenty
+  sidebar, toolbar, theme, and action glyphs moved to the 24 grid at
+  20px, stroke 1.8 (`d6fa542`), and the vendored bundle was refreshed to
+  the family focus recipe (`83e536c`, dakit `dea377c`). The judge read
+  every render at one family weight with no icon-bump layout regressions
+  and genuinely dark darks; the only finding (campaign-detail's
+  recipients table scrolling its clipped "Assume sent" button) is
+  pre-existing, reachable by scroll, and not user-rejecting.
 
-Tests stayed green throughout (721 passed after each fix batch).
+Tests stayed green throughout (721 passed after each fix batch, and
+again after the icon migration).
 
 ## Result
 
