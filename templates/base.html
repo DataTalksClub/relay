@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Datamailer{% endblock %}</title>
     <script>
+      document.documentElement.classList.add("js");
       (function () {
         try {
           let stored = localStorage.getItem("dakit-theme");
@@ -29,122 +30,193 @@
     <link rel="stylesheet" href="{% static 'mailing/css/app.css' %}">
   </head>
   <body>
-    <header class="app-header">
-      <nav class="app-nav" aria-label="Main">
-        <a class="brand" href="{% url 'mailing:dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>Datamailer</a>
-        <div class="top-nav-actions">
-          <a href="{% url 'mailing:client_list' %}" {% if request.resolver_match.url_name == "client_list" or request.resolver_match.url_name == "client_create" or request.resolver_match.url_name == "client_detail" or request.resolver_match.url_name == "client_edit" %}aria-current="page"{% endif %}>Clients</a>
-          <a href="{% url 'mailing:api_docs' %}" {% if request.resolver_match.url_name == "api_docs" or request.resolver_match.url_name == "api_docs_json" %}aria-current="page"{% endif %}>API Docs</a>
-          <a href="/admin/">Admin</a>
-          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
-            <span data-theme-toggle-label>Dark</span>
-          </button>
-        </div>
-      </nav>
-    </header>
-    <div class="app-shell" data-sidebar-shell>
+    {% with current_url_name=request.resolver_match.url_name %}
+    <div class="app-shell{% if user.is_authenticated and user.is_staff %} has-sidebar{% endif %}" data-sidebar-shell>
       {% if user.is_authenticated and user.is_staff %}
-        <aside class="app-sidebar" data-sidebar>
-          <div id="client-sidebar" class="sidebar-inner">
-            <div class="sidebar-titlebar">
-              <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="client-sidebar" aria-label="Toggle client navigation">
-                <span class="sidebar-toggle-open">Hide</span>
-                <span class="sidebar-toggle-closed">Open</span>
-              </button>
+        <aside class="app-sidebar" data-sidebar id="client-sidebar" aria-label="Client navigation">
+          <div class="sidebar-head">
+            <a class="brand" href="{% url 'mailing:dashboard' %}">
+              <span class="brand-mark" aria-hidden="true">D</span>
+              <span class="brand-text">Datamailer</span>
+            </a>
+            <button class="icon-button sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="client-sidebar" aria-label="Collapse navigation">
+              <svg class="icon sidebar-toggle-open" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4l-4 4 4 4"/></svg>
+              <svg class="icon sidebar-toggle-closed" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+            </button>
+          </div>
+          <div class="sidebar-context">
+            {% if operator_clients %}
+              <form class="client-switcher" method="post" action="{% url 'mailing:client_select' %}">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <label for="operator-client">Active client</label>
+                <select id="operator-client" name="client_id" onchange="this.form.submit()">
+                  <option value="">Select client</option>
+                  {% for client in operator_clients %}
+                    <option value="{{ client.id }}"{% if operator_active_client and operator_active_client.id == client.id %} selected{% endif %}>{{ client.name }}</option>
+                  {% endfor %}
+                </select>
+                <noscript><button type="submit">Select</button></noscript>
+              </form>
+            {% else %}
+              <a class="button secondary sidebar-client-action" href="{% url 'mailing:client_create' %}">Create client</a>
+            {% endif %}
+          </div>
+          <nav class="sidebar-nav" aria-label="Client">
+            <div class="sidebar-nav-group">
+              <span class="sidebar-nav-label">Operate</span>
+              <a href="{% url 'mailing:dashboard' %}" {% if current_url_name == "dashboard" %}aria-current="page"{% endif %} title="Dashboard">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg>
+                <span>Dashboard</span>
+              </a>
+              <a href="{% url 'mailing:campaign_list' %}" {% if current_url_name == "campaign_list" or current_url_name == "campaign_create" or current_url_name == "campaign_detail" or current_url_name == "campaign_edit" %}aria-current="page"{% endif %} title="Campaigns">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2L7.5 8.5"/><path d="M14 2L9.5 14l-2-4.5L3 7.5 14 2z"/></svg>
+                <span>Campaigns</span>
+              </a>
+              <a href="{% url 'mailing:transactional_queue' %}" {% if current_url_name == "transactional_queue" %}aria-current="page"{% endif %} title="Transactional queue">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 2"/></svg>
+                <span>Transactional queue</span>
+              </a>
+              <a href="{% url 'mailing:contact_search' %}" {% if current_url_name == "contact_search" or current_url_name == "contact_detail" %}aria-current="page"{% endif %} title="Contacts">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5.5" r="2.5"/><path d="M2 13c0-2.2 1.8-4 4-4s4 1.8 4 4"/><path d="M10.5 3.3a2.5 2.5 0 010 4.4"/><path d="M11.5 9.2c1.5.6 2.5 2 2.5 3.8"/></svg>
+                <span>Contacts</span>
+              </a>
+              <a href="{% url 'mailing:inbound_list' %}" {% if current_url_name == "inbound_list" or current_url_name == "inbound_message_detail" %}aria-current="page"{% endif %} title="Inbound mail">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 9h3a2 2 0 004 0h4"/><path d="M3.2 3.5h9.6l1.7 5.5v3a1.5 1.5 0 01-1.5 1.5H3a1.5 1.5 0 01-1.5-1.5v-3l1.7-5.5z"/></svg>
+                <span>Inbound mail</span>
+              </a>
             </div>
-            <div class="sidebar-context">
-              {% if operator_clients %}
-                <form class="client-switcher" method="post" action="{% url 'mailing:client_select' %}">
-                  {% csrf_token %}
-                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                  <label for="operator-client">Active client</label>
-                  <select id="operator-client" name="client_id" onchange="this.form.submit()">
-                    <option value="">Select client</option>
-                    {% for client in operator_clients %}
-                      <option value="{{ client.id }}"{% if operator_active_client and operator_active_client.id == client.id %} selected{% endif %}>{{ client.name }}</option>
-                    {% endfor %}
-                  </select>
-                  <noscript><button type="submit">Select</button></noscript>
-                </form>
-              {% else %}
-                <a class="button secondary sidebar-client-action" href="{% url 'mailing:client_create' %}">Create client</a>
+            <div class="sidebar-nav-group">
+              <span class="sidebar-nav-label">Configure</span>
+              <a href="{% url 'mailing:audience_list' %}" {% if current_url_name == "audience_list" or current_url_name == "audience_create" or current_url_name == "audience_detail" or current_url_name == "audience_edit" or current_url_name == "tag_create" or current_url_name == "tag_detail" or current_url_name == "tag_edit" %}aria-current="page"{% endif %} title="Audiences">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3h11l-4.3 5v3.8L6.8 13.5V8L2.5 3z"/></svg>
+                <span>Audiences</span>
+              </a>
+              <a href="{% url 'mailing:template_catalog' %}" {% if current_url_name == "template_catalog" or current_url_name == "template_detail" or current_url_name == "transactional_message_detail" %}aria-current="page"{% endif %} title="Templates">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2H4.5a1 1 0 00-1 1v10a1 1 0 001 1h7a1 1 0 001-1V5.5L9 2z"/><path d="M9 2v3.5h3.5"/></svg>
+                <span>Templates</span>
+              </a>
+              <a href="{% url 'mailing:inbound_address_list' %}" {% if current_url_name == "inbound_address_list" or current_url_name == "inbound_address_create" %}aria-current="page"{% endif %} title="Receiving addresses">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="2.5"/><path d="M10.5 8v.8a1.7 1.7 0 003.4 0V8a5.9 5.9 0 10-2.3 4.7"/></svg>
+                <span>Receiving addresses</span>
+              </a>
+              {% if operator_active_client %}
+                <a href="{% url 'mailing:client_detail' operator_active_client.id %}" {% if current_url_name == "client_detail" %}aria-current="page"{% endif %} title="Settings">
+                  <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h6M11 4.5h2.5M2.5 11.5h2.5M7.5 11.5h6"/><circle cx="9.5" cy="4.5" r="1.6"/><circle cx="6" cy="11.5" r="1.6"/></svg>
+                  <span>Settings</span>
+                </a>
               {% endif %}
             </div>
-            <nav class="sidebar-nav" aria-label="Client">
-              <div class="sidebar-nav-group">
-                <span class="sidebar-nav-label">Operate</span>
-                <a href="{% url 'mailing:dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>
-                  Dashboard
-                </a>
-                <a href="{% url 'mailing:campaign_list' %}" {% if request.resolver_match.url_name == "campaign_list" or request.resolver_match.url_name == "campaign_create" or request.resolver_match.url_name == "campaign_detail" or request.resolver_match.url_name == "campaign_edit" %}aria-current="page"{% endif %}>
-                  Campaigns
-                </a>
-                <a href="{% url 'mailing:transactional_queue' %}" {% if request.resolver_match.url_name == "transactional_queue" %}aria-current="page"{% endif %}>
-                  Transactional queue
-                </a>
-                <a href="{% url 'mailing:contact_search' %}" {% if request.resolver_match.url_name == "contact_search" or request.resolver_match.url_name == "contact_detail" %}aria-current="page"{% endif %}>
-                  Contacts
-                </a>
-                <a href="{% url 'mailing:inbound_list' %}" {% if request.resolver_match.url_name == "inbound_list" or request.resolver_match.url_name == "inbound_message_detail" %}aria-current="page"{% endif %}>
-                  Inbound mail
-                </a>
-              </div>
-              <div class="sidebar-nav-group">
-                <span class="sidebar-nav-label">Configure</span>
-                <a href="{% url 'mailing:audience_list' %}" {% if request.resolver_match.url_name == "audience_list" or request.resolver_match.url_name == "audience_create" or request.resolver_match.url_name == "audience_detail" or request.resolver_match.url_name == "audience_edit" or request.resolver_match.url_name == "tag_create" or request.resolver_match.url_name == "tag_detail" or request.resolver_match.url_name == "tag_edit" %}aria-current="page"{% endif %}>
-                  Audiences
-                </a>
-                <a href="{% url 'mailing:template_catalog' %}" {% if request.resolver_match.url_name == "template_catalog" or request.resolver_match.url_name == "template_detail" or request.resolver_match.url_name == "transactional_message_detail" %}aria-current="page"{% endif %}>
-                  Templates
-                </a>
-                <a href="{% url 'mailing:inbound_address_list' %}" {% if request.resolver_match.url_name == "inbound_address_list" or request.resolver_match.url_name == "inbound_address_create" %}aria-current="page"{% endif %}>
-                  Receiving addresses
-                </a>
-                {% if operator_active_client %}
-                  <a href="{% url 'mailing:client_detail' operator_active_client.id %}" {% if request.resolver_match.url_name == "client_detail" %}aria-current="page"{% endif %}>
-                    Settings
-                  </a>
-                {% endif %}
-              </div>
-            </nav>
-          </div>
+          </nav>
         </aside>
       {% endif %}
-      <main class="app-main">
-        {% if messages %}
-          <ul class="messages">
-            {% for message in messages %}
-              <li class="message {{ message.tags }}">{{ message }}</li>
-            {% endfor %}
-          </ul>
-        {% endif %}
-        {% block content %}{% endblock %}
-      </main>
+      <div class="sidebar-scrim" data-sidebar-scrim hidden></div>
+      <div class="app-column">
+        <header class="app-toolbar">
+          {% if user.is_authenticated and user.is_staff %}
+            <button class="icon-button sidebar-menu-toggle" type="button" data-sidebar-menu-toggle aria-expanded="false" aria-controls="client-sidebar" aria-label="Open navigation">
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/></svg>
+              <span>Menu</span>
+            </button>
+          {% endif %}
+          <nav class="toolbar-nav" aria-label="Global">
+            <a href="{% url 'mailing:client_list' %}" {% if current_url_name == "client_list" or current_url_name == "client_create" or current_url_name == "client_detail" or current_url_name == "client_edit" %}aria-current="page"{% endif %}>
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="12" height="8.5" rx="1.5"/><path d="M5.5 5V3.5a1 1 0 011-1h3a1 1 0 011 1V5"/><path d="M2 8.75h12"/></svg>
+              <span>Clients</span>
+            </a>
+            <a href="{% url 'mailing:api_docs' %}" {% if current_url_name == "api_docs" or current_url_name == "api_docs_json" %}aria-current="page"{% endif %}>
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 4.5L2 8l3.5 3.5"/><path d="M10.5 4.5L14 8l-3.5 3.5"/></svg>
+              <span>API Docs</span>
+            </a>
+            <a href="/admin/">
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2l5 1.8v3.4c0 2.9-2 5.4-5 6.3-3-.9-5-3.4-5-6.3V3.8L8 2z"/></svg>
+              <span>Admin</span>
+            </a>
+            <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.5 5.5 0 116.4 2.8a4.3 4.3 0 006.8 6.8z"/></svg>
+              <span data-theme-toggle-label>Dark</span>
+            </button>
+          </nav>
+        </header>
+        <main class="app-main">
+          {% if messages %}
+            <ul class="messages">
+              {% for message in messages %}
+                <li class="message {{ message.tags }}">{{ message }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+          {% block content %}{% endblock %}
+        </main>
+      </div>
     </div>
+    {% endwith %}
     <script>
       (function () {
         const shell = document.querySelector("[data-sidebar-shell]");
-        const toggle = document.querySelector("[data-sidebar-toggle]");
-        if (!shell || !toggle) return;
+        if (!shell) return;
+        const sidebar = shell.querySelector("[data-sidebar]");
+        const toggle = shell.querySelector("[data-sidebar-toggle]");
+        const menuToggle = shell.querySelector("[data-sidebar-menu-toggle]");
+        const scrim = shell.querySelector("[data-sidebar-scrim]");
         const key = "datamailer.sidebar.collapsed";
         const mobileQuery = window.matchMedia("(max-width: 860px)");
-        const storedPreference = () => {
-          try {
-            return localStorage.getItem(key);
-          } catch (error) {
-            return null;
+
+        // Desktop: collapse to an icon rail. The preference persists; on a
+        // fresh visit the sidebar starts expanded.
+        if (toggle) {
+          const storedPreference = () => {
+            try {
+              return localStorage.getItem(key);
+            } catch (error) {
+              return null;
+            }
+          };
+          const setCollapsed = (collapsed, persist = true) => {
+            shell.classList.toggle("sidebar-collapsed", collapsed);
+            toggle.setAttribute("aria-expanded", String(!collapsed));
+            toggle.setAttribute("aria-label", collapsed ? "Expand navigation" : "Collapse navigation");
+            if (persist) localStorage.setItem(key, collapsed ? "1" : "0");
+          };
+          setCollapsed(storedPreference() === "1", false);
+          toggle.addEventListener("click", function () {
+            setCollapsed(!shell.classList.contains("sidebar-collapsed"));
+          });
+        }
+
+        // Mobile: the navigation opens as a modal drawer with a scrim.
+        const setDrawer = (open) => {
+          shell.classList.toggle("sidebar-open", open);
+          if (menuToggle) {
+            menuToggle.setAttribute("aria-expanded", String(open));
+            menuToggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
           }
+          if (scrim) scrim.hidden = !open;
         };
-        const setCollapsed = (collapsed, persist = true) => {
-          shell.classList.toggle("sidebar-collapsed", collapsed);
-          toggle.setAttribute("aria-expanded", String(!collapsed));
-          if (persist) localStorage.setItem(key, collapsed ? "1" : "0");
+        const closeDrawer = () => setDrawer(false);
+        const syncDrawer = () => {
+          closeDrawer();
         };
-        const stored = storedPreference();
-        setCollapsed(stored === null ? mobileQuery.matches : stored === "1", false);
-        toggle.addEventListener("click", function () {
-          setCollapsed(!shell.classList.contains("sidebar-collapsed"));
-        });
+        if (menuToggle && sidebar) {
+          menuToggle.addEventListener("click", function () {
+            setDrawer(!shell.classList.contains("sidebar-open"));
+            if (shell.classList.contains("sidebar-open")) {
+              const firstLink = sidebar.querySelector("a, button, select");
+              if (firstLink) firstLink.focus();
+            }
+          });
+          if (scrim) scrim.addEventListener("click", closeDrawer);
+          document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && shell.classList.contains("sidebar-open")) {
+              closeDrawer();
+              if (menuToggle) menuToggle.focus();
+            }
+          });
+          sidebar.addEventListener("click", function (event) {
+            if (event.target.closest("a")) closeDrawer();
+          });
+          if (mobileQuery.addEventListener) mobileQuery.addEventListener("change", syncDrawer);
+        }
       })();
       (function () {
         const toggle = document.querySelector("[data-theme-toggle]");

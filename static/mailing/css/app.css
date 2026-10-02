@@ -42,97 +42,113 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-header,
-.app-header {
+/* --- shared shell pieces: icons, brand mark, canvas toolbar -------------- */
+
+.icon {
+  flex: none;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--dk-radius-md);
+  background: transparent;
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-md);
+}
+
+.icon-button:hover {
+  color: var(--dk-text-primary);
+  border-color: var(--dk-border-default);
+  background: var(--dk-bg-hover);
+  text-decoration: none;
+}
+
+.app-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 48px;
+  padding: 0 var(--dk-space-6);
   border-bottom: 1px solid var(--dk-border-default);
   background: var(--dk-bg-page);
 }
 
-nav,
-.app-nav {
+.toolbar-nav {
   display: flex;
   align-items: center;
-  gap: var(--dk-space-5);
-  min-height: 52px;
-  margin: 0 auto;
-  padding: 0 var(--dk-space-4);
+  gap: var(--dk-space-1);
 }
 
-nav a,
-.app-nav a {
-  color: var(--dk-text-muted);
-  font-size: 14px;
-  font-weight: 500;
-  text-decoration: none;
-}
-
-nav a:hover,
-.app-nav a:hover {
-  color: var(--dk-text-primary);
-  text-decoration: none;
-}
-
-nav .brand,
-.app-nav .brand {
+.toolbar-nav a,
+.toolbar-nav .theme-toggle {
   display: inline-flex;
   align-items: center;
-  min-height: 52px;
-  color: var(--dk-text-heading);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.top-nav-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--dk-space-4);
-  margin-left: auto;
-}
-
-.top-nav-actions a {
+  gap: var(--dk-space-2);
+  height: 32px;
+  padding: 0 var(--dk-space-3);
+  border-radius: var(--dk-radius-md);
   color: var(--dk-text-muted);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
+  font-weight: var(--dk-weight-medium);
+}
+
+.toolbar-nav a {
+  text-decoration: none;
+}
+
+.toolbar-nav a:hover {
+  color: var(--dk-text-primary);
+  background: var(--dk-bg-hover);
+  text-decoration: none;
+}
+
+.toolbar-nav a[aria-current="page"] {
+  color: var(--dk-accent-default);
+  background: var(--dk-accent-soft);
+  font-weight: var(--dk-weight-semibold);
 }
 
 .theme-toggle {
   width: auto;
-  min-height: 30px;
-  padding: 3px 10px;
-  color: var(--dk-text-muted);
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-page);
-  font-size: var(--dk-text-sm);
-  font-weight: 500;
+  min-height: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
 }
 
 .theme-toggle:hover {
   color: var(--dk-text-primary);
-  border-color: var(--dk-border-strong);
-  background: var(--dk-bg-muted);
-}
-
-.app-nav a[aria-current="page"] {
-  color: var(--dk-text-link);
-  font-weight: 600;
+  border-color: var(--dk-border-default);
+  background: var(--dk-bg-hover);
 }
 
 .client-switcher {
   display: grid;
-  gap: var(--dk-space-2);
+  gap: var(--dk-space-1);
 }
 
 .client-switcher label {
   color: var(--dk-text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
+  font-size: var(--dk-text-xs);
+  font-weight: var(--dk-weight-semibold);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .client-switcher select {
   width: 100%;
-  height: 34px;
+  height: var(--dk-size-control-md);
+  font-size: var(--dk-text-md);
   /* Right padding keeps the label clear of dakit's chevron (base layer). */
   padding: 0 calc(2 * var(--dk-space-3) + 10px) 0 var(--dk-space-2);
 }
@@ -143,93 +159,90 @@ main,
   padding: var(--dk-space-7) var(--dk-space-6) 64px;
 }
 
+/* --- the family shell: 268px sidebar + canvas ----------------------------
+   Same geometry as dataops: the sidebar sits on the page background, carries
+   the product mark and icon-plus-text rows; global actions live in a slim
+   toolbar above the canvas only. Selection signal is the filled row only. */
+
 .app-shell {
   display: grid;
-  grid-template-columns: var(--dk-size-sidebar) minmax(0, 1fr);
-  min-height: calc(100vh - 53px);
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 100vh;
   background: var(--dk-bg-page);
 }
 
-.app-shell.sidebar-collapsed {
-  grid-template-columns: 44px minmax(0, 1fr);
+.app-shell.has-sidebar {
+  grid-template-columns: var(--dk-size-sidebar) minmax(0, 1fr);
+}
+
+.app-shell.has-sidebar.sidebar-collapsed {
+  grid-template-columns: 56px minmax(0, 1fr);
 }
 
 .app-sidebar {
   position: sticky;
   top: 0;
-  height: calc(100vh - 53px);
-  overflow: auto;
-  border-right: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-muted);
-}
-
-.sidebar-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  padding: 2px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--dk-radius-sm);
-  background: transparent;
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.sidebar-toggle:hover {
-  color: var(--dk-text-primary);
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-page);
-  text-decoration: none;
-}
-
-.sidebar-toggle-closed {
-  display: none;
-}
-
-.sidebar-inner {
-  padding: var(--dk-space-3) var(--dk-space-3) var(--dk-space-4);
-}
-
-.sidebar-titlebar {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--dk-space-2);
-}
-
-.sidebar-context {
+  flex-direction: column;
+  gap: var(--dk-space-4);
+  height: 100vh;
   padding: var(--dk-space-3);
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-md);
+  overflow-y: auto;
+  border-right: 1px solid var(--dk-border-default);
   background: var(--dk-bg-page);
 }
 
-.sidebar-context-header {
+.sidebar-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--dk-space-1);
+  min-height: 32px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
   gap: var(--dk-space-2);
+  min-width: 0;
+  color: var(--dk-text-heading);
+  text-decoration: none;
 }
 
-.sidebar-context strong,
-.sidebar-context span {
-  display: block;
+.brand:hover {
+  text-decoration: none;
 }
 
-.sidebar-client-meta {
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-accent-default);
+  color: var(--dk-text-on-accent);
+  font-size: 14px;
+  font-weight: var(--dk-weight-bold);
+}
+
+.brand-text {
+  overflow: hidden;
+  font-size: var(--dk-text-md);
+  font-weight: var(--dk-weight-semibold);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* The drawer open control lives in the toolbar on phones. */
+.sidebar-menu-toggle {
   display: none;
 }
 
-.sidebar-client-meta strong {
-  color: var(--dk-text-primary);
-}
-
-.sidebar-client-meta span,
-.sidebar-client-meta code {
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
+.sidebar-context {
+  padding-top: var(--dk-space-2);
+  border-top: 1px solid var(--dk-border-muted);
 }
 
 .sidebar-client-action {
@@ -238,8 +251,9 @@ main,
 
 .sidebar-nav {
   display: grid;
-  gap: var(--dk-space-4);
-  margin-top: var(--dk-space-4);
+  gap: var(--dk-space-5);
+  align-content: start;
+  flex: 1;
 }
 
 .sidebar-nav-group {
@@ -248,24 +262,36 @@ main,
 }
 
 .sidebar-nav-label {
-  margin: 0 8px var(--dk-space-1);
+  margin: 0 0 var(--dk-space-1);
+  padding: 0 var(--dk-space-3);
   color: var(--dk-text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
+  font-size: var(--dk-text-xs);
+  font-weight: var(--dk-weight-semibold);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .sidebar-nav a {
-  display: block;
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: var(--dk-radius-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-2);
+  height: 32px;
+  padding: 0 var(--dk-space-3);
+  border-radius: var(--dk-radius-md);
   color: var(--dk-text-primary);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--dk-text-body);
+  font-weight: var(--dk-weight-medium);
   text-decoration: none;
+  white-space: nowrap;
+}
+
+.sidebar-nav a .icon {
+  color: var(--dk-text-muted);
+}
+
+.sidebar-nav a span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sidebar-nav a:hover {
@@ -275,22 +301,36 @@ main,
 
 .sidebar-nav a[aria-current="page"] {
   background: var(--dk-accent-soft);
-  color: var(--dk-text-link);
-  font-weight: 600;
+  color: var(--dk-accent-default);
+  font-weight: var(--dk-weight-semibold);
 }
 
-.sidebar-collapsed .sidebar-inner {
-  display: block;
+.sidebar-nav a[aria-current="page"] .icon {
+  color: var(--dk-accent-default);
+}
+
+/* Collapsed rail: icon-only rows, restore control stays visible. */
+.sidebar-collapsed .app-sidebar {
   padding: var(--dk-space-2);
 }
 
-.sidebar-collapsed .sidebar-titlebar {
+.sidebar-collapsed .sidebar-head {
   justify-content: center;
-  margin-bottom: 0;
 }
 
+.sidebar-collapsed .brand-text,
 .sidebar-collapsed .sidebar-context,
-.sidebar-collapsed .sidebar-nav {
+.sidebar-collapsed .sidebar-nav-label,
+.sidebar-collapsed .sidebar-nav a span {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-nav a {
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar-toggle-closed {
   display: none;
 }
 
@@ -299,13 +339,11 @@ main,
 }
 
 .sidebar-collapsed .sidebar-toggle-closed {
-  display: inline;
+  display: block;
 }
 
-.sidebar-collapsed .sidebar-toggle {
-  width: 30px;
-  padding: 0;
-  writing-mode: vertical-rl;
+.sidebar-scrim {
+  display: none;
 }
 
 .app-main {
@@ -1513,29 +1551,40 @@ pre {
 }
 
 @media (max-width: 860px) {
-  nav,
-  .app-nav {
-    flex-wrap: wrap;
-    gap: var(--dk-space-2) var(--dk-space-4);
-    padding-top: var(--dk-space-2);
-    padding-bottom: var(--dk-space-2);
-  }
-
-  nav .brand,
-  .app-nav .brand {
-    min-height: 36px;
-  }
-
-  .top-nav-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: var(--dk-space-2) var(--dk-space-3);
-  }
-
   .app-shell,
-  .app-shell.sidebar-collapsed {
+  .app-shell.has-sidebar,
+  .app-shell.has-sidebar.sidebar-collapsed {
     display: block;
     min-height: 0;
+  }
+
+  /* The toolbar becomes the 64px top bar: menu control left, global
+     links pushed right. */
+  .app-toolbar {
+    justify-content: flex-start;
+    min-height: 64px;
+    padding: 0 var(--dk-space-4);
+  }
+
+  .sidebar-menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dk-space-2);
+    width: auto;
+    height: 40px;
+    min-height: 0;
+    padding: 0 var(--dk-space-3);
+    font-size: var(--dk-text-md);
+    font-weight: var(--dk-weight-medium);
+  }
+
+  .toolbar-nav {
+    flex: 1;
+    justify-content: flex-end;
+  }
+
+  .sidebar-toggle {
+    display: none;
   }
 
   .app-sidebar {
@@ -1547,43 +1596,41 @@ pre {
     border-bottom: 1px solid var(--dk-border-default);
   }
 
-  .sidebar-titlebar {
-    display: flex;
-    justify-content: flex-start;
-    margin-bottom: var(--dk-space-2);
-  }
-
-  .sidebar-toggle,
-  .sidebar-collapsed .sidebar-toggle {
-    display: inline-flex;
-    align-items: center;
-    width: auto;
-    height: 34px;
-    min-height: 34px;
-    padding: 0 var(--dk-space-2);
-    border: 1px solid var(--dk-border-default);
-    border-radius: var(--dk-radius-sm);
-    background: var(--dk-bg-page);
-    writing-mode: horizontal-tb;
-  }
-
-  .sidebar-inner,
-  .sidebar-collapsed .sidebar-inner {
-    padding: var(--dk-space-3) var(--dk-space-4);
-  }
-
-  .sidebar-collapsed .sidebar-context,
-  .sidebar-collapsed .sidebar-nav {
+  /* With JS the navigation opens as a modal drawer instead of stacking. */
+  html.js .has-sidebar .app-sidebar {
     display: none;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: min(300px, 85vw);
+    height: 100vh;
+    border-right: 1px solid var(--dk-border-default);
+    box-shadow: var(--dk-shadow-overlay);
   }
 
-  .sidebar-nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--dk-space-3);
+  html.js .has-sidebar.sidebar-open .app-sidebar {
+    display: flex;
+  }
+
+  html.js .sidebar-scrim {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    border: 0;
+    padding: 0;
+    background: rgb(0 0 0 / 0.4);
+  }
+
+  html.js .app-shell.sidebar-open > .sidebar-scrim {
+    display: block;
   }
 
   .sidebar-nav a {
-    min-height: 38px;
+    min-height: 40px;
+    height: auto;
   }
 
   .table-wrap {
@@ -1623,9 +1670,7 @@ pre {
     padding: var(--dk-space-5) 14px;
   }
 
-  nav,
-  .app-nav {
-    gap: var(--dk-space-3);
+  .app-toolbar {
     padding-right: 14px;
     padding-left: 14px;
   }
@@ -1687,10 +1732,6 @@ pre {
 
   input[type="checkbox"],
   input[type="radio"] {
-    width: auto;
-  }
-
-  .top-nav-actions .theme-toggle {
     width: auto;
   }
 }
@@ -1828,30 +1869,6 @@ pre {
 }
 
 @media (max-width: 640px) {
-  .app-shell,
-  .app-shell.sidebar-collapsed {
-    display: block;
-  }
-
-  .app-sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--dk-border-default);
-  }
-
-  .sidebar-collapsed .sidebar-toggle-closed {
-    writing-mode: horizontal-tb;
-  }
-
-  .client-switcher {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .client-switcher select {
-    min-width: 0;
-    flex: 1;
-  }
-
   .unsubscribe-main {
     align-items: start;
     padding: var(--dk-space-5) 14px;
@@ -1882,24 +1899,6 @@ pre {
 
 .skip-link:focus {
   transform: translateY(0);
-}
-
-.sidebar-current-client {
-  display: none;
-  min-width: 0;
-  color: var(--dk-text-primary);
-  overflow-wrap: anywhere;
-  font-size: 13px;
-}
-
-.sidebar-collapsed .sidebar-current-client {
-  display: block;
-}
-
-.scope-note {
-  color: var(--dk-text-muted);
-  font-size: 13px;
-  overflow-wrap: anywhere;
 }
 
 .local-nav {
@@ -1958,15 +1957,6 @@ pre {
 }
 
 @media (max-width: 860px) {
-  .sidebar-current-client {
-    display: block;
-  }
-
-  .sidebar-titlebar {
-    align-items: center;
-    gap: var(--dk-space-3);
-  }
-
   .triage-table {
     overflow: visible;
     box-shadow: none;
@@ -2088,16 +2078,4 @@ pre {
 .confirmation-choice input {
   flex: 0 0 auto;
   margin-top: 4px;
-}
-
-@media (min-width: 861px) {
-  .sidebar-collapsed .sidebar-current-client {
-    display: none;
-  }
-}
-
-@media (max-width: 860px) {
-  .header-client-context {
-    display: none;
-  }
 }
