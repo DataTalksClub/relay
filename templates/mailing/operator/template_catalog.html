@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Transactional Templates | Datamailer{% endblock %}
+  {% block topbar_title %}Templates{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -14,7 +15,12 @@
   </div>
 
   {% if template_rows %}
-    <div class="table-wrap template-table">
+    <section class="section panel" aria-labelledby="templates-table">
+      <div class="panel-header">
+        <h2 id="templates-table">All templates</h2>
+        <span class="muted">{{ templates.paginator.count }} template{{ templates.paginator.count|pluralize }}</span>
+      </div>
+      <div class="table-wrap template-table">
       <table>
         <thead>
           <tr>
@@ -68,11 +74,12 @@
         </tbody>
       </table>
     </div>
-    {% include "mailing/operator/_pagination.html" with page_obj=templates querystring=pagination_querystring %}
+      {% include "mailing/operator/_pagination.html" with page_obj=templates querystring=pagination_querystring %}
+    </section>
   {% else %}
     <div class="empty-state">
-      <strong>No transactional templates found.</strong>
-      <div class="muted">Adjust the client filter or seed a transactional template for this client.</div>
+      <span class="badge neutral">Empty</span>
+      <p><strong>No transactional templates found.</strong> Adjust the client filter or seed a transactional template for this client.</p>
     </div>
   {% endif %}
 {% endblock %}

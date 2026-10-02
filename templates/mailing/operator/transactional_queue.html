@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Transactional queue | Datamailer{% endblock %}
+  {% block topbar_title %}Transactional queue{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -15,12 +16,10 @@
   </div>
 
   {% if message_rows %}
-    <section class="section" aria-labelledby="queue-table">
-      <div class="section-header">
-        <div>
-          <h2 id="queue-table">Queued messages</h2>
-          <p class="muted"><strong>{{ queued_total }}</strong> message{{ queued_total|pluralize }} queued for this client.</p>
-        </div>
+    <section class="section panel" aria-labelledby="queue-table">
+      <div class="panel-header">
+        <h2 id="queue-table">Queued messages</h2>
+        <span class="muted">{{ queued_total }} message{{ queued_total|pluralize }} queued</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -60,8 +59,8 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <strong>No queued transactional messages.</strong>
-      <p>Accepted transactional messages waiting to be sent for {{ active_client.name }} will appear here.</p>
+      <span class="badge neutral">Empty</span>
+      <p><strong>No queued transactional messages.</strong> Accepted transactional messages waiting to be sent for {{ active_client.name }} will appear here.</p>
       {% if other_clients_queued_total %}
         {% if other_clients_queued_total == 1 %}
           <p>There is 1 queued message under other clients. Switch clients to review those queues.</p>

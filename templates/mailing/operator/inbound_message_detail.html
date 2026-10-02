@@ -1,12 +1,9 @@
 {% extends "base.html" %}
 
 {% block title %}{{ message.subject|default:"Inbound message" }} | Relay{% endblock %}
+  {% block topbar_title %}Inbound message{% endblock %}
 
 {% block content %}
-  <nav class="breadcrumbs" aria-label="Breadcrumb">
-    <a href="{% url 'mailing:inbound_list' %}">Inbound mail</a>
-  </nav>
-
   <div class="page-header">
     <div>
       <h1>{{ message.subject|default:"(no subject)" }}</h1>
@@ -22,8 +19,8 @@
   </div>
 
   <div class="detail-grid">
-    <section class="section" aria-labelledby="summary-heading">
-      <div class="section-header">
+    <section class="section panel" aria-labelledby="summary-heading">
+      <div class="panel-header">
         <div><h2 id="summary-heading">Summary</h2></div>
       </div>
       <div class="meta-grid">
@@ -38,8 +35,8 @@
       </div>
     </section>
 
-    <section class="section" aria-labelledby="signal-heading">
-      <div class="section-header">
+    <section class="section panel" aria-labelledby="signal-heading">
+      <div class="panel-header">
         <div><h2 id="signal-heading">Authentication and spam signals</h2></div>
       </div>
       <div class="meta-grid">
@@ -56,8 +53,8 @@
     </section>
   </div>
 
-  <section class="section" aria-labelledby="body-heading">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="body-heading">
+    <div class="panel-header">
       <div><h2 id="body-heading">Body</h2></div>
     </div>
     {% if message.state == "blocked" %}
@@ -79,8 +76,8 @@
     {% endif %}
   </section>
 
-  <section class="section" aria-labelledby="actions-heading">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="actions-heading">
+    <div class="panel-header">
       <div><h2 id="actions-heading">Manage this sender</h2></div>
     </div>
     <p class="helptext">
