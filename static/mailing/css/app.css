@@ -1940,14 +1940,23 @@ pre {
     width: 100%;
   }
 
+  /* Row actions keep their intrinsic width, so badges and quiet buttons in
+     stacked table rows and headers stay content-sized; only the stacked-form
+     footer goes full-width. */
   .actions,
-  .action-row,
+  .action-row {
+    justify-content: flex-start;
+  }
+
+  .actions > *,
+  .action-row > * {
+    width: auto;
+  }
+
   .form-actions {
     justify-content: stretch;
   }
 
-  .actions > *,
-  .action-row > *,
   .form-actions > * {
     width: 100%;
   }
