@@ -1321,41 +1321,8 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
-.campaign-table table {
-  min-width: 760px;
-  table-layout: fixed;
-}
-
-.campaign-table th:nth-child(1),
-.campaign-table td:nth-child(1) {
-  width: 28%;
-}
-
-.campaign-table th:nth-child(2),
-.campaign-table td:nth-child(2) {
-  width: 13%;
-}
-
-.campaign-table th:nth-child(3),
-.campaign-table td:nth-child(3) {
-  width: 20%;
-}
-
-.campaign-table th:nth-child(4),
-.campaign-table td:nth-child(4) {
-  width: 16%;
-}
-
-.campaign-table th:nth-child(5),
-.campaign-table td:nth-child(5) {
-  width: 9%;
-}
-
-.campaign-table th:nth-child(6),
-.campaign-table td:nth-child(6) {
-  width: 14%;
-}
-
+/* Columns auto-size to content; the truncate cells cap the wide ones so the
+   six-column comparison fits the canvas without clipping. */
 .campaign-table .truncate,
 .campaign-table .truncate a {
   min-width: 0;
@@ -1985,6 +1952,8 @@ pre {
     min-width: 0;
     padding: 0;
     border: 0;
+    /* Labelled rows read as sentences; cell-level nowrap no longer applies. */
+    white-space: normal;
   }
 
   .stack-table td[data-label]::before {
