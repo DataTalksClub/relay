@@ -132,6 +132,47 @@ body {
   background: var(--dk-bg-hover);
 }
 
+/* Account control: avatar chip + name at the toolbar's end, the family
+   toolbar pattern. It links to sign-out. */
+.toolbar-nav .account-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dk-space-2);
+  height: 32px;
+  padding: 0 var(--dk-space-2) 0 var(--dk-space-1);
+  border-radius: var(--dk-radius-md);
+  color: var(--dk-text-primary);
+  font-size: var(--dk-text-md);
+  font-weight: var(--dk-weight-semibold);
+  text-decoration: none;
+}
+
+.toolbar-nav .account-button:hover {
+  background: var(--dk-bg-hover);
+  color: var(--dk-text-primary);
+  text-decoration: none;
+}
+
+.account-avatar {
+  display: inline-grid;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: var(--dk-radius-full);
+  background: var(--dk-accent-default);
+  color: var(--dk-text-on-accent);
+  font-size: 11px;
+  font-weight: var(--dk-weight-bold);
+}
+
+.account-button-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .client-switcher {
   display: grid;
   gap: var(--dk-space-1);
@@ -189,7 +230,7 @@ main,
   padding: var(--dk-space-3);
   overflow-y: auto;
   border-right: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-page);
+  background: var(--dk-bg-muted);
 }
 
 .sidebar-head {
@@ -271,12 +312,14 @@ main,
   text-transform: uppercase;
 }
 
+/* Family nav row: 36px icon+text row, radius-md, medium weight; the filled
+   row is the whole selection signal. */
 .sidebar-nav a {
   display: flex;
   align-items: center;
-  gap: var(--dk-space-2);
-  height: 32px;
-  padding: 0 var(--dk-space-3);
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px 10px;
   border-radius: var(--dk-radius-md);
   color: var(--dk-text-primary);
   font-size: var(--dk-text-body);
@@ -972,6 +1015,21 @@ a.compact-row:hover {
   margin: 0;
 }
 
+/* Form footer: one action row above a top border, primary first, then
+   Cancel — the family's stacked-form exit. */
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dk-space-2);
+  margin-top: var(--dk-space-6);
+  padding-top: var(--dk-space-4);
+  border-top: 1px solid var(--dk-border-default);
+}
+
+.form-actions form {
+  margin: 0;
+}
+
 .messages {
   display: grid;
   gap: var(--dk-space-2);
@@ -1091,7 +1149,7 @@ button,
 .button {
   min-height: var(--dk-size-control-md);
   border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-sm);
+  border-radius: var(--dk-radius-md);
   padding: 5px 10px;
   font-family: var(--dk-font-sans);
   font-size: var(--dk-text-body);
@@ -1115,6 +1173,8 @@ select:focus,
 textarea:focus {
   border-color: var(--dk-accent-default);
   outline: none;
+  /* The dataops focus treatment: a soft token-colored ring, not a border swap alone. */
+  box-shadow: 0 0 0 3px var(--dk-focus-ring);
 }
 
 button,
@@ -1739,7 +1799,7 @@ pre {
     z-index: 30;
     border: 0;
     padding: 0;
-    background: rgb(0 0 0 / 0.4);
+    background: var(--dk-bg-backdrop);
   }
 
   html.js .app-shell.sidebar-open > .sidebar-scrim {
@@ -1811,6 +1871,19 @@ pre {
     display: none;
   }
 
+  /* The account chip keeps its avatar at phone widths; only the name drops. */
+  .account-button {
+    padding: 0 var(--dk-space-1);
+  }
+
+  .account-button .account-avatar {
+    display: inline-grid;
+  }
+
+  .account-button .account-button-name {
+    display: none;
+  }
+
   h1 {
     font-size: 22px;
   }
@@ -1827,12 +1900,14 @@ pre {
   }
 
   .actions,
-  .action-row {
+  .action-row,
+  .form-actions {
     justify-content: stretch;
   }
 
   .actions > *,
-  .action-row > * {
+  .action-row > *,
+  .form-actions > * {
     width: 100%;
   }
 
@@ -2070,6 +2145,18 @@ pre {
 }
 
 /* Task-focused navigation and responsive investigation rows. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .skip-link {
   position: fixed;
   top: 8px;
