@@ -16,12 +16,10 @@
   </div>
 
   {% if audiences.object_list %}
-    <section class="section" aria-labelledby="audiences-table">
-      <div class="section-header">
-        <div>
-          <h2 id="audiences-table">Audience Health</h2>
-          <p class="muted">Membership, sendable contacts, inactive discovery, and the latest audience activity.</p>
-        </div>
+    <section class="section panel" aria-labelledby="audiences-table">
+      <div class="panel-header">
+        <h2 id="audiences-table">Audience health</h2>
+        <span class="muted">{{ audiences.paginator.count }} audience{{ audiences.paginator.count|pluralize }}</span>
       </div>
       <div class="table-wrap audience-table stack-table">
         <table>
@@ -72,12 +70,12 @@
           </tbody>
         </table>
       </div>
+      {% include "mailing/operator/_pagination.html" with page_obj=audiences querystring=pagination_querystring %}
     </section>
-    {% include "mailing/operator/_pagination.html" with page_obj=audiences querystring=pagination_querystring %}
   {% else %}
     <div class="empty-state">
-      <strong>No audiences yet</strong>
-      <p>Create an audience before importing contacts, assigning tags, or drafting a campaign.</p>
+      <span class="badge neutral">Empty</span>
+      <p><strong>No audiences yet.</strong> Create an audience before importing contacts, assigning tags, or drafting a campaign.</p>
       <a class="button secondary" href="{% url 'mailing:audience_create' %}">Create audience</a>
     </div>
   {% endif %}

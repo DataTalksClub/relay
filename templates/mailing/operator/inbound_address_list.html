@@ -20,17 +20,17 @@
 
   <div class="stats-grid">
     <div class="stat">
-      <span class="stat-label">Active</span>
+      <span class="stat-label"><span class="stat-dot success"></span>Active</span>
       <span class="stat-value">{{ active_count }}</span>
     </div>
     <div class="stat">
-      <span class="stat-label">Retired</span>
+      <span class="stat-label"><span class="stat-dot {% if retired_count %}warning{% endif %}"></span>Retired</span>
       <span class="stat-value">{{ retired_count }}</span>
     </div>
   </div>
 
-  <section class="section" aria-labelledby="addresses-table">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="addresses-table">
+    <div class="panel-header">
       <div>
         <h2 id="addresses-table">Addresses</h2>
         <p class="muted">
@@ -86,10 +86,11 @@
       </div>
     {% else %}
       <div class="empty-state">
-        <strong>No addresses yet.</strong>
+        <span class="badge neutral">Empty</span>
         <p>
-          Until an address exists here, inbound mail falls back to
-          <code>INBOUND_EMAIL_ROUTES</code> from the environment.
+          <strong>No addresses yet.</strong> Until an address exists here,
+          inbound mail falls back to <code>INBOUND_EMAIL_ROUTES</code> from the
+          environment.
           {% if routes %}
             Currently configured there: {{ routes|join:", " }}.
           {% endif %}
@@ -98,8 +99,8 @@
     {% endif %}
   </section>
 
-  <section class="section" aria-labelledby="blocked-table">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="blocked-table">
+    <div class="panel-header">
       <div>
         <h2 id="blocked-table">Blocked senders</h2>
         <p class="muted">
@@ -141,8 +142,8 @@
       </div>
     {% else %}
       <div class="empty-state">
-        <strong>Nothing is blocked.</strong>
-        <p>Mark a message as spam from the mailbox to add a rule here.</p>
+        <span class="badge success">Clear</span>
+        <p><strong>Nothing is blocked.</strong> Mark a message as spam from the mailbox to add a rule here.</p>
       </div>
     {% endif %}
   </section>

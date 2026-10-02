@@ -12,7 +12,12 @@
     <a class="button" href="{% url 'mailing:client_create' %}">Create client</a>
   </div>
   {% if clients.object_list %}
-    <div class="table-wrap client-table stack-table">
+    <section class="section panel" aria-labelledby="clients-table">
+      <div class="panel-header">
+        <h2 id="clients-table">All clients</h2>
+        <span class="muted">{{ clients.paginator.count }} integration{{ clients.paginator.count|pluralize }}</span>
+      </div>
+      <div class="table-wrap client-table stack-table">
       <table>
         <thead>
           <tr>
@@ -81,10 +86,12 @@
       </table>
     </div>
     {% include "mailing/operator/_pagination.html" with page_obj=clients querystring=pagination_querystring %}
+    </section>
   {% else %}
     <div class="empty-state">
-      <strong>No clients found.</strong>
-      <div class="muted">Create a client before issuing named API keys for an integration.</div>
+      <span class="badge neutral">Empty</span>
+      <p><strong>No clients found.</strong> Create a client before issuing named API keys for an integration.</p>
+      <a class="button secondary" href="{% url 'mailing:client_create' %}">Create client</a>
     </div>
   {% endif %}
 {% endblock %}

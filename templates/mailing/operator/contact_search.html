@@ -11,14 +11,14 @@
     </div>
   </div>
 
-  <form class="contact-explorer-form section" method="get">
-    <div class="section-header">
+  <form class="contact-explorer-form section panel" method="get">
+    <div class="panel-header">
       <div>
         <h2>Filters</h2>
         <p class="muted">Start with email, audience, or subscription. Use advanced filters only when needed.</p>
       </div>
       <div class="actions">
-        <button class="secondary" type="submit">Apply filters</button>
+        <button type="submit">Apply filters</button>
         <a class="button secondary" href="{% url 'mailing:contact_search' %}">Clear</a>
       </div>
     </div>
@@ -159,22 +159,20 @@
     {% endif %}
   </form>
 
-  <section class="section" aria-labelledby="contact-results-heading">
-    <div class="section-header">
-      <div>
-        <h2 id="contact-results-heading">Results</h2>
-        {% if contacts is not None %}
-          <p class="muted">
-            {% if contact_rows %}
-              Showing {{ contacts.start_index }}-{{ contacts.end_index }} of {{ contacts.paginator.count }} contacts, ordered by email.
-            {% else %}
-              No contacts match the current filters.
-            {% endif %}
-          </p>
-        {% else %}
-          <p class="muted">Apply at least one filter to load contacts.</p>
-        {% endif %}
-      </div>
+  <section class="section panel" aria-labelledby="contact-results-heading">
+    <div class="panel-header">
+      <h2 id="contact-results-heading">Results</h2>
+      {% if contacts is not None %}
+        <span class="muted">
+          {% if contact_rows %}
+            Showing {{ contacts.start_index }}-{{ contacts.end_index }} of {{ contacts.paginator.count }} contacts
+          {% else %}
+            No contacts match the current filters
+          {% endif %}
+        </span>
+      {% else %}
+        <span class="muted">Apply at least one filter to load contacts</span>
+      {% endif %}
     </div>
 
     {% if contacts is not None %}
@@ -221,15 +219,15 @@
         {% include "mailing/operator/_pagination.html" with page_obj=contacts querystring=pagination_querystring %}
       {% else %}
         <div class="empty-state">
-          <strong>No contacts match these filters.</strong>
-          <p>Change the email, audience, state, tag, or engagement filters and apply again.</p>
+          <span class="badge neutral">Empty</span>
+          <p><strong>No contacts match these filters.</strong> Change the email, audience, state, tag, or engagement filters and apply again.</p>
           <a class="button secondary" href="{% url 'mailing:contact_search' %}">Clear filters</a>
         </div>
       {% endif %}
     {% else %}
       <div class="empty-state">
-        <strong>Apply a filter to search contacts.</strong>
-        <p>Start with an email, audience, subscription state, suppression state, tag, or engagement filter.</p>
+        <span class="badge neutral">Start here</span>
+        <p><strong>Apply a filter to search contacts.</strong> Start with an email, audience, subscription state, suppression state, tag, or engagement filter.</p>
       </div>
     {% endif %}
   </section>

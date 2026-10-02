@@ -15,25 +15,28 @@
   </div>
 
   <div class="stats-grid">
-    <div class="section">
-      <div class="muted">Unread</div>
-      <div class="stat-value">{{ counts.received|default:0 }}</div>
+    <div class="stat">
+      <span class="stat-label"><span class="stat-dot {% if counts.received %}danger{% endif %}"></span>Unread</span>
+      <span class="stat-value">{{ counts.received|default:0 }}</span>
     </div>
-    <div class="section">
-      <div class="muted">Read</div>
-      <div class="stat-value">{{ counts.read|default:0 }}</div>
+    <div class="stat">
+      <span class="stat-label"><span class="stat-dot"></span>Read</span>
+      <span class="stat-value">{{ counts.read|default:0 }}</span>
     </div>
-    <div class="section">
-      <div class="muted">Blocked</div>
-      <div class="stat-value">{{ counts.blocked|default:0 }}</div>
+    <div class="stat">
+      <span class="stat-label"><span class="stat-dot {% if counts.blocked %}warning{% endif %}"></span>Blocked</span>
+      <span class="stat-value">{{ counts.blocked|default:0 }}</span>
     </div>
-    <div class="section">
-      <div class="muted">Senders waiting</div>
-      <div class="stat-value">{{ sender_count|default:0 }}</div>
+    <div class="stat">
+      <span class="stat-label"><span class="stat-dot {% if sender_count %}warning{% endif %}"></span>Senders waiting</span>
+      <span class="stat-value">{{ sender_count|default:0 }}</span>
     </div>
   </div>
 
-  <section class="section" aria-labelledby="mailbox-filters">
+  <section class="section panel" aria-labelledby="mailbox-filters">
+    <div class="panel-header">
+      <h2 id="mailbox-filters">Filter mailbox</h2>
+    </div>
     <form method="get" class="filter-bar">
       <div class="filter-grid">
         <div class="form-field">
@@ -69,12 +72,10 @@
   </section>
 
   {% if rows %}
-    <section class="section" aria-labelledby="mailbox-table">
-      <div class="section-header">
-        <div>
-          <h2 id="mailbox-table">Messages</h2>
-          <p class="muted"><strong>{{ total }}</strong> message{{ total|pluralize }}.</p>
-        </div>
+    <section class="section panel" aria-labelledby="mailbox-table">
+      <div class="panel-header">
+        <h2 id="mailbox-table">Messages</h2>
+        <span class="muted">{{ total }} message{{ total|pluralize }}</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -129,19 +130,18 @@
     </section>
   {% else %}
     <div class="empty-state">
+      <span class="badge neutral">Empty</span>
       {% if narrowed %}
-        <strong>No messages match this filter.</strong>
-        <p>Nothing here is a statement about whether mail arrived; only about this filter.</p>
+        <p><strong>No messages match this filter.</strong> Nothing here is a statement about whether mail arrived; only about this filter.</p>
       {% else %}
-        <strong>No unread mail.</strong>
-        <p>Mail received for a Relay address will appear here. Until a receiving domain points at Relay, nothing arrives.</p>
+        <p><strong>No unread mail.</strong> Mail received for a Relay address will appear here. Until a receiving domain points at Relay, nothing arrives.</p>
       {% endif %}
     </div>
   {% endif %}
 
   {% if blocked_senders %}
-    <section class="section" aria-labelledby="blocked-heading">
-      <div class="section-header">
+    <section class="section panel" aria-labelledby="blocked-heading">
+      <div class="panel-header">
         <div>
           <h2 id="blocked-heading">Blocked senders</h2>
           <p class="muted">Discarded at ingest, so they never reach the mailbox. Managed on the addresses page.</p>

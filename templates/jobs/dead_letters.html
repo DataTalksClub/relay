@@ -15,12 +15,10 @@
   </div>
 
   {% if page.object_list %}
-    <section class="section" aria-labelledby="dead-letter-table">
-      <div class="section-header">
-        <div>
-          <h2 id="dead-letter-table">Failed tasks</h2>
-          <p class="muted"><strong>{{ page.paginator.count }}</strong> task{{ page.paginator.count|pluralize }} in the dead-letter list, newest first.</p>
-        </div>
+    <section class="section panel" aria-labelledby="dead-letter-table">
+      <div class="panel-header">
+        <h2 id="dead-letter-table">Failed tasks</h2>
+        <span class="muted">{{ page.paginator.count }} task{{ page.paginator.count|pluralize }} in the dead-letter list</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -63,8 +61,8 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <strong>No dead-letter tasks.</strong>
-      <p>Tasks that fail after all attempts will appear here with a retry action.</p>
+      <span class="badge success">Clear</span>
+      <p><strong>No dead-letter tasks.</strong> Tasks that fail after all attempts will appear here with a retry action.</p>
     </div>
   {% endif %}
 {% endblock %}

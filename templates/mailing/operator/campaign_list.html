@@ -17,12 +17,10 @@
   </div>
 
   {% if campaigns.object_list %}
-    <section class="section" aria-labelledby="campaigns-table">
-      <div class="section-header">
-        <div>
-          <h2 id="campaigns-table">Campaigns</h2>
-          <p class="muted">Scan current state, audience, send timing, and delivery signals.</p>
-        </div>
+    <section class="section panel" aria-labelledby="campaigns-table">
+      <div class="panel-header">
+        <h2 id="campaigns-table">All campaigns</h2>
+        <span class="muted">{{ campaigns.paginator.count }} campaign{{ campaigns.paginator.count|pluralize }}</span>
       </div>
       <div class="table-wrap campaign-table stack-table">
         <table>
@@ -72,8 +70,8 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <strong>No campaigns yet</strong>
-      <p>Create a campaign draft when an audience is ready for a broadcast send.</p>
+      <span class="badge neutral">Empty</span>
+      <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a broadcast send.</p>
       <a class="button secondary" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
     </div>
   {% endif %}
