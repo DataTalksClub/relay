@@ -146,9 +146,10 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     assert b'href="/static/dakit/dist/dakit.css"' in response.content
     assert b'href="/static/mailing/css/app.css"' in response.content
     assert b"<style>" not in response.content
-    assert b'aria-current="page">Datamailer' in response.content
+    assert b'class="brand-text">Datamailer</span>' in response.content
     assert b'data-theme-toggle aria-label="Toggle dark mode"' in response.content
     assert b'data-sidebar-toggle aria-expanded="true"' in response.content
+    assert b'data-sidebar-menu-toggle aria-expanded="false"' in response.content
     assert b'matchMedia("(max-width: 860px)")' in response.content
     assert b"dakit-theme" in response.content
     assert finders.find("dakit/dist/dakit.css") is not None
@@ -158,7 +159,8 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     css = Path(finders.find("mailing/css/app.css")).read_text()
     assert ".client-table,\n  .campaign-table,\n  .audience-table,\n  .audience-member-table" in css
     assert "scrollbar-width: thin" in css
-    assert ".sidebar-collapsed .sidebar-context,\n  .sidebar-collapsed .sidebar-nav" in css
+    assert ".app-shell.has-sidebar.sidebar-collapsed" in css
+    assert "html.js .has-sidebar.sidebar-open .app-sidebar" in css
 
 
 def test_sidebar_links_transactional_queue(client, operator, client_record):
@@ -1732,29 +1734,30 @@ def test_campaign_detail_shows_draft_estimate_and_state_dependent_controls(clien
     draft_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
 
     assert draft_response.status_code == 200
-    assert b"Queue Preview" in draft_response.content
+    assert b"Recipient review" in draft_response.content
     assert b"Stats" not in draft_response.content
     assert b"Send progress" not in draft_response.content
-    assert b"Queue send" in draft_response.content
-    assert b"Snapshot and queue" not in draft_response.content
+    assert b"Review and send" in draft_response.content
+    assert b"Send this campaign now?" not in draft_response.content
     assert b"Edit draft" in draft_response.content
-    assert b"No campaign email events found yet" in draft_response.content
     confirm_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]), {"confirm_send": "1"})
-    assert b"Queue this send?" in confirm_response.content
-    assert b"Queue send to approximately 1 recipient" in confirm_response.content
-    assert b"Send campaign" in confirm_response.content
+    assert b"Send this campaign now?" in confirm_response.content
+    assert b"1 recipient" in confirm_response.content
+    assert b"will be queued for sending" in confirm_response.content
+    assert b"Send to 1 recipient" in confirm_response.content
 
     campaign.status = "queued"
     campaign.save()
     queued_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
-    assert b"Queue Preview" not in queued_response.content
-    assert b"Queue send" not in queued_response.content
+    assert b"Recipient review" not in queued_response.content
+    assert b"Send this campaign now?" not in queued_response.content
     assert b"Edit draft" not in queued_response.content
+    assert b"No campaign email events found yet" in queued_response.content
 
     campaign.status = "snapshotting"
     campaign.save()
     snapshotting_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
-    assert b"Preparing recipients" in snapshotting_response.content
+    assert b"Sending is in progress" in snapshotting_response.content
     assert b"Snapshotting" not in snapshotting_response.content
 
 

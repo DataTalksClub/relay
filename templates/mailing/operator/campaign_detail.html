@@ -68,20 +68,6 @@
     {% else %}<p class="empty-state">No message content yet.</p>{% endif %}
   </section>
 
-  {% if not send_issues %}
-    <details class="section" id="campaign-test-send">
-      <summary>Send a test email</summary>
-      <p>This sends real email to 1–25 explicit test addresses only. It does not queue the audience, change recipient counts, or record campaign results. Sandbox delivery requires verified recipients.</p>
-      <form method="post" action="{% url 'mailing:campaign_test_send' campaign.id %}">
-        {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
-        <label for="test-emails">Test email addresses</label>
-        <textarea id="test-emails" name="test_emails" rows="3" required placeholder="you@example.com" aria-describedby="test-emails-help"></textarea>
-        <p id="test-emails-help" class="helptext">Use addresses you control, separated by commas or new lines. Preview tracking links use sample tokens and do not update campaign statistics.</p>
-        <label><input type="checkbox" name="confirm_test" value="1" required> I confirm these are test addresses and want to send a real email.</label>
-        <button type="submit">Send test email</button>
-      </form>
-    </details>
-  {% endif %}
   {% if confirm_queue and estimate and not send_issues %}
     <section class="section" aria-labelledby="queue-confirmation">
       <div class="section-header"><div><h2 id="queue-confirmation">Send this campaign now?</h2><p>{{ estimate.recipient_count }} recipient{{ estimate.recipient_count|pluralize }} will be queued for sending. Eligibility is checked again when you confirm. Queue acceptance does not mean delivery.</p></div></div>
@@ -98,17 +84,6 @@
   {% endif %}
 
   {% if campaign.status != "draft" %}</details>{% endif %}
-  {% if campaign.status == "draft" or campaign.status == "queued" %}
-    <details class="secondary-section">
-      <summary>Cancel campaign</summary>
-      <p>Cancellation is available for drafts or queued campaigns before sending starts. Sent messages cannot be recalled. Cancellation cannot be undone.</p>
-      <form method="post" action="{% url 'mailing:campaign_cancel' campaign.id %}">
-        {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
-        <label><input type="checkbox" name="confirm_cancel" value="1" required> Cancel this campaign and stop its pending recipients.</label>
-        <button type="submit" class="secondary">Confirm cancellation</button>
-      </form>
-    </details>
-  {% endif %}
   {% if campaign.status != "draft" %}
   <section class="section" aria-labelledby="campaign-summary">
     <div class="section-header">
@@ -305,7 +280,7 @@
           {% endfor %}
         </select>
       </div>
-      <button type="submit">Apply</button>
+      <button class="secondary" type="submit">Apply</button>
       {% if active_filter or recipient_query %}
         <a class="button secondary" href="{% url 'mailing:campaign_detail' campaign.id %}">Clear</a>
       {% endif %}
