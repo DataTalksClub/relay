@@ -2302,10 +2302,18 @@ pre {
 
   input,
   select,
+  /* Controls stay content-width on phones — the reference keeps bordered,
+     content-width buttons in the header and top bar; only stacked-form
+     footers and record actions go full-width. */
   textarea,
+  select,
+  input:not([type="checkbox"]):not([type="radio"]) {
+    width: 100%;
+  }
+
   button,
   .button {
-    width: 100%;
+    width: auto;
   }
 
   input[type="checkbox"],
