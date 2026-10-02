@@ -579,6 +579,11 @@ summary:focus-visible,
   margin: var(--dk-space-4) 0 var(--dk-space-6);
 }
 
+/* Panels composed side by side (board columns) own no page-flow margins. */
+.detail-grid > .panel {
+  margin: 0;
+}
+
 /* Identity metadata renders as one segmented strip: a single bordered
    container whose cells are divided by hairlines (the dataops count-strip
    pattern), not as separate cards. Cells carry right/bottom hairlines pulled
@@ -937,6 +942,7 @@ a.stat-link:focus {
 /* Content surfaces sit flush inside a panel: the panel owns the border and
    the radius, the inner strip/table/list drops both. */
 .panel > .stats-grid,
+.panel > .meta-grid,
 .panel > .table-wrap,
 .panel > .timeline,
 .panel > .compact-list {
