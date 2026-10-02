@@ -1,6 +1,6 @@
 from django.urls import path
 
-from mailing import ops_views, views
+from mailing import ops_views, transfer_views, views
 
 app_name = "mailing"
 
@@ -9,6 +9,8 @@ urlpatterns = [
     path("health/", views.health, name="health"),
     path("health/ready", views.readiness, name="readiness"),
     path("internal/ops/status", ops_views.status, name="taskdeck_status"),
+    path("internal/transfer/export", transfer_views.transfer_export, name="transfer_export"),
+    path("internal/transfer/load", transfer_views.transfer_load, name="transfer_load"),
     path("campaigns/", views.campaign_list, name="campaign_list"),
     path("campaigns/new/", views.campaign_create, name="campaign_create"),
     path("campaigns/<int:campaign_id>/", views.campaign_detail, name="campaign_detail"),
@@ -145,6 +147,16 @@ urlpatterns = [
         name="api_request_verification",
     ),
     path("api/subscriptions/confirm", views.api_confirm, name="api_confirm"),
+    path(
+        "api/public/lists/<slug:list_key>/subscribe",
+        views.api_public_subscribe,
+        name="api_public_subscribe",
+    ),
+    path(
+        "api/public/lists/<slug:list_key>/confirm",
+        views.api_public_confirm,
+        name="api_public_confirm",
+    ),
     path("api/recipient-lists/<str:list_key>", views.api_recipient_list, name="api_recipient_list"),
     path(
         "api/recipient-lists/<str:list_key>/members",

@@ -20,9 +20,8 @@ The environment selects the CloudWatch log group, the web listener address,
 the release health check, and the environment-specific bootstrap of
 /etc/relay/runtime.env. Sandbox keeps a local PostgreSQL container and Caddy;
 production uses the RDS database and the shared load balancer, publishes the
-web container on all interfaces, starts no PostgreSQL or Caddy, drains the
-inbound mail queue against RDS rather than a local database, and gives every
-container an explicit memory limit.
+web container on all interfaces, starts no PostgreSQL or Caddy, no inbound
+mail ingress, and gives every container an explicit memory limit.
 HELP
 }
 
@@ -191,6 +190,18 @@ if [[ "$environment" == sandbox ]]; then
   set_runtime_value AWS_SES_REGION us-east-1
   set_runtime_value AWS_SES_CONFIGURATION_SET datamailer-sandbox
   set_runtime_value RELAY_SES_MAX_SEND_RATE 14
+  set_runtime_value RELAY_PUBLIC_LISTS 'pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/'
+  set_runtime_value RELAY_PUBLIC_SUBSCRIBE_ORIGINS 'https://pocketshell.io,https://www.pocketshell.io,http://localhost:4000,http://127.0.0.1:4000'
+else
+  sandbox_role="$(sed -n 's/^RELAY_SANDBOX_EMAIL_SEND_ROLE_ARN=//p' "$infra_env")"
+  if [[ -n "$sandbox_role" ]]; then
+    set_runtime_value RELAY_SES_DOMAIN_ROUTES "dtcdev.click role=${sandbox_role} region=us-east-1 configuration_set=datamailer-sandbox;pocketshell.io role=${sandbox_role} region=us-east-1 configuration_set=datamailer-sandbox"
+  fi
+  set_runtime_value RELAY_PUBLIC_LISTS 'pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/'
+  set_runtime_value RELAY_PUBLIC_SUBSCRIBE_ORIGINS 'https://pocketshell.io,https://www.pocketshell.io,http://localhost:4000,http://127.0.0.1:4000'
+  if ! grep -q '^RELAY_TRANSFER_TOKEN=.' "$runtime_env"; then
+    set_runtime_value RELAY_TRANSFER_TOKEN "$(openssl rand -hex 32)"
+  fi
 fi
 
 grep -q '^RELAY_EMAIL_SEND_ROLE_ARN=' "$infra_env" || {
@@ -214,7 +225,7 @@ if git -C "$app_dir" remote get-url origin >/dev/null 2>&1; then
 else
   git -C "$app_dir" remote add origin https://github.com/DataTalksClub/relay.git
 fi
-git -C "$app_dir" fetch --prune origin main
+git -C "$app_dir" fetch --prune origin "$release"
 git -C "$app_dir" checkout --force "$release"
 git -C "$app_dir" clean -ffd -e .env
 
@@ -244,16 +255,10 @@ set_memory_args() {
     relay-web) memory_args=(--memory 384m) ;;
     relay-worker) memory_args=(--memory 512m) ;;
     relay-scheduler) memory_args=(--memory 96m) ;;
-    relay-ses-ingress) memory_args=(--memory 128m) ;;
+    relay-ses-ingress|relay-sandbox-ses-ingress|relay-sandbox-inbound-ingress) memory_args=(--memory 128m) ;;
     relay-cmp-callbacks) memory_args=(--memory 96m) ;;
     relay-client-callbacks) memory_args=(--memory 96m) ;;
     relay-recipient-imports) memory_args=(--memory 128m) ;;
-    # The inbound drain is bounded like every other container. It parses a
-    # message in memory and writes one row, so it needs no more than the SES
-    # ingress drain -- but it needs a limit at all: a container without one can
-    # still take a 2 GiB host down, and inbound is what was blamed for that
-    # last time.
-    relay-inbound-ingress) memory_args=(--memory 128m) ;;
   esac
 }
 
@@ -333,14 +338,27 @@ replace_container relay-scheduler "${app_container_args[@]}" \
 set_memory_args relay-ses-ingress
 replace_container relay-ses-ingress "${app_container_args[@]}" \
   python manage.py drain_sqs_ingress ses-webhooks --batch-size 10 --wait-time 20
-# The inbound drain runs in both environments. It is the same code path: poll,
-# hand each notification to the same task, delete. In production it writes to RDS
-# rather than to a local PostgreSQL, so a database that is briefly unreachable
-# makes the message fail and retry, which is the correct outcome -- the message
-# stays in the queue and the raw MIME stays in the bucket.
-set_memory_args relay-inbound-ingress
-replace_container relay-inbound-ingress "${app_container_args[@]}" \
-  python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20
+# Sandbox SES events and inbound mail stay in the sandbox account. Production
+# drains those queues too, with the host role granted on the queue policies.
+# Stop the sandbox host's copies of these drains before this deploy, or the
+# two consumers split the same messages.
+sandbox_ses_queue="$(sed -n 's/^SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL=//p' "$infra_env" || true)"
+sandbox_inbound_queue="$(sed -n 's/^SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL=//p' "$infra_env" || true)"
+if [[ -n "$sandbox_ses_queue" ]]; then
+  set_memory_args relay-sandbox-ses-ingress
+  replace_container relay-sandbox-ses-ingress "${app_container_args[@]}" \
+    python manage.py drain_sqs_ingress sandbox-ses-webhooks --batch-size 10 --wait-time 20
+fi
+if [[ -n "$sandbox_inbound_queue" ]]; then
+  set_memory_args relay-sandbox-inbound-ingress
+  replace_container relay-sandbox-inbound-ingress "${app_container_args[@]}" \
+    python manage.py drain_sqs_ingress sandbox-inbound-email --batch-size 10 --wait-time 20
+fi
+if [[ "$environment" == sandbox ]]; then
+  set_memory_args relay-inbound-ingress
+  replace_container relay-inbound-ingress "${app_container_args[@]}" \
+    python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20
+fi
 set_memory_args relay-cmp-callbacks
 replace_container relay-cmp-callbacks "${app_container_args[@]}" \
   python manage.py process_cmp_callbacks --batch-size 25 --idle-sleep 5
@@ -380,11 +398,16 @@ else
     relay-worker
     relay-scheduler
     relay-ses-ingress
-    relay-inbound-ingress
     relay-cmp-callbacks
     relay-client-callbacks
     relay-recipient-imports
   )
+fi
+if [[ -n "${sandbox_ses_queue:-}" ]]; then
+  required_containers+=(relay-sandbox-ses-ingress)
+fi
+if [[ -n "${sandbox_inbound_queue:-}" ]]; then
+  required_containers+=(relay-sandbox-inbound-ingress)
 fi
 
 for _ in $(seq 1 60); do
@@ -409,3 +432,4 @@ if [[ -n "$public_health_url" ]]; then
   curl --fail --show-error --silent --retry 20 --retry-delay 3 "$public_health_url"
 fi
 echo "Relay ${environment} deployed: ${release}"
+echo "containers: $(docker ps --format '{{.Names}}' | sort | tr '\n' ' ')"

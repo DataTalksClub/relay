@@ -1,0 +1,79 @@
+name: Load Relay production transfer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: eu-west-1
+  PROD_INSTANCE_ID: ${{ vars.RELAY_PRODUCTION_INSTANCE_ID }}
+  PROD_DEPLOY_ROLE_ARN: ${{ vars.RELAY_PRODUCTION_DEPLOY_ROLE_ARN || 'arn:aws:iam::387546586013:role/relay-production-github-deploy' }}
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    environment: production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Load the transfer archive on the host
+        env:
+          ARCHIVE_URL: ${{ secrets.RELAY_TRANSFER_ARCHIVE_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ARCHIVE_URL" ]]; then
+            echo "Set the RELAY_TRANSFER_ARCHIVE_URL secret to a short-lived archive URL." >&2
+            exit 1
+          fi
+          if [[ -z "$PROD_INSTANCE_ID" ]]; then
+            echo "Set the repository variable RELAY_PRODUCTION_INSTANCE_ID." >&2
+            exit 1
+          fi
+          archive_b64="$(printf '%s' "$ARCHIVE_URL" | base64 -w0)"
+          command_id=$(
+            aws ssm send-command \
+              --region "$AWS_REGION" \
+              --instance-ids "$PROD_INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --comment "Load Relay transfer archive" \
+              --timeout-seconds 900 \
+              --parameters "commands=[\"set -euo pipefail\",\"install -d -m 0700 /var/lib/relay/export\",\"url=\$(printf '%s' ${archive_b64} | base64 -d)\",\"curl --fail --location --silent --show-error --retry 5 --retry-delay 2 \\\"\$url\\\" -o /var/lib/relay/export/transfer.tgz\",\"tar -C /var/lib/relay/export -xzf /var/lib/relay/export/transfer.tgz\",\"python3 /opt/relay/scripts/load_transfer_archive.py\",\"rm -f /var/lib/relay/export/transfer.tgz\"]" \
+              --query 'Command.CommandId' \
+              --output text
+          )
+          for _ in $(seq 1 180); do
+            status=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$command_id" \
+              --instance-id "$PROD_INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || true)
+            case "$status" in
+              Success)
+                aws ssm get-command-invocation \
+                  --region "$AWS_REGION" \
+                  --command-id "$command_id" \
+                  --instance-id "$PROD_INSTANCE_ID" \
+                  --query StandardOutputContent --output text
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                aws ssm get-command-invocation \
+                  --region "$AWS_REGION" \
+                  --command-id "$command_id" \
+                  --instance-id "$PROD_INSTANCE_ID" \
+                  --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}'
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo "Transfer load did not finish within 15 minutes" >&2
+          exit 1

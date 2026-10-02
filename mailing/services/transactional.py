@@ -198,15 +198,18 @@ def dry_run_response(rendered):
     }
 
 
-def request_category_verification_for_client(data, authenticated_client):
+def request_category_verification_for_client(data, authenticated_client, *, confirm_base_url=None):
     """Start the double opt-in flow for one canonical category.
 
     Validates the scope and category, fails closed unless the named
     transactional template exists and is owned by the authenticated client,
     then enqueues a verification message through that template. The message
-    context carries a confirm_url built from ``SUBSCRIPTION_CONFIRM_BASE_URL``
-    plus an opaque signed token; the token itself is stateless, so no model or
-    migration is involved. The raw token is returned only inside the message.
+    context carries a confirm_url built from ``confirm_base_url`` or
+    ``SUBSCRIPTION_CONFIRM_BASE_URL`` plus an opaque signed token; the token
+    itself is stateless, so no model or migration is involved. The raw token
+    is returned only inside the message. Callers must not take
+    ``confirm_base_url`` from a request body: it decides where the recipient
+    is sent.
     """
     scope = validate_contact_scope(data, authenticated_client)
     category = validate_canonical_category(data.get("category"))
@@ -230,7 +233,7 @@ def request_category_verification_for_client(data, authenticated_client):
             "email": scope.email,
             "template_key": template.key,
             "context": {
-                "confirm_url": subscription_confirm_url(token),
+                "confirm_url": subscription_confirm_url(token, base=confirm_base_url),
                 "verification_token": token,
                 "category": category,
             },

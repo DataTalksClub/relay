@@ -39,13 +39,16 @@ def category_label(category):
     return category.replace("-", " ").title()
 
 
-def subscription_confirm_url(token):
+def subscription_confirm_url(token, base=None):
     """Build the double opt-in confirm link for the site's public landing page.
 
-    ``SUBSCRIPTION_CONFIRM_BASE_URL`` is the landing page URL without the
-    token query parameter; the token is always appended as ``token=...`` so a
-    raw email never appears in the URL.
+    ``base`` overrides ``SUBSCRIPTION_CONFIRM_BASE_URL`` for one list. The
+    token is always appended as ``token=...`` so a raw email never appears
+    in the URL.
     """
-    base = settings.SUBSCRIPTION_CONFIRM_BASE_URL.rstrip("/")
-    separator = "&" if "?" in base else "?"
-    return f"{base}{separator}token={quote(token, safe='')}"
+    chosen = (base if base is not None else settings.SUBSCRIPTION_CONFIRM_BASE_URL).strip()
+    if not chosen:
+        chosen = settings.PUBLIC_BASE_URL
+    chosen = chosen.rstrip("/")
+    separator = "&" if "?" in chosen else "?"
+    return f"{chosen}{separator}token={quote(token, safe='')}"
