@@ -1,13 +1,9 @@
 {% extends "base.html" %}
 
 {% block title %}{{ client.name }} | Datamailer{% endblock %}
+  {% block topbar_title %}{{ client.name }}{% endblock %}
 
 {% block content %}
-  <nav class="breadcrumbs" aria-label="Breadcrumb">
-    <a href="{% url 'mailing:client_list' %}">Clients</a>
-    <span>/</span>
-    <span>{{ client.name }}</span>
-  </nav>
   <div class="page-header">
     <div>
       <h1>{{ client.name }}</h1>
@@ -36,7 +32,7 @@
           {% csrf_token %}
           <input type="hidden" name="client_id" value="{{ client.id }}">
           <input type="hidden" name="next" value="{% url 'mailing:dashboard' %}">
-          <button type="submit">Use client</button>
+          <button class="secondary" type="submit">Use client</button>
         </form>
       {% endif %}
       <a class="button secondary" href="{% url 'mailing:client_edit' client.id %}">Edit client</a>
@@ -52,8 +48,8 @@
       <div>Copy this now. Datamailer stores only the hash and will not show the raw key again.</div>
     </div>
   {% endif %}
-  <section class="detail-section" aria-labelledby="client-summary">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="client-summary">
+    <div class="panel-header">
       <div>
         <h2 id="client-summary">Integration summary</h2>
         <p class="muted">Identity and key health for this external integration.</p>
@@ -73,7 +69,7 @@
         <span class="stat-label">Client state</span>
       </div>
     </div>
-    <div class="detail-grid">
+    <div class="meta-grid">
       <div class="meta-item"><span class="meta-label">Organization</span>{{ client.organization.name }}</div>
       <div class="meta-item"><span class="meta-label">Slug</span><code>{{ client.slug }}</code></div>
       <div class="meta-item"><span class="meta-label">Default sender ID</span>{{ client.default_sender_id|default:"-" }}</div>
@@ -93,8 +89,8 @@
       <div class="meta-item"><span class="meta-label">Updated</span>{{ client.updated_at|date:"Y-m-d H:i" }}</div>
     </div>
   </section>
-  <section class="detail-section" aria-labelledby="cmp-callbacks">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="cmp-callbacks">
+    <div class="panel-header">
       <div>
         <h2 id="cmp-callbacks">CMP callbacks</h2>
         <p class="muted">Recent callback delivery attempts for this client.</p>
@@ -142,8 +138,8 @@
       </div>
     {% endif %}
   </section>
-  <section class="detail-section" aria-labelledby="client-callbacks">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="client-callbacks">
+    <div class="panel-header">
       <div>
         <h2 id="client-callbacks">Client callbacks</h2>
         <p class="muted">Recent signed callback delivery attempts for this client.</p>
@@ -193,8 +189,8 @@
       </div>
     {% endif %}
   </section>
-  <section class="detail-section" aria-labelledby="mailchimp">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="mailchimp">
+    <div class="panel-header">
       <div>
         <h2 id="mailchimp">Mailchimp sync</h2>
         <p class="muted">One-way push of tagged contacts into this client's Mailchimp audience.</p>
@@ -232,7 +228,7 @@
           <label>{{ editor.audience.name }} <span class="muted">({{ editor.audience.slug }}) — {{ editor.count }} mapping{{ editor.count|pluralize }}</span></label>
           <textarea name="mappings" rows="4" placeholder="ai-dev-tools-zoomcamp-2026:@registered = ai-dev-tools-zoomcamp-2026">{{ editor.mappings_text }}</textarea>
           <div class="action-row">
-            <button type="submit">Save mappings for {{ editor.audience.slug }}</button>
+            <button class="secondary" type="submit">Save mappings for {{ editor.audience.slug }}</button>
           </div>
         </form>
       {% empty %}
@@ -284,15 +280,15 @@
       {% endif %}
     </div>
   </section>
-  <section class="detail-section" aria-labelledby="api-keys">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="api-keys">
+    <div class="panel-header">
       <div>
         <h2 id="api-keys">API keys</h2>
         <p class="muted">Named credentials for this integration. Prefixes are safe to display; raw keys are shown once on creation.</p>
       </div>
     </div>
     {% if api_keys %}
-      <div class="table-wrap api-key-table">
+      <div class="table-wrap api-key-table stack-table">
         <table>
           <thead>
             <tr>
@@ -308,24 +304,24 @@
           <tbody>
             {% for api_key in api_keys %}
               <tr>
-                <td>
+                <td data-label="Key and purpose">
                   <strong>{{ api_key.name }}</strong>
                   <div class="muted truncate">
                     {% if api_key.notes %}{{ api_key.notes }}{% else %}No notes recorded.{% endif %}
                   </div>
                 </td>
-                <td><code>{{ api_key.display_prefix }}</code></td>
-                <td>
+                <td data-label="Safe prefix"><code>{{ api_key.display_prefix }}</code></td>
+                <td data-label="State">
                   {% if api_key.revoked_at %}
                     <span class="badge danger">Revoked</span>
                   {% else %}
                     <span class="badge success">Active</span>
                   {% endif %}
                 </td>
-                <td>{{ api_key.created_at|date:"Y-m-d H:i" }}</td>
-                <td>{% if api_key.last_used_at %}{{ api_key.last_used_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">Never</span>{% endif %}</td>
-                <td>{% if api_key.revoked_at %}{{ api_key.revoked_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">-</span>{% endif %}</td>
-                <td>
+                <td data-label="Created">{{ api_key.created_at|date:"Y-m-d H:i" }}</td>
+                <td data-label="Last used">{% if api_key.last_used_at %}{{ api_key.last_used_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">Never</span>{% endif %}</td>
+                <td data-label="Revoked">{% if api_key.revoked_at %}{{ api_key.revoked_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td data-label="Action">
                   {% if not api_key.revoked_at %}
                     <form method="post" action="{% url 'mailing:client_api_key_revoke' client.id api_key.id %}">
                       {% csrf_token %}
@@ -356,13 +352,13 @@
       <form method="post" action="{% url 'mailing:client_api_key_create' client.id %}" class="form-stack">
         {% include "mailing/operator/_form_fields.html" with form=key_form %}
         <div class="actions">
-          <button type="submit">Create API key</button>
+          <button class="secondary" type="submit">Create API key</button>
         </div>
       </form>
     </div>
   </section>
-  <section class="detail-section secondary-section" aria-labelledby="audit">
-    <div class="section-header">
+  <section class="detail-section panel" aria-labelledby="audit">
+    <div class="panel-header">
       <div>
         <h2 id="audit">Audit</h2>
         <p class="muted">Recent operator changes for this client.</p>

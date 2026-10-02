@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 
 {% block title %}API Docs | Datamailer{% endblock %}
+  {% block topbar_title %}API docs{% endblock %}
 
 {% block content %}
   <div class="page-header api-docs-header">
     <div>
-      <p class="breadcrumbs"><a href="{% url 'mailing:dashboard' %}">Dashboard</a> / API Docs</p>
       <h1>API Docs</h1>
       <p>Runnable Datamailer API workflows for staff and client developers. Examples use seeded demo keys, final <code>/api/...</code> paths, and a configurable default base URL of <code>{{ docs_base_url }}</code>.</p>
     </div>
     <div class="actions">
-      <a class="button" href="{% url openapi_json_url %}">OpenAPI JSON</a>
+      <a class="button secondary" href="{% url openapi_json_url %}">OpenAPI JSON</a>
       <a class="button secondary" href="{% url 'mailing:client_list' %}">Client key management</a>
     </div>
   </div>
@@ -28,8 +28,8 @@
     </aside>
 
     <div class="api-docs-main">
-      <section class="section api-docs-setup" aria-labelledby="auth">
-        <div class="section-header">
+      <section class="section panel api-docs-setup" aria-labelledby="auth">
+        <div class="panel-header">
           <div>
             <h2 id="auth">Setup and Authentication</h2>
             <p>Relay management uses separate admin keys and <code>/api/admin/</code> endpoints. <a href="{% url 'mailing:admin_api_keys' %}">Manage admin API keys</a>. Admin keys can run these client workflows under <code>/api/admin/clients/{client_id}/</code>; choose the client explicitly.</p>
@@ -51,9 +51,9 @@
           </div>
         </div>
 
-        <div class="api-key-grid">
+        <div class="compact-list api-key-list">
           {% for key in demo_api_keys %}
-            <div class="api-key-panel">
+            <div class="compact-row">
               <div class="compact-row-main">
                 <span class="badge neutral">{{ key.client }}</span>
                 <strong>{{ key.name }}</strong>
@@ -73,8 +73,8 @@
       </section>
 
       {% for group in workflow_examples %}
-        <section class="section api-workflow-section" aria-labelledby="workflow-{{ forloop.counter }}">
-          <div class="section-header">
+        <section class="section panel api-workflow-section" aria-labelledby="workflow-{{ forloop.counter }}">
+          <div class="panel-header">
             <div>
               <h2 id="workflow-{{ forloop.counter }}">{{ group.section }}</h2>
             </div>
@@ -129,17 +129,19 @@
         </section>
       {% endfor %}
 
-      <section class="section" aria-labelledby="common-errors">
-        <div class="section-header">
+      <section class="section panel" aria-labelledby="common-errors">
+        <div class="panel-header">
           <div>
             <h2 id="common-errors">Common Errors</h2>
             <p>All client API errors return JSON. Validation failures include field-level details; auth and scope failures do not expose key internals.</p>
           </div>
         </div>
-        <div class="detail-grid">
-          <div class="summary-panel">
-            <span class="badge danger">401</span>
-            <h3>Authentication failed</h3>
+        <div class="compact-list error-list">
+          <div class="compact-row">
+            <div class="compact-row-main">
+              <span class="badge danger">401</span>
+              <h3>Authentication failed</h3>
+            </div>
             <pre><code>{
   "error": {
     "code": "invalid_api_key",
@@ -147,9 +149,11 @@
   }
 }</code></pre>
           </div>
-          <div class="summary-panel">
-            <span class="badge warning">403</span>
-            <h3>Client scope mismatch</h3>
+          <div class="compact-row">
+            <div class="compact-row-main">
+              <span class="badge warning">403</span>
+              <h3>Client scope mismatch</h3>
+            </div>
             <pre><code>{
   "error": {
     "code": "validation_error",
@@ -157,9 +161,11 @@
   }
 }</code></pre>
           </div>
-          <div class="summary-panel">
-            <span class="badge neutral">405</span>
-            <h3>Wrong method</h3>
+          <div class="compact-row">
+            <div class="compact-row-main">
+              <span class="badge neutral">405</span>
+              <h3>Wrong method</h3>
+            </div>
             <pre><code>{
   "error": {
     "code": "method_not_allowed",
@@ -170,15 +176,15 @@
         </div>
       </section>
 
-      <section class="section" aria-labelledby="endpoint-reference">
-        <div class="section-header">
+      <section class="section panel" aria-labelledby="endpoint-reference">
+        <div class="panel-header">
           <div>
             <h2 id="endpoint-reference">Endpoint Reference</h2>
             <p>Implemented routes only. Public tracking, unsubscribe, and provider webhook routes are included for integration context; client application endpoints under <code>/api</code> use Bearer authentication.</p>
           </div>
         </div>
         {% for group in endpoint_groups %}
-          <section class="detail-section" aria-labelledby="endpoint-group-{{ forloop.counter }}">
+          <div class="secondary-section endpoint-group">
             <h3 id="endpoint-group-{{ forloop.counter }}">{{ group.name }}</h3>
             <div class="table-wrap">
               <table>
@@ -200,7 +206,7 @@
                 </tbody>
               </table>
             </div>
-          </section>
+          </div>
         {% endfor %}
       </section>
     </div>

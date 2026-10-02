@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Clients | Datamailer{% endblock %}
+  {% block topbar_title %}Clients{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -11,7 +12,12 @@
     <a class="button" href="{% url 'mailing:client_create' %}">Create client</a>
   </div>
   {% if clients.object_list %}
-    <div class="table-wrap client-table">
+    <section class="section panel" aria-labelledby="clients-table">
+      <div class="panel-header">
+        <h2 id="clients-table">All clients</h2>
+        <span class="muted">{{ clients.paginator.count }} integration{{ clients.paginator.count|pluralize }}</span>
+      </div>
+      <div class="table-wrap client-table stack-table">
       <table>
         <thead>
           <tr>
@@ -27,19 +33,19 @@
         <tbody>
           {% for client in clients %}
             <tr>
-              <td class="integration-cell">
+              <td class="integration-cell" data-label="Integration">
                 <a href="{% url 'mailing:client_detail' client.id %}"><strong>{{ client.name }}</strong></a>
                 <div class="muted truncate">{{ client.slug }}</div>
               </td>
-              <td class="truncate">{{ client.organization.name }}</td>
-              <td>
+              <td class="truncate" data-label="Organization">{{ client.organization.name }}</td>
+              <td data-label="Client status">
                 {% if client.is_active %}
                   <span class="badge success">Active</span>
                 {% else %}
                   <span class="badge danger">Inactive</span>
                 {% endif %}
               </td>
-              <td>
+              <td data-label="API keys">
                 <div class="badge-row">
                   {% if client.active_key_count %}
                     <span class="badge success">{{ client.active_key_count }} active</span>
@@ -51,15 +57,15 @@
                   {% endif %}
                 </div>
               </td>
-              <td class="nowrap">
+              <td class="nowrap" data-label="Last used">
                 {% if client.latest_key_used_at %}
                   {{ client.latest_key_used_at|date:"Y-m-d H:i" }}
                 {% else %}
                   <span class="muted">Never</span>
                 {% endif %}
               </td>
-              <td class="nowrap">{{ client.updated_at|date:"Y-m-d H:i" }}</td>
-              <td>
+              <td class="nowrap" data-label="Updated">{{ client.updated_at|date:"Y-m-d H:i" }}</td>
+              <td data-label="Actions">
                 <div class="actions">
                   {% if operator_active_client and operator_active_client.id == client.id %}
                     <span class="badge success">Current</span>
@@ -80,10 +86,12 @@
       </table>
     </div>
     {% include "mailing/operator/_pagination.html" with page_obj=clients querystring=pagination_querystring %}
+    </section>
   {% else %}
     <div class="empty-state">
-      <strong>No clients found.</strong>
-      <div class="muted">Create a client before issuing named API keys for an integration.</div>
+      <span class="badge neutral">Empty</span>
+      <p><strong>No clients found.</strong> Create a client before issuing named API keys for an integration.</p>
+      <a class="button secondary" href="{% url 'mailing:client_create' %}">Create client</a>
     </div>
   {% endif %}
 {% endblock %}

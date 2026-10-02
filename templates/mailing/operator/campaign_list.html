@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Campaigns | Datamailer{% endblock %}
+  {% block topbar_title %}Campaigns{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -16,14 +17,12 @@
   </div>
 
   {% if campaigns.object_list %}
-    <section class="section" aria-labelledby="campaigns-table">
-      <div class="section-header">
-        <div>
-          <h2 id="campaigns-table">Campaigns</h2>
-          <p class="muted">Scan current state, audience, send timing, and delivery signals.</p>
-        </div>
+    <section class="section panel" aria-labelledby="campaigns-table">
+      <div class="panel-header">
+        <h2 id="campaigns-table">All campaigns</h2>
+        <span class="muted">{{ campaigns.paginator.count }} campaign{{ campaigns.paginator.count|pluralize }}</span>
       </div>
-      <div class="table-wrap campaign-table">
+      <div class="table-wrap campaign-table stack-table">
         <table>
           <thead>
             <tr>
@@ -39,7 +38,7 @@
             {% for row in campaign_rows %}
               {% with campaign=row.campaign %}
               <tr>
-                <td class="truncate">
+                <td class="truncate" data-label="Campaign">
                   <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject }}</a>
                   <div class="helptext">
                     {{ active_client.name }}
@@ -48,16 +47,16 @@
                     {% endif %}
                   </div>
                 </td>
-                <td><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
-                <td class="truncate">
+                <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
+                <td class="truncate" data-label="Audience">
                   <a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a>
                 </td>
-                <td class="nowrap">
+                <td class="nowrap" data-label="Send time">
                   {{ row.timing_value|date:"Y-m-d H:i"|default:"-" }}
                   <div class="helptext">{{ row.timing_label }}</div>
                 </td>
-                <td class="nowrap">{{ campaign.recipient_count }}</td>
-                <td class="nowrap">
+                <td class="nowrap" data-label="Recipients">{{ campaign.recipient_count }}</td>
+                <td class="nowrap" data-label="Delivery">
                   {{ campaign.sent_count }} sent / {{ campaign.delivered_count }} delivered
                   <div class="helptext">{{ campaign.bounce_count }} bounces / {{ campaign.complaint_count }} complaints</div>
                 </td>
@@ -71,8 +70,8 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <strong>No campaigns yet</strong>
-      <p>Create a campaign draft when an audience is ready for a broadcast send.</p>
+      <span class="badge neutral">Empty</span>
+      <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a broadcast send.</p>
       <a class="button secondary" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
     </div>
   {% endif %}

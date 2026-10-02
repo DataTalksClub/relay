@@ -1,26 +1,19 @@
 {% extends "base.html" %}
 
-{% block title %}{{ campaign.subject }} | Datamailer{% endblock %}
+{% block title %}{{ campaign.subject|default:"Untitled draft" }} | Relay{% endblock %}
+  {% block topbar_title %}{{ campaign.subject }}{% endblock %}
 
 {% block content %}
-  <nav class="breadcrumbs" aria-label="Breadcrumb">
-    <a href="{% url 'mailing:campaign_list' %}">Campaigns</a>
-    <span>/</span>
-    <span>{{ campaign.subject }}</span>
-  </nav>
-
   <div class="page-header">
     <div>
-      <h1>{{ campaign.subject }}</h1>
-      <p>{{ campaign.client.name }} / {{ campaign.audience.name }}</p>
+      <h1>{{ campaign.subject|default:"Untitled draft" }}</h1>
+      <p>{{ campaign.audience.name }} audience</p>
       <div class="badge-row">
         <span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>
         {% if campaign.sent_at %}
           <span class="badge success">Sent {{ campaign.sent_at|date:"Y-m-d H:i" }}</span>
-        {% elif campaign.scheduled_at %}
-          <span class="badge warning">Scheduled {{ campaign.scheduled_at|date:"Y-m-d H:i" }}</span>
-        {% else %}
-          <span class="badge neutral">No send time</span>
+        {% elif campaign.status == "draft" %}
+          <span class="badge neutral">Not sent</span>
         {% endif %}
       </div>
     </div>
@@ -30,33 +23,65 @@
         <a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>
       {% endif %}
       {% if can_queue %}
-        <a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Queue send</a>
+        <a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Review and send</a>
       {% endif %}
     </div>
   </div>
 
-  {% if confirm_queue and estimate %}
-    <section class="section" aria-labelledby="queue-confirmation">
-      <div class="section-header">
-        <div>
-          <h2 id="queue-confirmation">Queue this send?</h2>
-          <p class="muted">
-            Queue send to approximately {{ estimate.recipient_count }} recipient{{ estimate.recipient_count|pluralize }}.
-            {{ estimate.skipped_count }} contact{{ estimate.skipped_count|pluralize }} will be skipped.
-          </p>
-        </div>
+  {% if campaign.status == "queued" or campaign.status == "sending" or campaign.status == "snapshotting" %}<p role="status">Sending is in progress. Follow waiting recipients and results below; provider acceptance does not confirm delivery.</p>{% elif campaign.status == "cancelled" %}<p>Campaign cancelled. It will not send further pending recipients.</p>{% elif campaign.status == "failed" %}<p class="form-errors">Sending needs attention. Inspect failed recipients below before taking any recovery action.</p>{% endif %}
+  <nav class="local-nav" aria-label="Campaign stages">
+    {% if can_edit %}<a href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a>{% endif %}
+    {% if can_edit %}<a href="#draft-readiness" {% if campaign.status == "draft" %}aria-current="step"{% endif %}>3. Review</a>{% endif %}
+    {% if campaign.status != "draft" %}<a href="#campaign-stats" aria-current="step">Results</a><a href="#campaign-recipients">Recipients</a>{% endif %}
+  </nav>
+  {% if campaign.status == "draft" %}
+    <section class="section panel" aria-labelledby="draft-readiness">
+      <div class="panel-header"><div><h2 id="draft-readiness">3. Review before sending</h2><p>Check the audience and message below. Nothing is sent until you confirm.</p></div></div>
+      {% if send_issues %}
+        <div class="form-errors"><strong>This draft needs attention:</strong><ul>{% for issue in send_issues %}<li>{{ issue }}</li>{% endfor %}</ul></div>
+        <a class="button" href="{% url 'mailing:campaign_edit' campaign.id %}">Complete draft</a>
+      {% else %}
+        <p><strong>{{ estimate.recipient_count }} eligible recipient{{ estimate.recipient_count|pluralize }}</strong> in {{ campaign.audience.name }} for {{ campaign.client.name }}. {{ estimate.skipped_count }} excluded by sending policy; {{ estimate.tag_filtered_count }} excluded by tags.</p>
+      {% endif %}
+        <div class="meta-grid">
+        <div class="meta-item"><span class="meta-label">Subject</span>{{ campaign.subject|default:"Not added yet" }}</div>
+        <div class="meta-item"><span class="meta-label">From</span>{{ campaign_sender }}</div>
+        <div class="meta-item"><span class="meta-label">When</span>Send now after confirmation. Automatic scheduling is unavailable.</div>
       </div>
+    </section>
+  {% endif %}
+
+  {% if campaign.status != "draft" %}<details class="secondary-section"><summary>View campaign message and test preview</summary>{% endif %}
+  <section class="section panel" aria-labelledby="campaign-message-preview">
+    <div class="panel-header"><div><h2 id="campaign-message-preview">Message preview</h2><p>Rendered email with tracking and unsubscribe links. Preview links use sample tokens. Check email-client compatibility separately.</p></div></div>
+    {% if preview_error %}<div class="form-errors">{{ preview_error }}</div>
+    {% elif rendered_preview %}
+      {% if campaign.preview_text %}<p><strong>Inbox preview:</strong> {{ campaign.preview_text }}</p>{% endif %}
+      {% if campaign.html_body %}{% include "mailing/operator/_preview_sizes.html" %}<iframe class="email-preview-frame" title="Campaign email preview" sandbox="" referrerpolicy="no-referrer" srcdoc="{{ rendered_preview.html_body|force_escape }}"></iframe>{% endif %}
+      {% if campaign.text_body %}<details class="inline-details"{% if not campaign.html_body %} open{% endif %}><summary>Plain-text email</summary><pre>{{ rendered_preview.text_body|force_escape }}</pre></details>{% endif %}
+      {% if not campaign.html_body and not campaign.text_body %}<p class="empty-state">No message content yet. Complete the draft to see a preview.</p>{% endif %}
+    {% else %}<p class="empty-state">No message content yet.</p>{% endif %}
+  </section>
+
+  {% if confirm_queue and estimate and not send_issues %}
+    <section class="section panel" aria-labelledby="queue-confirmation">
+      <div class="panel-header"><div><h2 id="queue-confirmation">Send this campaign now?</h2><p>{{ estimate.recipient_count }} recipient{{ estimate.recipient_count|pluralize }} will be queued for sending. Eligibility is checked again when you confirm. Queue acceptance does not mean delivery.</p></div></div>
       <form class="toolbar" method="post" action="{% url 'mailing:campaign_queue' campaign.id %}">
         {% csrf_token %}
+        <input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
         <input type="hidden" name="confirm" value="1">
-        <button type="submit">Send campaign</button>
+        <input type="hidden" name="reviewed_recipient_count" value="{{ estimate.recipient_count }}">
+        <button type="submit">Send to {{ estimate.recipient_count }} recipient{{ estimate.recipient_count|pluralize }} now</button>
+        <a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Return to editing</a>
         <a class="button secondary" href="{% url 'mailing:campaign_detail' campaign.id %}">Cancel</a>
       </form>
     </section>
   {% endif %}
 
-  <section class="section" aria-labelledby="campaign-summary">
-    <div class="section-header">
+  {% if campaign.status != "draft" %}</details>{% endif %}
+  {% if campaign.status != "draft" %}
+  <section class="section panel" aria-labelledby="campaign-summary">
+    <div class="panel-header">
       <div>
         <h2 id="campaign-summary">Summary</h2>
         <p class="muted">Identity, queue state, audience, and send timing.</p>
@@ -66,50 +91,62 @@
       <div class="meta-item"><span class="meta-label">Status</span><span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span></div>
       <div class="meta-item"><span class="meta-label">Client</span>{{ campaign.client.name }}</div>
       <div class="meta-item"><span class="meta-label">Audience</span><a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a></div>
-      <div class="meta-item"><span class="meta-label">Scheduled</span>{{ campaign.scheduled_at|date:"Y-m-d H:i"|default:"-" }}</div>
       <div class="meta-item"><span class="meta-label">Sent</span>{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
       <div class="meta-item"><span class="meta-label">Recipients selected</span>{{ campaign.recipient_count }}</div>
     </div>
   </section>
 
+  {% endif %}
+
   {% if campaign.status != "draft" %}
-    <section class="section" aria-labelledby="campaign-stats">
-      <div class="section-header">
+    <section class="section panel" aria-labelledby="campaign-stats">
+      <div class="panel-header">
         <div>
           <h2 id="campaign-stats">Stats</h2>
-          <p class="muted">Delivery and engagement rates use total recipients as the denominator.</p>
+          <p class="muted">Rates use selected recipients as the denominator. Counts overlap and are not an additive delivery funnel.</p>
         </div>
       </div>
       <div class="detail-grid">
-        <div class="campaign-stat-group">
-          <h3>Delivery</h3>
+        <section class="detail-section panel campaign-stat-group" aria-labelledby="stats-delivery">
+          <div class="panel-header">
+            <h3 id="stats-delivery">Delivery</h3>
+          </div>
           <div class="stats-grid">
             {% for stat in stat_groups.delivery %}
               <div class="stat">
                 <span class="stat-label">{{ stat.label }}</span>
+                {% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
                 <span class="stat-value">{{ stat.value }}</span>
                 {% if stat.rate %}<span class="muted">{{ stat.rate }}</span>{% endif %}
               </div>
             {% endfor %}
           </div>
-        </div>
-        <div class="campaign-stat-group">
-          <h3>Engagement</h3>
+        </section>
+        <section class="detail-section panel campaign-stat-group" aria-labelledby="stats-engagement">
+          <div class="panel-header">
+            <h3 id="stats-engagement">Engagement</h3>
+          </div>
           <div class="stats-grid">
             {% for stat in stat_groups.engagement %}
               <div class="stat">
                 <span class="stat-label">{{ stat.label }}</span>
+                {% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
                 <span class="stat-value">{{ stat.value }}</span>
                 {% if stat.rate %}<span class="muted">{{ stat.rate }}</span>{% endif %}
               </div>
             {% endfor %}
           </div>
-        </div>
+        </section>
       </div>
     </section>
 
-    <section class="section" aria-labelledby="send-progress">
-      <div class="section-header">
+    <details class="secondary-section"><summary>What do these numbers mean?</summary>
+      <p>Sent counts recipients currently in the Sent state; later bounces, complaints, or unsubscribes can reduce it. Delivered counts recorded delivery confirmations, which remain after later events. Delivery confirmation means the receiving server accepted the email, not that it reached the inbox.</p>
+      <p>Unique opens and clicks count recipients with recorded tracking events. Tracked opens are imperfect: privacy protections and automated image loading can create or hide opens. Clicks can include automated scanners.</p>
+      <p>Queued means waiting for processing. Processed counts recipients with a terminal sending disposition, including failures, bounces, complaints, and unsubscribes, but excluding skipped recipients; it does not mean delivered.</p>
+    </details>
+    <section class="section panel" aria-labelledby="send-progress">
+      <div class="panel-header">
         <div>
           <h2 id="send-progress">Send progress</h2>
           <p class="muted">Queue state and worker throughput for this campaign.</p>
@@ -119,6 +156,7 @@
         {% for stat in stat_groups.progress %}
           <div class="stat">
             <span class="stat-label">{{ stat.label }}</span>
+                {% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
             <span class="stat-value">{{ stat.value }}</span>
             {% if stat.rate %}<span class="muted">{{ stat.rate }}</span>{% endif %}
           </div>
@@ -143,11 +181,11 @@
   {% endif %}
 
   {% if estimate %}
-    <section class="section" aria-labelledby="recipient-estimate">
-      <div class="section-header">
+    <section class="section panel" aria-labelledby="recipient-estimate">
+      <div class="panel-header">
         <div>
-          <h2 id="recipient-estimate">Queue Preview</h2>
-          <p class="muted">Estimated recipients before queueing this draft.</p>
+          <h2 id="recipient-estimate">Recipient review</h2>
+          <p class="muted">Counts reflect current subscriptions and sending policy; they may change before sending.</p>
         </div>
       </div>
       <div class="stats-grid">
@@ -160,7 +198,7 @@
           <span class="stat-value">{{ estimate.tag_filtered_count }}</span>
         </div>
         <div class="stat">
-          <span class="stat-label">Queueable</span>
+          <span class="stat-label">Eligible</span>
           <span class="stat-value">{{ estimate.recipient_count }}</span>
         </div>
         <div class="stat">
@@ -174,9 +212,14 @@
         <div class="meta-item"><span class="meta-label">Exclude tags</span>{{ campaign.exclude_tags|join:", "|default:"-" }}</div>
       </div>
 
+      </section>
+
       {% if estimate.skip_reason_counts %}
-        <h3>Skip reasons</h3>
-        <div class="table-wrap">
+        <section class="section panel" aria-labelledby="skip-reasons">
+          <div class="panel-header">
+            <h3 id="skip-reasons">Skip reasons</h3>
+          </div>
+          <div class="table-wrap">
           <table>
             <thead>
               <tr>
@@ -185,7 +228,7 @@
               </tr>
             </thead>
             <tbody>
-              {% for reason, count in estimate.skip_reason_counts.items %}
+              {% for reason, count in estimate.skip_reason_labels.items %}
                 <tr>
                   <td>{{ reason }}</td>
                   <td>{{ count }}</td>
@@ -193,12 +236,16 @@
               {% endfor %}
             </tbody>
           </table>
-        </div>
+          </div>
+        </section>
       {% endif %}
 
       {% if estimate.preview_rows %}
-        <h3>Preview</h3>
-        <div class="table-wrap">
+        <section class="section panel" aria-labelledby="sample-recipients">
+          <div class="panel-header">
+            <h3 id="sample-recipients">Sample recipients</h3>
+          </div>
+          <div class="table-wrap">
           <table>
             <thead>
               <tr>
@@ -208,28 +255,30 @@
               </tr>
             </thead>
             <tbody>
-              {% for row in estimate.preview_rows %}
+              {% for row in preview_rows %}
                 <tr>
-                  <td class="truncate">{{ row.email }}</td>
-                  <td><span class="badge">{{ row.status }}</span></td>
-                  <td>{{ row.skip_reason|default:"-" }}</td>
+                  <td class="truncate">{{ row.row.email }}</td>
+                  <td><span class="badge {{ row.tone }}">{{ row.row.status_label }}</span></td>
+                  <td>{{ row.row.skip_reason_label|default:"-" }}</td>
                 </tr>
               {% endfor %}
             </tbody>
           </table>
-        </div>
+          </div>
+        </section>
       {% endif %}
-    </section>
   {% endif %}
 
-  <section class="section" aria-labelledby="campaign-recipients">
-    <div class="section-header">
+  {% if campaign.status != "draft" %}
+  <section class="section panel" aria-labelledby="campaign-recipients">
+    <div class="panel-header">
       <div>
         <h2 id="campaign-recipients">Recipients</h2>
         <p class="muted">Recipients, delivery state, engagement, provider diagnostics, and errors.</p>
       </div>
     </div>
-    <form class="toolbar" method="get">
+    <form class="toolbar" method="get" action="#campaign-recipients">
+      <div><label for="recipient-query">Recipient email</label><input id="recipient-query" type="search" name="recipient_q" value="{{ recipient_query }}" placeholder="Search recipients"></div>
       <div>
         <label for="filter">Filter</label>
         <select id="filter" name="filter">
@@ -239,14 +288,14 @@
           {% endfor %}
         </select>
       </div>
-      <button type="submit">Apply</button>
-      {% if active_filter %}
+      <button class="secondary" type="submit">Apply</button>
+      {% if active_filter or recipient_query %}
         <a class="button secondary" href="{% url 'mailing:campaign_detail' campaign.id %}">Clear</a>
       {% endif %}
     </form>
 
     {% if recipients.object_list %}
-      <div class="table-wrap campaign-recipient-table">
+      <div class="table-wrap triage-table campaign-recipient-table">
         <table>
           <thead>
             <tr>
@@ -259,44 +308,44 @@
             </tr>
           </thead>
           <tbody>
-            {% for recipient in recipients %}
-              <tr id="recipient-{{ recipient.id }}">
-                <td class="email-cell">
-                  <a class="data-truncate" href="{% url 'mailing:contact_detail' recipient.contact.normalized_email %}" title="{{ recipient.email }}">{{ recipient.email }}</a>
+            {% for row in recipient_rows %}
+              <tr id="recipient-{{ row.recipient.id }}">
+                <td class="email-cell" data-label="Email">
+                  <a class="data-truncate" href="{% url 'mailing:contact_detail' row.recipient.contact.normalized_email %}" title="{{ row.recipient.email }}">{{ row.recipient.email }}</a>
                 </td>
-                <td><span class="badge">{{ recipient.get_status_display }}</span></td>
-                <td>
-                  <div class="nowrap">Sent: {{ recipient.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Delivered: {{ recipient.delivered_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  {% if recipient.skip_reason %}
-                    <div class="helptext">Skipped: {{ recipient.get_skip_reason_display }}</div>
+                <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
+                <td data-label="Delivery">
+                  <div class="nowrap">Sent: {{ row.recipient.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  <div class="nowrap">Delivered: {{ row.recipient.delivered_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  {% if row.recipient.skip_reason %}
+                    <div class="helptext">Skipped: {{ row.recipient.get_skip_reason_display }}</div>
                   {% endif %}
                 </td>
-                <td>
-                  <div class="nowrap">Opened: {{ recipient.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Clicked: {{ recipient.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="helptext">{{ recipient.open_count }} opens / {{ recipient.click_count }} clicks</div>
+                <td data-label="Engagement">
+                  <div class="nowrap">Opened: {{ row.recipient.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  <div class="nowrap">Clicked: {{ row.recipient.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  <div class="helptext">{{ row.recipient.open_count }} opens / {{ row.recipient.click_count }} clicks</div>
                 </td>
-                <td class="provider-cell">
-                  {% if recipient.ses_message_id or recipient.last_error %}
+                <td class="provider-cell" data-label="Provider data">
+                  {% if row.recipient.ses_message_id or row.recipient.last_error %}
                     <details class="inline-details">
                       <summary>Diagnostics</summary>
-                      {% if recipient.ses_message_id %}
-                        <span class="data-truncate" title="{{ recipient.ses_message_id }}">SES message ID: {{ recipient.ses_message_id }}</span>
+                      {% if row.recipient.ses_message_id %}
+                        <span class="data-truncate" title="{{ row.recipient.ses_message_id }}">SES message ID: {{ row.recipient.ses_message_id }}</span>
                       {% endif %}
-                      {% if recipient.last_error %}
-                        <span class="data-truncate helptext" title="{{ recipient.last_error }}">Error: {{ recipient.last_error }}</span>
+                      {% if row.recipient.last_error %}
+                        <span class="data-truncate helptext" title="{{ row.recipient.last_error }}">Error: {{ row.recipient.last_error }}</span>
                       {% endif %}
                     </details>
                   {% else %}
                     <span class="muted">None</span>
                   {% endif %}
                 </td>
-                <td>
-                  {% if recipient.status == "failed" %}
-                    <form method="post" action="{% url 'mailing:campaign_recipient_assume_sent' campaign.id recipient.id %}">
+                <td data-label="Actions">
+                  {% if row.recipient.status == "failed" %}
+                    <form method="post" action="{% url 'mailing:campaign_recipient_assume_sent' campaign.id row.recipient.id %}">
                       {% csrf_token %}
-                      <button type="submit" class="secondary" onclick="return confirm('Mark {{ recipient.email|escapejs }} as assumed sent without resending?');">Assume sent</button>
+                      <button type="submit" class="secondary" onclick="return confirm('Mark {{ row.recipient.email|escapejs }} as assumed sent without resending? This records an operator assumption, not confirmed delivery.');">Assume sent</button>
                     </form>
                   {% else %}
                     <span class="muted">-</span>
@@ -310,17 +359,18 @@
       {% include "mailing/operator/_pagination.html" with page_obj=recipients querystring=pagination_querystring %}
     {% else %}
       <div class="empty-state">
+        <span class="badge neutral">Empty</span>
         {% if active_filter %}
-          No recipients match this filter.
+          <p>No recipients match this filter.</p>
         {% else %}
-          No recipients have been selected for this campaign yet.
+          <p>No recipients have been selected for this campaign yet.</p>
         {% endif %}
       </div>
     {% endif %}
   </section>
 
-  <section class="detail-section secondary-section" aria-labelledby="campaign-history">
-    <div class="section-header">
+  <section class="section panel" aria-labelledby="campaign-history">
+    <div class="panel-header">
       <div>
         <h2 id="campaign-history">Recent History</h2>
         <p class="muted">Latest email events tied to this campaign.</p>
@@ -361,4 +411,5 @@
       <div class="empty-state">No campaign email events found yet.</div>
     {% endif %}
   </section>
+  {% endif %}
 {% endblock %}

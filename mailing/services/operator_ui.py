@@ -94,6 +94,9 @@ class Stat:
     value: int
     rate: str = ""
     href: str = ""
+    # Count strips carry a colored dot when the count is itself a state to
+    # act on (the family count-strip convention); empty means a neutral dot.
+    tone: str = ""
 
 
 @dataclass(frozen=True)
@@ -385,6 +388,7 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
                 "Deliverability attention",
                 suppressed_contacts,
                 f"{hard_bounces} bounces / {complaints} complaints",
+                tone="danger" if suppressed_contacts else "",
             ),
             Stat("api_access", "API access", active_clients, f"{active_api_keys} active keys"),
             Stat("templates", "Transactional templates", active_templates, "active templates"),
