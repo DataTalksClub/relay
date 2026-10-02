@@ -43,8 +43,8 @@
               </span>
             </a>
             <button class="icon-button sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="client-sidebar" aria-label="Collapse navigation">
-              <svg class="icon sidebar-toggle-open" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4l-4 4 4 4"/></svg>
-              <svg class="icon sidebar-toggle-closed" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+              <svg class="icon sidebar-toggle-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+              <svg class="icon sidebar-toggle-closed" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
             </button>
           </div>
           <div class="sidebar-context">
@@ -69,43 +69,43 @@
             <div class="sidebar-nav-group">
               <span class="sidebar-nav-label">Operate</span>
               <a href="{% url 'mailing:dashboard' %}" {% if current_url_name == "dashboard" %}aria-current="page"{% endif %} title="Dashboard">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
                 <span>Dashboard</span>
               </a>
               <a href="{% url 'mailing:campaign_list' %}" {% if current_url_name == "campaign_list" or current_url_name == "campaign_create" or current_url_name == "campaign_detail" or current_url_name == "campaign_edit" %}aria-current="page"{% endif %} title="Campaigns">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2L7.5 8.5"/><path d="M14 2L9.5 14l-2-4.5L3 7.5 14 2z"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg>
                 <span>Campaigns</span>
               </a>
               <a href="{% url 'mailing:transactional_queue' %}" {% if current_url_name == "transactional_queue" %}aria-current="page"{% endif %} title="Transactional queue">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 2"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="10"/></svg>
                 <span>Transactional queue</span>
               </a>
               <a href="{% url 'mailing:contact_search' %}" {% if current_url_name == "contact_search" or current_url_name == "contact_detail" %}aria-current="page"{% endif %} title="Contacts">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5.5" r="2.5"/><path d="M2 13c0-2.2 1.8-4 4-4s4 1.8 4 4"/><path d="M10.5 3.3a2.5 2.5 0 010 4.4"/><path d="M11.5 9.2c1.5.6 2.5 2 2.5 3.8"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
                 <span>Contacts</span>
               </a>
               <a href="{% url 'mailing:inbound_list' %}" {% if current_url_name == "inbound_list" or current_url_name == "inbound_message_detail" %}aria-current="page"{% endif %} title="Inbound mail">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 9h3a2 2 0 004 0h4"/><path d="M3.2 3.5h9.6l1.7 5.5v3a1.5 1.5 0 01-1.5 1.5H3a1.5 1.5 0 01-1.5-1.5v-3l1.7-5.5z"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
                 <span>Inbound mail</span>
               </a>
             </div>
             <div class="sidebar-nav-group">
               <span class="sidebar-nav-label">Configure</span>
               <a href="{% url 'mailing:audience_list' %}" {% if current_url_name == "audience_list" or current_url_name == "audience_create" or current_url_name == "audience_detail" or current_url_name == "audience_edit" or current_url_name == "tag_create" or current_url_name == "tag_detail" or current_url_name == "tag_edit" %}aria-current="page"{% endif %} title="Audiences">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3h11l-4.3 5v3.8L6.8 13.5V8L2.5 3z"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z"/></svg>
                 <span>Audiences</span>
               </a>
               <a href="{% url 'mailing:template_catalog' %}" {% if current_url_name == "template_catalog" or current_url_name == "template_detail" or current_url_name == "transactional_message_detail" %}aria-current="page"{% endif %} title="Templates">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2H4.5a1 1 0 00-1 1v10a1 1 0 001 1h7a1 1 0 001-1V5.5L9 2z"/><path d="M9 2v3.5h3.5"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/></svg>
                 <span>Templates</span>
               </a>
               <a href="{% url 'mailing:inbound_address_list' %}" {% if current_url_name == "inbound_address_list" or current_url_name == "inbound_address_create" %}aria-current="page"{% endif %} title="Receiving addresses">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="2.5"/><path d="M10.5 8v.8a1.7 1.7 0 003.4 0V8a5.9 5.9 0 10-2.3 4.7"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>
                 <span>Receiving addresses</span>
               </a>
               {% if operator_active_client %}
                 <a href="{% url 'mailing:client_detail' operator_active_client.id %}" {% if current_url_name == "client_detail" %}aria-current="page"{% endif %} title="Settings">
-                  <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h6M11 4.5h2.5M2.5 11.5h2.5M7.5 11.5h6"/><circle cx="9.5" cy="4.5" r="1.6"/><circle cx="6" cy="11.5" r="1.6"/></svg>
+                  <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg>
                   <span>Settings</span>
                 </a>
               {% endif %}
@@ -113,15 +113,15 @@
             <div class="sidebar-nav-group">
               <span class="sidebar-nav-label">Administer</span>
               <a href="{% url 'mailing:client_list' %}" {% if current_url_name == "client_list" or current_url_name == "client_create" %}aria-current="page"{% endif %} title="Clients">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="12" height="8.5" rx="1.5"/><path d="M5.5 5V3.5a1 1 0 011-1h3a1 1 0 011 1V5"/><path d="M2 8.75h12"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><rect width="20" height="14" x="2" y="6" rx="2"/></svg>
                 <span>Clients</span>
               </a>
               <a href="{% url 'mailing:api_docs' %}" {% if current_url_name == "api_docs" or current_url_name == "api_docs_json" %}aria-current="page"{% endif %} title="API docs">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 4.5L2 8l3.5 3.5"/><path d="M10.5 4.5L14 8l-3.5 3.5"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
                 <span>API docs</span>
               </a>
               <a href="{% url 'mailing:admin_api_keys' %}" {% if current_url_name == "admin_api_keys" %}aria-current="page"{% endif %} title="Admin API keys">
-                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2l5 1.8v3.4c0 2.9-2 5.4-5 6.3-3-.9-5-3.4-5-6.3V3.8L8 2z"/></svg>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
                 <span>Admin</span>
               </a>
             </div>
@@ -133,21 +133,21 @@
         <header class="app-toolbar">
           {% if user.is_authenticated and user.is_staff %}
             <button class="icon-button sidebar-menu-toggle" type="button" data-sidebar-menu-toggle aria-expanded="false" aria-controls="client-sidebar" aria-label="Open navigation">
-              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/></svg>
+              <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
             </button>
           {% endif %}
           <span class="topbar-title">{% block topbar_title %}Datamailer{% endblock %}</span>
           <div class="toolbar-actions">
             <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false" title="Toggle theme">
-              <svg class="icon theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.5 5.5 0 116.4 2.8a4.3 4.3 0 006.8 6.8z"/></svg>
-              <svg class="icon theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.2 1.2M11.4 11.4l1.2 1.2M12.6 3.4l-1.2 1.2M4.6 11.4l-1.2 1.2"/></svg>
+              <svg class="icon theme-icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+              <svg class="icon theme-icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
             </button>
             {% if user.is_authenticated %}
               <details class="account-menu" data-account-menu>
                 <summary class="account-button">
                   <span class="account-avatar" aria-hidden="true">{{ user.get_username|first|upper }}</span>
                   <span class="account-button-name">{{ user.get_username }}</span>
-                  <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg>
+                  <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
                 </summary>
                 <div class="account-panel">
                   <a href="/auth/logout">Log out</a>
