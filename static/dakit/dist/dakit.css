@@ -201,6 +201,27 @@ body {
 button, input, select, textarea { font: inherit; letter-spacing: inherit; color: inherit; }
 button { cursor: pointer; background: none; border: 0; padding: 0; }
 
+/* One dropdown everywhere: the native arrow hugs the right edge, so every
+   select gets dakit's chevron, set 12px off it. The glyph is an image and
+   cannot read a token, so its ink is baked to match --dk-text-muted per
+   theme (light #57606a, dark #9198a1) and flipped here. */
+:root {
+  --dk-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2357606a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] {
+  --dk-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239198a1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+select:not([multiple]) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: calc(2 * var(--dk-space-3) + 10px); /* text clears the glyph */
+  background-image: var(--dk-select-chevron);
+  background-repeat: no-repeat;
+  background-position: right var(--dk-space-3) center;
+  cursor: pointer;
+}
+
 a { color: var(--dk-text-link); }
 a:hover { color: var(--dk-text-link-hover); }
 
@@ -287,6 +308,9 @@ code, kbd, samp { font-family: var(--dk-font-mono); font-size: 0.92em; backgroun
   font-size: var(--dk-text-md);
 }
 .dk-textarea { height: auto; min-height: 76px; padding: var(--dk-space-2) var(--dk-space-3); resize: vertical; }
+/* Keep the class's own clearance for the base layer's chevron rather than
+   inheriting it from the element rule's higher specificity. */
+.dk-select { padding-right: calc(2 * var(--dk-space-3) + 10px); }
 .dk-input::placeholder, .dk-textarea::placeholder { color: var(--dk-text-faint); }
 .dk-input:hover, .dk-select:hover, .dk-textarea:hover { border-color: var(--dk-border-strong); }
 .dk-input:focus-visible, .dk-select:focus-visible, .dk-textarea:focus-visible { outline: 2px solid var(--dk-focus-ring); outline-offset: 0; border-color: var(--dk-accent-default); }
