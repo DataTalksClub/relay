@@ -204,11 +204,15 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 /* One dropdown everywhere: the native arrow hugs the right edge, so every
    select gets dakit's chevron, set 12px off it. The glyph is an image and
    cannot read a token, so its ink is baked to match --dk-text-muted per
-   theme (light #57606a, dark #9198a1) and flipped here. */
+   theme (light #57606a, dark #9198a1) and flipped here. color-scheme rides
+   the same flip so the browser's own chrome (the opened dropdown, spinners,
+   scrollbars) follows the theme even where an app styles nothing itself. */
 :root {
+  color-scheme: light;
   --dk-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2357606a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --dk-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239198a1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
