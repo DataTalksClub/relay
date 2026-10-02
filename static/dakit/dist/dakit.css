@@ -84,6 +84,7 @@
   --dk-text-on-accent: #ffffff;
   --dk-text-on-deep: #ffffff;
   --dk-border-default: #d0d7de;
+  --dk-border-control-hover: #d0d7de;
   --dk-border-strong: #afb8c1;
   --dk-accent-default: #315f8f;
   --dk-accent-hover: #244d78;
@@ -107,7 +108,6 @@
   --dk-info-text: #315f8f;
   --dk-info-bg: #edf5ff;
   --dk-info-border: rgba(49, 95, 143, 0.22);
-  --dk-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06);
   --dk-shadow-overlay: 0 8px 24px rgba(15, 23, 42, 0.16);
 }
 :root[data-theme="dark"] {
@@ -127,6 +127,7 @@
   --dk-text-on-accent: #0d1117;
   --dk-text-on-deep: #ffffff;
   --dk-border-default: #30363d;
+  --dk-border-control-hover: #8b949e;
   --dk-border-strong: #6e7681;
   --dk-accent-default: #58a6ff;
   --dk-accent-hover: #79b8ff;
@@ -150,7 +151,6 @@
   --dk-info-text: #79b8ff;
   --dk-info-bg: rgba(88, 166, 255, 0.12);
   --dk-info-border: rgba(88, 166, 255, 0.4);
-  --dk-shadow-card: 0 1px 2px rgba(1, 4, 9, 0.4);
   --dk-shadow-overlay: 0 8px 24px rgba(1, 4, 9, 0.6);
 }
 
@@ -285,15 +285,17 @@ code, kbd, samp { font-family: var(--dk-font-mono); font-size: 0.92em; backgroun
 .dk-button--primary { background: var(--dk-accent-default); color: var(--dk-text-on-accent); }
 .dk-button--primary:hover { background: var(--dk-accent-hover); }
 
-.dk-button--secondary { border-color: var(--dk-border-strong); background: transparent; color: var(--dk-text-primary); }
-.dk-button--secondary:hover { border-color: var(--dk-text-muted); background: var(--dk-bg-hover); }
+/* Secondary = muted surface + neutral border + primary text (the family
+   recipe); quiet controls gain --dk-border-control-hover on hover. */
+.dk-button--secondary { border-color: var(--dk-border-default); background: var(--dk-bg-muted); color: var(--dk-text-primary); }
+.dk-button--secondary:hover { border-color: var(--dk-border-control-hover); background: var(--dk-bg-hover); }
 
 .dk-button--danger { border-color: var(--dk-danger-border); background: transparent; color: var(--dk-danger-text); }
 .dk-button--danger:hover { background: var(--dk-danger-bg); }
 
 .dk-button:disabled { opacity: 0.55; cursor: not-allowed; }
 .dk-button:disabled:hover { background: var(--dk-accent-default); }
-.dk-button--secondary:disabled:hover { background: transparent; }
+.dk-button--secondary:disabled:hover { background: var(--dk-bg-muted); }
 .dk-button--danger:disabled:hover { background: transparent; }
 
 /* --- fields ----------------------------------------------------------------- */
@@ -323,12 +325,11 @@ code, kbd, samp { font-family: var(--dk-font-mono); font-size: 0.92em; backgroun
 
 .dk-card {
   border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-lg);
+  border-radius: var(--dk-radius-md);
   background: var(--dk-bg-surface);
-  box-shadow: var(--dk-shadow-card);
   padding: var(--dk-space-4);
 }
-.dk-card--muted { background: var(--dk-bg-muted); box-shadow: none; }
+.dk-card--muted { background: var(--dk-bg-muted); }
 
 /* --- chips & status ---------------------------------------------------------- */
 
