@@ -23,15 +23,15 @@
     </div>
     <div class="meta-grid">
       <div class="meta-item"><span class="meta-label">Message ID</span>{{ message.id }}</div>
-      <div class="meta-item"><span class="meta-label">From sender</span>{{ message.from_email_id|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">From address</span>{{ message.from_email|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">From sender</span>{{ message.from_email_id|default:"—" }}</div>
+      <div class="meta-item"><span class="meta-label">From address</span>{{ message.from_email|default:"—" }}</div>
       <div class="meta-item"><span class="meta-label">Created</span>{{ message.created_at|date:"Y-m-d H:i" }}</div>
-      <div class="meta-item"><span class="meta-label">Sent</span>{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">Delivered</span>{{ message.delivered_at|date:"Y-m-d H:i"|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">Opened</span>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">Clicked</span>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">SES message</span>{{ message.ses_message_id|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">Idempotency</span>{{ message.idempotency_key|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Sent</span>{{ message.sent_at|date:"Y-m-d H:i"|default:"—" }}</div>
+      <div class="meta-item"><span class="meta-label">Delivered</span>{{ message.delivered_at|date:"Y-m-d H:i"|default:"—" }}</div>
+      <div class="meta-item"><span class="meta-label">Opened</span>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</div>
+      <div class="meta-item"><span class="meta-label">Clicked</span>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</div>
+      <div class="meta-item"><span class="meta-label">SES message</span>{{ message.ses_message_id|default:"—" }}</div>
+      <div class="meta-item"><span class="meta-label">Idempotency</span>{{ message.idempotency_key|default:"—" }}</div>
     </div>
     {% if message.last_error %}
       <div class="empty-state danger-state">
@@ -45,7 +45,7 @@
     <div class="panel-header">
       <h2 id="message-content">Rendered Content</h2>
     </div>
-    <div class="template-preview-subject"><span class="meta-label">Subject</span>{{ message.subject|default:"-" }}</div>
+    <div class="template-preview-subject"><span class="meta-label">Subject</span>{{ message.subject|default:"—" }}</div>
     {% if message.text_body %}
       <h3>Text</h3>
       <pre><code>{{ message.text_body }}</code></pre>
@@ -104,7 +104,7 @@
                 <td><span class="badge neutral">{{ row.event.get_event_type_display }}</span></td>
                 <td class="nowrap">{{ row.event.created_at|date:"Y-m-d H:i" }}</td>
                 <td>{{ row.context }}</td>
-                <td class="truncate">{{ row.metadata_summary|default:"-" }}</td>
+                <td class="truncate">{{ row.metadata_summary|default:"—" }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -141,9 +141,9 @@
                 <td><code>{{ callback.event_type }}</code></td>
                 <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
                 <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="truncate">{{ callback.last_error|default:"-" }}</td>
+                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="truncate">{{ callback.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -180,9 +180,9 @@
                 <td><code>{{ callback.event_type }}</code></td>
                 <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
                 <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="truncate">{{ callback.last_error|default:"-" }}</td>
+                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="truncate">{{ callback.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}
           </tbody>

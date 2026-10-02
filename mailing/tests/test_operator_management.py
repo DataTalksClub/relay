@@ -159,8 +159,6 @@ def test_client_detail_renders_identity_status_and_api_key_rows(client, operator
     assert response.status_code == 200
     assert "Integration summary" in page
     assert "<code>dtc</code>" in page
-    assert '<span class="badge success">1 active API keys</span>' in page
-    assert '<span class="badge neutral">1 revoked</span>' in page
     assert "Key and purpose" in page
     assert "Safe prefix" in page
     assert "Used by public signup." in page

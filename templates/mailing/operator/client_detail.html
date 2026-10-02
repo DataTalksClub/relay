@@ -9,33 +9,16 @@
       <h1>{{ client.name }}</h1>
       <p>{{ client.organization.name }} / {{ client.slug }}</p>
       <div class="badge-row">
-        {% if client.is_active %}
-          <span class="badge success">Active client</span>
-        {% else %}
+        {% if operator_active_client and operator_active_client.id == client.id %}
+          <span class="badge success">Current client</span>
+        {% endif %}
+        {% if not client.is_active %}
           <span class="badge danger">Inactive client</span>
-        {% endif %}
-        {% if active_key_count %}
-          <span class="badge success">{{ active_key_count }} active API keys</span>
-        {% else %}
-          <span class="badge warning">No active API keys</span>
-        {% endif %}
-        {% if revoked_key_count %}
-          <span class="badge neutral">{{ revoked_key_count }} revoked</span>
         {% endif %}
       </div>
     </div>
     <div class="actions">
-      {% if operator_active_client and operator_active_client.id == client.id %}
-        <span class="badge success">Current client</span>
-      {% else %}
-        <form method="post" action="{% url 'mailing:client_select' %}">
-          {% csrf_token %}
-          <input type="hidden" name="client_id" value="{{ client.id }}">
-          <input type="hidden" name="next" value="{% url 'mailing:dashboard' %}">
-          <button class="secondary" type="submit">Use client</button>
-        </form>
-      {% endif %}
-      <a class="button secondary" href="{% url 'mailing:client_edit' client.id %}">Edit client</a>
+      <a class="button" href="{% url 'mailing:client_edit' client.id %}">Edit client</a>
       <a class="button secondary" href="{% url 'mailing:api_docs' %}">API docs</a>
     </div>
   </div>
@@ -64,15 +47,12 @@
         <span class="stat-value">{{ revoked_key_count }}</span>
         <span class="stat-label">Revoked keys</span>
       </div>
-      <div class="stat">
-        <span class="stat-value">{% if client.is_active %}Active{% else %}Inactive{% endif %}</span>
-        <span class="stat-label">Client state</span>
-      </div>
     </div>
     <div class="meta-grid">
+      <div class="meta-item"><span class="meta-label">Client state</span>{% if client.is_active %}<span class="badge success">Active</span>{% else %}<span class="badge danger">Inactive</span>{% endif %}</div>
       <div class="meta-item"><span class="meta-label">Organization</span>{{ client.organization.name }}</div>
       <div class="meta-item"><span class="meta-label">Slug</span><code>{{ client.slug }}</code></div>
-      <div class="meta-item"><span class="meta-label">Default sender ID</span>{{ client.default_sender_id|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Default sender ID</span>{{ client.default_sender_id|default:"—" }}</div>
       <div class="meta-item"><span class="meta-label">CMP webhook URL</span>{{ client.cmp_webhook_url|default:"Global/default" }}</div>
       <div class="meta-item"><span class="meta-label">Callback endpoint</span>{% if callback_endpoint %}<code>{{ callback_endpoint.url }}</code>{% if not callback_endpoint.enabled %} (disabled){% endif %}{% else %}-{% endif %}</div>
       <div class="meta-item">
@@ -118,14 +98,14 @@
                   {% if callback.contact %}
                     <a href="{% url 'mailing:contact_detail' callback.contact.normalized_email %}">{{ callback.contact.normalized_email }}</a>
                   {% else %}
-                    <span class="muted">-</span>
+                    <span class="muted">—</span>
                   {% endif %}
                 </td>
                 <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
                 <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="truncate">{{ callback.last_error|default:"-" }}</td>
+                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="truncate">{{ callback.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -169,14 +149,14 @@
                   {% elif callback.campaign_recipient_id %}
                     <span class="muted">recipient {{ callback.campaign_recipient_id }}</span>
                   {% else %}
-                    <span class="muted">-</span>
+                    <span class="muted">—</span>
                   {% endif %}
                 </td>
                 <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
                 <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="truncate">{{ callback.last_error|default:"-" }}</td>
+                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="truncate">{{ callback.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -205,44 +185,45 @@
     </div>
     <div class="meta-grid">
       <div class="meta-item"><span class="meta-label">API key</span>{% if mailchimp_status.api_key_set %}Set (datacenter {{ mailchimp_status.datacenter|default:"?" }}){% else %}Not set{% endif %}</div>
-      <div class="meta-item"><span class="meta-label">Audience ID</span>{{ mailchimp_status.list_id|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Audience ID</span>{{ mailchimp_status.list_id|default:"—" }}</div>
       <div class="meta-item"><span class="meta-label">Sync enabled</span>{{ mailchimp_status.enabled|yesno:"Yes,No" }}</div>
     </div>
     <p class="muted">Edit the key, audience ID, and enabled flag on the <a href="{% url 'mailing:client_edit' client.id %}">client edit form</a>.</p>
+  </section>
 
-    <div class="secondary-section">
-      <div class="section-header">
-        <div>
-          <h3>Tag mappings by audience subtree</h3>
-          <p class="muted">
-            One mapping per line as <code>list_key = tag</code>. When a contact joins that recipient-list node
-            (e.g. <code>ai-dev-tools-zoomcamp-2026:@registered</code> or the audience root <code>&lt;all&gt;</code>),
-            Datamailer applies the tag in Mailchimp. Saving replaces all mappings for that audience.
-          </p>
-        </div>
+  <section class="detail-section panel" aria-labelledby="mailchimp-mappings">
+    <div class="panel-header">
+      <div>
+        <h2 id="mailchimp-mappings">Tag mappings by audience subtree</h2>
+        <p class="muted">
+          One mapping per line as <code>list_key = tag</code>. When a contact joins that recipient-list node
+          (e.g. <code>ai-dev-tools-zoomcamp-2026:@registered</code> or the audience root <code>&lt;all&gt;</code>),
+          Datamailer applies the tag in Mailchimp. Saving replaces all mappings for that audience.
+        </p>
       </div>
+    </div>
+    <div class="form-stack panel-body-pad">
       {% for editor in mailchimp_audiences %}
         <form method="post" action="{% url 'mailing:client_mailchimp_tag_mappings' client.id %}" class="stacked-form">
           {% csrf_token %}
           <input type="hidden" name="audience_id" value="{{ editor.audience.id }}">
           <label>{{ editor.audience.name }} <span class="muted">({{ editor.audience.slug }}) — {{ editor.count }} mapping{{ editor.count|pluralize }}</span></label>
           <textarea name="mappings" rows="4" placeholder="ai-dev-tools-zoomcamp-2026:@registered = ai-dev-tools-zoomcamp-2026">{{ editor.mappings_text }}</textarea>
-          <div class="action-row">
+          <div class="action-row action-row-start">
             <button class="secondary" type="submit">Save mappings for {{ editor.audience.slug }}</button>
           </div>
         </form>
       {% empty %}
-        <div class="empty-state"><strong>No audiences in this organization yet.</strong></div>
+        <div class="empty-state"><p><strong>No audiences in this organization yet.</strong></p></div>
       {% endfor %}
     </div>
+  </section>
 
-    <div class="secondary-section">
-      <div class="section-header">
-        <div>
-          <h3>Recent syncs</h3>
-          <p class="muted">Latest Mailchimp tag sync attempts for this client.</p>
-        </div>
-      </div>
+  <section class="detail-section panel" aria-labelledby="mailchimp-syncs">
+    <div class="panel-header">
+      <h2 id="mailchimp-syncs">Recent syncs</h2>
+      <span class="muted">Latest Mailchimp tag sync attempts</span>
+    </div>
       {% if mailchimp_syncs %}
         <div class="table-wrap">
           <table>
@@ -265,8 +246,8 @@
                   <td><code>{{ sync.tag }}</code></td>
                   <td><span class="badge neutral">{{ sync.get_status_display }}</span></td>
                   <td>{{ sync.attempt_count }}/{{ sync.max_attempts }}</td>
-                  <td>{{ sync.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                  <td class="truncate">{{ sync.last_error|default:"-" }}</td>
+                  <td>{{ sync.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                  <td class="truncate">{{ sync.last_error|default:"—" }}</td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -320,7 +301,7 @@
                 </td>
                 <td data-label="Created">{{ api_key.created_at|date:"Y-m-d H:i" }}</td>
                 <td data-label="Last used">{% if api_key.last_used_at %}{{ api_key.last_used_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">Never</span>{% endif %}</td>
-                <td data-label="Revoked">{% if api_key.revoked_at %}{{ api_key.revoked_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td data-label="Revoked">{% if api_key.revoked_at %}{{ api_key.revoked_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">—</span>{% endif %}</td>
                 <td data-label="Action">
                   {% if not api_key.revoked_at %}
                     <form method="post" action="{% url 'mailing:client_api_key_revoke' client.id api_key.id %}">
@@ -328,7 +309,7 @@
                       <button type="submit" class="danger" onclick="return confirm('Revoke only {{ api_key.name|escapejs }} for {{ client.name|escapejs }}?');">Revoke key</button>
                     </form>
                   {% else %}
-                    <span class="muted">-</span>
+                    <span class="muted">—</span>
                   {% endif %}
                 </td>
               </tr>
@@ -342,20 +323,21 @@
         <div class="muted">Create a named key before this client can call the Datamailer API.</div>
       </div>
     {% endif %}
-    <div class="secondary-section">
-      <div class="section-header">
-        <div>
-          <h3>Create named API key</h3>
-          <p class="muted">The raw secret appears only on the next page load. Store it outside Datamailer immediately.</p>
-        </div>
+  </section>
+
+  <section class="detail-section panel" aria-labelledby="api-key-create">
+    <div class="panel-header">
+      <div>
+        <h2 id="api-key-create">Create named API key</h2>
+        <p class="muted">The raw secret appears only on the next page load. Store it outside Datamailer immediately.</p>
       </div>
-      <form method="post" action="{% url 'mailing:client_api_key_create' client.id %}" class="form-stack">
-        {% include "mailing/operator/_form_fields.html" with form=key_form %}
-        <div class="actions">
-          <button class="secondary" type="submit">Create API key</button>
-        </div>
-      </form>
     </div>
+    <form method="post" action="{% url 'mailing:client_api_key_create' client.id %}" class="form-stack panel-body-pad">
+      {% include "mailing/operator/_form_fields.html" with form=key_form %}
+      <div class="actions action-row-start">
+        <button class="secondary" type="submit">Create API key</button>
+      </div>
+    </form>
   </section>
   <section class="detail-section panel" aria-labelledby="audit">
     <div class="panel-header">

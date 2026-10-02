@@ -9,7 +9,6 @@
       <h1>{% if mode == "create" %}Create tag{% else %}Edit tag{% endif %}</h1>
       <p>{% if mode == "create" %}Add a reusable segment tag to this audience.{% else %}Update this tag without moving it to another audience.{% endif %}</p>
     </div>
-    <a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">Cancel</a>
   </div>
 
   <form class="form-page form-panel" method="post" novalidate>

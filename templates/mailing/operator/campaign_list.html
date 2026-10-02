@@ -52,7 +52,7 @@
                   <a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a>
                 </td>
                 <td class="nowrap" data-label="Send time">
-                  {{ row.timing_value|date:"Y-m-d H:i"|default:"-" }}
+                  {{ row.timing_value|date:"Y-m-d H:i"|default:"—" }}
                   <div class="helptext">{{ row.timing_label }}</div>
                 </td>
                 <td class="nowrap" data-label="Recipients">{{ campaign.recipient_count }}</td>
@@ -70,7 +70,7 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <span class="badge neutral">Empty</span>
+      <span class="badge neutral">EMPTY</span>
       <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a broadcast send.</p>
       <a class="button secondary" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
     </div>

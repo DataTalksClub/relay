@@ -6,7 +6,7 @@
         {% for row in audit_rows %}
           <tr>
             <td>{{ row.created_at|date:"Y-m-d H:i:s" }}</td>
-            <td>{{ row.actor.username|default:"-" }}</td>
+            <td>{{ row.actor.username|default:"—" }}</td>
             <td>{{ row.action }}</td>
             <td class="truncate">{{ row.metadata }}</td>
           </tr>

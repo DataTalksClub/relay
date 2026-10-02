@@ -9,7 +9,6 @@
       <h1>{% if mode == "create" %}Create campaign{% else %}Edit campaign{% endif %}</h1>
       <p>Prepare a campaign draft, choose the recipient filters, and paste final email content.</p>
     </div>
-    <a class="button secondary" href="{% if campaign %}{% url 'mailing:campaign_detail' campaign.id %}{% else %}{% url 'mailing:campaign_list' %}{% endif %}">Cancel</a>
   </div>
 
   <form method="post" novalidate class="form-panel">
