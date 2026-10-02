@@ -377,7 +377,7 @@ main,
   color: var(--dk-text-muted);
   font-size: var(--dk-text-xs);
   font-weight: var(--dk-weight-semibold);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
