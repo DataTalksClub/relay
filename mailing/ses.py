@@ -21,6 +21,7 @@ def send_email(
     bcc=None,
     headers=None,
     message_parts=None,
+    configuration_set=None,
 ):
     throttle_ses_send()
 
@@ -37,6 +38,7 @@ def send_email(
             bcc=bcc,
             headers=headers or {},
             message_parts=message_parts or [],
+            configuration_set=configuration_set,
         )
 
     body = {"Html": {"Charset": "UTF-8", "Data": html_body}}
@@ -51,8 +53,10 @@ def send_email(
             "Body": body,
         },
     }
-    if settings.AWS_SES_CONFIGURATION_SET:
-        params["ConfigurationSetName"] = settings.AWS_SES_CONFIGURATION_SET
+    if configuration_set is None:
+        configuration_set = settings.AWS_SES_CONFIGURATION_SET
+    if configuration_set:
+        params["ConfigurationSetName"] = configuration_set
     if reply_to:
         params["ReplyToAddresses"] = [reply_to]
     if cc:
@@ -76,6 +80,7 @@ def send_raw_email(
     bcc=None,
     headers=None,
     message_parts=None,
+    configuration_set=None,
 ):
     cc = cc or []
     bcc = bcc or []
@@ -111,8 +116,10 @@ def send_raw_email(
         "Destinations": [to_email, *cc, *bcc],
         "RawMessage": {"Data": message.as_bytes()},
     }
-    if settings.AWS_SES_CONFIGURATION_SET:
-        params["ConfigurationSetName"] = settings.AWS_SES_CONFIGURATION_SET
+    if configuration_set is None:
+        configuration_set = settings.AWS_SES_CONFIGURATION_SET
+    if configuration_set:
+        params["ConfigurationSetName"] = configuration_set
     return ses_client.send_raw_email(**params)["MessageId"]
 
 

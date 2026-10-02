@@ -192,6 +192,13 @@ if [[ "$environment" == sandbox ]]; then
   set_runtime_value RELAY_SES_MAX_SEND_RATE 14
   set_runtime_value RELAY_PUBLIC_LISTS 'pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/'
   set_runtime_value RELAY_PUBLIC_SUBSCRIBE_ORIGINS 'https://pocketshell.io,https://www.pocketshell.io,http://localhost:4000,http://127.0.0.1:4000'
+else
+  sandbox_role="$(sed -n 's/^RELAY_SANDBOX_EMAIL_SEND_ROLE_ARN=//p' "$infra_env")"
+  if [[ -n "$sandbox_role" ]]; then
+    set_runtime_value RELAY_SES_DOMAIN_ROUTES "dtcdev.click role=${sandbox_role} region=us-east-1 configuration_set=datamailer-sandbox;pocketshell.io role=${sandbox_role} region=us-east-1 configuration_set=datamailer-sandbox"
+  fi
+  set_runtime_value RELAY_PUBLIC_LISTS 'pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/'
+  set_runtime_value RELAY_PUBLIC_SUBSCRIBE_ORIGINS 'https://pocketshell.io,https://www.pocketshell.io,http://localhost:4000,http://127.0.0.1:4000'
 fi
 
 grep -q '^RELAY_EMAIL_SEND_ROLE_ARN=' "$infra_env" || {
@@ -245,7 +252,7 @@ set_memory_args() {
     relay-web) memory_args=(--memory 384m) ;;
     relay-worker) memory_args=(--memory 512m) ;;
     relay-scheduler) memory_args=(--memory 96m) ;;
-    relay-ses-ingress) memory_args=(--memory 128m) ;;
+    relay-ses-ingress|relay-sandbox-ses-ingress|relay-sandbox-inbound-ingress) memory_args=(--memory 128m) ;;
     relay-cmp-callbacks) memory_args=(--memory 96m) ;;
     relay-client-callbacks) memory_args=(--memory 96m) ;;
     relay-recipient-imports) memory_args=(--memory 128m) ;;
@@ -328,6 +335,22 @@ replace_container relay-scheduler "${app_container_args[@]}" \
 set_memory_args relay-ses-ingress
 replace_container relay-ses-ingress "${app_container_args[@]}" \
   python manage.py drain_sqs_ingress ses-webhooks --batch-size 10 --wait-time 20
+# Sandbox SES events and inbound mail stay in the sandbox account. Production
+# drains those queues too, with the host role granted on the queue policies.
+# Stop the sandbox host's copies of these drains before this deploy, or the
+# two consumers split the same messages.
+sandbox_ses_queue="$(sed -n 's/^SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL=//p' "$infra_env" || true)"
+sandbox_inbound_queue="$(sed -n 's/^SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL=//p' "$infra_env" || true)"
+if [[ -n "$sandbox_ses_queue" ]]; then
+  set_memory_args relay-sandbox-ses-ingress
+  replace_container relay-sandbox-ses-ingress "${app_container_args[@]}" \
+    python manage.py drain_sqs_ingress sandbox-ses-webhooks --batch-size 10 --wait-time 20
+fi
+if [[ -n "$sandbox_inbound_queue" ]]; then
+  set_memory_args relay-sandbox-inbound-ingress
+  replace_container relay-sandbox-inbound-ingress "${app_container_args[@]}" \
+    python manage.py drain_sqs_ingress sandbox-inbound-email --batch-size 10 --wait-time 20
+fi
 if [[ "$environment" == sandbox ]]; then
   set_memory_args relay-inbound-ingress
   replace_container relay-inbound-ingress "${app_container_args[@]}" \
@@ -376,6 +399,12 @@ else
     relay-client-callbacks
     relay-recipient-imports
   )
+fi
+if [[ -n "${sandbox_ses_queue:-}" ]]; then
+  required_containers+=(relay-sandbox-ses-ingress)
+fi
+if [[ -n "${sandbox_inbound_queue:-}" ]]; then
+  required_containers+=(relay-sandbox-inbound-ingress)
 fi
 
 for _ in $(seq 1 60); do

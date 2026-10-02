@@ -27,7 +27,12 @@ from mailing.sqs_worker import WorkerConfig
 
 logger = logging.getLogger(__name__)
 
-INGRESS_WORKER_NAMES = ("ses-webhooks", "inbound-email")
+INGRESS_WORKER_NAMES = (
+    "ses-webhooks",
+    "inbound-email",
+    "sandbox-ses-webhooks",
+    "sandbox-inbound-email",
+)
 
 
 def _handle_ses_webhook_record(payload, record):
@@ -56,6 +61,16 @@ def get_ingress_config(name):
         "inbound-email": WorkerConfig(
             name="inbound-email-ingress",
             queue_url=settings.SQS_INBOUND_EMAIL_QUEUE_URL,
+            handler=inbound_email_ingress_handler,
+        ),
+        "sandbox-ses-webhooks": WorkerConfig(
+            name="sandbox-ses-webhooks-ingress",
+            queue_url=settings.SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL,
+            handler=ses_webhooks_ingress_handler,
+        ),
+        "sandbox-inbound-email": WorkerConfig(
+            name="sandbox-inbound-email-ingress",
+            queue_url=settings.SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL,
             handler=inbound_email_ingress_handler,
         ),
     }

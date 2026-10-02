@@ -7,20 +7,13 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
 
 import taskdeck
+from mailing.ses_routes import route_for_source
 
 _credential_cache = {}
 _credential_cache_lock = threading.Lock()
 
 
-def _role_credentials(task_type):
-    role_arn = settings.RELAY_TASK_ROLE_ARNS.get(task_type, "")
-    if not role_arn:
-        if settings.RELAY_REQUIRE_TASK_ROLES:
-            raise ImproperlyConfigured(
-                f"Relay task type {task_type!r} has no configured IAM role."
-            )
-        return None
-
+def _assume_role(role_arn):
     with _credential_cache_lock:
         cached = _credential_cache.get(role_arn)
         if cached and cached["Expiration"] > timezone.now() + timedelta(minutes=5):
@@ -38,19 +31,34 @@ def _role_credentials(task_type):
         return credentials
 
 
-def aws_client(service_name, *, endpoint_url=None, task_type=None, region_name=None):
+def _role_credentials(task_type):
+    role_arn = settings.RELAY_TASK_ROLE_ARNS.get(task_type, "")
+    if not role_arn:
+        if settings.RELAY_REQUIRE_TASK_ROLES:
+            raise ImproperlyConfigured(
+                f"Relay task type {task_type!r} has no configured IAM role."
+            )
+        return None
+    return _assume_role(role_arn)
+
+
+def aws_client(service_name, *, endpoint_url=None, task_type=None, role_arn=None, region_name=None):
     kwargs = {
         "region_name": region_name or settings.AWS_REGION,
         "endpoint_url": endpoint_url if endpoint_url is not None else settings.AWS_ENDPOINT_URL or None,
     }
-    if task_type:
+    if role_arn:
+        credentials = _assume_role(role_arn)
+    elif task_type:
         credentials = _role_credentials(task_type)
-        if credentials:
-            kwargs |= {
-                "aws_access_key_id": credentials["AccessKeyId"],
-                "aws_secret_access_key": credentials["SecretAccessKey"],
-                "aws_session_token": credentials["SessionToken"],
-            }
+    else:
+        credentials = None
+    if credentials:
+        kwargs |= {
+            "aws_access_key_id": credentials["AccessKeyId"],
+            "aws_secret_access_key": credentials["SecretAccessKey"],
+            "aws_session_token": credentials["SessionToken"],
+        }
     return boto3.client(service_name, **kwargs)
 
 
@@ -64,6 +72,18 @@ def ses_client(*, endpoint_url=None):
         endpoint_url=endpoint_url,
         task_type="email.send",
         region_name=settings.AWS_SES_REGION,
+    )
+
+
+def ses_client_for_source(source, *, endpoint_url=None):
+    route = route_for_source(source)
+    if route is None:
+        return ses_client(endpoint_url=endpoint_url)
+    return aws_client(
+        "ses",
+        endpoint_url=endpoint_url,
+        role_arn=route.role_arn,
+        region_name=route.region,
     )
 
 
