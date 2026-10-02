@@ -146,7 +146,7 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     assert b'href="/static/dakit/dist/dakit.css"' in response.content
     assert b'href="/static/mailing/css/app.css"' in response.content
     assert b"<style>" not in response.content
-    assert b'class="brand-text">Datamailer</span>' in response.content
+    assert b'class="brand-name">Datamailer</span>' in response.content
     assert b'data-theme-toggle aria-label="Toggle dark mode"' in response.content
     assert b'data-sidebar-toggle aria-expanded="true"' in response.content
     assert b'data-sidebar-menu-toggle aria-expanded="false"' in response.content
