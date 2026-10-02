@@ -30,7 +30,7 @@
         <tr>
           <td data-label="Name">{{ key.name }}</td><td data-label="Owner">{{ key.user.username }}</td><td data-label="Prefix"><code>{{ key.display_prefix }}</code></td>
           <td data-label="Last used">{{ key.last_used_at|default:"Never" }}</td><td data-label="Status">{% if key.revoked_at %}Revoked{% else %}Active{% endif %}</td>
-          <td data-label="Action">{% if not key.revoked_at %}<form method="post" action="{% url 'mailing:admin_api_key_revoke' key.id %}">{% csrf_token %}<button type="submit">Revoke</button></form>{% endif %}</td>
+          <td data-label="Action">{% if not key.revoked_at %}<form method="post" action="{% url 'mailing:admin_api_key_revoke' key.id %}">{% csrf_token %}<button type="submit" class="danger">Revoke</button></form>{% endif %}</td>
         </tr>
       {% empty %}<tr><td colspan="6">No admin API keys yet.</td></tr>{% endfor %}
       </tbody>
