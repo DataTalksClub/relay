@@ -20,6 +20,7 @@ from mailing.models import (
 
 
 class CampaignForm(forms.ModelForm):
+    label_suffix = ""
     include_tags = forms.ModelMultipleChoiceField(
         queryset=Tag.objects.select_related("audience").order_by("audience__slug", "slug"),
         required=False,
@@ -150,6 +151,7 @@ class CampaignForm(forms.ModelForm):
 
 
 class AudienceForm(forms.ModelForm):
+    label_suffix = ""
     class Meta:
         model = Audience
         fields = ["organization", "name", "slug"]
@@ -191,6 +193,7 @@ class AudienceForm(forms.ModelForm):
 
 
 class ClientForm(forms.ModelForm):
+    label_suffix = ""
     sender_emails = forms.CharField(
         required=False,
         widget=forms.Textarea(attrs={"rows": 4}),
@@ -349,6 +352,7 @@ class ClientForm(forms.ModelForm):
 
 
 class ClientApiKeyForm(forms.ModelForm):
+    label_suffix = ""
     class Meta:
         model = ClientApiKey
         fields = ["name", "notes"]
@@ -378,6 +382,7 @@ class ClientApiKeyForm(forms.ModelForm):
 
 
 class TagForm(forms.ModelForm):
+    label_suffix = ""
     class Meta:
         model = Tag
         fields = ["name", "slug"]
@@ -409,6 +414,7 @@ class TagForm(forms.ModelForm):
 
 
 class ContactStateForm(forms.Form):
+    label_suffix = ""
     verified_state = forms.ChoiceField(
         choices=(("unchanged", "Leave unchanged"), ("verified", "Verified"), ("unverified", "Unverified")),
     )
@@ -420,6 +426,7 @@ class ContactStateForm(forms.Form):
 
 
 class ContactSubscriptionForm(forms.Form):
+    label_suffix = ""
     audience = forms.ModelChoiceField(queryset=Audience.objects.none())
     client = forms.ModelChoiceField(queryset=Client.objects.none(), required=False)
     status = forms.ChoiceField(choices=SubscriptionStatus.choices)
@@ -458,6 +465,7 @@ class ContactSubscriptionForm(forms.Form):
 
 
 class ContactTagAddForm(forms.Form):
+    label_suffix = ""
     audience = forms.ModelChoiceField(queryset=Audience.objects.none())
     tag = forms.ModelChoiceField(queryset=Tag.objects.none(), required=False)
     new_tag_name = forms.CharField(required=False, max_length=120)
@@ -491,6 +499,7 @@ class ContactTagAddForm(forms.Form):
 
 
 class ContactTagRemoveForm(forms.Form):
+    label_suffix = ""
     membership = forms.ModelChoiceField(queryset=ContactTag.objects.none())
 
     def __init__(self, *args, contact=None, active_client=None, **kwargs):
