@@ -775,6 +775,17 @@ a.compact-row:hover {
   color: var(--dk-text-heading);
 }
 
+/* The card's padding-top is the header's top spacing; the page-flow margins
+   (the header's, then the heading's own) would otherwise pile onto it as an
+   empty band under the card's top edge. */
+.secondary-section > .section-header {
+  margin-top: 0;
+}
+
+.secondary-section > .section-header :is(h2, h3):first-child {
+  margin-top: 0;
+}
+
 .advanced-panel[open] {
   padding-bottom: var(--dk-space-3);
 }
