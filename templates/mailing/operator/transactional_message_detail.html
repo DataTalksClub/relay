@@ -50,7 +50,7 @@
     <div class="section-header">
       <h2 id="message-content">Rendered Content</h2>
     </div>
-    <div class="meta-item template-preview-subject"><span class="meta-label">Subject</span>{{ message.subject|default:"-" }}</div>
+    <div class="template-preview-subject"><span class="meta-label">Subject</span>{{ message.subject|default:"-" }}</div>
     {% if message.text_body %}
       <h3>Text</h3>
       <pre><code>{{ message.text_body }}</code></pre>

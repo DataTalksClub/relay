@@ -572,19 +572,47 @@ summary:focus-visible,
   color: var(--dk-text-primary);
 }
 
-.meta-grid,
 .detail-grid {
   display: grid;
   gap: var(--dk-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   margin: var(--dk-space-4) 0 var(--dk-space-6);
 }
 
+/* Identity metadata renders as one segmented strip: a single bordered
+   container whose cells are divided by hairlines (the dataops count-strip
+   pattern), not as separate cards. Cells carry right/bottom hairlines pulled
+   1px past their track so wrapped rows stay divided and the outer edge stays
+   clean; the wrapping flex cells fill each row, so a partial last row never
+   leaves a ghost box around empty space. */
 .meta-grid {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  margin: var(--dk-space-4) 0 var(--dk-space-6);
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-bg-surface);
+  overflow: hidden;
 }
 
-.detail-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+.meta-grid > * {
+  flex: 1 1 150px;
+  min-width: 0;
+  margin: 0;
+  padding: var(--dk-space-3) var(--dk-space-4);
+  background: var(--dk-bg-surface);
+  border: 0;
+  border-right: 1px solid var(--dk-border-default);
+  border-bottom: 1px solid var(--dk-border-default);
+  margin-right: -1px;
+  margin-bottom: -1px;
+  border-radius: 0;
+  overflow-wrap: anywhere;
+}
+
+.meta-grid > *:last-child {
+  border-right: 0;
+  margin-right: 0;
 }
 
 /* Summary counts render as one segmented strip: a single bordered container
@@ -599,14 +627,6 @@ summary:focus-visible,
   border-radius: var(--dk-radius-md);
   background: var(--dk-bg-page);
   overflow: hidden;
-}
-
-.meta-item {
-  min-width: 0;
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-md);
-  padding: var(--dk-space-3);
-  background: var(--dk-bg-page);
 }
 
 .meta-item dd {
