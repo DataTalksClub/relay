@@ -1,5 +1,6 @@
 import json
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
@@ -146,6 +147,7 @@ from mailing.services.operator_ui import (
     metadata_summary,
     parse_contact_explorer_filters,
 )
+from mailing.services.public_lists import confirm_public_verification, public_list, request_public_verification
 from mailing.services.recipient_lists import (
     bulk_upsert_recipient_list_members_for_client,
     create_recipient_list_import_job_for_client,
@@ -1314,6 +1316,75 @@ def api_confirm(request):
         return validation_error_response(exc)
 
     return JsonResponse(payload, status=200)
+
+
+def _public_subscribe_response(request, payload, status):
+    if status == 204:
+        response = HttpResponse(status=204)
+    else:
+        response = JsonResponse(payload, status=status)
+    origin = request.headers.get("Origin", "")
+    if origin and origin in settings.RELAY_PUBLIC_SUBSCRIBE_ORIGINS:
+        response["Access-Control-Allow-Origin"] = origin
+        response["Vary"] = "Origin"
+        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+        response["Access-Control-Max-Age"] = "600"
+    return response
+
+
+@csrf_exempt
+def api_public_subscribe(request, list_key):
+    """Start double opt-in for one configured public list. No API key."""
+    if request.method == "OPTIONS":
+        return _public_subscribe_response(request, {}, 204)
+    if request.method != "POST":
+        return _public_subscribe_response(
+            request,
+            {"error": {"code": "method_not_allowed", "allowed_methods": ["POST"]}},
+            405,
+        )
+    try:
+        spec = public_list(list_key)
+        body = json_request_body(request)
+        email = body.get("email")
+        if not isinstance(email, str):
+            raise ApiValidationError({"email": "required"})
+        payload = request_public_verification(spec, email)
+    except ApiValidationError as exc:
+        return _public_subscribe_response(
+            request,
+            {"error": {"code": "validation_error", "fields": exc.errors}},
+            exc.status_code,
+        )
+    return _public_subscribe_response(request, payload, 200)
+
+
+@csrf_exempt
+def api_public_confirm(request, list_key):
+    """Finish double opt-in for one configured public list. No API key."""
+    if request.method == "OPTIONS":
+        return _public_subscribe_response(request, {}, 204)
+    if request.method != "POST":
+        return _public_subscribe_response(
+            request,
+            {"error": {"code": "method_not_allowed", "allowed_methods": ["POST"]}},
+            405,
+        )
+    try:
+        spec = public_list(list_key)
+        body = json_request_body(request)
+        token = body.get("token")
+        if not isinstance(token, str) or not token.strip():
+            raise ApiValidationError({"token": "required"})
+        payload = confirm_public_verification(spec, token.strip())
+    except ApiValidationError as exc:
+        return _public_subscribe_response(
+            request,
+            {"error": {"code": "validation_error", "fields": exc.errors}},
+            exc.status_code,
+        )
+    return _public_subscribe_response(request, payload, 200)
 
 
 @csrf_exempt

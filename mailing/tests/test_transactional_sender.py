@@ -112,7 +112,7 @@ def test_transactional_handler_forwards_extra_recipient_headers(
                 "ReplyToAddresses": ["support@example.com"],
             },
         )
-        monkeypatch.setattr("mailing.services.transactional_sender.ses_client", lambda: ses)
+        monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: ses)
 
         response = transactional_email_handler(
             _event("message-1", build_transactional_queue_payload(transactional_message))
@@ -151,7 +151,7 @@ def test_transactional_handler_sends_structured_message_parts_as_raw_email(
     }
     transactional_message.save(update_fields=["metadata", "updated_at"])
     ses = FakeRawSesClient()
-    monkeypatch.setattr("mailing.services.transactional_sender.ses_client", lambda: ses)
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: ses)
 
     response = transactional_email_handler(
         _event("message-1", build_transactional_queue_payload(transactional_message))
@@ -216,7 +216,7 @@ def test_transactional_handler_sends_persisted_message_and_records_sent_event(tr
                 },
             },
         )
-        monkeypatch.setattr("mailing.services.transactional_sender.ses_client", lambda: ses)
+        monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: ses)
 
         response = transactional_email_handler(
             _event("message-1", build_transactional_queue_payload(transactional_message))
@@ -262,7 +262,7 @@ def test_transactional_handler_uses_message_display_sender(transactional_message
                 },
             },
         )
-        monkeypatch.setattr("mailing.services.transactional_sender.ses_client", lambda: ses)
+        monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: ses)
 
         response = transactional_email_handler(
             _event("message-1", build_transactional_queue_payload(transactional_message))
@@ -304,10 +304,10 @@ def test_duplicate_terminal_delivery_is_acknowledged_without_ses_or_duplicate_ev
         metadata={},
     )
 
-    def fail_if_called():
+    def fail_if_called(*_args, **_kwargs):
         raise AssertionError("SES should not be called for terminal duplicate deliveries")
 
-    monkeypatch.setattr("mailing.services.transactional_sender.ses_client", fail_if_called)
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", fail_if_called)
 
     response = transactional_email_handler(
         _event("message-1", build_transactional_queue_payload(transactional_message))
@@ -322,10 +322,10 @@ def test_client_or_idempotency_mismatch_marks_failed_and_acknowledges(transactio
         "client_id": transactional_message.client_id + 1
     }
 
-    def fail_if_called():
+    def fail_if_called(*_args, **_kwargs):
         raise AssertionError("SES should not be called for queue payload mismatches")
 
-    monkeypatch.setattr("mailing.services.transactional_sender.ses_client", fail_if_called)
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", fail_if_called)
 
     response = transactional_email_handler(_event("message-1", payload))
 
@@ -342,7 +342,7 @@ def test_transient_ses_failure_leaves_message_retryable_and_returns_batch_failur
         def send_email(self, **params):
             raise EndpointConnectionError(endpoint_url="https://email.us-east-1.amazonaws.com")
 
-    monkeypatch.setattr("mailing.services.transactional_sender.ses_client", lambda: TransientSesClient())
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: TransientSesClient())
 
     response = transactional_email_handler(
         _event("message-1", build_transactional_queue_payload(transactional_message))
@@ -365,7 +365,7 @@ def test_post_ses_failure_does_not_send_again_on_retry(transactional_message, mo
             return {"MessageId": "ses-message-123"}["MessageId"]
 
     ses = SuccessfulSesClient()
-    monkeypatch.setattr("mailing.services.transactional_sender.ses_client", lambda: ses)
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: ses)
 
     def fail_after_ses(*args, **kwargs):
         raise RuntimeError("database event insert failed")
@@ -383,10 +383,10 @@ def test_post_ses_failure_does_not_send_again_on_retry(transactional_message, mo
     assert transactional_message.ses_message_id == ""
     assert EmailEvent.objects.count() == 0
 
-    def fail_if_called():
+    def fail_if_called(*_args, **_kwargs):
         raise AssertionError("SES should not be called while send is in progress")
 
-    monkeypatch.setattr("mailing.services.transactional_sender.ses_client", fail_if_called)
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", fail_if_called)
     response = transactional_email_handler(
         _event("message-1", build_transactional_queue_payload(transactional_message))
     )
@@ -410,7 +410,7 @@ def test_permanent_ses_failure_marks_failed_and_acknowledges(transactional_messa
                 "SendEmail",
             )
 
-    monkeypatch.setattr("mailing.services.transactional_sender.ses_client", lambda: PermanentSesClient())
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: PermanentSesClient())
 
     response = transactional_email_handler(
         _event("message-1", build_transactional_queue_payload(transactional_message))
@@ -442,7 +442,7 @@ def test_mixed_batch_retries_only_invalid_and_transient_records(transactional_me
         def send_email(self, **params):
             raise EndpointConnectionError(endpoint_url="https://email.us-east-1.amazonaws.com")
 
-    monkeypatch.setattr("mailing.services.transactional_sender.ses_client", lambda: TransientSesClient())
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: TransientSesClient())
     valid_payload = build_transactional_queue_payload(transactional_message)
     invalid_payload = valid_payload | {"version": 999}
     event = records_from_messages(

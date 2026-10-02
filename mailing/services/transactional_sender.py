@@ -3,11 +3,12 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from mailing.aws import ses_client
+from mailing.aws import ses_client_for_source
 from mailing.models import EmailEvent, EmailEventType, TransactionalMessage, TransactionalMessageStatus
 from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.ses import send_email
+from mailing.ses_routes import configuration_set_for_source
 
 TERMINAL_ACK_STATUSES = {
     TransactionalMessageStatus.SENT,
@@ -49,9 +50,14 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
             raise TransientSendFailure(f"transactional message {message.id} is already sending")
 
         source = source or message.from_email or message.client.default_from_email or settings.DEFAULT_FROM_EMAIL
+        configuration_set = None
+        if client is None:
+            client = ses_client_for_source(source)
+            configuration_set = configuration_set_for_source(source)
         try:
             ses_message_id = send_email(
-                ses_client=client or ses_client(),
+                ses_client=client,
+                configuration_set=configuration_set,
                 source=source,
                 to_email=message.email,
                 subject=message.subject,

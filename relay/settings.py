@@ -98,6 +98,11 @@ TASKDECK_PROJECT = "relay"
 # has not been given a token cannot leak operational detail.
 TASKDECK_STATUS_TOKEN = os.environ.get("TASKDECK_STATUS_TOKEN", "")
 
+# Bearer token for GET /internal/transfer/export and POST /internal/transfer/load.
+# Empty disables both routes (they 404). The document contains contacts and
+# client secrets, so leave this unset except during a migration.
+RELAY_TRANSFER_TOKEN = os.environ.get("RELAY_TRANSFER_TOKEN", "")
+
 # Recurring sends that something outside this service triggers on a timer.
 #
 # Datamailer has no scheduler and should not grow one: the caller decides who
@@ -120,6 +125,7 @@ TASKDECK_SCHEDULES = [
 ]
 
 MIDDLEWARE = [
+    "mailing.middleware.DropContentLengthOnNoContent",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -218,13 +224,26 @@ API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).r
 SUBSCRIPTION_CONFIRM_BASE_URL = (
     os.environ.get("SUBSCRIPTION_CONFIRM_BASE_URL", "").strip().rstrip("/") or PUBLIC_BASE_URL
 )
+# Static sites call these lists without a client API key. The value is parsed
+# by mailing.services.public_lists. Empty disables the public routes' lists.
+RELAY_PUBLIC_LISTS = os.environ.get("RELAY_PUBLIC_LISTS", "")
+RELAY_PUBLIC_SUBSCRIBE_ORIGINS = frozenset(csv_env("RELAY_PUBLIC_SUBSCRIBE_ORIGINS", "", allow_empty=True))
+RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT", "3"))
+RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS = int(
+    os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS", "3600")
+)
 AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
+# domain role=<arn> region=<region> configuration_set=<name>, separated by ';'
+# or newlines. Domains absent from this list use email.send and the values above.
+RELAY_SES_DOMAIN_ROUTES = os.environ.get("RELAY_SES_DOMAIN_ROUTES", "")
 SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0)
 SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = os.environ.get("SQS_TRANSACTIONAL_EMAIL_QUEUE_URL", "")
 SQS_CAMPAIGN_EMAIL_QUEUE_URL = os.environ.get("SQS_CAMPAIGN_EMAIL_QUEUE_URL", "")
 SQS_EMAIL_EVENTS_QUEUE_URL = os.environ.get("SQS_EMAIL_EVENTS_QUEUE_URL", "")
 SQS_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SES_WEBHOOKS_QUEUE_URL", "")
 SQS_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_INBOUND_EMAIL_QUEUE_URL", "")
+SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL", "")
+SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL", "")
 INBOUND_EMAIL_EVENTS_TOPIC_ARN = os.environ.get("INBOUND_EMAIL_EVENTS_TOPIC_ARN", "")
 INBOUND_EMAIL_IDEMPOTENCY_TABLE = os.environ.get("INBOUND_EMAIL_IDEMPOTENCY_TABLE", "")
 INBOUND_EMAIL_ARTIFACT_PREFIX = os.environ.get("INBOUND_EMAIL_ARTIFACT_PREFIX", "processed/")
