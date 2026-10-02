@@ -293,7 +293,7 @@
       </div>
     </div>
     {% if api_keys %}
-      <div class="table-wrap api-key-table">
+      <div class="table-wrap api-key-table stack-table">
         <table>
           <thead>
             <tr>
@@ -309,24 +309,24 @@
           <tbody>
             {% for api_key in api_keys %}
               <tr>
-                <td>
+                <td data-label="Key and purpose">
                   <strong>{{ api_key.name }}</strong>
                   <div class="muted truncate">
                     {% if api_key.notes %}{{ api_key.notes }}{% else %}No notes recorded.{% endif %}
                   </div>
                 </td>
-                <td><code>{{ api_key.display_prefix }}</code></td>
-                <td>
+                <td data-label="Safe prefix"><code>{{ api_key.display_prefix }}</code></td>
+                <td data-label="State">
                   {% if api_key.revoked_at %}
                     <span class="badge danger">Revoked</span>
                   {% else %}
                     <span class="badge success">Active</span>
                   {% endif %}
                 </td>
-                <td>{{ api_key.created_at|date:"Y-m-d H:i" }}</td>
-                <td>{% if api_key.last_used_at %}{{ api_key.last_used_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">Never</span>{% endif %}</td>
-                <td>{% if api_key.revoked_at %}{{ api_key.revoked_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">-</span>{% endif %}</td>
-                <td>
+                <td data-label="Created">{{ api_key.created_at|date:"Y-m-d H:i" }}</td>
+                <td data-label="Last used">{% if api_key.last_used_at %}{{ api_key.last_used_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">Never</span>{% endif %}</td>
+                <td data-label="Revoked">{% if api_key.revoked_at %}{{ api_key.revoked_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td data-label="Action">
                   {% if not api_key.revoked_at %}
                     <form method="post" action="{% url 'mailing:client_api_key_revoke' client.id api_key.id %}">
                       {% csrf_token %}

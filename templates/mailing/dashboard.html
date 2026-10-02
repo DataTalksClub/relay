@@ -180,7 +180,7 @@
         <a class="button secondary" href="{% url 'mailing:campaign_list' %}">View campaigns</a>
       </div>
       {% if dashboard.recent_campaigns %}
-        <div class="table-wrap">
+        <div class="table-wrap stack-table">
           <table>
             <thead>
               <tr>
@@ -193,13 +193,13 @@
             <tbody>
               {% for row in dashboard.recent_campaigns %}
                 <tr>
-                  <td>
+                  <td data-label="Campaign">
                     <a href="{% url 'mailing:campaign_detail' row.campaign.id %}">{{ row.campaign.subject }}</a>
                     <div class="helptext">{{ row.campaign.client.name }} / {{ row.campaign.audience.name }}</div>
                   </td>
-                  <td><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
-                  <td class="nowrap">{{ row.campaign.recipient_count }}</td>
-                  <td class="nowrap">{{ row.campaign.delivered_count }}</td>
+                  <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
+                  <td class="nowrap" data-label="Recipients">{{ row.campaign.recipient_count }}</td>
+                  <td class="nowrap" data-label="Delivered">{{ row.campaign.delivered_count }}</td>
                 </tr>
               {% endfor %}
             </tbody>
