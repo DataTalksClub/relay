@@ -26,7 +26,7 @@
         <div class="top-nav-actions">
           <a href="{% url 'mailing:client_list' %}" {% if request.resolver_match.url_name == "client_list" or request.resolver_match.url_name == "client_create" or request.resolver_match.url_name == "client_detail" or request.resolver_match.url_name == "client_edit" %}aria-current="page"{% endif %}>Clients</a>
           <a href="{% url 'mailing:api_docs' %}" {% if request.resolver_match.url_name == "api_docs" or request.resolver_match.url_name == "api_docs_json" %}aria-current="page"{% endif %}>API Docs</a>
-          <a href="/admin/">Admin</a>
+          <a href="{% url 'mailing:admin_api_keys' %}" {% if request.resolver_match.url_name == "admin_api_keys" %}aria-current="page"{% endif %}>Admin</a>
           <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
             <span data-theme-toggle-label>Dark</span>
           </button>
