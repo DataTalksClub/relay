@@ -603,7 +603,9 @@ summary:focus-visible,
    pattern), not as separate cards. Cells carry right/bottom hairlines pulled
    1px past their track so wrapped rows stay divided and the outer edge stays
    clean; the wrapping flex cells fill each row, so a partial last row never
-   leaves a ghost box around empty space. */
+   leaves a ghost box around empty space. Cells must stay transparent: the
+   container paints the surface color, and an opaque cell background would
+   paint over the previous cell's hairline across the 1px overlap. */
 .meta-grid {
   display: flex;
   flex-wrap: wrap;
@@ -619,7 +621,6 @@ summary:focus-visible,
   min-width: 0;
   margin: 0;
   padding: var(--dk-space-3) var(--dk-space-4);
-  background: var(--dk-bg-surface);
   border: 0;
   border-right: 1px solid var(--dk-border-default);
   border-bottom: 1px solid var(--dk-border-default);
@@ -639,7 +640,10 @@ summary:focus-visible,
    not as separate cards. Cells carry right/bottom hairlines pulled 1px past
    their track so wrapped rows stay divided and the outer edge stays clean;
    the wrapping flex cells fill each row, so a partial last row stretches to
-   the full width and never leaves a ghost box around empty space. */
+   the full width and never leaves a ghost box around empty space. Cells must
+   stay transparent: the container paints the page color, and an opaque cell
+   background would paint over the previous cell's hairline across the 1px
+   overlap. */
 .stats-grid {
   display: flex;
   flex-wrap: wrap;
@@ -663,7 +667,6 @@ summary:focus-visible,
   align-items: flex-start;
   gap: 2px;
   padding: var(--dk-space-3) var(--dk-space-4);
-  background: var(--dk-bg-page);
 }
 
 .stats-grid .stat {

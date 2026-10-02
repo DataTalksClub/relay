@@ -7,7 +7,6 @@
     <h1>Admin API Keys</h1>
     <p>Admin keys manage Relay through <code>/api/admin/</code>. Each key belongs to a staff user and grants access across clients.</p>
   </div>
-  <a href="{% url 'admin:index' %}">Django admin</a>
 </div>
 {% if raw_key %}
 <section class="section">
@@ -20,19 +19,24 @@
   <h2>Create a key for your account</h2>
   <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Create admin key</button></form>
 </section>
-<section class="section">
-  <h2>Keys</h2>
-  <table>
-    <thead><tr><th>Name</th><th>Owner</th><th>Prefix</th><th>Last used</th><th>Status</th><th>Action</th></tr></thead>
-    <tbody>
-    {% for key in keys %}
-      <tr>
-        <td>{{ key.name }}</td><td>{{ key.user.username }}</td><td><code>{{ key.display_prefix }}</code></td>
-        <td>{{ key.last_used_at|default:"Never" }}</td><td>{% if key.revoked_at %}Revoked{% else %}Active{% endif %}</td>
-        <td>{% if not key.revoked_at %}<form method="post" action="{% url 'mailing:admin_api_key_revoke' key.id %}">{% csrf_token %}<button type="submit">Revoke</button></form>{% endif %}</td>
-      </tr>
-    {% empty %}<tr><td colspan="6">No admin API keys yet.</td></tr>{% endfor %}
-    </tbody>
-  </table>
+<section class="section panel" aria-labelledby="admin-api-keys-table">
+  <div class="panel-header">
+    <h2 id="admin-api-keys-table">Keys</h2>
+    <span class="muted">{{ keys|length }} key{{ keys|length|pluralize }}</span>
+  </div>
+  <div class="table-wrap stack-table">
+    <table>
+      <thead><tr><th scope="col">Name</th><th scope="col">Owner</th><th scope="col">Prefix</th><th scope="col">Last used</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+      <tbody>
+      {% for key in keys %}
+        <tr>
+          <td data-label="Name">{{ key.name }}</td><td data-label="Owner">{{ key.user.username }}</td><td data-label="Prefix"><code>{{ key.display_prefix }}</code></td>
+          <td data-label="Last used">{{ key.last_used_at|default:"Never" }}</td><td data-label="Status">{% if key.revoked_at %}Revoked{% else %}Active{% endif %}</td>
+          <td data-label="Action">{% if not key.revoked_at %}<form method="post" action="{% url 'mailing:admin_api_key_revoke' key.id %}">{% csrf_token %}<button type="submit" class="danger">Revoke</button></form>{% endif %}</td>
+        </tr>
+      {% empty %}<tr><td colspan="6">No admin API keys yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 {% endblock %}
