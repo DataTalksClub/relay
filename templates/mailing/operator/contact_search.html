@@ -198,7 +198,9 @@
                   <td>
                     <div class="badge-row">
                       <span class="badge {{ row.subscription_badge.tone }}">{{ row.subscription_badge.label }}</span>
-                      <span class="badge {{ row.validation_badge.tone }}">{{ row.validation_badge.label }}</span>
+                      {% if row.validation_badge.tone != "success" %}
+                        <span class="badge {{ row.validation_badge.tone }}">{{ row.validation_badge.label }}</span>
+                      {% endif %}
                     </div>
                     {% if row.contact.email_validation_reason %}
                       <span class="muted data-truncate">{{ row.contact.email_validation_reason }}</span>
@@ -210,7 +212,7 @@
                       <span>Opened {{ row.last_opened_at|date:"Y-m-d H:i"|default:"never" }} / Clicked {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"never" }}</span>
                     </div>
                   </td>
-                  <td><span class="data-truncate">{{ row.recent_issue|default:"-" }}</span></td>
+                  <td><span class="data-truncate">{{ row.recent_issue|default:"—" }}</span></td>
                 </tr>
               {% endfor %}
             </tbody>

@@ -56,7 +56,7 @@
             {% for row in addresses %}
               <tr>
                 <td class="nowrap">{{ row.address }}</td>
-                <td class="truncate">{{ row.note|default:"-" }}</td>
+                <td class="truncate">{{ row.note|default:"—" }}</td>
                 <td>
                   {% if row.message_count %}
                     <a href="{% url 'mailing:inbound_list' %}?address={{ row.address|urlencode }}&amp;state=all">{{ row.message_count }}</a>
@@ -86,7 +86,6 @@
       </div>
     {% else %}
       <div class="empty-state">
-        <span class="badge neutral">Empty</span>
         <p>
           <strong>No addresses yet.</strong> Until an address exists here,
           inbound mail falls back to <code>INBOUND_EMAIL_ROUTES</code> from the
@@ -127,7 +126,7 @@
               <tr>
                 <td>{{ rule.get_scope_display }}</td>
                 <td class="nowrap">{{ rule.value }}</td>
-                <td class="truncate">{{ rule.reason|default:"-" }}</td>
+                <td class="truncate">{{ rule.reason|default:"—" }}</td>
                 <td class="nowrap">{{ rule.blocked_message_count }}</td>
                 <td>
                   <form method="post" action="{% url 'mailing:blocked_sender_delete' rule.id %}">
@@ -142,7 +141,6 @@
       </div>
     {% else %}
       <div class="empty-state">
-        <span class="badge success">Clear</span>
         <p><strong>Nothing is blocked.</strong> Mark a message as spam from the mailbox to add a rule here.</p>
       </div>
     {% endif %}

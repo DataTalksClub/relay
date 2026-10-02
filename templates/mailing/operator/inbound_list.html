@@ -98,7 +98,7 @@
                   {% endif %}
                 </td>
                 <td class="truncate">{{ row.subject|default:"(no subject)" }}</td>
-                <td class="nowrap">{{ row.recipient_address|default:"-" }}</td>
+                <td class="nowrap">{{ row.recipient_address|default:"—" }}</td>
                 <td class="nowrap">{{ row.created_at|date:"Y-m-d H:i" }}</td>
                 <td class="nowrap">
                   {% if row.is_spam %}
@@ -108,7 +108,7 @@
                   {% elif row.attachment_count %}
                     <span class="badge neutral">{{ row.attachment_count }} attachment{{ row.attachment_count|pluralize }}</span>
                   {% else %}
-                    <span class="muted">-</span>
+                    <span class="muted">—</span>
                   {% endif %}
                 </td>
               </tr>
@@ -162,7 +162,7 @@
               <tr>
                 <td>{{ rule.get_scope_display }}</td>
                 <td>{{ rule.value }}</td>
-                <td class="truncate">{{ rule.reason|default:"-" }}</td>
+                <td class="truncate">{{ rule.reason|default:"—" }}</td>
                 <td class="nowrap">{{ rule.created_at|date:"Y-m-d" }}</td>
               </tr>
             {% endfor %}

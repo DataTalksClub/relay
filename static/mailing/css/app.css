@@ -228,7 +228,12 @@ body {
   text-transform: uppercase;
 }
 
-.client-switcher select {
+.client-switcher select[multiple] {
+  height: auto;
+  min-height: var(--dk-size-control-md);
+}
+
+select {
   width: 100%;
   height: var(--dk-size-control-md);
   font-size: var(--dk-text-md);
@@ -336,14 +341,31 @@ main,
   white-space: nowrap;
 }
 
-/* The workspace collapse control is a 36px quiet square, the family's
+/* The workspace collapse control is a 36px bordered square, the family's
    sidebar-header button. */
 .sidebar-toggle {
+  border: 1px solid var(--dk-border-default);
+  background: var(--dk-bg-surface);
   flex: none;
   width: 36px;
   min-width: 36px;
   height: 36px;
   color: var(--dk-text-muted);
+}
+
+/* The drawer close control shows only while the mobile drawer is open. */
+.sidebar-drawer-close {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  html.js .has-sidebar.sidebar-open .sidebar-drawer-close {
+    display: inline-flex;
+  }
+
+  html.js .has-sidebar.sidebar-open .sidebar-toggle {
+    display: none;
+  }
 }
 
 /* The drawer open control lives in the toolbar on phones. */
@@ -371,9 +393,15 @@ main,
   gap: 2px;
 }
 
+.sidebar-nav-label,
+.sidebar-context {
+  padding-left: var(--dk-space-3);
+  padding-right: var(--dk-space-3);
+}
+
 .sidebar-nav-label {
   margin: 0 0 var(--dk-space-1);
-  padding: 0 var(--dk-space-3);
+  padding-left: var(--dk-space-3);
   color: var(--dk-text-muted);
   font-size: var(--dk-text-xs);
   font-weight: var(--dk-weight-semibold);
@@ -398,6 +426,7 @@ main,
 }
 
 .sidebar-nav a .icon {
+  color: var(--dk-text-primary);
   color: var(--dk-text-muted);
 }
 
@@ -495,6 +524,27 @@ p {
   color: var(--dk-text-muted);
 }
 
+/* Table row titles read as content, not as a link farm: ink text that
+   underlines on hover, the reference queue-row treatment. */
+.table-wrap a {
+  color: var(--dk-text-primary);
+  text-decoration: none;
+  font-weight: var(--dk-weight-semibold);
+}
+
+.table-wrap a:hover {
+  text-decoration: underline;
+}
+
+.table-wrap td .helptext a,
+.table-wrap td .muted a {
+  font-weight: var(--dk-weight-normal);
+}
+
+.table-wrap a.button {
+  font-weight: var(--dk-weight-medium);
+}
+
 a {
   color: var(--dk-text-link);
 }
@@ -525,7 +575,6 @@ summary:focus-visible,
 }
 
 .page-header p {
-  max-width: 60ch;
   margin: 0;
 }
 
@@ -607,31 +656,23 @@ summary:focus-visible,
 .meta-grid {
   display: flex;
   flex-wrap: wrap;
+  gap: 1px;
   margin: var(--dk-space-4) 0 var(--dk-space-6);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  background: var(--dk-bg-surface);
+  background: var(--dk-border-default);
   overflow: hidden;
 }
 
 .meta-grid > * {
-  flex: 1 1 150px;
+  flex: 1 1 220px;
   min-width: 0;
   margin: 0;
   padding: var(--dk-space-3) var(--dk-space-4);
   background: var(--dk-bg-surface);
   border: 0;
-  border-right: 1px solid var(--dk-border-default);
-  border-bottom: 1px solid var(--dk-border-default);
-  margin-right: -1px;
-  margin-bottom: -1px;
   border-radius: 0;
   overflow-wrap: anywhere;
-}
-
-.meta-grid > *:last-child {
-  border-right: 0;
-  margin-right: 0;
 }
 
 /* Summary counts render as one segmented strip: a single bordered container
@@ -643,10 +684,14 @@ summary:focus-visible,
 .stats-grid {
   display: flex;
   flex-wrap: wrap;
+  gap: 1px;
   margin: var(--dk-space-4) 0 var(--dk-space-6);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  background: var(--dk-bg-page);
+  /* The container carries the hairline colour; the 1px gaps between surface
+     cells are the dividers, so they render identically in both themes and
+     inside panels (where the cells keep the panel surface). */
+  background: var(--dk-border-default);
   overflow: hidden;
 }
 
@@ -669,11 +714,8 @@ summary:focus-visible,
 .stats-grid .stat {
   flex: 1 1 150px;
   border: 0;
-  border-right: 1px solid var(--dk-border-default);
-  border-bottom: 1px solid var(--dk-border-default);
-  margin-right: -1px;
-  margin-bottom: -1px;
   border-radius: 0;
+  background: var(--dk-bg-surface);
 }
 
 .stat-value {
@@ -921,7 +963,7 @@ a.stat-link:focus {
 .panel-header h2,
 .panel-header h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .panel-header p {
@@ -971,6 +1013,28 @@ a.stat-link:focus {
   margin: 0;
   padding: var(--dk-space-3) var(--dk-space-4);
   border-bottom: 1px solid var(--dk-border-default);
+}
+
+/* Filter groups inside a panel keep the band padding on all sides. */
+.panel .filter-panel {
+  border: 0;
+  padding: var(--dk-space-4);
+}
+
+.panel .advanced-panel {
+  border: 0;
+  border-top: 1px solid var(--dk-border-default);
+  border-radius: 0;
+  background: transparent;
+  margin-top: 0;
+}
+
+.panel .advanced-panel > summary {
+  padding: var(--dk-space-3) 0;
+}
+
+.panel .advanced-panel[open] {
+  padding-bottom: var(--dk-space-2);
 }
 
 .panel > .pagination {
@@ -1023,14 +1087,21 @@ a.stat-link:focus {
   margin-bottom: 0;
 }
 
-/* The reference home's footer hint line: one muted sentence with inline links. */
+/* The reference home's footer hint line: one muted sentence per question
+   with plain links, 13px. */
 .quick-links {
   margin: var(--dk-space-6) 0;
-  font-size: var(--dk-text-sm);
+  color: var(--dk-text-muted);
+  font-size: 13px;
 }
 
 .quick-links a {
-  margin-left: var(--dk-space-2);
+  margin-right: var(--dk-space-3);
+  color: var(--dk-text-link);
+}
+
+.quick-links a:hover {
+  text-decoration: underline;
 }
 
 .compact-list-flush {
@@ -1375,7 +1446,7 @@ a.compact-row:hover {
 
 .form-panel > .form-panel-header h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .form-panel .form-section {
@@ -1385,7 +1456,7 @@ a.compact-row:hover {
 .form-panel .form-section h2,
 .form-panel .section-header h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .form-panel .section-header {
@@ -1462,7 +1533,12 @@ select,
 textarea,
 button,
 .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dk-space-2);
   min-height: var(--dk-size-control-md);
+  white-space: nowrap;
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
   padding: 5px 10px;
@@ -2000,14 +2076,20 @@ pre {
   word-break: normal;
 }
 
-.code-block.success pre {
-  border-color: var(--dk-success-border);
-  background: var(--dk-success-bg);
+/* Response examples stay on the neutral code surface — the label names the
+   tone, the block stays quiet (dataops has no tinted code surfaces). */
+.code-block.success pre,
+.code-block.danger pre {
+  border-color: var(--dk-border-default);
+  background: var(--dk-bg-muted);
 }
 
-.code-block.danger pre {
-  border-color: var(--dk-danger-border);
-  background: var(--dk-danger-bg);
+.code-block.success .code-label {
+  color: var(--dk-success-text);
+}
+
+.code-block.danger .code-label {
+  color: var(--dk-danger-text);
 }
 
 @media (max-width: 860px) {
@@ -2035,6 +2117,18 @@ pre {
     width: 44px;
     min-width: 44px;
     height: 44px;
+    border: 1px solid var(--dk-border-default);
+    border-radius: var(--dk-radius-md);
+    background: var(--dk-bg-surface);
+  }
+
+  .toolbar-actions .icon-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    border: 1px solid var(--dk-border-default);
+    border-radius: var(--dk-radius-md);
+    background: var(--dk-bg-surface);
   }
 
   .toolbar-actions {
@@ -2219,10 +2313,19 @@ pre {
     width: auto;
   }
 
-  /* Narrow tables become labelled rows instead of a clipped grid. */
+  /* Narrow tables become bordered record cards — the family's mobile
+     record: a title-first line, then compact "Label value" meta lines in one
+     sans font, then the row action. */
   .stack-table {
     overflow: visible;
     box-shadow: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .panel > .stack-table {
+    padding: var(--dk-space-3);
   }
 
   .stack-table table,
@@ -2243,13 +2346,16 @@ pre {
 
   .stack-table tr {
     display: grid;
-    gap: var(--dk-space-2);
-    padding: var(--dk-space-3) 0;
-    border-bottom: 1px solid var(--dk-border-muted);
+    gap: var(--dk-space-1);
+    margin: 0 0 var(--dk-space-3);
+    padding: var(--dk-space-3);
+    border: 1px solid var(--dk-border-default);
+    border-radius: var(--dk-radius-md);
+    background: var(--dk-bg-surface);
   }
 
   .stack-table tr:last-child {
-    border-bottom: 0;
+    margin-bottom: 0;
   }
 
   .stack-table td {
@@ -2260,15 +2366,42 @@ pre {
     border: 0;
     /* Labelled rows read as sentences; cell-level nowrap no longer applies. */
     white-space: normal;
+    font-family: var(--dk-font-sans);
+  }
+
+  /* The first column is the record title: ink, semibold, no label. */
+  .stack-table td:first-child {
+    font-weight: var(--dk-weight-semibold);
+  }
+
+  .stack-table td:first-child::before {
+    display: none;
   }
 
   .stack-table td[data-label]::before {
-    display: block;
-    margin-bottom: 2px;
+    display: inline-block;
+    margin-right: 6px;
     color: var(--dk-text-muted);
-    font-size: var(--dk-text-sm);
+    font-size: var(--dk-text-xs);
     font-weight: var(--dk-weight-semibold);
     content: attr(data-label);
+  }
+
+  /* Row actions and badges keep family geometry: content-width controls,
+     full-width only for the record's own action buttons. */
+  .stack-table td .actions,
+  .stack-table td .action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--dk-space-2);
+  }
+
+  .stack-table td form {
+    margin: 0;
+  }
+
+  .stack-table td .button {
+    width: auto;
   }
 }
 

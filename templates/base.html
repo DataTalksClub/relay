@@ -42,6 +42,9 @@
                 <span class="brand-subtitle">Campaigns, contacts, deliverability</span>
               </span>
             </a>
+            <button class="icon-button sidebar-drawer-close" type="button" data-sidebar-close aria-label="Close navigation">
+              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
             <button class="icon-button sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="client-sidebar" aria-label="Collapse navigation">
               <svg class="icon sidebar-toggle-open" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4l-4 4 4 4"/></svg>
               <svg class="icon sidebar-toggle-closed" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
@@ -215,6 +218,8 @@
         const syncDrawer = () => {
           closeDrawer();
         };
+        const closeButton = shell.querySelector("[data-sidebar-close]");
+        if (closeButton) closeButton.addEventListener("click", closeDrawer);
         if (menuToggle && sidebar) {
           menuToggle.addEventListener("click", function () {
             setDrawer(!shell.classList.contains("sidebar-open"));

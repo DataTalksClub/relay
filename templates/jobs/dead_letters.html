@@ -44,8 +44,8 @@
                 <td>{{ job.client.slug }}</td>
                 <td class="nowrap">{{ job.attempt }}/{{ job.max_attempts }}</td>
                 <td class="nowrap">{% if job.response_status %}HTTP {{ job.response_status }}{% else %}-{% endif %}</td>
-                <td class="nowrap">{{ job.finished_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="truncate">{{ job.error|default:"-" }}</td>
+                <td class="nowrap">{{ job.finished_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="truncate">{{ job.error|default:"—" }}</td>
                 <td>
                   <form method="post" action="{% url 'jobs:dead_letter_retry' job.id %}">
                     {% csrf_token %}

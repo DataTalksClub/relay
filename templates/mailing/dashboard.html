@@ -102,6 +102,85 @@
     {% endfor %}
   </div>
 
+  <section class="section panel" aria-labelledby="deliverability-attention">
+    <div class="panel-header">
+      <div>
+        <h2 id="deliverability-attention">Deliverability attention</h2>
+        <p class="muted">Failures, suppressions, bounces, complaints, and skips to review.</p>
+      </div>
+      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
+    </div>
+    {% if dashboard.attention_items %}
+      <div class="compact-list">
+        {% for item in dashboard.attention_items %}
+          <div class="compact-row">
+            <div class="compact-row-main">
+              <span class="badge {{ item.badge.tone }}">{{ item.badge.label }}</span>
+              {% if item.href %}
+                <a href="{{ item.href }}"><strong>{{ item.title }}</strong></a>
+              {% else %}
+                <strong>{{ item.title }}</strong>
+              {% endif %}
+            </div>
+            <div class="compact-row-meta">
+              {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
+              <span class="muted">{{ item.detail }}</span>
+              {% if item.occurred_at %}<span class="helptext">{{ item.occurred_at|date:"M j, Y H:i" }}</span>{% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <span class="badge success">Clear</span>
+        <p><strong>No deliverability issues found.</strong> Bounces, complaints, failed sends, skipped recipients, and suppressed contacts will appear here.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="section panel" aria-labelledby="recent-campaigns">
+    <div class="panel-header">
+      <div>
+        <h2 id="recent-campaigns">Recent campaign activity</h2>
+        <p class="muted">Latest drafts, queued sends, and completed campaigns.</p>
+      </div>
+      <a class="button secondary" href="{% url 'mailing:campaign_list' %}">View campaigns</a>
+    </div>
+    {% if dashboard.recent_campaigns %}
+      <div class="table-wrap stack-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Campaign</th>
+              <th>Status</th>
+              <th class="nowrap">Recipients</th>
+              <th class="nowrap">Delivered</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in dashboard.recent_campaigns %}
+              <tr>
+                <td data-label="Campaign">
+                  <a href="{% url 'mailing:campaign_detail' row.campaign.id %}">{{ row.campaign.subject }}</a>
+                  <div class="helptext">{{ row.campaign.client.name }} / {{ row.campaign.audience.name }}</div>
+                </td>
+                <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
+                <td class="nowrap" data-label="Recipients">{{ row.campaign.recipient_count }}</td>
+                <td class="nowrap" data-label="Delivered">{{ row.campaign.delivered_count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <span class="badge neutral">Empty</span>
+        <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a send.</p>
+        <a class="button secondary" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
+      </div>
+    {% endif %}
+  </section>
+
   <section class="section panel" aria-labelledby="background-processing">
     <div class="panel-header">
       <h2 id="background-processing">Background processing</h2>
@@ -113,7 +192,7 @@
     <div class="stats-grid">
       {% for worker in dashboard.worker_statuses %}
         <div class="stat">
-          <span class="stat-label"><span class="stat-dot {% if worker.badge_tone == "danger" or worker.badge_tone == "warning" %}{{ worker.badge_tone }}{% elif worker.backlog_count %}warning{% endif %}"></span>{{ worker.label }}</span>
+          <span class="stat-label"><span class="stat-dot {% if worker.backlog_count %}warning{% endif %}"></span>{{ worker.label }}</span>
           {% if worker.key == "transactional" %}
             <a class="stat-value" href="{% url 'mailing:transactional_queue' %}">{{ dashboard.transactional_backlog_count }}</a>
           {% elif worker.backlog_count is None %}
@@ -160,85 +239,6 @@
         </table>
       </div>
     </details>
-  </section>
-
-  <section class="section panel" aria-labelledby="recent-campaigns">
-    <div class="panel-header">
-      <div>
-        <h2 id="recent-campaigns">Recent campaign activity</h2>
-        <p class="muted">Latest drafts, queued sends, and completed campaigns.</p>
-      </div>
-      <a class="button secondary" href="{% url 'mailing:campaign_list' %}">View campaigns</a>
-    </div>
-    {% if dashboard.recent_campaigns %}
-      <div class="table-wrap stack-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Campaign</th>
-              <th>Status</th>
-              <th class="nowrap">Recipients</th>
-              <th class="nowrap">Delivered</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in dashboard.recent_campaigns %}
-              <tr>
-                <td data-label="Campaign">
-                  <a href="{% url 'mailing:campaign_detail' row.campaign.id %}">{{ row.campaign.subject }}</a>
-                  <div class="helptext">{{ row.campaign.client.name }} / {{ row.campaign.audience.name }}</div>
-                </td>
-                <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
-                <td class="nowrap" data-label="Recipients">{{ row.campaign.recipient_count }}</td>
-                <td class="nowrap" data-label="Delivered">{{ row.campaign.delivered_count }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="empty-state">
-        <span class="badge neutral">Empty</span>
-        <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a send.</p>
-        <a class="button secondary" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
-      </div>
-    {% endif %}
-  </section>
-
-  <section class="section panel" aria-labelledby="deliverability-attention">
-    <div class="panel-header">
-      <div>
-        <h2 id="deliverability-attention">Deliverability attention</h2>
-        <p class="muted">Failures, suppressions, bounces, complaints, and skips to review.</p>
-      </div>
-      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
-    </div>
-    {% if dashboard.attention_items %}
-      <div class="compact-list">
-        {% for item in dashboard.attention_items %}
-          <div class="compact-row">
-            <div class="compact-row-main">
-              <span class="badge {{ item.badge.tone }}">{{ item.badge.label }}</span>
-              {% if item.href %}
-                <a href="{{ item.href }}"><strong>{{ item.title }}</strong></a>
-              {% else %}
-                <strong>{{ item.title }}</strong>
-              {% endif %}
-            </div>
-            <div class="compact-row-meta">
-              {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
-              <span class="muted">{{ item.detail }}</span>
-              {% if item.occurred_at %}<span class="helptext">{{ item.occurred_at|date:"M j, Y H:i" }}</span>{% endif %}
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <div class="empty-state">
-        <span class="badge success">Clear</span>
-        <p><strong>No deliverability issues found.</strong> Bounces, complaints, failed sends, skipped recipients, and suppressed contacts will appear here.</p>
-      </div>
-    {% endif %}
   </section>
 
   <p class="muted quick-links">Common workflows:

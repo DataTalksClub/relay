@@ -52,7 +52,7 @@
                   <a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a>
                 </td>
                 <td class="nowrap" data-label="Send time">
-                  {{ row.timing_value|date:"Y-m-d H:i"|default:"-" }}
+                  {{ row.timing_value|date:"Y-m-d H:i"|default:"—" }}
                   <div class="helptext">{{ row.timing_label }}</div>
                 </td>
                 <td class="nowrap" data-label="Recipients">{{ campaign.recipient_count }}</td>

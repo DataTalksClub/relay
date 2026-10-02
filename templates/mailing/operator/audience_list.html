@@ -45,12 +45,7 @@
                     <div class="helptext">{{ row.subscribed_count }} subscribed / {{ audience.subscription_count }} subscriptions</div>
                   </td>
                   <td class="nowrap" data-label="Inactive / suppressed">
-                    <span class="badge neutral">{{ row.inactive_count }} inactive</span>
-                    {% if row.suppressed_count %}
-                      <span class="badge danger">{{ row.suppressed_count }} suppressed</span>
-                    {% else %}
-                      <span class="badge success">No suppression</span>
-                    {% endif %}
+                    {{ row.inactive_count }} inactive{% if row.suppressed_count %} / {{ row.suppressed_count }} suppressed{% endif %}
                   </td>
                   <td class="truncate" data-label="Recent activity">
                     {% if row.recent_campaign %}
@@ -63,7 +58,7 @@
                       <span class="muted">No campaign or event activity</span>
                     {% endif %}
                   </td>
-                  <td class="nowrap" data-label="Action"><a href="{% url 'mailing:audience_detail' audience.id %}">View detail</a></td>
+                  <td class="nowrap" data-label="Action"><a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">View detail</a></td>
                 </tr>
               {% endwith %}
             {% endfor %}

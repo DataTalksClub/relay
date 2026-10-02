@@ -12,19 +12,17 @@
         <span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>
         {% if campaign.sent_at %}
           <span class="badge success">Sent {{ campaign.sent_at|date:"Y-m-d H:i" }}</span>
-        {% elif campaign.status == "draft" %}
-          <span class="badge neutral">Not sent</span>
         {% endif %}
       </div>
     </div>
     <div class="actions">
-      <a class="button secondary" href="{% url 'mailing:campaign_list' %}">All campaigns</a>
-      {% if can_edit %}
-        <a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>
-      {% endif %}
       {% if can_queue %}
         <a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Review and send</a>
       {% endif %}
+      {% if can_edit %}
+        <a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>
+      {% endif %}
+      <a class="button secondary" href="{% url 'mailing:campaign_list' %}">All campaigns</a>
     </div>
   </div>
 
@@ -45,7 +43,7 @@
       {% endif %}
         <div class="meta-grid">
         <div class="meta-item"><span class="meta-label">Subject</span>{{ campaign.subject|default:"Not added yet" }}</div>
-        <div class="meta-item"><span class="meta-label">From</span>{{ campaign_sender }}</div>
+        <div class="meta-item"><span class="meta-label">From</span>{{ campaign_sender|default:"—" }}</div>
         <div class="meta-item"><span class="meta-label">When</span>Send now after confirmation. Automatic scheduling is unavailable.</div>
       </div>
     </section>
@@ -91,7 +89,7 @@
       <div class="meta-item"><span class="meta-label">Status</span><span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span></div>
       <div class="meta-item"><span class="meta-label">Client</span>{{ campaign.client.name }}</div>
       <div class="meta-item"><span class="meta-label">Audience</span><a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a></div>
-      <div class="meta-item"><span class="meta-label">Sent</span>{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Sent</span>{{ campaign.sent_at|date:"Y-m-d H:i"|default:"—" }}</div>
       <div class="meta-item"><span class="meta-label">Recipients selected</span>{{ campaign.recipient_count }}</div>
     </div>
   </section>
@@ -163,12 +161,12 @@
         {% endfor %}
         <div class="stat">
           <span class="stat-label">Send speed</span>
-          <span class="stat-value">{{ send_progress.per_second|default:"-" }}</span>
+          <span class="stat-value">{{ send_progress.per_second|default:"—" }}</span>
           {% if send_progress.per_minute %}<span class="muted">{{ send_progress.per_minute }}</span>{% endif %}
         </div>
         <div class="stat">
           <span class="stat-label">Duration</span>
-          <span class="stat-value">{{ send_progress.duration_label|default:"-" }}</span>
+          <span class="stat-value">{{ send_progress.duration_label|default:"—" }}</span>
           {% if send_progress.started_at %}
             <span class="muted">Started {{ send_progress.started_at|date:"Y-m-d H:i:s" }}</span>
           {% endif %}
@@ -208,8 +206,8 @@
       </div>
 
       <div class="meta-grid">
-        <div class="meta-item"><span class="meta-label">Include tags</span>{{ campaign.include_tags|join:", "|default:"-" }}</div>
-        <div class="meta-item"><span class="meta-label">Exclude tags</span>{{ campaign.exclude_tags|join:", "|default:"-" }}</div>
+        <div class="meta-item"><span class="meta-label">Include tags</span>{{ campaign.include_tags|join:", "|default:"—" }}</div>
+        <div class="meta-item"><span class="meta-label">Exclude tags</span>{{ campaign.exclude_tags|join:", "|default:"—" }}</div>
       </div>
 
       </section>
@@ -258,8 +256,8 @@
               {% for row in preview_rows %}
                 <tr>
                   <td class="truncate">{{ row.row.email }}</td>
-                  <td><span class="badge {{ row.tone }}">{{ row.row.status_label }}</span></td>
-                  <td>{{ row.row.skip_reason_label|default:"-" }}</td>
+                  <td><span class="badge {{ row.tone }}">{{ row.row.status_label|default:"Eligible" }}</span></td>
+                  <td>{{ row.row.skip_reason_label|default:"—" }}</td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -295,7 +293,7 @@
     </form>
 
     {% if recipients.object_list %}
-      <div class="table-wrap triage-table campaign-recipient-table">
+      <div class="table-wrap triage-table campaign-recipient-table stack-table">
         <table>
           <thead>
             <tr>
@@ -315,15 +313,15 @@
                 </td>
                 <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
                 <td data-label="Delivery">
-                  <div class="nowrap">Sent: {{ row.recipient.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Delivered: {{ row.recipient.delivered_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  <div class="nowrap">Sent: {{ row.recipient.sent_at|date:"Y-m-d H:i"|default:"—" }}</div>
+                  <div class="nowrap">Delivered: {{ row.recipient.delivered_at|date:"Y-m-d H:i"|default:"—" }}</div>
                   {% if row.recipient.skip_reason %}
                     <div class="helptext">Skipped: {{ row.recipient.get_skip_reason_display }}</div>
                   {% endif %}
                 </td>
                 <td data-label="Engagement">
-                  <div class="nowrap">Opened: {{ row.recipient.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Clicked: {{ row.recipient.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  <div class="nowrap">Opened: {{ row.recipient.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</div>
+                  <div class="nowrap">Clicked: {{ row.recipient.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</div>
                   <div class="helptext">{{ row.recipient.open_count }} opens / {{ row.recipient.click_count }} clicks</div>
                 </td>
                 <td class="provider-cell" data-label="Provider data">
@@ -338,7 +336,7 @@
                       {% endif %}
                     </details>
                   {% else %}
-                    <span class="muted">None</span>
+                    <span class="muted">—</span>
                   {% endif %}
                 </td>
                 <td data-label="Actions">
@@ -348,7 +346,7 @@
                       <button type="submit" class="secondary" onclick="return confirm('Mark {{ row.recipient.email|escapejs }} as assumed sent without resending? This records an operator assumption, not confirmed delivery.');">Assume sent</button>
                     </form>
                   {% else %}
-                    <span class="muted">-</span>
+                    <span class="muted">—</span>
                   {% endif %}
                 </td>
               </tr>
@@ -359,7 +357,6 @@
       {% include "mailing/operator/_pagination.html" with page_obj=recipients querystring=pagination_querystring %}
     {% else %}
       <div class="empty-state">
-        <span class="badge neutral">Empty</span>
         {% if active_filter %}
           <p>No recipients match this filter.</p>
         {% else %}
