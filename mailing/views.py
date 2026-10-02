@@ -1247,6 +1247,9 @@ def public_unsubscribe(request, unsubscribe_token):
 
 
 def authenticate_api_request(request):
+    # Set only by the authenticated admin wrapper, never from HTTP input.
+    if getattr(request, "_admin_api_client", None) is not None:
+        return request._admin_api_client, None
     auth_result = authenticate_bearer_token(request.headers.get("Authorization"))
     if auth_result.is_authenticated:
         return auth_result.client, None

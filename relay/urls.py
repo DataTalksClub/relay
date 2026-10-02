@@ -10,6 +10,7 @@ urlpatterns = [
     path("auth/logout", oidc.end, name="oidc-logout"),
     path("admin/login/", oidc.admin_login, name="shared-admin-login"),
     path("admin/", admin.site.urls),
+    path("api/admin/", include("mailing.admin_urls")),
     path("", include("jobs.urls")),
     path("", include("mailing.urls")),
 ]
