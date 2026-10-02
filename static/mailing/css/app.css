@@ -1032,9 +1032,19 @@ button,
   border-color: var(--dk-accent-default);
   background: var(--dk-accent-default);
   font-size: var(--dk-text-body);
-  font-weight: 600;
+  font-weight: var(--dk-weight-medium);
   cursor: pointer;
   text-decoration: none;
+}
+
+/* Explicit aliases so templates can name the role instead of relying on
+   the bare-element default: .primary is the filled accent (one per view),
+   .secondary the quiet control, .danger the outlined destructive one. */
+button.primary,
+.button.primary {
+  color: var(--dk-text-on-accent);
+  border-color: var(--dk-accent-default);
+  background: var(--dk-accent-default);
 }
 
 button:hover,
@@ -1065,17 +1075,19 @@ button.secondary:hover {
   background: var(--dk-bg-hover);
 }
 
+/* Destructive actions are outlined, not filled, per the dakit vocabulary. */
 button.danger,
 .button.danger {
-  color: var(--dk-text-on-accent);
-  border-color: var(--dk-danger-text);
-  background: var(--dk-danger-text);
+  color: var(--dk-danger-text);
+  border-color: var(--dk-danger-border);
+  background: var(--dk-bg-page);
 }
 
 button.danger:hover,
 .button.danger:hover {
+  color: var(--dk-danger-text);
   border-color: var(--dk-danger-hover);
-  background: var(--dk-danger-hover);
+  background: var(--dk-danger-bg);
 }
 
 .table-wrap {

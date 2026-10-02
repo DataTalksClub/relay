@@ -104,7 +104,7 @@
           <p class="muted">Start with email, client, or subscription. Use advanced filters only when needed.</p>
         </div>
         <div class="actions">
-          <button type="submit">Apply filters</button>
+          <button class="secondary" type="submit">Apply filters</button>
           <a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">Clear</a>
         </div>
       </div>
@@ -344,7 +344,7 @@
           {% endfor %}
         </select>
       </div>
-      <button type="submit">Filter events</button>
+      <button class="secondary" type="submit">Filter events</button>
     </form>
     {% if event_rows %}
       <div class="timeline">

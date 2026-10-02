@@ -36,7 +36,7 @@
           {% csrf_token %}
           <input type="hidden" name="client_id" value="{{ client.id }}">
           <input type="hidden" name="next" value="{% url 'mailing:dashboard' %}">
-          <button type="submit">Use client</button>
+          <button class="secondary" type="submit">Use client</button>
         </form>
       {% endif %}
       <a class="button secondary" href="{% url 'mailing:client_edit' client.id %}">Edit client</a>
@@ -232,7 +232,7 @@
           <label>{{ editor.audience.name }} <span class="muted">({{ editor.audience.slug }}) — {{ editor.count }} mapping{{ editor.count|pluralize }}</span></label>
           <textarea name="mappings" rows="4" placeholder="ai-dev-tools-zoomcamp-2026:@registered = ai-dev-tools-zoomcamp-2026">{{ editor.mappings_text }}</textarea>
           <div class="action-row">
-            <button type="submit">Save mappings for {{ editor.audience.slug }}</button>
+            <button class="secondary" type="submit">Save mappings for {{ editor.audience.slug }}</button>
           </div>
         </form>
       {% empty %}
@@ -356,7 +356,7 @@
       <form method="post" action="{% url 'mailing:client_api_key_create' client.id %}" class="form-stack">
         {% include "mailing/operator/_form_fields.html" with form=key_form %}
         <div class="actions">
-          <button type="submit">Create API key</button>
+          <button class="secondary" type="submit">Create API key</button>
         </div>
       </form>
     </div>

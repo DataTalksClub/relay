@@ -136,28 +136,28 @@
         {% csrf_token %}
         <h3>Subscription</h3>
         {% include "mailing/operator/_form_fields.html" with form=subscription_form %}
-        <div class="toolbar"><button type="submit">Update subscription</button></div>
+        <div class="toolbar"><button class="secondary" type="submit">Update subscription</button></div>
       </form>
 
       <form class="summary-panel manage-form" method="post" action="{% url 'mailing:contact_state_update' contact.normalized_email %}">
         {% csrf_token %}
         <h3>State</h3>
         {% include "mailing/operator/_form_fields.html" with form=contact_state_form %}
-        <div class="toolbar"><button type="submit">Update state</button></div>
+        <div class="toolbar"><button class="secondary" type="submit">Update state</button></div>
       </form>
 
       <form class="summary-panel manage-form" method="post" action="{% url 'mailing:contact_tag_add' contact.normalized_email %}">
         {% csrf_token %}
         <h3>Add tag</h3>
         {% include "mailing/operator/_form_fields.html" with form=tag_add_form %}
-        <div class="toolbar"><button type="submit">Add tag</button></div>
+        <div class="toolbar"><button class="secondary" type="submit">Add tag</button></div>
       </form>
 
       <form class="summary-panel manage-form" method="post" action="{% url 'mailing:contact_tag_remove' contact.normalized_email %}">
         {% csrf_token %}
         <h3>Remove tag</h3>
         {% include "mailing/operator/_form_fields.html" with form=tag_remove_form %}
-        <div class="toolbar"><button type="submit">Remove tag</button></div>
+        <div class="toolbar"><button class="secondary" type="submit">Remove tag</button></div>
       </form>
     </div>
   </section>
