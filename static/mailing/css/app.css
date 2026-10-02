@@ -65,92 +65,104 @@ body {
 
 .icon-button:hover {
   color: var(--dk-text-primary);
-  border-color: var(--dk-border-default);
+  border-color: transparent;
   background: var(--dk-bg-hover);
   text-decoration: none;
 }
 
+/* Canvas toolbar: global actions only — quiet icon buttons and the account
+   control, the family toolbar pattern. Navigation lives in the sidebar. */
 .app-toolbar {
   position: sticky;
   top: 0;
   z-index: 5;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  min-height: 48px;
+  gap: var(--dk-space-2);
+  min-height: 64px;
   padding: 0 var(--dk-space-6);
   border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-page);
+  background: var(--dk-bg-surface);
 }
 
-.toolbar-nav {
+.topbar-title {
+  display: none;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dk-text-heading);
+  font-size: 17px;
+  font-weight: var(--dk-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-actions {
   display: flex;
   align-items: center;
   gap: var(--dk-space-1);
+  margin-left: auto;
 }
 
-.toolbar-nav a,
-.toolbar-nav .theme-toggle {
+.toolbar-actions .icon-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  color: var(--dk-text-muted);
+}
+
+/* Theme toggle shows one glyph per theme; the boot script pins data-theme
+   before first paint, so the swap is pure CSS. */
+.theme-icon-sun {
+  display: none;
+}
+
+:root[data-theme="dark"] .theme-icon-moon {
+  display: none;
+}
+
+:root[data-theme="dark"] .theme-icon-sun {
+  display: block;
+}
+
+/* Account control: avatar chip + name + chevron opening a small disclosure
+   menu (the family's toolbar account pattern). */
+.account-menu {
+  position: relative;
+}
+
+.account-menu summary {
+  list-style: none;
+}
+
+.account-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-menu[open] .account-button {
+  background: var(--dk-bg-hover);
+}
+
+.account-button {
   display: inline-flex;
   align-items: center;
   gap: var(--dk-space-2);
-  height: 32px;
-  padding: 0 var(--dk-space-3);
+  min-height: var(--dk-size-control-md);
+  padding: 0 var(--dk-space-2) 0 var(--dk-space-1);
+  border: 0;
   border-radius: var(--dk-radius-md);
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-md);
-  font-weight: var(--dk-weight-medium);
-}
-
-.toolbar-nav a {
-  text-decoration: none;
-}
-
-.toolbar-nav a:hover {
-  color: var(--dk-text-primary);
-  background: var(--dk-bg-hover);
-  text-decoration: none;
-}
-
-.toolbar-nav a[aria-current="page"] {
-  color: var(--dk-accent-default);
-  background: var(--dk-accent-soft);
-  font-weight: var(--dk-weight-semibold);
-}
-
-.theme-toggle {
-  width: auto;
-  min-height: 0;
-  border: 1px solid transparent;
   background: transparent;
+  color: var(--dk-text-primary);
+  font-size: 13px;
+  font-weight: var(--dk-weight-semibold);
   cursor: pointer;
 }
 
-.theme-toggle:hover {
-  color: var(--dk-text-primary);
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-hover);
+.account-button .icon {
+  color: var(--dk-text-muted);
 }
 
-/* Account control: avatar chip + name at the toolbar's end, the family
-   toolbar pattern. It links to sign-out. */
-.toolbar-nav .account-button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--dk-space-2);
-  height: 32px;
-  padding: 0 var(--dk-space-2) 0 var(--dk-space-1);
-  border-radius: var(--dk-radius-md);
-  color: var(--dk-text-primary);
-  font-size: var(--dk-text-md);
-  font-weight: var(--dk-weight-semibold);
-  text-decoration: none;
-}
-
-.toolbar-nav .account-button:hover {
+.account-button:hover {
   background: var(--dk-bg-hover);
-  color: var(--dk-text-primary);
-  text-decoration: none;
 }
 
 .account-avatar {
@@ -171,6 +183,36 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.account-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 180px;
+  padding: var(--dk-space-1);
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-lg);
+  background: var(--dk-bg-surface);
+  box-shadow: var(--dk-shadow-overlay);
+}
+
+.account-panel a {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 var(--dk-space-3);
+  border-radius: var(--dk-radius-sm);
+  color: var(--dk-text-primary);
+  font-size: var(--dk-text-body);
+  text-decoration: none;
+}
+
+.account-panel a:hover {
+  background: var(--dk-bg-hover);
+  text-decoration: none;
 }
 
 .client-switcher {
@@ -227,7 +269,7 @@ main,
   flex-direction: column;
   gap: var(--dk-space-4);
   height: 100vh;
-  padding: var(--dk-space-3);
+  padding: var(--dk-space-4) var(--dk-space-3);
   overflow-y: auto;
   border-right: 1px solid var(--dk-border-default);
   background: var(--dk-bg-muted);
@@ -238,7 +280,7 @@ main,
   align-items: center;
   justify-content: space-between;
   gap: var(--dk-space-1);
-  min-height: 32px;
+  min-height: 40px;
 }
 
 .brand {
@@ -259,21 +301,49 @@ main,
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--dk-radius-md);
   background: var(--dk-accent-default);
   color: var(--dk-text-on-accent);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: var(--dk-weight-bold);
 }
 
 .brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.brand-name {
   overflow: hidden;
-  font-size: var(--dk-text-md);
+  color: var(--dk-text-heading);
+  font-size: 16px;
   font-weight: var(--dk-weight-semibold);
-  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.brand-subtitle {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--dk-text-muted);
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The workspace collapse control is a 36px quiet square, the family's
+   sidebar-header button. */
+.sidebar-toggle {
+  flex: none;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  color: var(--dk-text-muted);
 }
 
 /* The drawer open control lives in the toolbar on phones. */
@@ -283,7 +353,6 @@ main,
 
 .sidebar-context {
   padding-top: var(--dk-space-2);
-  border-top: 1px solid var(--dk-border-muted);
 }
 
 .sidebar-client-action {
@@ -1703,29 +1772,27 @@ pre {
     min-height: 0;
   }
 
-  /* The toolbar becomes the 64px top bar: menu control left, global
-     links pushed right. */
+  /* The toolbar becomes the 64px top bar: menu control and page title left,
+     global actions right — the family's mobile top bar. */
   .app-toolbar {
-    justify-content: flex-start;
     min-height: 64px;
-    padding: 0 var(--dk-space-4);
+    padding: 0 var(--dk-space-3);
+  }
+
+  .topbar-title {
+    display: block;
+    flex: 1;
   }
 
   .sidebar-menu-toggle {
     display: inline-flex;
-    align-items: center;
-    gap: var(--dk-space-2);
-    width: auto;
-    height: 40px;
-    min-height: 0;
-    padding: 0 var(--dk-space-3);
-    font-size: var(--dk-text-md);
-    font-weight: var(--dk-weight-medium);
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
   }
 
-  .toolbar-nav {
-    flex: 1;
-    justify-content: flex-end;
+  .toolbar-actions {
+    flex: none;
   }
 
   .sidebar-toggle {
@@ -1822,32 +1889,16 @@ pre {
     padding-left: 14px;
   }
 
-  /* At phone widths the global controls go icon-only so the top bar
-     never overflows the viewport. */
-  .toolbar-nav {
-    gap: var(--dk-space-1);
-  }
-
-  .toolbar-nav a {
-    padding: 0 var(--dk-space-2);
-    white-space: nowrap;
-  }
-
-  .toolbar-nav a span,
-  .theme-toggle span {
-    display: none;
-  }
-
   /* The account chip keeps its avatar at phone widths; only the name drops. */
   .account-button {
-    padding: 0 var(--dk-space-1);
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0;
   }
 
-  .account-button .account-avatar {
-    display: inline-grid;
-  }
-
-  .account-button .account-button-name {
+  .account-button .account-button-name,
+  .account-button > .icon {
     display: none;
   }
 

@@ -37,7 +37,10 @@
           <div class="sidebar-head">
             <a class="brand" href="{% url 'mailing:dashboard' %}">
               <span class="brand-mark" aria-hidden="true">D</span>
-              <span class="brand-text">Datamailer</span>
+              <span class="brand-text">
+                <span class="brand-name">Datamailer</span>
+                <span class="brand-subtitle">Campaigns, contacts, deliverability</span>
+              </span>
             </a>
             <button class="icon-button sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="client-sidebar" aria-label="Collapse navigation">
               <svg class="icon sidebar-toggle-open" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4l-4 4 4 4"/></svg>
@@ -107,6 +110,21 @@
                 </a>
               {% endif %}
             </div>
+            <div class="sidebar-nav-group">
+              <span class="sidebar-nav-label">Administer</span>
+              <a href="{% url 'mailing:client_list' %}" {% if current_url_name == "client_list" or current_url_name == "client_create" %}aria-current="page"{% endif %} title="Clients">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="12" height="8.5" rx="1.5"/><path d="M5.5 5V3.5a1 1 0 011-1h3a1 1 0 011 1V5"/><path d="M2 8.75h12"/></svg>
+                <span>Clients</span>
+              </a>
+              <a href="{% url 'mailing:api_docs' %}" {% if current_url_name == "api_docs" or current_url_name == "api_docs_json" %}aria-current="page"{% endif %} title="API docs">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 4.5L2 8l3.5 3.5"/><path d="M10.5 4.5L14 8l-3.5 3.5"/></svg>
+                <span>API docs</span>
+              </a>
+              <a href="/admin/" title="Django admin">
+                <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2l5 1.8v3.4c0 2.9-2 5.4-5 6.3-3-.9-5-3.4-5-6.3V3.8L8 2z"/></svg>
+                <span>Admin</span>
+              </a>
+            </div>
           </nav>
         </aside>
       {% endif %}
@@ -116,33 +134,27 @@
           {% if user.is_authenticated and user.is_staff %}
             <button class="icon-button sidebar-menu-toggle" type="button" data-sidebar-menu-toggle aria-expanded="false" aria-controls="client-sidebar" aria-label="Open navigation">
               <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/></svg>
-              <span>Menu</span>
             </button>
           {% endif %}
-          <nav class="toolbar-nav" aria-label="Global">
-            <a href="{% url 'mailing:client_list' %}" {% if current_url_name == "client_list" or current_url_name == "client_create" or current_url_name == "client_detail" or current_url_name == "client_edit" %}aria-current="page"{% endif %}>
-              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="12" height="8.5" rx="1.5"/><path d="M5.5 5V3.5a1 1 0 011-1h3a1 1 0 011 1V5"/><path d="M2 8.75h12"/></svg>
-              <span>Clients</span>
-            </a>
-            <a href="{% url 'mailing:api_docs' %}" {% if current_url_name == "api_docs" or current_url_name == "api_docs_json" %}aria-current="page"{% endif %}>
-              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 4.5L2 8l3.5 3.5"/><path d="M10.5 4.5L14 8l-3.5 3.5"/></svg>
-              <span>API Docs</span>
-            </a>
-            <a href="/admin/">
-              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2l5 1.8v3.4c0 2.9-2 5.4-5 6.3-3-.9-5-3.4-5-6.3V3.8L8 2z"/></svg>
-              <span>Admin</span>
-            </a>
-            <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
-              <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.5 5.5 0 116.4 2.8a4.3 4.3 0 006.8 6.8z"/></svg>
-              <span data-theme-toggle-label>Dark</span>
+          <span class="topbar-title">{% block topbar_title %}Datamailer{% endblock %}</span>
+          <div class="toolbar-actions">
+            <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false" title="Toggle theme">
+              <svg class="icon theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.5 5.5 0 116.4 2.8a4.3 4.3 0 006.8 6.8z"/></svg>
+              <svg class="icon theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.2 1.2M11.4 11.4l1.2 1.2M12.6 3.4l-1.2 1.2M4.6 11.4l-1.2 1.2"/></svg>
             </button>
             {% if user.is_authenticated %}
-              <a class="account-button" href="/auth/logout" title="Log out">
-                <span class="account-avatar" aria-hidden="true">{{ user.get_username|first|upper }}</span>
-                <span class="account-button-name">{{ user.get_username }}</span>
-              </a>
+              <details class="account-menu" data-account-menu>
+                <summary class="account-button">
+                  <span class="account-avatar" aria-hidden="true">{{ user.get_username|first|upper }}</span>
+                  <span class="account-button-name">{{ user.get_username }}</span>
+                  <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg>
+                </summary>
+                <div class="account-panel">
+                  <a href="/auth/logout">Log out</a>
+                </div>
+              </details>
             {% endif %}
-          </nav>
+          </div>
         </header>
         <main class="app-main">
           {% if messages %}
@@ -226,9 +238,8 @@
       })();
       (function () {
         const toggle = document.querySelector("[data-theme-toggle]");
-        const label = document.querySelector("[data-theme-toggle-label]");
         const media = window.matchMedia("(prefers-color-scheme: dark)");
-        if (!toggle || !label) return;
+        if (!toggle) return;
 
         const storedTheme = () => {
           try {
@@ -248,9 +259,7 @@
           }
         };
         const sync = () => {
-          const theme = currentTheme();
-          toggle.setAttribute("aria-pressed", String(theme === "dark"));
-          label.textContent = theme === "dark" ? "Light" : "Dark";
+          toggle.setAttribute("aria-pressed", String(currentTheme() === "dark"));
         };
 
         sync();
@@ -260,6 +269,21 @@
         });
         media.addEventListener("change", function () {
           if (!storedTheme()) sync();
+        });
+      })();
+      (function () {
+        // The account control is a disclosure menu: outside click and Escape
+        // close it, like any popover in the family.
+        const menu = document.querySelector("[data-account-menu]");
+        if (!menu) return;
+        document.addEventListener("click", function (event) {
+          if (!menu.contains(event.target)) menu.removeAttribute("open");
+        });
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape" && menu.open) {
+            menu.removeAttribute("open");
+            menu.querySelector("summary").focus();
+          }
         });
       })();
     </script>
