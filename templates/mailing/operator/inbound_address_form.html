@@ -17,29 +17,32 @@
   </div>
 
   <section class="section">
-    <form method="post" class="form-grid">
+    <form method="post" novalidate>
       {% csrf_token %}
-      <div class="form-field">
-        <label for="local_part">Local part</label>
-        <input id="local_part" name="local_part" required value="" placeholder="support">
-        <p class="helptext">The part before the @. Lowercased on save.</p>
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="local_part">Local part</label>
+          <input id="local_part" name="local_part" required value="" placeholder="support">
+          <p class="helptext">The part before the @. Lowercased on save.</p>
+        </div>
+        <div class="form-field">
+          <label for="domain">Domain</label>
+          <input id="domain" name="domain" required value="" placeholder="aishippinglabs.com">
+          <p class="helptext">
+            Must already receive at this root. Creating an address here does not
+            change DNS or SES, so a domain nobody points at Relay will simply
+            never arrive.
+          </p>
+        </div>
+        <div class="form-field">
+          <label for="note">Note</label>
+          <input id="note" name="note" value="" placeholder="What this address is for">
+          <p class="helptext">Only you see this. Useful when several addresses exist for the same purpose.</p>
+        </div>
       </div>
-      <div class="form-field">
-        <label for="domain">Domain</label>
-        <input id="domain" name="domain" required value="" placeholder="aishippinglabs.com">
-        <p class="helptext">
-          Must already receive at this root. Creating an address here does not
-          change DNS or SES, so a domain nobody points at Relay will simply
-          never arrive.
-        </p>
-      </div>
-      <div class="form-field">
-        <label for="note">Note</label>
-        <input id="note" name="note" value="" placeholder="What this address is for">
-        <p class="helptext">Only you see this. Useful when several addresses exist for the same purpose.</p>
-      </div>
-      <div class="form-field">
-        <button class="button" type="submit">Create address</button>
+      <div class="form-actions">
+        <button type="submit">Create address</button>
+        <a class="button secondary" href="{% url 'mailing:inbound_address_list' %}">Cancel</a>
       </div>
     </form>
   </section>

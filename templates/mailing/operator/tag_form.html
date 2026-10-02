@@ -68,9 +68,9 @@
       </div>
     </section>
 
-    <div class="action-row">
-      <a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">Cancel</a>
+    <div class="form-actions">
       <button type="submit">{% if mode == "create" %}Create tag{% else %}Save tag{% endif %}</button>
+      <a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">Cancel</a>
     </div>
   </form>
 {% endblock %}

@@ -127,9 +127,9 @@
       </div>
     </section>
 
-    <div class="action-row">
-      <a class="button secondary" href="{% if campaign %}{% url 'mailing:campaign_detail' campaign.id %}{% else %}{% url 'mailing:campaign_list' %}{% endif %}">Cancel</a>
+    <div class="form-actions">
       <button type="submit">{% if mode == "create" %}Create draft{% else %}Save draft{% endif %}</button>
+      <a class="button secondary" href="{% if campaign %}{% url 'mailing:campaign_detail' campaign.id %}{% else %}{% url 'mailing:campaign_list' %}{% endif %}">Cancel</a>
     </div>
   </form>
 {% endblock %}

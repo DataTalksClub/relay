@@ -160,13 +160,13 @@
       </div>
     </section>
 
-    <div class="action-row">
+    <div class="form-actions">
+      <button type="submit">{% if mode == "create" %}Create client{% else %}Save client{% endif %}</button>
       {% if mode == "edit" %}
         <a class="button secondary" href="{% url 'mailing:client_detail' client.id %}">Cancel</a>
       {% else %}
         <a class="button secondary" href="{% url 'mailing:client_list' %}">Cancel</a>
       {% endif %}
-      <button type="submit">{% if mode == "create" %}Create client{% else %}Save client{% endif %}</button>
     </div>
   </form>
 {% endblock %}

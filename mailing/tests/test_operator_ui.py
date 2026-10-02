@@ -1092,7 +1092,7 @@ def test_audience_create_and_edit_forms_use_operational_layout(client, operator,
         assert "Audience name" in html
         assert "Audience slug" in html
         assert f'href="{reverse("mailing:audience_list")}"' in html
-        assert 'class="action-row"' in html
+        assert 'class="form-actions"' in html
         assert 'class="button secondary"' in html
     assert "Create audience" in create_response.content.decode()
     assert "Save audience" in edit_response.content.decode()
@@ -1119,7 +1119,7 @@ def test_tag_create_and_edit_forms_show_parent_scope_and_actions(client, operato
         assert audience.slug in html
         assert audience.organization.name in html
         assert f'href="{reverse("mailing:audience_detail", args=[audience.id])}"' in html
-        assert 'class="action-row"' in html
+        assert 'class="form-actions"' in html
         assert 'class="button secondary"' in html
     assert "Create tag" in create_response.content.decode()
     assert "Save tag" in edit_response.content.decode()
@@ -1543,7 +1543,7 @@ def test_campaign_create_form_uses_sectioned_operational_layout(client, operator
     assert 'rows="18"' in html
     assert 'name="text_body"' in html
     assert 'rows="12"' in html
-    assert 'class="action-row"' in html
+    assert 'class="form-actions"' in html
     assert f'href="{reverse("mailing:campaign_list")}"' in html
 
 
