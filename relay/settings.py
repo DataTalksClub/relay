@@ -98,6 +98,11 @@ TASKDECK_PROJECT = "relay"
 # has not been given a token cannot leak operational detail.
 TASKDECK_STATUS_TOKEN = os.environ.get("TASKDECK_STATUS_TOKEN", "")
 
+# Bearer token for GET /internal/transfer/export and POST /internal/transfer/load.
+# Empty disables both routes (they 404). The document contains contacts and
+# client secrets, so leave this unset except during a migration.
+RELAY_TRANSFER_TOKEN = os.environ.get("RELAY_TRANSFER_TOKEN", "")
+
 # Recurring sends that something outside this service triggers on a timer.
 #
 # Datamailer has no scheduler and should not grow one: the caller decides who
