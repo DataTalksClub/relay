@@ -140,16 +140,16 @@
           <tbody>
             {% for worker in dashboard.worker_statuses %}
               <tr>
-                <td><strong>{{ worker.label }}</strong></td>
-                <td>
+                <td data-label="Worker"><strong>{{ worker.label }}</strong></td>
+                <td data-label="Status">
                   <span class="badge {{ worker.badge_tone }}">{{ worker.badge_label }}</span>
                   <div class="helptext">{{ worker.detail }}</div>
                 </td>
-                <td>
+                <td data-label="Service">
                   <div class="helptext">{{ worker.service_name }}</div>
                   <code>{{ worker.command }}</code>
                 </td>
-                <td>
+                <td data-label="Runtime">
                   {% if worker.pid and worker.pid != "0" %}<div class="helptext">pid {{ worker.pid }}</div>{% endif %}
                   {% if worker.started_at %}<div class="helptext">started {{ worker.started_at }}</div>{% endif %}
                   {% if not worker.pid or worker.pid == "0" %}<span class="muted">No running process reported</span>{% endif %}

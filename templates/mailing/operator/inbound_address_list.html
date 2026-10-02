@@ -55,23 +55,23 @@
           <tbody>
             {% for row in addresses %}
               <tr>
-                <td class="nowrap">{{ row.address }}</td>
-                <td class="truncate">{{ row.note|default:"-" }}</td>
-                <td>
+                <td class="nowrap" data-label="Address">{{ row.address }}</td>
+                <td class="truncate" data-label="Note">{{ row.note|default:"-" }}</td>
+                <td data-label="Messages">
                   {% if row.message_count %}
                     <a href="{% url 'mailing:inbound_list' %}?address={{ row.address|urlencode }}&amp;state=all">{{ row.message_count }}</a>
                   {% else %}
                     <span class="muted">0</span>
                   {% endif %}
                 </td>
-                <td>
+                <td data-label="State">
                   {% if row.is_active %}
                     <span class="badge success">Receiving</span>
                   {% else %}
                     <span class="badge neutral">Retired</span>
                   {% endif %}
                 </td>
-                <td>
+                <td data-label="Actions">
                   <form method="post" action="{% url 'mailing:inbound_address_archive' row.id %}">
                     {% csrf_token %}
                     <button class="button secondary" type="submit">
@@ -125,11 +125,11 @@
           <tbody>
             {% for rule in blocked_rules %}
               <tr>
-                <td>{{ rule.get_scope_display }}</td>
-                <td class="nowrap">{{ rule.value }}</td>
-                <td class="truncate">{{ rule.reason|default:"-" }}</td>
-                <td class="nowrap">{{ rule.blocked_message_count }}</td>
-                <td>
+                <td data-label="Scope">{{ rule.get_scope_display }}</td>
+                <td class="nowrap" data-label="Value">{{ rule.value }}</td>
+                <td class="truncate" data-label="Reason">{{ rule.reason|default:"-" }}</td>
+                <td class="nowrap" data-label="Discarded">{{ rule.blocked_message_count }}</td>
+                <td data-label="Actions">
                   <form method="post" action="{% url 'mailing:blocked_sender_delete' rule.id %}">
                     {% csrf_token %}
                     <button class="button secondary" type="submit">Unblock</button>

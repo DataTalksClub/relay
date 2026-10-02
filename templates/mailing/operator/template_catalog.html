@@ -35,19 +35,19 @@
         <tbody>
           {% for row in template_rows %}
             <tr>
-              <td>
+              <td data-label="Template">
                 <a href="{% url 'mailing:template_detail' row.template.id %}">{{ row.template.name }}</a>
                 <div class="muted">Integration key: {{ row.template.key }}</div>
               </td>
-              <td>{{ row.template.client.name }}<div class="muted">{{ row.template.client.slug }}</div></td>
-              <td>
+              <td data-label="Client">{{ row.template.client.name }}<div class="muted">{{ row.template.client.slug }}</div></td>
+              <td data-label="Status">
                 {% if row.template.is_active %}
                   <span class="badge success">Active</span>
                 {% else %}
                   <span class="badge danger">Inactive</span>
                 {% endif %}
               </td>
-              <td>
+              <td data-label="Required context">
                 {% if row.requirements %}
                   <div class="code-list" aria-label="Required context">
                     {% for requirement in row.requirements %}
@@ -61,14 +61,14 @@
                   <span class="muted">None</span>
                 {% endif %}
               </td>
-              <td>
+              <td data-label="Messages">
                 {{ row.template.total_message_count }}
                 <div class="metric-stack">
                   <span>Queued {{ row.template.queued_count }}</span>
                   <span>Sent {{ row.template.sent_count }} / Skipped {{ row.template.skipped_count }} / Failed {{ row.template.failed_count }}</span>
                 </div>
               </td>
-              <td class="nowrap">{{ row.template.updated_at|date:"Y-m-d H:i" }}</td>
+              <td class="nowrap" data-label="Updated">{{ row.template.updated_at|date:"Y-m-d H:i" }}</td>
             </tr>
           {% endfor %}
         </tbody>

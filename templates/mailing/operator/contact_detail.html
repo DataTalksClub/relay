@@ -205,11 +205,11 @@
           <tbody>
             {% for item in eligibility %}
               <tr>
-                <td>{{ item.scope }}</td>
-                <td>{% if item.can_send_marketing %}<span class="badge success">Can send</span>{% else %}<span class="badge danger">Blocked</span>{% endif %}</td>
-                <td>{{ item.marketing_reasons|join:", " }}</td>
-                <td>{% if item.can_send_transactional %}<span class="badge success">Can send</span>{% else %}<span class="badge danger">Blocked</span>{% endif %}</td>
-                <td>{{ item.transactional_reasons|join:", " }}</td>
+                <td data-label="Scope">{{ item.scope }}</td>
+                <td data-label="Marketing">{% if item.can_send_marketing %}<span class="badge success">Can send</span>{% else %}<span class="badge danger">Blocked</span>{% endif %}</td>
+                <td data-label="Marketing reasons">{{ item.marketing_reasons|join:", " }}</td>
+                <td data-label="Transactional">{% if item.can_send_transactional %}<span class="badge success">Can send</span>{% else %}<span class="badge danger">Blocked</span>{% endif %}</td>
+                <td data-label="Transactional reasons">{{ item.transactional_reasons|join:", " }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -242,19 +242,19 @@
           <tbody>
             {% for recipient in campaign_history %}
               <tr>
-                <td class="truncate">
+                <td class="truncate" data-label="Campaign">
                   <a href="{% url 'mailing:campaign_detail' recipient.campaign_id %}#recipient-{{ recipient.id }}">{{ recipient.campaign.subject }}</a>
                   <div class="muted">{{ recipient.campaign.client.name }} / {{ recipient.campaign.audience.name }}</div>
                 </td>
-                <td><span class="badge">{{ recipient.get_status_display }}</span></td>
-                <td>{{ recipient.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ recipient.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ recipient.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ recipient.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ recipient.get_skip_reason_display|default:"-" }}</td>
-                <td class="truncate">{{ recipient.ses_message_id|default:"-" }}</td>
-                <td class="nowrap">{{ recipient.open_count }} opens / {{ recipient.click_count }} clicks</td>
-                <td class="truncate">{{ recipient.last_error|default:"-" }}</td>
+                <td data-label="Status"><span class="badge">{{ recipient.get_status_display }}</span></td>
+                <td data-label="Sent">{{ recipient.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Delivered">{{ recipient.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Opened">{{ recipient.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Clicked">{{ recipient.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Issue">{{ recipient.get_skip_reason_display|default:"-" }}</td>
+                <td class="truncate" data-label="SES message">{{ recipient.ses_message_id|default:"-" }}</td>
+                <td class="nowrap" data-label="Counts">{{ recipient.open_count }} opens / {{ recipient.click_count }} clicks</td>
+                <td class="truncate" data-label="Last error">{{ recipient.last_error|default:"-" }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -292,22 +292,22 @@
             {% for row in transactional_rows %}
               {% with message=row.message %}
               <tr>
-                <td>
+                <td data-label="Template">
                   {{ message.template.name }}
                   <div class="muted">Integration key: {{ message.template_key }}</div>
                 </td>
-                <td>{{ message.client.name }}</td>
-                <td><span class="badge">{{ message.get_status_display }}</span></td>
-                <td class="truncate">{{ message.subject }}</td>
-                <td>{{ message.created_at|date:"Y-m-d H:i" }}</td>
-                <td>{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ message.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="nowrap">{{ message.open_count }} opens / {{ message.click_count }} clicks</td>
-                <td class="truncate">{{ message.ses_message_id|default:"-" }}</td>
-                <td class="truncate">{{ row.metadata_summary|default:"-" }}</td>
-                <td class="truncate">{{ message.last_error|default:"-" }}</td>
+                <td data-label="Client">{{ message.client.name }}</td>
+                <td data-label="Status"><span class="badge">{{ message.get_status_display }}</span></td>
+                <td class="truncate" data-label="Subject">{{ message.subject }}</td>
+                <td data-label="Created">{{ message.created_at|date:"Y-m-d H:i" }}</td>
+                <td data-label="Sent">{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Delivered">{{ message.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Opened">{{ message.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Clicked">{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td class="nowrap" data-label="Counts">{{ message.open_count }} opens / {{ message.click_count }} clicks</td>
+                <td class="truncate" data-label="SES message">{{ message.ses_message_id|default:"-" }}</td>
+                <td class="truncate" data-label="Metadata">{{ row.metadata_summary|default:"-" }}</td>
+                <td class="truncate" data-label="Last error">{{ message.last_error|default:"-" }}</td>
               </tr>
               {% endwith %}
             {% endfor %}

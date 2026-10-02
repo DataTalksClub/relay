@@ -101,10 +101,10 @@
           <tbody>
             {% for row in event_rows %}
               <tr>
-                <td><span class="badge neutral">{{ row.event.get_event_type_display }}</span></td>
-                <td class="nowrap">{{ row.event.created_at|date:"Y-m-d H:i" }}</td>
-                <td>{{ row.context }}</td>
-                <td class="truncate">{{ row.metadata_summary|default:"-" }}</td>
+                <td data-label="Event"><span class="badge neutral">{{ row.event.get_event_type_display }}</span></td>
+                <td class="nowrap" data-label="Created">{{ row.event.created_at|date:"Y-m-d H:i" }}</td>
+                <td data-label="Context">{{ row.context }}</td>
+                <td class="truncate" data-label="Metadata">{{ row.metadata_summary|default:"-" }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -138,12 +138,12 @@
           <tbody>
             {% for callback in cmp_callback_rows %}
               <tr>
-                <td><code>{{ callback.event_type }}</code></td>
-                <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
-                <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="truncate">{{ callback.last_error|default:"-" }}</td>
+                <td data-label="Event"><code>{{ callback.event_type }}</code></td>
+                <td data-label="Status"><span class="badge neutral">{{ callback.get_status_display }}</span></td>
+                <td data-label="Attempts">{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
+                <td data-label="Next retry">{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Delivered">{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td class="truncate" data-label="Error">{{ callback.last_error|default:"-" }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -177,12 +177,12 @@
           <tbody>
             {% for callback in callback_rows %}
               <tr>
-                <td><code>{{ callback.event_type }}</code></td>
-                <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
-                <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="truncate">{{ callback.last_error|default:"-" }}</td>
+                <td data-label="Event"><code>{{ callback.event_type }}</code></td>
+                <td data-label="Status"><span class="badge neutral">{{ callback.get_status_display }}</span></td>
+                <td data-label="Attempts">{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
+                <td data-label="Next retry">{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Delivered">{{ callback.delivered_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td class="truncate" data-label="Error">{{ callback.last_error|default:"-" }}</td>
               </tr>
             {% endfor %}
           </tbody>

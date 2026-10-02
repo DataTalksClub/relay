@@ -5,10 +5,10 @@
       <tbody>
         {% for row in audit_rows %}
           <tr>
-            <td>{{ row.created_at|date:"Y-m-d H:i:s" }}</td>
-            <td>{{ row.actor.username|default:"-" }}</td>
-            <td>{{ row.action }}</td>
-            <td class="truncate">{{ row.metadata }}</td>
+            <td data-label="When">{{ row.created_at|date:"Y-m-d H:i:s" }}</td>
+            <td data-label="Actor">{{ row.actor.username|default:"-" }}</td>
+            <td data-label="Action">{{ row.action }}</td>
+            <td class="truncate" data-label="Metadata">{{ row.metadata }}</td>
           </tr>
         {% endfor %}
       </tbody>

@@ -198,9 +198,9 @@
                 <tbody>
                   {% for method, path, purpose in group.endpoints %}
                     <tr>
-                      <td class="nowrap"><span class="badge">{{ method }}</span></td>
-                      <td><code>{{ path }}</code></td>
-                      <td>{{ purpose }}</td>
+                      <td class="nowrap" data-label="Method"><span class="badge">{{ method }}</span></td>
+                      <td data-label="Path"><code>{{ path }}</code></td>
+                      <td data-label="Purpose">{{ purpose }}</td>
                     </tr>
                   {% endfor %}
                 </tbody>

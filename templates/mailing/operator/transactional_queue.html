@@ -36,20 +36,20 @@
           <tbody>
             {% for row in message_rows %}
               <tr>
-                <td>
+                <td data-label="Recipient">
                   <a href="{% url 'mailing:transactional_message_detail' row.message.id %}">{{ row.message.email }}</a>
                   {% if row.message.contact %}
                     <div class="helptext"><a href="{% url 'mailing:contact_detail' row.message.contact.normalized_email %}">Contact</a></div>
                   {% endif %}
                 </td>
-                <td>
+                <td data-label="Template">
                   {{ row.message.template.name }}
                   <div class="muted">Integration key: {{ row.message.template_key }}</div>
                 </td>
-                <td class="truncate">{{ row.message.subject|default:"-" }}</td>
-                <td class="nowrap">{{ row.message.created_at|date:"Y-m-d H:i" }}</td>
-                <td class="nowrap">{{ row.message.created_at|timesince }}</td>
-                <td><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
+                <td class="truncate" data-label="Subject">{{ row.message.subject|default:"-" }}</td>
+                <td class="nowrap" data-label="Queued">{{ row.message.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="nowrap" data-label="Waiting">{{ row.message.created_at|timesince }}</td>
+                <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
               </tr>
             {% endfor %}
           </tbody>

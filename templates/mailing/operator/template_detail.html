@@ -59,8 +59,8 @@
           <tbody>
             {% for requirement in requirements %}
               <tr>
-                <td><code>{{ requirement.name }}</code></td>
-                <td>{{ requirement.description|default:"Required by this template." }}</td>
+                <td data-label="Variable"><code>{{ requirement.name }}</code></td>
+                <td data-label="Description">{{ requirement.description|default:"Required by this template." }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -125,15 +125,15 @@
           <tbody>
             {% for row in recent_message_rows %}
               <tr>
-                <td>
+                <td data-label="Email">
                   <a href="{% url 'mailing:transactional_message_detail' row.message.id %}">{{ row.message.email }}</a>
                   {% if row.message.contact %}
                     <div class="helptext"><a href="{% url 'mailing:contact_detail' row.message.contact.normalized_email %}">Contact</a></div>
                   {% endif %}
                 </td>
-                <td><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
-                <td class="nowrap">{{ row.message.created_at|date:"Y-m-d H:i" }}</td>
-                <td class="truncate">{{ row.message.last_error|default:"-" }}</td>
+                <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
+                <td class="nowrap" data-label="Created">{{ row.message.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="truncate" data-label="Last error">{{ row.message.last_error|default:"-" }}</td>
               </tr>
             {% endfor %}
           </tbody>

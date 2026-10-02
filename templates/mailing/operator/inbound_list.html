@@ -91,16 +91,16 @@
           <tbody>
             {% for row in rows %}
               <tr>
-                <td>
+                <td data-label="From">
                   <a href="{% url 'mailing:inbound_message_detail' row.id %}">{{ row.sender_address|default:row.from_header|default:"Unknown sender" }}</a>
                   {% if row.sender_domain %}
                     <div class="helptext">{{ row.sender_domain }}</div>
                   {% endif %}
                 </td>
-                <td class="truncate">{{ row.subject|default:"(no subject)" }}</td>
-                <td class="nowrap">{{ row.recipient_address|default:"-" }}</td>
-                <td class="nowrap">{{ row.created_at|date:"Y-m-d H:i" }}</td>
-                <td class="nowrap">
+                <td class="truncate" data-label="Subject">{{ row.subject|default:"(no subject)" }}</td>
+                <td class="nowrap" data-label="To">{{ row.recipient_address|default:"-" }}</td>
+                <td class="nowrap" data-label="Received">{{ row.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="nowrap" data-label="Signal">
                   {% if row.is_spam %}
                     <span class="badge danger">SES: spam</span>
                   {% elif row.spam_verdict %}
@@ -160,10 +160,10 @@
           <tbody>
             {% for rule in blocked_senders %}
               <tr>
-                <td>{{ rule.get_scope_display }}</td>
-                <td>{{ rule.value }}</td>
-                <td class="truncate">{{ rule.reason|default:"-" }}</td>
-                <td class="nowrap">{{ rule.created_at|date:"Y-m-d" }}</td>
+                <td data-label="Scope">{{ rule.get_scope_display }}</td>
+                <td data-label="Value">{{ rule.value }}</td>
+                <td class="truncate" data-label="Reason">{{ rule.reason|default:"-" }}</td>
+                <td class="nowrap" data-label="Blocked">{{ rule.created_at|date:"Y-m-d" }}</td>
               </tr>
             {% endfor %}
           </tbody>

@@ -36,17 +36,17 @@
           <tbody>
             {% for job in page.object_list %}
               <tr>
-                <td>
+                <td data-label="Task">
                   <div class="nowrap">{{ job.task_type }}</div>
                   <div class="muted">{{ job.id }}</div>
                   {% if job.idempotency_key %}<div class="helptext">{{ job.idempotency_key }}</div>{% endif %}
                 </td>
-                <td>{{ job.client.slug }}</td>
-                <td class="nowrap">{{ job.attempt }}/{{ job.max_attempts }}</td>
-                <td class="nowrap">{% if job.response_status %}HTTP {{ job.response_status }}{% else %}-{% endif %}</td>
-                <td class="nowrap">{{ job.finished_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td class="truncate">{{ job.error|default:"-" }}</td>
-                <td>
+                <td data-label="Client">{{ job.client.slug }}</td>
+                <td class="nowrap" data-label="Attempts">{{ job.attempt }}/{{ job.max_attempts }}</td>
+                <td class="nowrap" data-label="Response">{% if job.response_status %}HTTP {{ job.response_status }}{% else %}-{% endif %}</td>
+                <td class="nowrap" data-label="Failed">{{ job.finished_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td class="truncate" data-label="Error">{{ job.error|default:"-" }}</td>
+                <td data-label="Action">
                   <form method="post" action="{% url 'jobs:dead_letter_retry' job.id %}">
                     {% csrf_token %}
                     <button type="submit" class="button secondary">Retry</button>

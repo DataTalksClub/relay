@@ -190,12 +190,12 @@
             <tbody>
               {% for row in contact_rows %}
                 <tr>
-                  <td class="email-cell">
+                  <td class="email-cell" data-label="Email">
                     <a class="data-truncate" href="{% url 'mailing:contact_detail' row.contact.normalized_email %}">{{ row.contact.email }}</a>
                     <span class="muted data-truncate">{{ row.subscription_summary }}</span>
                     {% if row.tag_summary != "-" %}<span class="helptext data-truncate">{{ row.tag_summary }}</span>{% endif %}
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <div class="badge-row">
                       <span class="badge {{ row.subscription_badge.tone }}">{{ row.subscription_badge.label }}</span>
                       <span class="badge {{ row.validation_badge.tone }}">{{ row.validation_badge.label }}</span>
@@ -204,13 +204,13 @@
                       <span class="muted data-truncate">{{ row.contact.email_validation_reason }}</span>
                     {% endif %}
                   </td>
-                  <td>
+                  <td data-label="Last activity">
                     <div class="metric-stack">
                       <span>Sent {{ row.last_sent_at|date:"Y-m-d H:i"|default:"never" }}</span>
                       <span>Opened {{ row.last_opened_at|date:"Y-m-d H:i"|default:"never" }} / Clicked {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"never" }}</span>
                     </div>
                   </td>
-                  <td><span class="data-truncate">{{ row.recent_issue|default:"-" }}</span></td>
+                  <td data-label="Recent issue"><span class="data-truncate">{{ row.recent_issue|default:"-" }}</span></td>
                 </tr>
               {% endfor %}
             </tbody>

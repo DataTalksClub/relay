@@ -245,7 +245,7 @@
           <tbody>
             {% for row in member_rows %}
               <tr>
-                <td class="email-cell">
+                <td class="email-cell" data-label="Email">
                   <a class="data-truncate" href="{% url 'mailing:contact_detail' row.contact.normalized_email %}" title="{{ row.contact.email }}">{{ row.contact.email }}</a>
                   {% if row.contact.email != row.contact.normalized_email %}
                     <div class="helptext">{{ row.contact.normalized_email }}</div>
@@ -253,19 +253,19 @@
                   <span class="muted data-truncate" title="{{ row.subscription_summary }}">{{ row.subscription_summary }}</span>
                   {% if row.tag_summary != "-" %}<span class="helptext data-truncate" title="{{ row.tag_summary }}">{{ row.tag_summary }}</span>{% endif %}
                 </td>
-                <td>
+                <td data-label="Sendability">
                   <div class="badge-row">
                     <span class="badge {{ row.primary_status_badge.tone }}">{{ row.primary_status_badge.label }}</span>
                     <span class="badge neutral" title="{{ row.hidden_status_badge_summary }}">+{{ row.hidden_status_badge_count }}</span>
                   </div>
                   {% if row.contact.email_validation_reason %}<div class="helptext truncate">{{ row.contact.email_validation_reason }}</div>{% endif %}
                 </td>
-                <td>
+                <td data-label="Engagement">
                   <div class="nowrap">Sent: {{ row.last_sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
                   <div class="nowrap">Opened: {{ row.last_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
                   <div class="nowrap">Clicked: {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
                 </td>
-                <td><span class="data-truncate" title="{{ row.recent_issue|default:'-' }}">{{ row.recent_issue|default:"-" }}</span></td>
+                <td data-label="Recent issue"><span class="data-truncate" title="{{ row.recent_issue|default:'-' }}">{{ row.recent_issue|default:"-" }}</span></td>
               </tr>
             {% endfor %}
           </tbody>
@@ -301,16 +301,16 @@
           <tbody>
             {% for campaign in campaigns %}
               <tr>
-                <td class="truncate">
+                <td class="truncate" data-label="Campaign">
                   <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject }}</a>
                   <div class="helptext">{{ campaign.updated_at|date:"Y-m-d H:i" }}</div>
                 </td>
-                <td>{{ campaign.client.name }}</td>
-                <td><span class="badge">{{ campaign.get_status_display }}</span></td>
-                <td>{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td>{{ campaign.recipient_count }}</td>
-                <td>{{ campaign.unique_open_count }} / {{ campaign.open_count }}</td>
-                <td>{{ campaign.unique_click_count }} / {{ campaign.click_count }}</td>
+                <td data-label="Client">{{ campaign.client.name }}</td>
+                <td data-label="Status"><span class="badge">{{ campaign.get_status_display }}</span></td>
+                <td data-label="Sent">{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Recipients">{{ campaign.recipient_count }}</td>
+                <td data-label="Opens">{{ campaign.unique_open_count }} / {{ campaign.open_count }}</td>
+                <td data-label="Clicks">{{ campaign.unique_click_count }} / {{ campaign.click_count }}</td>
               </tr>
             {% endfor %}
           </tbody>
