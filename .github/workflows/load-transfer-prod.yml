@@ -45,7 +45,7 @@ jobs:
               --document-name AWS-RunShellScript \
               --comment "Load Relay transfer archive" \
               --timeout-seconds 900 \
-              --parameters "commands=[\"set -euo pipefail\",\"install -d -m 0700 /var/lib/relay/export\",\"url=\$(printf '%s' ${archive_b64} | base64 -d)\",\"curl --fail --silent --show-error --retry 5 --retry-delay 2 \\\"\$url\\\" -o /var/lib/relay/export/transfer.tgz\",\"tar -C /var/lib/relay/export -xzf /var/lib/relay/export/transfer.tgz\",\"python3 /opt/relay/scripts/load_transfer_archive.py\",\"rm -f /var/lib/relay/export/transfer.tgz\"]" \
+              --parameters "commands=[\"set -euo pipefail\",\"install -d -m 0700 /var/lib/relay/export\",\"url=\$(printf '%s' ${archive_b64} | base64 -d)\",\"curl --fail --location --silent --show-error --retry 5 --retry-delay 2 \\\"\$url\\\" -o /var/lib/relay/export/transfer.tgz\",\"tar -C /var/lib/relay/export -xzf /var/lib/relay/export/transfer.tgz\",\"python3 /opt/relay/scripts/load_transfer_archive.py\",\"rm -f /var/lib/relay/export/transfer.tgz\"]" \
               --query 'Command.CommandId' \
               --output text
           )
