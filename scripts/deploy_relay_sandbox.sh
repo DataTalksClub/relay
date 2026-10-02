@@ -222,7 +222,7 @@ if git -C "$app_dir" remote get-url origin >/dev/null 2>&1; then
 else
   git -C "$app_dir" remote add origin https://github.com/DataTalksClub/relay.git
 fi
-git -C "$app_dir" fetch --prune origin main
+git -C "$app_dir" fetch --prune origin "$release"
 git -C "$app_dir" checkout --force "$release"
 git -C "$app_dir" clean -ffd -e .env
 
