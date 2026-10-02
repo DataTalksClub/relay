@@ -38,16 +38,13 @@
       <h2 id="mailbox-filters">Filter mailbox</h2>
     </div>
     <form method="get" class="filter-bar">
+      <nav class="local-nav" aria-label="Mailbox state">
+        <a href="?state=&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}" {% if not state %}aria-current="page"{% endif %}>Unread</a>
+        <a href="?state=read&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}" {% if state == "read" %}aria-current="page"{% endif %}>Read</a>
+        <a href="?state=blocked&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}" {% if state == "blocked" %}aria-current="page"{% endif %}>Blocked senders</a>
+        <a href="?state=all&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}" {% if state == "all" %}aria-current="page"{% endif %}>Everything</a>
+      </nav>
       <div class="filter-grid">
-        <div class="form-field">
-          <label for="state">Show</label>
-          <select id="state" name="state">
-            <option value="" {% if not state %}selected{% endif %}>Unread</option>
-            <option value="read" {% if state == "read" %}selected{% endif %}>Read</option>
-            <option value="blocked" {% if state == "blocked" %}selected{% endif %}>Blocked senders</option>
-            <option value="all" {% if state == "all" %}selected{% endif %}>Everything</option>
-          </select>
-        </div>
         <div class="form-field">
           <label for="address">Address</label>
           <select id="address" name="address">
@@ -130,7 +127,7 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <span class="badge neutral">Empty</span>
+      <span class="badge neutral">EMPTY</span>
       {% if narrowed %}
         <p><strong>No messages match this filter.</strong> Nothing here is a statement about whether mail arrived; only about this filter.</p>
       {% else %}

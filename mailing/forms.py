@@ -74,6 +74,7 @@ class CampaignForm(OperatorForm, forms.ModelForm):
             "preview_text"
         ].help_text = "Optional inbox preview text shown after the subject by many email clients."
         self.fields["scheduled_at"].help_text = "Optional. Leave blank to keep the draft unscheduled."
+        self.fields["audience"].empty_label = "Select audience"
         self.fields["audience"].queryset = Audience.objects.select_related("organization").order_by(
             "organization__slug", "slug"
         )

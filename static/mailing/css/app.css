@@ -103,6 +103,11 @@ body {
   margin-left: auto;
 }
 
+.toolbar-actions .icon-button .icon {
+  width: 18px;
+  height: 18px;
+}
+
 .toolbar-actions .icon-button {
   width: 32px;
   min-width: 32px;
@@ -231,6 +236,13 @@ body {
 .client-switcher select[multiple] {
   height: auto;
   min-height: var(--dk-size-control-md);
+  /* Native multi-selects size to their options; the 34px control height
+     slices the second option in half. */
+  padding: 6px 10px;
+}
+
+select[multiple] option {
+  padding: 3px 4px;
 }
 
 select {
@@ -322,6 +334,7 @@ main,
 }
 
 .brand-name {
+  font-weight: var(--dk-weight-medium);
   overflow: hidden;
   color: var(--dk-text-heading);
   font-size: 16px;
@@ -403,7 +416,7 @@ main,
   margin: 0 0 var(--dk-space-1);
   padding-left: var(--dk-space-3);
   color: var(--dk-text-muted);
-  font-size: var(--dk-text-xs);
+  font-size: 12px;
   font-weight: var(--dk-weight-semibold);
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -547,10 +560,21 @@ p {
 
 a {
   color: var(--dk-text-link);
+  text-decoration: none;
 }
 
 a:hover {
   color: var(--dk-text-link-hover);
+  text-decoration: underline;
+}
+
+.compact-row-main a {
+  color: var(--dk-text-heading);
+  font-weight: var(--dk-weight-semibold);
+}
+
+.compact-row-main a:hover {
+  text-decoration: underline;
 }
 
 a:focus-visible,
@@ -638,6 +662,37 @@ summary:focus-visible,
 .panel > .detail-grid {
   margin: 0;
   padding: var(--dk-space-3) var(--dk-space-4) var(--dk-space-4);
+}
+
+/* Loose content (form stacks, prose) inside a panel keeps the band inset. */
+.panel-body-pad,
+.panel > .form-stack {
+  padding: var(--dk-space-4);
+}
+
+.panel .stacked-form textarea,
+.panel .stacked-form input,
+.panel .form-stack textarea,
+.panel .form-stack input,
+.panel .form-stack select {
+  width: 100%;
+}
+
+.action-row-start,
+.panel .action-row,
+.panel .actions {
+  justify-content: flex-start;
+}
+
+/* The last column keeps the panel's horizontal inset. */
+.panel th:last-child,
+.panel td:last-child {
+  padding-right: var(--dk-space-4);
+}
+
+.panel .secondary-section .empty-state,
+.panel .panel-body-pad .empty-state {
+  padding: var(--dk-space-2) 0 0;
 }
 
 .panel .summary-panel {
@@ -927,6 +982,8 @@ a.stat-link:focus {
 }
 
 .empty-state > p {
+  flex: 1 1 240px;
+  min-width: 0;
   margin: 0;
 }
 
@@ -996,7 +1053,8 @@ a.stat-link:focus {
 }
 
 /* Content surfaces sit flush inside a panel: the panel owns the border and
-   the radius, the inner strip/table/list drops both. */
+   the radius, the inner strip/table/list drops both. Panel tables keep the
+   panel surface under their rows (never the canvas) in both themes. */
 .panel > .stats-grid,
 .panel > .meta-grid,
 .panel > .table-wrap,
@@ -1007,9 +1065,15 @@ a.stat-link:focus {
   margin: 0;
 }
 
+.panel .table-wrap,
+.panel .timeline {
+  background: var(--dk-bg-surface);
+}
+
 /* Filter/action rows between a panel band and its body rows. */
 .panel > .toolbar,
-.panel > .filter-bar {
+.panel > .filter-bar,
+.panel form > .filter-bar {
   margin: 0;
   padding: var(--dk-space-3) var(--dk-space-4);
   border-bottom: 1px solid var(--dk-border-default);
@@ -1449,7 +1513,8 @@ a.compact-row:hover {
   font-size: 16px;
 }
 
-.form-panel .form-section {
+.form-panel .form-section,
+.form-panel > .form-section:first-of-type {
   padding: var(--dk-space-4) var(--dk-space-5);
 }
 
@@ -1475,7 +1540,7 @@ a.compact-row:hover {
   border-top: 1px solid var(--dk-border-default);
 }
 
-.form-section:first-of-type {
+.form-page > .form-section:first-of-type {
   padding-top: 0;
   border-top: 0;
 }
@@ -1698,7 +1763,6 @@ tr:last-child td {
 }
 
 .table-wrap td.nowrap {
-  font-family: var(--dk-font-mono);
   font-size: 12.5px;
 }
 
@@ -1908,6 +1972,13 @@ code {
   font-size: 0.9em;
 }
 
+pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
 pre {
   overflow-x: auto;
   border: 1px solid var(--dk-border-default);
@@ -2057,11 +2128,15 @@ pre {
   display: inline-flex;
   min-height: 26px;
   align-items: center;
-  margin-bottom: 0;
-  padding: 0 var(--dk-space-2);
-  border: 1px solid var(--dk-border-default);
-  border-bottom: 0;
-  border-radius: var(--dk-radius-sm) var(--dk-radius-sm) 0 0;
+  margin-bottom: var(--dk-space-2);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--dk-text-muted);
+  font-size: 11px;
+  font-weight: var(--dk-weight-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
   color: var(--dk-text-muted);
   background: var(--dk-bg-muted);
   font-size: var(--dk-text-sm);
@@ -2122,7 +2197,12 @@ pre {
     background: var(--dk-bg-surface);
   }
 
-  .toolbar-actions .icon-button {
+  .toolbar-actions .icon-button .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.toolbar-actions .icon-button {
     width: 44px;
     min-width: 44px;
     height: 44px;
@@ -2387,12 +2467,17 @@ pre {
   }
 
   .stack-table td[data-label]::before {
-    display: inline-block;
-    margin-right: 6px;
+    display: block;
+    margin-bottom: 1px;
     color: var(--dk-text-muted);
     font-size: var(--dk-text-xs);
-    font-weight: var(--dk-weight-semibold);
+    font-weight: var(--dk-weight-medium);
     content: attr(data-label);
+  }
+
+  .stack-table .truncate,
+  .stack-table .data-truncate {
+    max-width: 100%;
   }
 
   /* Row actions and badges keep family geometry: content-width controls,
@@ -2410,6 +2495,18 @@ pre {
 
   .stack-table td .button {
     width: auto;
+  }
+
+  /* Strips wrap to a clean 2-column grid: no stretched orphans. */
+  .stats-grid,
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stats-grid > .stat:last-child:nth-child(odd),
+  .meta-grid > *:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 }
 

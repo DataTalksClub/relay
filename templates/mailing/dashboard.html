@@ -77,7 +77,7 @@
         </div>
       {% else %}
         <div class="empty-state">
-          <span class="badge neutral">Empty</span>
+          <span class="badge neutral">EMPTY</span>
           <p><strong>No clients configured.</strong> Create a client before managing campaigns, audiences, contacts, or transactional templates.</p>
           <a class="button secondary" href="{% url 'mailing:client_create' %}">Create client</a>
         </div>
@@ -104,11 +104,8 @@
 
   <section class="section panel" aria-labelledby="deliverability-attention">
     <div class="panel-header">
-      <div>
-        <h2 id="deliverability-attention">Deliverability attention</h2>
-        <p class="muted">Failures, suppressions, bounces, complaints, and skips to review.</p>
-      </div>
-      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
+      <h2 id="deliverability-attention">Deliverability attention</h2>
+      <span class="muted">Failures, suppressions, bounces, complaints, skips</span>
     </div>
     {% if dashboard.attention_items %}
       <div class="compact-list">
@@ -132,7 +129,7 @@
       </div>
     {% else %}
       <div class="empty-state">
-        <span class="badge success">Clear</span>
+        <span class="badge success">CLEAR</span>
         <p><strong>No deliverability issues found.</strong> Bounces, complaints, failed sends, skipped recipients, and suppressed contacts will appear here.</p>
       </div>
     {% endif %}
@@ -140,11 +137,8 @@
 
   <section class="section panel" aria-labelledby="recent-campaigns">
     <div class="panel-header">
-      <div>
-        <h2 id="recent-campaigns">Recent campaign activity</h2>
-        <p class="muted">Latest drafts, queued sends, and completed campaigns.</p>
-      </div>
-      <a class="button secondary" href="{% url 'mailing:campaign_list' %}">View campaigns</a>
+      <h2 id="recent-campaigns">Recent campaign activity</h2>
+      <span class="muted">Latest drafts, queued sends, and completed campaigns</span>
     </div>
     {% if dashboard.recent_campaigns %}
       <div class="table-wrap stack-table">
@@ -174,11 +168,14 @@
       </div>
     {% else %}
       <div class="empty-state">
-        <span class="badge neutral">Empty</span>
+        <span class="badge neutral">EMPTY</span>
         <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a send.</p>
         <a class="button secondary" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
       </div>
     {% endif %}
+    <div class="panel-footer">
+      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
+    </div>
   </section>
 
   <section class="section panel" aria-labelledby="background-processing">

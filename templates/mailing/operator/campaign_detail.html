@@ -188,19 +188,19 @@
       </div>
       <div class="stats-grid">
         <div class="stat">
-          <span class="stat-label">Candidates</span>
+          <span class="stat-label"><span class="stat-dot"></span>Candidates</span>
           <span class="stat-value">{{ estimate.total_candidates }}</span>
         </div>
         <div class="stat">
-          <span class="stat-label">Filtered by tags</span>
+          <span class="stat-label"><span class="stat-dot {% if estimate.tag_filtered_count %}warning{% endif %}"></span>Filtered by tags</span>
           <span class="stat-value">{{ estimate.tag_filtered_count }}</span>
         </div>
         <div class="stat">
-          <span class="stat-label">Eligible</span>
+          <span class="stat-label"><span class="stat-dot success"></span>Eligible</span>
           <span class="stat-value">{{ estimate.recipient_count }}</span>
         </div>
         <div class="stat">
-          <span class="stat-label">Skipped</span>
+          <span class="stat-label"><span class="stat-dot {% if estimate.skipped_count %}warning{% endif %}"></span>Skipped</span>
           <span class="stat-value">{{ estimate.skipped_count }}</span>
         </div>
       </div>
@@ -217,7 +217,7 @@
           <div class="panel-header">
             <h3 id="skip-reasons">Skip reasons</h3>
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap stack-table">
           <table>
             <thead>
               <tr>
@@ -243,7 +243,7 @@
           <div class="panel-header">
             <h3 id="sample-recipients">Sample recipients</h3>
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap stack-table">
           <table>
             <thead>
               <tr>

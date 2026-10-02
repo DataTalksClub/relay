@@ -221,14 +221,14 @@
         {% include "mailing/operator/_pagination.html" with page_obj=contacts querystring=pagination_querystring %}
       {% else %}
         <div class="empty-state">
-          <span class="badge neutral">Empty</span>
+          <span class="badge neutral">EMPTY</span>
           <p><strong>No contacts match these filters.</strong> Change the email, audience, state, tag, or engagement filters and apply again.</p>
           <a class="button secondary" href="{% url 'mailing:contact_search' %}">Clear filters</a>
         </div>
       {% endif %}
     {% else %}
       <div class="empty-state">
-        <span class="badge neutral">Start here</span>
+        <span class="badge neutral">START HERE</span>
         <p><strong>Apply a filter to search contacts.</strong> Start with an email, audience, subscription state, suppression state, tag, or engagement filter.</p>
       </div>
     {% endif %}

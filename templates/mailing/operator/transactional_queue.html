@@ -55,7 +55,7 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <span class="badge neutral">Empty</span>
+      <span class="badge neutral">EMPTY</span>
       <p><strong>No queued transactional messages.</strong> Accepted transactional messages waiting to be sent for {{ active_client.name }} will appear here.</p>
       {% if other_clients_queued_total %}
         {% if other_clients_queued_total == 1 %}
