@@ -1319,7 +1319,10 @@ def api_confirm(request):
 
 
 def _public_subscribe_response(request, payload, status):
-    response = JsonResponse(payload, status=status)
+    if status == 204:
+        response = HttpResponse(status=204)
+    else:
+        response = JsonResponse(payload, status=status)
     origin = request.headers.get("Origin", "")
     if origin and origin in settings.RELAY_PUBLIC_SUBSCRIBE_ORIGINS:
         response["Access-Control-Allow-Origin"] = origin

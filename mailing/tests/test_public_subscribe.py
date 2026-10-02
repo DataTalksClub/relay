@@ -148,6 +148,20 @@ def test_public_subscribe_rejects_unknown_list_and_bad_email(client, pocketshell
     assert "Access-Control-Allow-Origin" not in anonymous_origin
 
 
+@override_settings(RELAY_PUBLIC_LISTS=LISTS, RELAY_PUBLIC_SUBSCRIBE_ORIGINS=frozenset(ORIGINS))
+def test_public_preflight_is_an_empty_204(client):
+    response = client.options(
+        reverse("mailing:api_public_subscribe", kwargs={"list_key": "pocketshell"}),
+        HTTP_ORIGIN="https://pocketshell.io",
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert "Content-Length" not in response
+    assert response["Access-Control-Allow-Origin"] == "https://pocketshell.io"
+    assert response["Access-Control-Allow-Methods"] == "POST, OPTIONS"
+
+
 def test_parse_public_lists_rejects_a_broken_entry():
     with pytest.raises(Exception):
         parse_public_lists("pocketshell client=only")
