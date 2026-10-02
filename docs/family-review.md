@@ -35,8 +35,10 @@ captured from this worktree with a scratch sqlite database.
 6. **Controls** — heights from `--dk-size-control-md` (34px), radius-md,
    chevron on selects, token focus ring, labels above controls with hints
    below.
-7. **Icons** — inline SVG 16x16, `stroke="currentColor"`, stroke-width 1.5,
-   round caps, no fills; no emoji or glyph icons anywhere.
+7. **Icons** — inline SVG on the family 24 grid (viewBox `0 0 24 24`) rendered
+   at 20px, `stroke="currentColor"`, stroke-width 1.8, round caps/joins, no
+   fills; no emoji or glyph icons anywhere; the retired 16x16/stroke-1.5 set
+   must not appear alongside it.
 8. **Status language** — badge triplet tones only (success/warning/danger/
    info + neutral), text+bg+border together; no reflex badges.
 9. **Dark mode** — `data-theme` on the document element; all values from
@@ -55,7 +57,7 @@ captured from this worktree with a scratch sqlite database.
 | 4 | Row rhythm | Pass (after completeness pass) | Count strips are one segmented container with pulled hairlines; dashboard attention queue is a banded panel with divided rows; campaign/audience/client lists convert to labelled rows on phone via `stack-table` (data-labels added this pass); campaign table auto-sizes so 1440x900 no longer clips the Delivery column. |
 | 5 | Button hierarchy | Pass (after completeness pass) | One primary per view; stacked forms now exit through `.form-actions` (top border, primary first, Cancel after) — fixed this pass for campaign/client/audience/tag/receiving-address forms; phone stacks buttons full-width. |
 | 6 | Controls | Pass | 34px `--dk-size-control-md`, radius-md (fixed from radius-sm this pass), dakit chevron, dataops focus ring (`box-shadow 0 0 0 3px var(--dk-focus-ring)`) added this pass; labels above, hints below, errors at the field. |
-| 7 | Icons | Pass | All icons are inline 16x16 stroke-1.5 round-cap SVGs sharing the dakit chevron language; grep finds no emoji/glyph icons in templates or CSS. |
+| 7 | Icons | Pass (re-reviewed against the 2026-10-02 24-grid spec) | The original review measured the then-current 16x16/stroke-1.5 set. That geometry was retired by the settled family spec (dakit `docs/family.md` §Icons, 71a39d3); the chrome icons have since been migrated to the family 24 grid — viewBox `0 0 24 24`, rendered 20px, stroke-width 1.8, round caps/joins, no fills, original lucide 24-grid path data (filter→funnel, code-2→code-xml aliases), semantics unchanged. No mixed sets: grep finds no `0 0 16 16` / stroke-width 1.5 icons left in templates. |
 | 8 | Status language | Pass | `.badge` mirrors `.dk-badge` (radius-sm, xs, medium) with triplet tones; badges appear where state changes a decision (campaign status, key health, worker health). |
 | 9 | Dark mode | Pass | Boot script pins `data-theme` before first paint; dark values come from the vendored dakit remap; drawer scrim uses `--dk-bg-backdrop` (raw `rgb(0 0 0 / 0.4)` replaced this pass); overlay shadow is `--dk-shadow-overlay`. |
 | 10 | No off-token values | Pass | app.css carries no hex colors (the one exception is the email preview frame, documented as content-not-chrome: emails render on paper in both themes); radii, shadows, and control sizes are all `--dk-*` roles; remaining raw px values are structural layout (rail width, small-type sizes), which the spec's acceptance list does not reserve to tokens. |

@@ -163,6 +163,28 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     assert "html.js .has-sidebar.sidebar-open .app-sidebar" in css
 
 
+def test_chrome_icons_use_family_24grid_geometry(client, operator):
+    """Chrome icons draw on the settled family 24 grid, never the retired set.
+
+    dakit family.md §Icons: inline SVG, viewBox 0 0 24 24 rendered at 20px,
+    stroke-width 1.8, round caps/joins, currentColor, no fills.
+    """
+    client.force_login(operator)
+
+    response = client.get(reverse("mailing:dashboard"))
+
+    assert response.status_code == 200
+    content = response.content
+    assert b'width="20" height="20" viewBox="0 0 24 24"' in content
+    assert b'stroke-width="1.8"' in content
+    assert b'stroke-linecap="round" stroke-linejoin="round"' in content
+    assert b'fill="none"' in content
+    # The retired 16-grid set must not appear alongside the family set.
+    assert b'viewBox="0 0 16 16"' not in content
+    assert b'width="16" height="16"' not in content
+    assert b'stroke-width="1.5"' not in content
+
+
 def test_sidebar_links_transactional_queue(client, operator, client_record):
     client.force_login(operator)
     select_active_client(client, client_record)
