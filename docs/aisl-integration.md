@@ -31,6 +31,13 @@ The allowed job webhook origin is `https://aishippinglabs.com`. Sender IDs are
 local part at `aishippinglabs.com`. Check these against the site's runtime
 sender overrides before enabling mail.
 
+The AISL release agent acknowledged coordination on 2026-10-02 and owns AISL
+configuration and deployment. Sender IDs, runtime overrides and the mapping
+from environment variables into IntegrationSettings still require its live
+contract verification. Neither peer has a verified AWS credential route to
+the target account; the provisioner has not been applied. community-base
+confirmed it owns no Relay provisioning files or deployment slot.
+
 ## Integration checks still required
 
 - Verify Relay's email task role permits the `aishippinglabs.com` SES identity
