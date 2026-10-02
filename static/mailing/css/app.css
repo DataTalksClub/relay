@@ -677,9 +677,38 @@ a.stat-link:focus {
 
 .stat-label {
   order: -1;
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
+  font-size: 12px;
+  font-weight: var(--dk-weight-medium);
+}
+
+/* Status dots mirror the family count-strip convention: a colored dot before
+   the label when the count carries a state, faint when it does not. */
+.stat-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dk-text-faint);
+}
+
+.stat-dot.success {
+  background: var(--dk-success-text);
+}
+
+.stat-dot.warning {
+  background: var(--dk-warning-text);
+}
+
+.stat-dot.danger {
+  background: var(--dk-danger-text);
+}
+
+.stat-dot.info {
+  background: var(--dk-info-text);
 }
 
 .meta-label {
@@ -824,15 +853,28 @@ a.stat-link:focus {
 
 /* Empty states explain and offer the next action — plain copy, no box. */
 .empty-state {
-  padding: var(--dk-space-4) 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dk-space-2) var(--dk-space-3);
+  margin: var(--dk-space-4) 0;
+  padding: var(--dk-space-3) var(--dk-space-4);
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-bg-muted);
   color: var(--dk-text-muted);
+}
+
+.empty-state > p {
+  margin: 0;
 }
 
 .empty-state strong {
   color: var(--dk-text-primary);
+}
+
+.empty-state .button {
+  flex: none;
 }
 
 /* Banded container, the dataops panel: one bordered container whose
@@ -851,7 +893,8 @@ a.stat-link:focus {
   align-items: center;
   justify-content: space-between;
   gap: var(--dk-space-2) var(--dk-space-3);
-  padding: var(--dk-space-3) var(--dk-space-4);
+  min-height: 46px;
+  padding: var(--dk-space-2) var(--dk-space-4);
   border-bottom: 1px solid var(--dk-border-default);
   background: var(--dk-bg-muted);
 }
@@ -859,6 +902,7 @@ a.stat-link:focus {
 .panel-header h2,
 .panel-header h3 {
   margin: 0;
+  font-size: 14px;
 }
 
 .panel-header p {
@@ -866,17 +910,107 @@ a.stat-link:focus {
   font-size: var(--dk-text-sm);
 }
 
+/* Panel header actions are small quiet controls, the family's band buttons. */
+.panel-header .button,
+.panel-header button {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
 .panel-footer {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dk-space-2);
+  min-height: 46px;
   padding: var(--dk-space-2) var(--dk-space-4);
   border-top: 1px solid var(--dk-border-default);
   background: var(--dk-bg-muted);
 }
 
+.panel-footer > :only-child {
+  margin-left: auto;
+}
+
+/* Content surfaces sit flush inside a panel: the panel owns the border and
+   the radius, the inner strip/table/list drops both. */
+.panel > .stats-grid,
+.panel > .table-wrap,
+.panel > .timeline,
+.panel > .compact-list {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+/* Filter/action rows between a panel band and its body rows. */
+.panel > .toolbar,
+.panel > .filter-bar {
+  margin: 0;
+  padding: var(--dk-space-3) var(--dk-space-4);
+  border-bottom: 1px solid var(--dk-border-default);
+}
+
+.panel > .pagination {
+  margin: 0;
+  border-top: 1px solid var(--dk-border-default);
+  padding: var(--dk-space-2) var(--dk-space-4);
+  background: var(--dk-bg-muted);
+}
+
+/* Loose prose inside a panel gets the band padding, not page-flow margins. */
+.panel > p,
+.panel > .message {
+  margin: var(--dk-space-4);
+}
+
 .panel .empty-state {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin: 0;
   padding: var(--dk-space-4);
+}
+
+/* An inline disclosure row inside a panel: quiet summary on the hairline,
+   body content padded like rows. */
+.panel-diagnostics {
+  border-top: 1px solid var(--dk-border-default);
+}
+
+.panel-diagnostics > summary {
+  padding: var(--dk-space-3) var(--dk-space-4);
+  color: var(--dk-text-primary);
+  cursor: pointer;
+  font-size: var(--dk-text-sm);
+  font-weight: var(--dk-weight-semibold);
+}
+
+.panel-diagnostics > summary:hover {
+  color: var(--dk-text-heading);
+}
+
+.panel-diagnostics > .table-wrap {
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--dk-border-default);
+  box-shadow: none;
+}
+
+.panel-diagnostics[open] > summary {
+  margin-bottom: 0;
+}
+
+/* The reference home's footer hint line: one muted sentence with inline links. */
+.quick-links {
+  margin: var(--dk-space-6) 0;
+  font-size: var(--dk-text-sm);
+}
+
+.quick-links a {
+  margin-left: var(--dk-space-2);
 }
 
 .compact-list-flush {
@@ -2229,25 +2363,41 @@ pre {
 .local-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--dk-space-2);
-  padding: 0 0 var(--dk-space-3);
-  margin-bottom: var(--dk-space-4);
-  border-bottom: 1px solid var(--dk-border-default);
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px;
+  margin: 0 0 var(--dk-space-4);
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-bg-muted);
 }
 
 .local-nav a {
   display: inline-flex;
   align-items: center;
-  min-height: 36px;
-  padding: var(--dk-space-1) var(--dk-space-3);
-  border: 1px solid var(--dk-border-default);
+  min-height: 30px;
+  padding: 0 var(--dk-space-3);
+  border: 1px solid transparent;
   border-radius: var(--dk-radius-sm);
   color: var(--dk-text-primary);
-  background: var(--dk-bg-page);
+  font-size: var(--dk-text-md);
+  font-weight: var(--dk-weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 .local-nav a:hover {
   background: var(--dk-bg-hover);
+  text-decoration: none;
+}
+
+/* The active segment is the raised surface tab, never a filled pill — the
+   inbox reference's "Actionable | New | Blocked" treatment. */
+.local-nav a[aria-current] {
+  border-color: var(--dk-border-default);
+  background: var(--dk-bg-surface);
+  font-weight: var(--dk-weight-semibold);
 }
 
 [id] {
