@@ -8,9 +8,15 @@ We use our own lightweight CSS system. Do not add Bootstrap, Tailwind, React, a 
 
 Use these references for UI elements and interaction quality:
 
+- DataOps design system (`../dataops/frontend/DESIGN_SYSTEM.md`) and the
+  Course Management Platform system it builds on: the primary visual
+  reference. GitHub Primer neutrals, restrained borders, compact row-based
+  content, content-width actions, and the CMP blue accent.
 - GitHub Primer: primary reference for product UI foundations, compact navigation, subdued surfaces, tables, forms, labels, focus states, and status treatment.
 - Shopify Polaris: secondary reference for admin workflow discipline, especially promoted filters vs advanced filters and clear page actions.
 - Resend: secondary reference for API docs, API keys, developer-facing settings, sparse examples, and transactional email vocabulary.
+- Dapier ("Operator's Ledger") is a sibling look, not the reference here; keep
+  Datamailer aligned with DataOps.
 
 Use Postmark only for product concepts, not visual styling:
 
@@ -73,20 +79,28 @@ All reusable styling must flow through tokens before page-specific CSS is added.
 
 ### Color Tokens
 
-Core surface and text tokens:
+Core surface and text tokens (values follow the DataOps/Primer palette; the
+light page canvas is white, the sidebar and secondary surfaces use `#f6f8fa`,
+and the action/link accent is CMP blue `#315f8f`):
 
 - `--dm-color-text`
+- `--dm-color-heading`
 - `--dm-color-muted`
+- `--dm-color-faint`
 - `--dm-color-border`
+- `--dm-color-border-strong`
 - `--dm-color-background`
 - `--dm-color-surface`
-- `--dm-color-surface-strong`
+- `--dm-color-surface-strong` (hover/active tone)
+- `--dm-color-accent-soft` (selected navigation and focus wash)
 - `--dm-color-focus`
 
 Action tokens:
 
-- `--dm-color-primary`
+- `--dm-color-primary` (filled controls; dark mode uses a lighter fill)
 - `--dm-color-primary-hover`
+- `--dm-color-link` (links and selected-nav text; stays readable in dark mode)
+- `--dm-color-link-hover`
 - `--dm-color-on-primary`
 
 State tokens:
@@ -101,8 +115,12 @@ State tokens:
 - `--dm-color-danger-hover`
 - `--dm-color-danger-surface`
 - `--dm-color-danger-border`
+- `--dm-color-info`
+- `--dm-color-info-surface`
+- `--dm-color-info-border`
 - `--dm-color-neutral`
 - `--dm-color-neutral-surface`
+- `--dm-color-neutral-border`
 
 Do not use raw hex values outside `:root` unless there is a documented exception.
 
@@ -124,14 +142,19 @@ Do not introduce one-off spacing values for page layout. If a repeated spacing n
 
 - `--dm-radius-sm`: controls, badges, nav items
 - `--dm-radius-md`: panels, empty states, table wrappers
+- `--dm-font-sans`: Inter (self-hosted, SIL OFL)
+- `--dm-font-mono`: IBM Plex Mono (self-hosted, SIL OFL); quantities, timings, and IDs render as data, not prose
 - `--dm-font-size-sm`: labels, help text, table headers
 - `--dm-font-size-base`: body and form controls
 - `--dm-font-size-lg`: section headings
 - `--dm-font-size-xl`: page headings
 - `--dm-control-height`: inputs and buttons
 - `--dm-content-width`: readable main-column width
+- `--dm-sidebar-width`: persistent sidebar width
 
 Letter spacing stays normal. Font sizes do not scale with viewport width.
+The shared component radius is 6px. Normal surfaces carry no shadow; shadows
+are reserved for overlays.
 
 ## Component Contract
 
@@ -176,12 +199,14 @@ Use these primitives before creating page-specific classes.
 
 ## Typography
 
-- Use a system font stack.
+- Use the self-hosted Inter stack (`--dm-font-sans`) for UI text and IBM Plex
+  Mono (`--dm-font-mono`) for quantities, timings, IDs, and code. Fonts must
+  not make third-party requests.
 - Keep letter spacing normal.
 - Do not scale font size with viewport width.
-- Page titles should be clear but not hero-sized.
-- Section headings should be compact.
-- Table and metadata text should remain readable at 14-15px.
+- Page titles are 32px semibold on desktop and 22px on mobile.
+- Section headings are compact (16px semibold).
+- Body and row text is 14px; table and metadata text may drop to 12-13px.
 - Help text should be short and muted.
 
 ## Color

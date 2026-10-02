@@ -3,6 +3,7 @@ from django.contrib import admin
 
 from mailing.models import (
     Audience,
+    BlockedSender,
     CallbackEndpoint,
     Campaign,
     CampaignRecipient,
@@ -14,6 +15,8 @@ from mailing.models import (
     ContactTag,
     EmailEvent,
     EmailTemplate,
+    InboundAddress,
+    InboundMessage,
     MailchimpSync,
     MailchimpTagMapping,
     Organization,
@@ -390,3 +393,29 @@ class MailchimpSyncAdmin(admin.ModelAdmin):
         "last_error",
     )
     autocomplete_fields = ("contact", "client", "audience")
+
+
+@admin.register(InboundAddress)
+class InboundAddressAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
+    list_display = ("local_part", "domain", "is_active", "note", "created_at")
+    list_filter = ("is_active", "domain")
+    search_fields = ("local_part", "domain", "note")
+
+
+@admin.register(InboundMessage)
+class InboundMessageAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
+    list_display = ("sender_address", "subject", "recipient_address", "state", "created_at")
+    list_filter = ("state", "recipient_domain", "spam_verdict")
+    search_fields = ("subject", "snippet", "sender_address", "from_header", "recipient_address", "message_id")
+    readonly_fields = tuple(
+        field.name for field in InboundMessage._meta.fields if field.name not in {"id"}
+    )
+    autocomplete_fields = ("inbound_address",)
+
+
+@admin.register(BlockedSender)
+class BlockedSenderAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
+    list_display = ("value", "scope", "origin", "created_at")
+    list_filter = ("scope", "origin")
+    search_fields = ("value", "reason")
+    autocomplete_fields = ("origin_message",)

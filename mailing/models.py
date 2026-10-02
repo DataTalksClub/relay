@@ -1032,3 +1032,217 @@ class MailchimpSync(TimeStampedModel):
 
     def __str__(self):
         return f"{self.email} {self.list_key} -> {self.tag} ({self.status})"
+
+
+# ---------------------------------------------------------------------------
+# Inbound mail
+#
+# Inbound mail is a mailbox, not a feed. The previous path parsed each message,
+# published an event and kept nothing, which works for a downstream consumer with
+# its own system of record but leaves nothing to read. A message is therefore
+# stored here with its headers, a short text snippet, and a pointer to the raw
+# MIME and the body parts in object storage.
+#
+# The bodies stay in S3 on purpose. Inbound mail is unbounded in size and
+# retention, and the disk-fill that disqualified an inbound path in production
+# was a host-disk problem. Headers are what the console lists, searches and
+# sorts on, so they are cheap to index; bodies are read one at a time, on
+# demand, by an operator who has already decided to open one.
+#
+# This is a receiving mailbox, not a sending one. Nothing here is a Contact and
+# nothing here is deliverable, so a message is never suppressed, bounced or
+# unsubscribed.
+# ---------------------------------------------------------------------------
+
+
+class InboundAddress(TimeStampedModel):
+    """An address Relay receives for, created in the application.
+
+    This is the table that replaces the `local.email_forward_mapping` map in
+    main/aisl: adding an address is a row here rather than an edit to Terraform
+    and an apply. It is deliberately not a Contact and not a RecipientList --
+    this address is where mail arrives, not who gets sent mail to.
+
+    Not client-scoped. Inbound is a property of the Relay service, and a
+    receiving address does not belong to the tenant that happens to be selected
+    in the console.
+    """
+
+    local_part = models.CharField(max_length=64)
+    domain = models.CharField(max_length=255)
+    note = models.CharField(max_length=255, blank=True)
+    # Retired rather than deleted, so the address that a historical message was
+    # filed under still resolves to something.
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "inbound_addresses"
+        ordering = ["domain", "local_part"]
+        constraints = [
+            models.UniqueConstraint(fields=["local_part", "domain"], name="unique_inbound_address"),
+        ]
+
+    def __str__(self):
+        return self.address
+
+    @property
+    def address(self):
+        return f"{self.local_part}@{self.domain}"
+
+
+class InboundMessageState(models.TextChoices):
+    RECEIVED = "received", "Received"
+    BLOCKED = "blocked", "Blocked sender"
+    READ = "read", "Read"
+
+
+class InboundMessage(TimeStampedModel):
+    """One accepted inbound message, addressed to a Relay-owned address."""
+
+    # 512, not 998: a unique constraint on this column needs a btree index, and
+    # Postgres caps an index entry at 2704 bytes. 512 characters is 2048 bytes in
+    # the worst case, whereas 998 could reach 3992 and fail at insert time on a
+    # long id rather than at migration time. save() truncates.
+    message_id = models.CharField(max_length=512, blank=True)
+    state = models.CharField(max_length=20, choices=InboundMessageState.choices, default=InboundMessageState.RECEIVED)
+
+    subject = models.CharField(max_length=998, blank=True)
+    snippet = models.TextField(blank=True)
+
+    # The From header verbatim, and the address SES actually delivered to. The
+    # forwarding Lambda used to rewrite the header to "Sender via domain" and
+    # set Reply-To to the original sender; nothing rewrites anything here, so
+    # from_header stays what the sender claimed and reply_to stays empty.
+    from_header = models.CharField(max_length=998, blank=True)
+    sender_address = models.CharField(max_length=320, blank=True, db_index=True)
+    sender_domain = models.CharField(max_length=255, blank=True, db_index=True)
+    to_header = models.CharField(max_length=998, blank=True)
+    cc_header = models.CharField(max_length=998, blank=True)
+
+    # The local part that matched, so an address created in the application is
+    # what a message is filed under, and so the list can be grouped by address
+    # without re-parsing a header.
+    recipient = models.CharField(max_length=320, blank=True, db_index=True)
+    recipient_domain = models.CharField(max_length=255, blank=True)
+    recipient_address = models.CharField(max_length=320, blank=True)
+    # The Relay-owned address this arrived for. SET_NULL rather than CASCADE:
+    # deleting an address should not delete the mail that was already received
+    # for it, which is the only record that it ever existed.
+    inbound_address = models.ForeignKey(
+        InboundAddress,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="messages",
+    )
+
+    sent_at = models.DateTimeField(null=True, blank=True)
+    size_bytes = models.PositiveIntegerField(default=0)
+    attachment_count = models.PositiveIntegerField(default=0)
+
+    # Raw MIME exactly as SES stored it, plus the extracted body parts. The
+    # console reads the body from the text pointer; nothing renders body_html
+    # without an operator deciding to.
+    raw_bucket = models.CharField(max_length=255, blank=True)
+    raw_key = models.CharField(max_length=1024, blank=True)
+    body_text_key = models.CharField(max_length=1024, blank=True)
+    body_html_key = models.CharField(max_length=1024, blank=True)
+
+    # SES verdicts, kept because they are the cheapest available signal about
+    # whether to believe a message. x-ses-spam-verdict in particular is why a
+    # cold pitch can be separated from real mail without reading it.
+    spam_verdict = models.CharField(max_length=64, blank=True)
+    virus_verdict = models.CharField(max_length=64, blank=True)
+    spf_verdict = models.CharField(max_length=64, blank=True)
+    dkim_verdict = models.CharField(max_length=64, blank=True)
+    dmarc_verdict = models.CharField(max_length=64, blank=True)
+
+    read_at = models.DateTimeField(null=True, blank=True)
+    blocked_rule = models.ForeignKey(
+        "BlockedSender",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="blocked_messages",
+    )
+
+    class Meta:
+        db_table = "inbound_messages"
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["state", "created_at"], name="inbound_msg_state_created_idx"),
+            models.Index(fields=["sender_address", "created_at"], name="inbound_msg_sender_created_idx"),
+            models.Index(fields=["recipient", "created_at"], name="inbound_msg_rcpt_created_idx"),
+        ]
+        constraints = [
+            # One row per Message-ID, so a redelivery of the same message is
+            # recognised as a replay instead of filling the mailbox. Scoped to
+            # non-empty ids because many real senders omit the header and those
+            # messages are distinguished by bucket and key instead.
+            models.UniqueConstraint(
+                fields=["message_id"],
+                condition=~models.Q(message_id=""),
+                name="unique_nonempty_inbound_message_id",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.sender_address} -> {self.recipient_address}: {self.subject[:60]}"
+
+    def save(self, *args, **kwargs):
+        # The unique constraint is on message_id, so a value longer than the
+        # column is truncated rather than a database error. A truncated id still
+        # deduplicates, and losing the tail of a malformed id costs nothing.
+        if len(self.message_id) > 512:
+            self.message_id = self.message_id[:512]
+        super().save(*args, **kwargs)
+
+    @property
+    def is_spam(self):
+        return self.spam_verdict.strip().lower() == "yes"
+
+    @property
+    def has_body(self):
+        return bool(self.body_text_key or self.body_html_key)
+
+
+class BlockedSender(TimeStampedModel):
+    """A sender Relay refuses to file.
+
+    One row per address or domain. The ingest path checks this before storing,
+    so blocking a sender discards future mail from it rather than filtering a
+    mailbox that already has to be read.
+    """
+
+    class Scope(models.TextChoices):
+        ADDRESS = "address", "Exact address"
+        DOMAIN = "domain", "Whole domain"
+
+    scope = models.CharField(max_length=10, choices=Scope.choices, default=Scope.ADDRESS)
+    value = models.CharField(max_length=320)
+    reason = models.TextField(blank=True)
+
+    # Set when an operator marks a message as spam, so the UI can show what a
+    # block was derived from and so the same sender is not blocked twice from
+    # two different messages.
+    origin_message = models.ForeignKey(
+        InboundMessage,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="origin_blocks",
+    )
+    origin = models.CharField(max_length=32, blank=True)
+
+    class Meta:
+        db_table = "blocked_senders"
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["scope", "value"], name="unique_blocked_sender_scope_value"),
+        ]
+        indexes = [
+            models.Index(fields=["scope", "value"], name="blocked_sender_scope_value_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.scope}: {self.value}"

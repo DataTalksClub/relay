@@ -43,7 +43,9 @@ Transactional and campaign work use separate queues and workers so campaign back
 
 ## `inbound-email` v1
 
-SES stores the raw MIME object under the private inbound bucket's `raw/` prefix. S3 sends an object-created notification to the `inbound-email` queue. The Datamailer worker parses the message and publishes one normalized SNS event for each configured recipient route.
+SES stores the raw MIME object under the private inbound bucket's `raw/` prefix. S3 sends an object-created notification to the `inbound-email` queue. Relay parses the message, files it in its own mailbox, and publishes one normalized SNS event naming the stored message. The published event is optional and off unless `INBOUND_EMAIL_EVENTS_TOPIC_ARN` is set.
+
+**The event is smaller than version 1 of this contract.** `body` and `attachments` are gone; the event carries `inbound_message_id` and a `raw_mime` reference instead, because the filed message is the record and a second full copy over SNS is the thing this path was built to stop doing. A consumer reading `body` or `attachments` must read them from Relay instead. See "The mailbox" below.
 
 The published event has this shape:
 
@@ -51,41 +53,32 @@ The published event has this shape:
 {
   "contract": "inbound-email",
   "version": 1,
-  "event_id": "sha256-of-message-id-and-route",
+  "event_id": "<sha256-of-message-id>",
   "event_type": "email.received",
   "occurred_at": "2026-07-12T07:30:01+00:00",
-  "route": "invoice",
+  "route": "invoice@mailer.dtcdev.click",
   "message_id": "<message-123@example.com>",
   "sender": {"header": "Billing <billing@example.com>", "addresses": ["billing@example.com"]},
-  "recipients": {
-    "to": "invoice@mailer.dtcdev.click",
-    "cc": "",
-    "addresses": ["invoice@mailer.dtcdev.click"],
-    "matched": ["invoice@mailer.dtcdev.click"]
-  },
+  "recipients": {"addresses": ["invoice@mailer.dtcdev.click"]},
   "subject": "July invoice",
-  "date": "Sun, 12 Jul 2026 09:30:00 +0200",
-  "body": {
-    "text": {"content_type": "text/plain", "value": "Attached", "size": 8},
-    "html": {"content_type": "text/html", "value": "<p>Attached</p>", "size": 15}
-  },
-  "attachments": [{
-    "filename": "invoice.pdf",
-    "content_type": "application/pdf",
-    "content_id": "",
-    "disposition": "attachment",
-    "size": 12345,
-    "s3": {"bucket": "private-inbound-bucket", "key": "processed/event-id/attachments/001-invoice.pdf"}
-  }],
+  "inbound_message_id": 41,
   "raw_mime": {"bucket": "private-inbound-bucket", "key": "raw/ses-object-key"}
 }
 ```
 
-Bodies up to `INBOUND_EMAIL_INLINE_BODY_MAX_BYTES` are included as text. Larger bodies, all attachments, and raw MIME are represented by private S3 references. Consumers need explicit read access to those object prefixes; Datamailer never publishes binary content through SNS.
+The raw MIME and the extracted body parts are private S3 references, never inline values. Relay does not publish binary content through SNS.
 
-Aliases are configured as exact address-to-route mappings in `INBOUND_EMAIL_ROUTES`, for example `invoice@mailer.dtcdev.click=invoice,todo@mailer.dtcdev.click=todo`. One message sent to aliases belonging to two routes produces two events. Duplicate delivery is suppressed by a DynamoDB conditional write on the SHA-256 of `Message-ID + route`. A failed SNS publish releases the claim so SQS can retry.
+## The mailbox
 
-Raw MIME expires after `inbound_mail_retention_days` (60 days in the sandbox default). Extracted bodies and attachments expire after `inbound_email_artifact_retention_days` (14 days by default). Dapier must copy required artifacts to their system of record before expiry.
+A message that matches a receiving address is stored as an `inbound_messages` row: headers, a snippet and the SES verdicts in Postgres, bodies and attachments in object storage. `inbound_message_id` is that row. Bodies stay in S3 because inbound mail is unbounded in size and retention.
+
+Receiving addresses come from the `inbound_addresses` table, created in the console, and fall back to `INBOUND_EMAIL_ROUTES` when the table has no match -- so the sandbox keeps working on the environment variable and a new address needs no deploy. `python manage.py provision_inbound_addresses` copies the environment routes into the table.
+
+`blocked_senders` is checked before storage. A message from a blocked address or domain is filed as `blocked` with no body stored, is not announced over SNS, and is not a read message.
+
+Duplicate delivery is suppressed by a unique constraint on `message_id`, which is the same guarantee the previous DynamoDB conditional write gave and no longer needs a service. A message with no `Message-ID` is rejected, because a sender that omits it has nothing stable to deduplicate on. One message sent to two managed addresses produces one row, filed under the first address that matched.
+
+Raw MIME expires after `inbound_mail_retention_days` (60 days in the sandbox default, 14 in Relay production). Extracted body parts expire on the same lifecycle. A message that aged out of the queue is still in the bucket. Any external consumer must copy what it needs to its own system of record before expiry.
 
 ## `transactional-email` v1
 

@@ -101,6 +101,37 @@ uv run python manage.py check
 uv run pytest
 ```
 
+## Receive mail
+
+Relay files accepted inbound mail in its own mailbox instead of publishing it
+onwards and keeping nothing. A message becomes an `inbound_messages` row:
+headers, a snippet and the SES verdicts in Postgres, bodies and attachments in
+object storage. Bodies stay in S3 because inbound mail is unbounded in size and
+retention, and the disk fill that once disqualified inbound in production was a
+host-disk problem.
+
+Create a receiving address in the console under **Configure > Receiving
+addresses**. That is the whole change: no Terraform edit, no apply, no redeploy.
+An address is a row, not a forwarding rule in another repository.
+
+**Mark as spam** on a message blocks the sender, and the block is checked
+*before* storage, so future mail from that sender is discarded rather than filed
+and filtered later. A discarded message is recorded as `blocked` with no body, so
+the block is auditable and unblocking does not resurrect something nobody read.
+Blocking the sender or the whole sending domain are separate buttons: one
+correspondent at a shared domain can be blocked alone.
+
+Until a domain's SES receipt rule points at Relay, nothing arrives. Addresses
+fall back to `INBOUND_EMAIL_ROUTES` when no row in `inbound_addresses` matches, so
+an estate that has created no addresses is not silently dark;
+`python manage.py provision_inbound_addresses` copies the environment routes into
+the table.
+
+The `inbound-email` SNS event still publishes when
+`INBOUND_EMAIL_EVENTS_TOPIC_ARN` is set, but it is smaller than it was: it names
+the stored message instead of carrying the body and every attachment. See
+[docs/worker-contracts.md](docs/worker-contracts.md).
+
 ## Deploy the sandbox
 
 Pushing `main` runs the test suite and deploys the complete release through

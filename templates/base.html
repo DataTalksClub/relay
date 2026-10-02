@@ -76,6 +76,9 @@
                 <a href="{% url 'mailing:contact_search' %}" {% if request.resolver_match.url_name == "contact_search" or request.resolver_match.url_name == "contact_detail" %}aria-current="page"{% endif %}>
                   Contacts
                 </a>
+                <a href="{% url 'mailing:inbound_list' %}" {% if request.resolver_match.url_name == "inbound_list" or request.resolver_match.url_name == "inbound_message_detail" %}aria-current="page"{% endif %}>
+                  Inbound mail
+                </a>
               </div>
               <div class="sidebar-nav-group">
                 <span class="sidebar-nav-label">Configure</span>
@@ -84,6 +87,9 @@
                 </a>
                 <a href="{% url 'mailing:template_catalog' %}" {% if request.resolver_match.url_name == "template_catalog" or request.resolver_match.url_name == "template_detail" or request.resolver_match.url_name == "transactional_message_detail" %}aria-current="page"{% endif %}>
                   Templates
+                </a>
+                <a href="{% url 'mailing:inbound_address_list' %}" {% if request.resolver_match.url_name == "inbound_address_list" or request.resolver_match.url_name == "inbound_address_create" %}aria-current="page"{% endif %}>
+                  Receiving addresses
                 </a>
                 {% if operator_active_client %}
                   <a href="{% url 'mailing:client_detail' operator_active_client.id %}" {% if request.resolver_match.url_name == "client_detail" %}aria-current="page"{% endif %}>

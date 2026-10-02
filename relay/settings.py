@@ -132,6 +132,10 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Local convenience only: with DEBUG on, every request is pre-authenticated
+    # as the seeded superuser instead of hitting the admin login. Deployed
+    # environments run with DEBUG off and authenticate through relay.oidc.
+    "relay.dev_auth.DevAutoLoginMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -194,6 +198,11 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# Where the stock auth views send an already-authenticated visitor (e.g. after
+# logging out locally, the admin login page bounces here). The OIDC flow keeps
+# its own explicit return_to handling and never reads this.
+LOGIN_REDIRECT_URL = "/"
+
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
@@ -245,9 +254,11 @@ SQS_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_INBOUND_EMAIL_QUEUE_URL", "")
 SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL", "")
 SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL", "")
 INBOUND_EMAIL_EVENTS_TOPIC_ARN = os.environ.get("INBOUND_EMAIL_EVENTS_TOPIC_ARN", "")
-INBOUND_EMAIL_IDEMPOTENCY_TABLE = os.environ.get("INBOUND_EMAIL_IDEMPOTENCY_TABLE", "")
+# INBOUND_EMAIL_IDEMPOTENCY_TABLE is deliberately not read any more. Idempotency
+# is a unique constraint on inbound_messages.message_id, inside the transaction
+# that was already happening, so it needs no table and cannot half-succeed. The
+# env var is left set in deployed environments until nobody reads it.
 INBOUND_EMAIL_ARTIFACT_PREFIX = os.environ.get("INBOUND_EMAIL_ARTIFACT_PREFIX", "processed/")
-INBOUND_EMAIL_INLINE_BODY_MAX_BYTES = int(os.environ.get("INBOUND_EMAIL_INLINE_BODY_MAX_BYTES", "65536"))
 INBOUND_EMAIL_ROUTES = {
     address.strip().lower(): route.strip()
     for address, separator, route in (

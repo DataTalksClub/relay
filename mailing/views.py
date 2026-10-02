@@ -27,6 +27,7 @@ from mailing.forms import (
 )
 from mailing.models import (
     Audience,
+    BlockedSender,
     CallbackEndpoint,
     Campaign,
     CampaignRecipient,
@@ -37,6 +38,8 @@ from mailing.models import (
     CmpCallback,
     EmailEvent,
     EmailEventType,
+    InboundAddress,
+    InboundMessage,
     MailchimpSync,
     MailchimpTagMapping,
     Tag,
@@ -94,6 +97,17 @@ from mailing.services.contact_import_export import (
     csv_import_contacts_for_client,
     export_contacts_csv_for_client,
     export_contacts_for_client,
+)
+from mailing.services.inbound_views import (
+    BLOCK_ORIGIN_BUTTON,
+    DEFAULT_STATE,
+    address_summary,
+    block_sender,
+    list_addresses,
+    list_blocked_senders,
+    list_messages,
+    mark_read,
+    unblock_sender,
 )
 from mailing.services.mailchimp import (
     mailchimp_status_payload,
@@ -374,6 +388,166 @@ def transactional_message_detail(request, message_id):
             "metadata_summary": metadata_summary(message.metadata),
         },
     )
+
+
+@staff_member_required
+@require_GET
+def inbound_list(request):
+    """The receiving mailbox.
+
+    Not client-scoped and deliberately so: a receiving address belongs to the
+    Relay service, not to the tenant selected in the console, and scoping this
+    to a client would hide mail that arrived for a different one. The address
+    filter is how an operator narrows it.
+    """
+    state = request.GET.get("state")
+    if state == "all":
+        state = None
+    elif not state:
+        # No state in the query means the default view, which is unread. It
+        # cannot be None here, because None means "no filter" and the mailbox
+        # would open on everything an operator has already dealt with.
+        state = DEFAULT_STATE
+
+    query = request.GET.get("q", "")
+    address_filter = request.GET.get("address", "")
+    context = list_messages(
+        state=state,
+        query=query,
+        address=address_filter,
+        page=request.GET.get("page", 1),
+        per_page=request.GET.get("per_page", 50),
+    )
+    # Whether anything narrowed this view. The template cannot infer it from
+    # `state`, because the default view has a state too -- it is just the one
+    # an operator did not choose, and "no unread mail" is the honest thing to
+    # say there where "no messages match" would be a lie about the mailbox.
+    narrowed = bool(query or address_filter or request.GET.get("state"))
+    return render(
+        request,
+        "mailing/operator/inbound_list.html",
+        {
+            **context,
+            "narrowed": narrowed,
+            "addresses": list_addresses(),
+            "blocked_senders": list_blocked_senders()[:25],
+        },
+    )
+
+
+@staff_member_required
+def inbound_message_detail(request, message_id):
+    message = get_object_or_404(InboundMessage, pk=message_id)
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+        if action == "mark_read":
+            mark_read(message)
+            messages.success(request, "Message marked as read.")
+        elif action == BLOCK_ORIGIN_BUTTON:
+            scope = request.POST.get("scope", "address")
+            blocked, created = block_sender(
+                message=message,
+                scope=scope,
+                value=message.sender_address if scope == "address" else message.sender_domain,
+                origin=BLOCK_ORIGIN_BUTTON,
+                actor=request.user,
+            )
+            if blocked is None:
+                messages.error(request, "That message has no sender address to block.")
+            elif created:
+                verb = "domain" if scope == "domain" else "sender"
+                messages.success(request, f"Blocked {verb} {blocked.value}. Future mail is discarded.")
+                if message.state == "received":
+                    message.state = "read"
+                    message.blocked_rule = blocked
+                    message.save(update_fields=["state", "blocked_rule", "updated_at"])
+            else:
+                messages.info(request, f"{blocked.value} was already blocked.")
+        elif action == "unblock":
+            if message.blocked_rule_id:
+                unblock_sender(message.blocked_rule)
+                messages.success(request, "Sender unblocked.")
+        return redirect("mailing:inbound_message_detail", message_id=message.pk)
+
+    body = ""
+    if message.has_body:
+        from mailing.services.inbound_email import load_body_text  # noqa: PLC0415 - avoids an import cycle
+
+        body = load_body_text(message)
+    if request.method == "GET" and message.state == "received":
+        mark_read(message)
+
+    return render(
+        request,
+        "mailing/operator/inbound_message_detail.html",
+        {
+            "message": message,
+            "body": body,
+            "badge": Badge(
+                message.get_state_display(),
+                {"blocked": "danger", "read": "neutral"}.get(message.state, "warning"),
+            ),
+            "blocked_rule": message.blocked_rule,
+        },
+    )
+
+
+@staff_member_required
+def inbound_address_list(request):
+    return render(
+        request,
+        "mailing/operator/inbound_address_list.html",
+        {
+            **address_summary(),
+            "blocked_rules": list_blocked_senders(),
+            "routes": sorted(settings.INBOUND_EMAIL_ROUTES),
+        },
+    )
+
+
+@staff_member_required
+@require_http_methods(["GET", "POST"])
+def inbound_address_create(request):
+    if request.method == "POST":
+        local_part = request.POST.get("local_part", "").strip().lower()
+        domain = request.POST.get("domain", "").strip().lower()
+        note = request.POST.get("note", "").strip()
+        if not local_part or "@" in local_part:
+            messages.error(request, "Enter a local part with no @ and no spaces.")
+        elif not domain or "@" in domain:
+            messages.error(request, "Enter a domain with no @.")
+        else:
+            address, created = InboundAddress.objects.get_or_create(
+                local_part=local_part,
+                domain=domain,
+                defaults={"note": note},
+            )
+            if created:
+                messages.success(request, f"{address.address} will receive mail from now on.")
+            else:
+                messages.info(request, f"{address.address} already exists.")
+            return redirect("mailing:inbound_address_list")
+    return render(request, "mailing/operator/inbound_address_form.html", {"domain_hint": settings.INBOUND_EMAIL_ROUTES})
+
+
+@staff_member_required
+@require_POST
+def inbound_address_archive(request, address_id):
+    address = get_object_or_404(InboundAddress, pk=address_id)
+    address.is_active = not address.is_active
+    address.save(update_fields=["is_active", "updated_at"])
+    verb = "Retired" if not address.is_active else "Reactivated"
+    messages.success(request, f"{verb} {address.address}.")
+    return redirect("mailing:inbound_address_list")
+
+
+@staff_member_required
+@require_POST
+def blocked_sender_delete(request, blocked_id):
+    rule = get_object_or_404(BlockedSender, pk=blocked_id)
+    unblock_sender(rule)
+    messages.success(request, f"{rule.value} will receive mail again.")
+    return redirect("mailing:inbound_address_list")
 
 
 @staff_member_required
