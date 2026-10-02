@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}{% if mode == "create" %}Create campaign{% else %}Edit campaign{% endif %} | Datamailer{% endblock %}
+  {% block topbar_title %}{% if campaign %}{{ campaign.subject }}{% else %}New campaign{% endif %}{% endblock %}
 
 {% block content %}
   <div class="page-header">

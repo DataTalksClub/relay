@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}{% if mode == "create" %}Create tag{% else %}Edit tag{% endif %} | Datamailer{% endblock %}
+  {% block topbar_title %}Tag{% endblock %}
 
 {% block content %}
   <div class="page-header">

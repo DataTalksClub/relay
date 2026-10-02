@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}{{ contact.email }} | Datamailer{% endblock %}
+  {% block topbar_title %}{{ contact.email }}{% endblock %}
 
 {% block content %}
   <nav class="breadcrumbs" aria-label="Breadcrumb">

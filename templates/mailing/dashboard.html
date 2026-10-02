@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Datamailer{% endblock %}
+  {% block topbar_title %}{% if active_client %}{{ active_client.name }}{% else %}Datamailer{% endif %}{% endblock %}
 
 {% block content %}
   <div class="page-header">

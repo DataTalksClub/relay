@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}{{ campaign.subject|default:"Untitled draft" }} | Relay{% endblock %}
+  {% block topbar_title %}{{ campaign.subject }}{% endblock %}
 
 {% block content %}
   <nav class="breadcrumbs" aria-label="Breadcrumb">
