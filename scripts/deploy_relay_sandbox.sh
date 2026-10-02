@@ -199,6 +199,9 @@ else
   fi
   set_runtime_value RELAY_PUBLIC_LISTS 'pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/'
   set_runtime_value RELAY_PUBLIC_SUBSCRIBE_ORIGINS 'https://pocketshell.io,https://www.pocketshell.io,http://localhost:4000,http://127.0.0.1:4000'
+  if ! grep -q '^RELAY_TRANSFER_TOKEN=.' "$runtime_env"; then
+    set_runtime_value RELAY_TRANSFER_TOKEN "$(openssl rand -hex 32)"
+  fi
 fi
 
 grep -q '^RELAY_EMAIL_SEND_ROLE_ARN=' "$infra_env" || {
@@ -429,3 +432,4 @@ if [[ -n "$public_health_url" ]]; then
   curl --fail --show-error --silent --retry 20 --retry-delay 3 "$public_health_url"
 fi
 echo "Relay ${environment} deployed: ${release}"
+echo "containers: $(docker ps --format '{{.Names}}' | sort | tr '\n' ' ')"
