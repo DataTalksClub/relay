@@ -19,8 +19,14 @@ from mailing.models import (
 )
 
 
-class CampaignForm(forms.ModelForm):
-    label_suffix = ""
+class OperatorForm:
+    """Operator forms render bare labels — Django's ":" suffix stays off."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.label_suffix = ""
+
+class CampaignForm(OperatorForm, forms.ModelForm):
     include_tags = forms.ModelMultipleChoiceField(
         queryset=Tag.objects.select_related("audience").order_by("audience__slug", "slug"),
         required=False,
@@ -150,8 +156,7 @@ class CampaignForm(forms.ModelForm):
         return campaign
 
 
-class AudienceForm(forms.ModelForm):
-    label_suffix = ""
+class AudienceForm(OperatorForm, forms.ModelForm):
     class Meta:
         model = Audience
         fields = ["organization", "name", "slug"]
@@ -192,8 +197,7 @@ class AudienceForm(forms.ModelForm):
         return cleaned
 
 
-class ClientForm(forms.ModelForm):
-    label_suffix = ""
+class ClientForm(OperatorForm, forms.ModelForm):
     sender_emails = forms.CharField(
         required=False,
         widget=forms.Textarea(attrs={"rows": 4}),
@@ -351,8 +355,7 @@ class ClientForm(forms.ModelForm):
         return cleaned
 
 
-class ClientApiKeyForm(forms.ModelForm):
-    label_suffix = ""
+class ClientApiKeyForm(OperatorForm, forms.ModelForm):
     class Meta:
         model = ClientApiKey
         fields = ["name", "notes"]
@@ -381,8 +384,7 @@ class ClientApiKeyForm(forms.ModelForm):
         return cleaned
 
 
-class TagForm(forms.ModelForm):
-    label_suffix = ""
+class TagForm(OperatorForm, forms.ModelForm):
     class Meta:
         model = Tag
         fields = ["name", "slug"]
@@ -413,8 +415,7 @@ class TagForm(forms.ModelForm):
         return cleaned
 
 
-class ContactStateForm(forms.Form):
-    label_suffix = ""
+class ContactStateForm(OperatorForm, forms.Form):
     verified_state = forms.ChoiceField(
         choices=(("unchanged", "Leave unchanged"), ("verified", "Verified"), ("unverified", "Unverified")),
     )
@@ -425,8 +426,7 @@ class ContactStateForm(forms.Form):
     complained = forms.BooleanField(required=False)
 
 
-class ContactSubscriptionForm(forms.Form):
-    label_suffix = ""
+class ContactSubscriptionForm(OperatorForm, forms.Form):
     audience = forms.ModelChoiceField(queryset=Audience.objects.none())
     client = forms.ModelChoiceField(queryset=Client.objects.none(), required=False)
     status = forms.ChoiceField(choices=SubscriptionStatus.choices)
@@ -464,8 +464,7 @@ class ContactSubscriptionForm(forms.Form):
         return cleaned
 
 
-class ContactTagAddForm(forms.Form):
-    label_suffix = ""
+class ContactTagAddForm(OperatorForm, forms.Form):
     audience = forms.ModelChoiceField(queryset=Audience.objects.none())
     tag = forms.ModelChoiceField(queryset=Tag.objects.none(), required=False)
     new_tag_name = forms.CharField(required=False, max_length=120)
@@ -498,8 +497,7 @@ class ContactTagAddForm(forms.Form):
         return cleaned
 
 
-class ContactTagRemoveForm(forms.Form):
-    label_suffix = ""
+class ContactTagRemoveForm(OperatorForm, forms.Form):
     membership = forms.ModelChoiceField(queryset=ContactTag.objects.none())
 
     def __init__(self, *args, contact=None, active_client=None, **kwargs):
