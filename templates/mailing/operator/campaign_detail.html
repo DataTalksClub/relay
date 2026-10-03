@@ -17,8 +17,6 @@
         <span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>
         {% if campaign.sent_at %}
           <span class="badge success">Sent {{ campaign.sent_at|date:"Y-m-d H:i" }}</span>
-        {% elif campaign.status == "draft" %}
-          <span class="badge neutral">Not sent</span>
         {% endif %}
       </div>
     </div>
@@ -34,10 +32,10 @@
   </div>
 
   {% if campaign.status == "queued" or campaign.status == "sending" or campaign.status == "snapshotting" %}<p role="status">Sending is in progress. Follow waiting recipients and results below; provider acceptance does not confirm delivery.</p>{% elif campaign.status == "cancelled" %}<p>Campaign cancelled. It will not send further pending recipients.</p>{% elif campaign.status == "failed" %}<p class="form-errors">Sending needs attention. Inspect failed recipients below before taking any recovery action.</p>{% endif %}
-  <nav class="actions" aria-label="Campaign stages">
-    {% if can_edit %}<a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a>{% endif %}
-    {% if can_edit %}<a class="button secondary" href="#draft-readiness">3. Review</a>{% endif %}
-    {% if campaign.status != "draft" %}<a class="button secondary" href="#campaign-stats">Results</a><a class="button secondary" href="#campaign-recipients">Recipients</a>{% endif %}
+  <nav class="local-nav" aria-label="Campaign stages">
+    {% if can_edit %}<a href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a>{% endif %}
+    {% if can_edit %}<a href="#draft-readiness">3. Review</a>{% endif %}
+    {% if campaign.status != "draft" %}<a href="#campaign-stats">Results</a><a href="#campaign-recipients">Recipients</a>{% endif %}
   </nav>
   {% if campaign.status == "draft" %}
     <section class="section" aria-labelledby="draft-readiness">

@@ -19,19 +19,14 @@
           <span class="badge danger">Inactive client</span>
         {% endif %}
         {% if active_key_count %}
-          <span class="badge success">{{ active_key_count }} active API keys</span>
+          <span class="badge success">{{ active_key_count }} active API key{{ active_key_count|pluralize }}</span>
         {% else %}
           <span class="badge warning">No active API keys</span>
-        {% endif %}
-        {% if revoked_key_count %}
-          <span class="badge neutral">{{ revoked_key_count }} revoked</span>
         {% endif %}
       </div>
     </div>
     <div class="actions">
-      {% if operator_active_client and operator_active_client.id == client.id %}
-        <span class="badge success">Current client</span>
-      {% else %}
+      {% if not operator_active_client or operator_active_client.id != client.id %}
         <form method="post" action="{% url 'mailing:client_select' %}">
           {% csrf_token %}
           <input type="hidden" name="client_id" value="{{ client.id }}">
