@@ -13,6 +13,12 @@ from mailing.services.transactional_catalog import normalize_required_context
 
 SENDERS = {
     "pocketshell": ("hello", "PocketShell <hello@pocketshell.io>"),
+    "agent-git-lab": ("hello", "Agent Git Lab <hello@datatalks.club>"),
+}
+
+NAMES = {
+    "pocketshell": "PocketShell",
+    "agent-git-lab": "Agent Git Lab",
 }
 
 
@@ -36,25 +42,31 @@ class Command(BaseCommand):
         sender_id, sender_value = SENDERS[spec.key]
         sender_email = normalize_sender_email(sender_value)
 
-        organization, _ = Organization.objects.update_or_create(
+        label = NAMES.get(spec.key, spec.organization_slug)
+        organization, _ = Organization.objects.get_or_create(
             slug=spec.organization_slug,
-            defaults={"name": spec.organization_slug},
+            defaults={"name": label},
         )
-        audience, _ = Audience.objects.update_or_create(
+        audience, _ = Audience.objects.get_or_create(
             organization=organization,
             slug=spec.audience_slug,
-            defaults={"name": spec.audience_slug},
+            defaults={"name": label},
         )
-        client, _ = Client.objects.update_or_create(
+        client, created = Client.objects.get_or_create(
             organization=organization,
             slug=spec.client_slug,
             defaults={
-                "name": spec.client_slug,
+                "name": label,
                 "is_active": True,
                 "default_sender_id": sender_id,
                 "sender_emails": [{"id": sender_id, "email": sender_email}],
             },
         )
+        if not created:
+            client.is_active = True
+            client.default_sender_id = sender_id
+            client.sender_emails = [{"id": sender_id, "email": sender_email}]
+            client.save()
         template_path = Path(settings.BASE_DIR) / "templates" / spec.key / f"{spec.template_key}.md"
         if not template_path.is_file():
             raise CommandError(f"Missing template file {template_path}.")
