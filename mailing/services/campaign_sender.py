@@ -1,3 +1,5 @@
+import logging
+import traceback
 from dataclasses import dataclass
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -30,6 +32,8 @@ from mailing.services.tokens import (
     token_hash,
 )
 from mailing.ses import send_email
+
+logger = logging.getLogger(__name__)
 
 TERMINAL_STATUSES = {
     CampaignRecipientStatus.SENT,
@@ -155,6 +159,8 @@ def _deliver_campaign_recipient(recipient, ses, tokens):
     html_body = build_campaign_html_body(recipient.campaign.html_body, tokens.tracking_token, tokens.unsubscribe_token)
     text_body = build_campaign_text_body(recipient.campaign.text_body, tokens.unsubscribe_token)
 
+    # SES clients can raise transport, service, or unexpected adapter errors;
+    # preserve the catch-all delivery contract at this external boundary.
     try:
         message_id = send_email(
             ses_client=ses,
@@ -165,13 +171,35 @@ def _deliver_campaign_recipient(recipient, ses, tokens):
             text_body=text_body,
         )
     except Exception as exc:
-        if is_retryable_send_error(exc):
+        retryable = is_retryable_send_error(exc)
+        _log_campaign_delivery_error(recipient, exc, retryable)
+        if retryable:
             raise RetryableCampaignSendError(str(exc)) from exc
         _mark_recipient_failed(recipient, str(exc))
         return "failed"
 
     _complete_campaign_recipient(recipient, message_id)
     return "sent"
+
+
+def _log_campaign_delivery_error(recipient, exc, retryable):
+    # Copy only stack locations: provider text, chains, source lines, and locals
+    # may contain recipient content or credentials. Bound the emitted stack.
+    diagnostic = traceback.TracebackException(RuntimeError, RuntimeError("SES delivery error details omitted"), None)
+    frames = []
+    for frame, lineno in traceback.walk_tb(exc.__traceback__):
+        frames.append((frame.f_code.co_filename, lineno, frame.f_code.co_name, ""))
+    diagnostic.stack = traceback.StackSummary.from_list(frames[-10:])
+    classification = "permanent"
+    if retryable:
+        classification = "retryable"
+    logger.error(
+        "Campaign delivery failed campaign_id=%s recipient_id=%s classification=%s\n%s",
+        recipient.campaign_id,
+        recipient.pk,
+        classification,
+        "".join(diagnostic.format(chain=False)),
+    )
 
 
 def _complete_campaign_recipient(recipient, message_id):

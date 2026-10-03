@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import ClientError
 from django.db import connection
 from django.db.models.query import QuerySet
 
@@ -10,6 +11,8 @@ from mailing.models import Audience, Campaign, CampaignRecipient, Client, Contac
 from mailing.services import campaign_sender as sender
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+PRIVATE_CANARIES = ("private-recipient", "private-body", "private-context", "private-token", "private-credential")
 
 
 @pytest.fixture(autouse=True)
@@ -172,3 +175,82 @@ def test_preview_calls_injectable_sender_and_keeps_token_order(pending, monkeypa
     recipient.refresh_from_db()
     assert recipient.status == "pending" and recipient.ses_message_id == ""
     assert EmailEvent.objects.count() == 0
+
+
+class FailingProvider(Provider):
+    def __init__(self, error):
+        super().__init__()
+        self.error = error
+
+    def send_email(self, **parameters):
+        super().send_email(**parameters)
+        try:
+            raise RuntimeError(PRIVATE_CANARIES[-1])
+        except RuntimeError as cause:
+            raise self.error from cause
+
+
+def provider_error(kind):
+    message = " ".join(PRIVATE_CANARIES)
+    if kind == "timeout":
+        return TimeoutError(message)
+    if kind == "unexpected":
+        return RuntimeError(message)
+    return ClientError({"Error": {"Code": kind, "Message": message}}, "SendEmail")
+
+
+@pytest.mark.parametrize(
+    "kind,retryable", [("timeout", True), ("Throttling", True), ("MessageRejected", False), ("unexpected", False)]
+)
+def test_provider_failure_logs_safe_stack_and_preserves_outcome(pending, monkeypatch, caplog, kind, retryable):
+    campaign, recipient = pending
+    campaign.html_body = PRIVATE_CANARIES[1]
+    campaign.save(update_fields=["html_body"])
+    monkeypatch.setattr(sender, "generate_raw_token", lambda: PRIVATE_CANARIES[3])
+    error = provider_error(kind)
+    provider = FailingProvider(error)
+    if retryable:
+        with pytest.raises(sender.RetryableCampaignSendError) as caught:
+            sender.send_campaign_batch(payload(pending), ses_client=provider)
+        assert caught.value.__cause__ is error and str(caught.value) == str(error)
+    else:
+        result = sender.send_campaign_batch(payload(pending), ses_client=provider)
+        assert (result.sent_count, result.skipped_count, result.failed_count) == (0, 0, 1)
+    assert len(provider.calls) == 1 and provider.atomic == [True]
+    assert_failure_state(campaign, recipient, error, retryable)
+    assert_safe_diagnostic(caplog, campaign, recipient, retryable)
+
+
+def assert_failure_state(campaign, recipient, error, retryable):
+    recipient.refresh_from_db()
+    campaign.refresh_from_db()
+    assert campaign.sent_count == 0 and recipient.ses_message_id == "" and recipient.sent_at is None
+    assert recipient.last_error == str(error)
+    if retryable:
+        assert recipient.status == "pending" and EmailEvent.objects.count() == 0
+        assert recipient.tracking_token_hash is None and recipient.unsubscribe_token_hash is None
+        return
+    assert recipient.status == "failed"
+    event = EmailEvent.objects.get(campaign_recipient=recipient)
+    assert event.event_type == "failed" and event.metadata == {"error": str(error)}
+
+
+def assert_safe_diagnostic(caplog, campaign, recipient, retryable):
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    rendered = caplog.text
+    assert record.name == sender.__name__ and record.levelname == "ERROR"
+    assert f"campaign_id={campaign.pk} recipient_id={recipient.pk}" in rendered
+    classification = "permanent"
+    if retryable:
+        classification = "retryable"
+    assert f"classification={classification}" in rendered
+    assert "Traceback (most recent call last):" in rendered
+    assert "campaign_sender.py" in rendered and "_deliver_campaign_recipient" in rendered
+    assert "ses.py" in rendered and "send_email" in rendered
+    assert "test_campaign_sender_extraction_contract.py" in rendered
+    assert "RuntimeError: SES delivery error details omitted" in rendered
+    assert not any(canary in rendered for canary in PRIVATE_CANARIES)
+    assert recipient.email not in rendered and record.exc_info is None
+    assert "direct cause" not in rendered and "During handling" not in rendered
+    assert "raise self.error" not in rendered and "parameters =" not in rendered
