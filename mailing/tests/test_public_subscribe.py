@@ -1,4 +1,5 @@
 import pytest
+from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -165,3 +166,47 @@ def test_public_preflight_is_an_empty_204(client):
 def test_parse_public_lists_rejects_a_broken_entry():
     with pytest.raises(Exception):
         parse_public_lists("pocketshell client=only")
+
+
+def test_parse_public_lists_keeps_agent_git_lab_beside_pocketshell():
+    lists = parse_public_lists(
+        "pocketshell org=pocketshell client=pocketshell audience=pocketshell "
+        "category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/; "
+        "agent-git-lab org=agent-git-lab client=agent-git-lab audience=agent-git-lab "
+        "category=newsletter template=confirm-signup "
+        "confirm_base=https://alexeygrigorev.com/cloudflare-agent-git/subscribe/"
+    )
+
+    assert lists["pocketshell"].confirm_base_url == "https://pocketshell.io"
+    lab = lists["agent-git-lab"]
+    assert lab.client_slug == "agent-git-lab"
+    assert lab.audience_slug == "agent-git-lab"
+    assert lab.organization_slug == "agent-git-lab"
+    assert lab.confirm_base_url == "https://alexeygrigorev.com/cloudflare-agent-git/subscribe"
+
+
+BOTH_LISTS = (
+    "pocketshell org=pocketshell client=pocketshell audience=pocketshell "
+    "category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/; "
+    "agent-git-lab org=agent-git-lab client=agent-git-lab audience=agent-git-lab "
+    "category=newsletter template=confirm-signup "
+    "confirm_base=https://alexeygrigorev.com/cloudflare-agent-git/subscribe/"
+)
+
+
+@override_settings(RELAY_PUBLIC_LISTS=BOTH_LISTS)
+def test_provision_public_signup_adds_a_separate_list_without_renaming_pocketshell(pocketshell):
+    call_command("provision_public_signup")
+
+    pocketshell["organization"].refresh_from_db()
+    pocketshell["client"].refresh_from_db()
+    assert pocketshell["organization"].name == "PocketShell"
+    assert pocketshell["client"].sender_emails == [{"id": "hello", "email": "PocketShell <hello@pocketshell.io>"}]
+    lab = Client.objects.get(slug="agent-git-lab")
+    assert lab.organization.slug == "agent-git-lab"
+    assert lab.organization_id != pocketshell["organization"].id
+    assert Audience.objects.get(slug="agent-git-lab").organization_id == lab.organization_id
+    assert lab.sender_emails == [{"id": "hello", "email": "Agent Git Lab <hello@datatalks.club>"}]
+    template = EmailTemplate.objects.get(client=lab, key="confirm-signup")
+    assert template.subject == "Confirm your email"
+    assert template.is_active is True

@@ -197,8 +197,8 @@ else
   if [[ -n "$sandbox_role" ]]; then
     set_runtime_value RELAY_SES_DOMAIN_ROUTES "dtcdev.click role=${sandbox_role} region=us-east-1 configuration_set=datamailer-sandbox;pocketshell.io role=${sandbox_role} region=us-east-1 configuration_set=datamailer-sandbox"
   fi
-  set_runtime_value RELAY_PUBLIC_LISTS 'pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/'
-  set_runtime_value RELAY_PUBLIC_SUBSCRIBE_ORIGINS 'https://pocketshell.io,https://www.pocketshell.io,http://localhost:4000,http://127.0.0.1:4000'
+  set_runtime_value RELAY_PUBLIC_LISTS 'pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/;agent-git-lab org=agent-git-lab client=agent-git-lab audience=agent-git-lab category=newsletter template=confirm-signup confirm_base=https://alexeygrigorev.com/cloudflare-agent-git/subscribe/'
+  set_runtime_value RELAY_PUBLIC_SUBSCRIBE_ORIGINS 'https://pocketshell.io,https://www.pocketshell.io,http://localhost:4000,http://127.0.0.1:4000,https://alexeygrigorev.com'
   if ! grep -q '^RELAY_TRANSFER_TOKEN=.' "$runtime_env"; then
     set_runtime_value RELAY_TRANSFER_TOKEN "$(openssl rand -hex 32)"
   fi
@@ -318,6 +318,8 @@ if [[ "$environment" == sandbox ]]; then
 else
   bash "$app_dir/scripts/provision_production_tenant.sh"
 fi
+
+run_app python manage.py provision_public_signup
 
 app_container_args=(
   --network host
