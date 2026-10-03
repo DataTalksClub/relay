@@ -1,7 +1,4 @@
 from dataclasses import dataclass
-from html import escape
-from html.parser import HTMLParser
-from urllib.parse import urlparse
 
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
@@ -17,7 +14,15 @@ from mailing.models import (
     EmailEvent,
     EmailEventType,
 )
-from mailing.services.public_urls import click_redirect_url, open_pixel_url, unsubscribe_url
+from mailing.services.campaign_rendering import (
+    build_campaign_html_body as build_campaign_html_body,
+)
+from mailing.services.campaign_rendering import (
+    build_campaign_text_body as build_campaign_text_body,
+)
+from mailing.services.campaign_rendering import (
+    rewrite_html_links as rewrite_html_links,
+)
 from mailing.services.tokens import (
     CampaignRecipientTokens,
     ensure_campaign_recipient_tokens,
@@ -63,7 +68,9 @@ class CampaignSendResult:
     failed_count: int
 
 
-def render_campaign_message(campaign, *, tracking_token="preview-tracking-token", unsubscribe_token="preview-unsubscribe-token"):
+def render_campaign_message(
+    campaign, *, tracking_token="preview-tracking-token", unsubscribe_token="preview-unsubscribe-token"
+):
     return {
         "subject": campaign.subject,
         "preview_text": campaign.preview_text,
@@ -141,7 +148,10 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
         return "skipped"
 
     tokens = _send_tokens_for_pending_recipient(recipient)
+    return _deliver_campaign_recipient(recipient, ses, tokens)
 
+
+def _deliver_campaign_recipient(recipient, ses, tokens):
     html_body = build_campaign_html_body(recipient.campaign.html_body, tokens.tracking_token, tokens.unsubscribe_token)
     text_body = build_campaign_text_body(recipient.campaign.text_body, tokens.unsubscribe_token)
 
@@ -160,6 +170,11 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
         _mark_recipient_failed(recipient, str(exc))
         return "failed"
 
+    _complete_campaign_recipient(recipient, message_id)
+    return "sent"
+
+
+def _complete_campaign_recipient(recipient, message_id):
     now = timezone.now()
     recipient.status = CampaignRecipientStatus.SENT
     recipient.ses_message_id = message_id
@@ -167,30 +182,6 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
     recipient.last_error = ""
     recipient.save(update_fields=["status", "ses_message_id", "sent_at", "last_error", "updated_at"])
     _create_campaign_event(recipient, EmailEventType.SENT, metadata={"ses_message_id": message_id})
-    return "sent"
-
-
-def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
-    body = rewrite_html_links(html_body or "", tracking_token)
-    pixel = f'<img src="{escape(open_pixel_url(tracking_token), quote=True)}" width="1" height="1" alt="" />'
-    unsubscribe_href = escape(unsubscribe_url(unsubscribe_token), quote=True)
-    footer = f'<p><a href="{unsubscribe_href}">Unsubscribe or manage preferences</a></p>'
-    return f"{body}\n{footer}\n{pixel}"
-
-
-def build_campaign_text_body(text_body, unsubscribe_token):
-    url = unsubscribe_url(unsubscribe_token)
-    body = (text_body or "").rstrip()
-    if body:
-        return f"{body}\n\nUnsubscribe or manage preferences: {url}"
-    return f"Unsubscribe or manage preferences: {url}"
-
-
-def rewrite_html_links(html_body, tracking_token):
-    rewriter = _ClickTrackingHTMLRewriter(tracking_token)
-    rewriter.feed(html_body)
-    rewriter.close()
-    return rewriter.output
 
 
 def is_retryable_send_error(exc):
@@ -266,65 +257,3 @@ def _create_campaign_event(recipient, event_type, *, metadata=None):
         event_type=event_type,
         metadata=metadata or {},
     )
-
-
-class _ClickTrackingHTMLRewriter(HTMLParser):
-    def __init__(self, tracking_token):
-        super().__init__(convert_charrefs=False)
-        self.tracking_token = tracking_token
-        self.parts = []
-
-    @property
-    def output(self):
-        return "".join(self.parts)
-
-    def handle_starttag(self, tag, attrs):
-        self.parts.append(self._format_tag(tag, attrs, closed=False))
-
-    def handle_startendtag(self, tag, attrs):
-        self.parts.append(self._format_tag(tag, attrs, closed=True))
-
-    def handle_endtag(self, tag):
-        self.parts.append(f"</{tag}>")
-
-    def handle_data(self, data):
-        self.parts.append(data)
-
-    def handle_entityref(self, name):
-        self.parts.append(f"&{name};")
-
-    def handle_charref(self, name):
-        self.parts.append(f"&#{name};")
-
-    def handle_comment(self, data):
-        self.parts.append(f"<!--{data}-->")
-
-    def handle_decl(self, decl):
-        self.parts.append(f"<!{decl}>")
-
-    def handle_pi(self, data):
-        self.parts.append(f"<?{data}>")
-
-    def _format_tag(self, tag, attrs, *, closed):
-        rewritten_attrs = []
-        for name, value in attrs:
-            if tag.lower() == "a" and name.lower() == "href" and _is_trackable_url(value):
-                value = click_redirect_url(self.tracking_token, value)
-            rewritten_attrs.append((name, value))
-
-        attr_text = "".join(_format_attr(name, value) for name, value in rewritten_attrs)
-        suffix = " />" if closed else ">"
-        return f"<{tag}{attr_text}{suffix}"
-
-
-def _format_attr(name, value):
-    if value is None:
-        return f" {name}"
-    return f' {name}="{escape(value, quote=True)}"'
-
-
-def _is_trackable_url(value):
-    if not value:
-        return False
-    parsed = urlparse(value)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
