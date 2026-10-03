@@ -166,7 +166,7 @@
       {% else %}
         <a class="button secondary" href="{% url 'mailing:client_list' %}">Cancel</a>
       {% endif %}
-      <button type="submit">{% if mode == "create" %}Create client{% else %}Save client{% endif %}</button>
+      <button type="submit" class="button">{% if mode == "create" %}Create client{% else %}Save client{% endif %}</button>
     </div>
   </form>
 {% endblock %}

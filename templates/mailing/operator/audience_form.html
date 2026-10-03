@@ -60,8 +60,8 @@
     </section>
 
     <div class="action-row">
+      <button type="submit" class="button">{% if mode == "create" %}Create audience{% else %}Save audience{% endif %}</button>
       <a class="button secondary" href="{% url 'mailing:audience_list' %}">Cancel</a>
-      <button type="submit">{% if mode == "create" %}Create audience{% else %}Save audience{% endif %}</button>
     </div>
   </form>
 {% endblock %}

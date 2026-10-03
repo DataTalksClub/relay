@@ -351,7 +351,7 @@
       <form method="post" action="{% url 'mailing:client_api_key_create' client.id %}" class="form-stack">
         {% include "mailing/operator/_form_fields.html" with form=key_form %}
         <div class="actions">
-          <button type="submit">Create API key</button>
+          <button type="submit" class="button">Create API key</button>
         </div>
       </form>
     </div>
