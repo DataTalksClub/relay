@@ -46,13 +46,13 @@
       </div>
       <div class="form-grid">
         <div class="form-field">
-          {{ form.name.label_tag }}
+          <label for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
           {{ form.name }}
           {% if form.name.help_text %}<div class="helptext">{{ form.name.help_text }}</div>{% endif %}
           {% if form.name.errors %}<div class="field-errors">{{ form.name.errors }}</div>{% endif %}
         </div>
         <div class="form-field">
-          {{ form.slug.label_tag }}
+          <label for="{{ form.slug.id_for_label }}">{{ form.slug.label }}</label>
           {{ form.slug }}
           {% if form.slug.help_text %}<div class="helptext">{{ form.slug.help_text }}</div>{% endif %}
           {% if form.slug.errors %}<div class="field-errors">{{ form.slug.errors }}</div>{% endif %}

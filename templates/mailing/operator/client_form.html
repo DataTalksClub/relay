@@ -40,7 +40,7 @@
       </div>
       <div class="form-grid">
         <div class="form-field full">
-          {{ form.organization.label_tag }}
+          <label for="{{ form.organization.id_for_label }}">{{ form.organization.label }}</label>
           {{ form.organization }}
           {% if form.organization.help_text %}<div class="helptext">{{ form.organization.help_text }}</div>{% endif %}
           {% if form.organization.errors %}<div class="field-errors">{{ form.organization.errors }}</div>{% endif %}
@@ -57,13 +57,13 @@
       </div>
       <div class="form-grid">
         <div class="form-field">
-          {{ form.name.label_tag }}
+          <label for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
           {{ form.name }}
           {% if form.name.help_text %}<div class="helptext">{{ form.name.help_text }}</div>{% endif %}
           {% if form.name.errors %}<div class="field-errors">{{ form.name.errors }}</div>{% endif %}
         </div>
         <div class="form-field">
-          {{ form.slug.label_tag }}
+          <label for="{{ form.slug.id_for_label }}">{{ form.slug.label }}</label>
           {{ form.slug }}
           {% if form.slug.help_text %}<div class="helptext">{{ form.slug.help_text }}</div>{% endif %}
           {% if form.slug.errors %}<div class="field-errors">{{ form.slug.errors }}</div>{% endif %}
@@ -80,13 +80,13 @@
       </div>
       <div class="form-grid">
         <div class="form-field">
-          {{ form.default_sender_id.label_tag }}
+          <label for="{{ form.default_sender_id.id_for_label }}">{{ form.default_sender_id.label }}</label>
           {{ form.default_sender_id }}
           {% if form.default_sender_id.help_text %}<div class="helptext">{{ form.default_sender_id.help_text }}</div>{% endif %}
           {% if form.default_sender_id.errors %}<div class="field-errors">{{ form.default_sender_id.errors }}</div>{% endif %}
         </div>
         <div class="form-field">
-          {{ form.sender_emails.label_tag }}
+          <label for="{{ form.sender_emails.id_for_label }}">{{ form.sender_emails.label }}</label>
           {{ form.sender_emails }}
           {% if form.sender_emails.help_text %}<div class="helptext">{{ form.sender_emails.help_text }}</div>{% endif %}
           {% if form.sender_emails.errors %}<div class="field-errors">{{ form.sender_emails.errors }}</div>{% endif %}
@@ -111,13 +111,13 @@
       </div>
       <div class="form-grid">
         <div class="form-field">
-          {{ form.mailchimp_api_key.label_tag }}
+          <label for="{{ form.mailchimp_api_key.id_for_label }}">{{ form.mailchimp_api_key.label }}</label>
           {{ form.mailchimp_api_key }}
           {% if form.mailchimp_api_key.help_text %}<div class="helptext">{{ form.mailchimp_api_key.help_text }}</div>{% endif %}
           {% if form.mailchimp_api_key.errors %}<div class="field-errors">{{ form.mailchimp_api_key.errors }}</div>{% endif %}
         </div>
         <div class="form-field">
-          {{ form.mailchimp_list_id.label_tag }}
+          <label for="{{ form.mailchimp_list_id.id_for_label }}">{{ form.mailchimp_list_id.label }}</label>
           {{ form.mailchimp_list_id }}
           {% if form.mailchimp_list_id.help_text %}<div class="helptext">{{ form.mailchimp_list_id.help_text }}</div>{% endif %}
           {% if form.mailchimp_list_id.errors %}<div class="field-errors">{{ form.mailchimp_list_id.errors }}</div>{% endif %}
