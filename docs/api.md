@@ -6,6 +6,10 @@ The in-app staff API docs at `/api-docs/` are the primary runnable reference. Th
 
 ## Authentication
 
+Relay management uses a separate [admin API](admin-api.md) under `/api/admin/`
+with dedicated admin keys. It includes operator actions and client-scoped
+import/export; the credentials are separate from the client API described here.
+
 All client API endpoints under `/api/...` require Bearer authentication:
 
 ```text

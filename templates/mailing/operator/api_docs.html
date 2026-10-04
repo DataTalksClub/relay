@@ -32,6 +32,7 @@
         <div class="section-header">
           <div>
             <h2 id="auth">Setup and Authentication</h2>
+            <p>Relay management uses separate admin keys and <code>/api/admin/</code> endpoints. <a href="{% url 'mailing:admin_api_keys' %}">Manage admin API keys</a>. Admin keys can run these client workflows under <code>/api/admin/clients/{client_id}/</code>; choose the client explicitly.</p>
             <p>Client API calls use Bearer authentication. Each key belongs to one active client and is named by purpose so it can be rotated without disturbing unrelated integrations.</p>
           </div>
         </div>

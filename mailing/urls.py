@@ -1,10 +1,12 @@
 from django.urls import path
 
-from mailing import ops_views, views
+from mailing import admin_key_views, ops_views, views
 
 app_name = "mailing"
 
 urlpatterns = [
+    path("admin-api-keys/", admin_key_views.admin_keys, name="admin_api_keys"),
+    path("admin-api-keys/<int:key_id>/revoke/", admin_key_views.revoke_admin_key, name="admin_api_key_revoke"),
     path("", views.dashboard, name="dashboard"),
     path("health/", views.health, name="health"),
     path("health/ready", views.readiness, name="readiness"),
