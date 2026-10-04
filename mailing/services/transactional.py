@@ -40,7 +40,7 @@ from mailing.services.delivery_options import MAX_CUSTOM_HEADERS as MAX_CUSTOM_H
 from mailing.services.delivery_options import MAX_MESSAGE_PART_CONTENT_LENGTH as MAX_MESSAGE_PART_CONTENT_LENGTH
 from mailing.services.delivery_options import MAX_MESSAGE_PARTS as MAX_MESSAGE_PARTS
 from mailing.services.delivery_options import RESERVED_HEADERS as RESERVED_HEADERS
-from mailing.services.delivery_options import delivery_option_metadata
+from mailing.services.delivery_options import delivery_option_metadata, validate_calendar_alternative_option
 from mailing.services.delivery_options import parse_content_type as parse_content_type
 from mailing.services.delivery_options import validate_headers as validate_headers
 from mailing.services.delivery_options import validate_message_parts as validate_message_parts
@@ -645,6 +645,9 @@ def validate_transactional_send_payload(data, authenticated_client):
     bcc = validate_optional_email_addresses(data, "bcc", errors)
     headers = validate_headers(data.get("headers"), errors)
     message_parts = validate_message_parts(data.get("message_parts"), errors)
+    calendar_alternative = validate_calendar_alternative_option(
+        data.get("calendar_alternative"), message_parts, headers, errors
+    )
 
     dry_run = data.get("dry_run", False)
     if dry_run in (None, ""):
@@ -675,6 +678,7 @@ def validate_transactional_send_payload(data, authenticated_client):
         "bcc": bcc,
         "headers": headers,
         "message_parts": message_parts,
+        "calendar_alternative": calendar_alternative,
         "dry_run": dry_run,
     }
 
