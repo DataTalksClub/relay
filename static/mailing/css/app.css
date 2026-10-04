@@ -1226,12 +1226,20 @@ a.compact-row:hover {
 }
 
 .secondary-section summary {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-2);
+  list-style: none;
   color: var(--dk-text-primary);
   cursor: pointer;
   font-weight: 600;
 }
 
 .inline-details summary {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-2);
+  list-style: none;
   color: var(--dk-text-link);
   cursor: pointer;
   font-size: 13px;
@@ -1345,6 +1353,10 @@ a.compact-row:hover {
 
 .advanced-panel summary,
 .secondary-section summary {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-2);
+  list-style: none;
   padding: var(--dk-space-3);
   color: var(--dk-text-primary);
   cursor: pointer;
@@ -1354,6 +1366,40 @@ a.compact-row:hover {
 .advanced-panel summary:hover,
 .secondary-section summary:hover {
   color: var(--dk-text-heading);
+}
+
+/* Family disclosure rows: hide the native marker and draw the family
+   chevron (24-grid path) as a masked icon so server-rendered <details>
+   markup gains the shared icon language without new markup. */
+.advanced-panel summary::-webkit-details-marker,
+.secondary-section summary::-webkit-details-marker,
+.inline-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-panel summary::before,
+.secondary-section summary::before,
+.inline-details summary::before {
+  content: "";
+  display: inline-block;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background-color: var(--dk-text-muted);
+  mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>') center / contain no-repeat;
+  transform: rotate(90deg);
+  transition: transform 120ms ease;
+}
+
+.advanced-panel[open] summary::before,
+.secondary-section[open] summary::before,
+.inline-details[open] summary::before {
+  transform: rotate(0deg);
+}
+
+.advanced-panel summary:hover::before,
+.secondary-section summary:hover::before {
+  background-color: var(--dk-text-heading);
 }
 
 /* The card's padding-top is the header's top spacing; the page-flow margins
