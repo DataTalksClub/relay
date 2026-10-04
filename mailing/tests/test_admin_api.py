@@ -9,9 +9,22 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import Client as HttpClient
 from django.urls import reverse
+from django.utils import timezone
 
+from jobs import operator_views as job_operator_views
 from jobs import views as job_views
-from mailing import admin_key_views, views
+from jobs.models import Job, Schedule
+from jobs.urls import urlpatterns as job_patterns
+from mailing import (
+    activity_ui_views,
+    admin_key_views,
+    campaign_ui_views,
+    contact_ui_views,
+    documentation_views,
+    setup_views,
+    template_ui_views,
+    views,
+)
 from mailing.admin_operations import READ_FIELDS
 from mailing.admin_urls import OPERATOR_API_PARITY
 from mailing.admin_urls import urlpatterns as admin_patterns
@@ -253,12 +266,18 @@ def test_client_api_operations_have_admin_counterparts():
 
 def test_staff_ui_capabilities_have_admin_api_routes():
     staff_views = set()
-    for module in (views, admin_key_views, job_views):
-        for node in ast.parse(inspect.getsource(module)).body:
+    modules = (views, admin_key_views, job_views, job_operator_views, activity_ui_views,
+               campaign_ui_views, contact_ui_views, documentation_views, setup_views, template_ui_views)
+    for module in modules:
+        declared = {
+            node.name for node in ast.parse(inspect.getsource(module)).body
             if isinstance(node, ast.FunctionDef) and any(
                 isinstance(d, ast.Name) and d.id == "staff_member_required" for d in node.decorator_list
-            ):
-                staff_views.add(node.name)
+            )
+        }
+        for pattern in [*client_patterns, *job_patterns]:
+            if pattern.callback.__module__ == module.__name__ and pattern.callback.__name__ in declared:
+                staff_views.add(pattern.name)
     assert staff_views == set(OPERATOR_API_PARITY)
     api_names = {p.name for p in admin_patterns}
     assert set(OPERATOR_API_PARITY.values()) <= api_names
@@ -354,14 +373,37 @@ def test_operator_overviews_and_contact_filters(setup):
     assert http.get("/api/admin/contacts?client_id=invalid").status_code == 400
 
 
-def test_full_data_transfer_uses_admin_auth(setup, settings):
-    settings.RELAY_TRANSFER_TOKEN = ""
-    http, _, _, _, _, _ = setup
-    response = http.get("/api/admin/transfer/export")
-    assert response.status_code == 200 and "resources" in response.json()
-    response = http.get("/api/admin/transfer/export?resource=organizations")
-    assert response.status_code == 200 and response.json()["rows"]
-    result = send(http, "transfer/load", response.json())
-    assert result.status_code == 200 and result.json()["upserted"] == 1
-    assert HttpClient().get("/api/admin/transfer/export").status_code == 401
-    assert http.get("/internal/transfer/export").status_code == 404
+def test_jobs_admin_recovery_requires_fresh_confirmation(setup):
+    http, _, _, _, client, _ = setup
+    job = Job.objects.create(client=client, task_type="webhook", idempotency_key="review-admin", status="failed", error="timeout")
+    detail = http.get(f"/api/admin/jobs/{job.id}")
+    assert detail.status_code == 200
+    assert detail.json()["error"] == "timeout"
+    assert "task" not in detail.json()
+    url = f"jobs/{job.id}/retry"
+    assert send(http, url, {"client_id": client.id, "revision": job.updated_at.isoformat()}).status_code == 409
+    assert send(http, url, {"client_id": client.id, "revision": "stale", "confirmed": True}).status_code == 409
+    job.refresh_from_db()
+    assert job.status == "failed"
+    response = send(http, url, {"client_id": client.id, "revision": job.updated_at.isoformat(), "confirmed": True})
+    assert response.status_code == 200
+    job.refresh_from_db()
+    assert job.status == "queued"
+    assert response.json()["error"] == ""
+
+
+def test_schedule_admin_pause_resume_uses_existing_future_policy(setup):
+    http, _, _, _, client, _ = setup
+    schedule = Schedule.objects.create(client=client, name="daily", task_type="webhook", cron="0 9 * * *", next_run_at=timezone.now())
+    response = http.get(f"/api/admin/schedules/{schedule.id}")
+    assert response.status_code == 200
+    assert response.json()["cron"] == "0 9 * * *"
+    url = f"schedules/{schedule.id}/action"
+    assert send(http, url, {"action": "pause", "confirmed": True, "client_id": client.id, "revision": "stale"}).status_code == 409
+    assert send(http, url, {"action": "pause", "confirmed": True, "client_id": client.id, "revision": schedule.updated_at.isoformat()}).status_code == 200
+    schedule.refresh_from_db()
+    assert not schedule.enabled
+    assert send(http, url, {"action": "resume", "confirmed": True, "client_id": client.id, "revision": schedule.updated_at.isoformat()}).status_code == 200
+    schedule.refresh_from_db()
+    assert schedule.enabled and schedule.next_run_at > timezone.now()
+    assert not schedule.jobs.exists()

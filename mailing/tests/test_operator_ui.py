@@ -106,7 +106,9 @@ def create_contact(email="person@example.com", **kwargs):
     return Contact.objects.create(email=email, **kwargs)
 
 
-def create_subscribed_contact(email, audience, client, *, verified=True, status=SubscriptionStatus.SUBSCRIBED, **kwargs):
+def create_subscribed_contact(
+    email, audience, client, *, verified=True, status=SubscriptionStatus.SUBSCRIBED, **kwargs
+):
     contact = create_contact(email, verified_at=timezone.now() if verified else None, **kwargs)
     Subscription.objects.create(contact=contact, audience=audience, client=client, status=status)
     return contact
@@ -146,7 +148,7 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     assert b'href="/static/dakit/dist/dakit.css"' in response.content
     assert b'href="/static/mailing/css/app.css"' in response.content
     assert b"<style>" not in response.content
-    assert b'aria-current="page">Datamailer' in response.content
+    assert b'aria-current="page">Relay' in response.content
     assert b'data-theme-toggle aria-label="Toggle dark mode"' in response.content
     assert b'data-sidebar-toggle aria-expanded="true"' in response.content
     assert b'matchMedia("(max-width: 860px)")' in response.content
@@ -168,7 +170,7 @@ def test_sidebar_links_transactional_queue(client, operator, client_record):
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
 
-    assert "Transactional queue" in html
+    assert "Email activity" in html
     assert f'href="{reverse("mailing:transactional_queue")}"' in html
 
 
@@ -623,10 +625,21 @@ def test_contact_detail_uses_normalized_email_url_and_mixed_case_lookup(client, 
     assert canonical_url == "/contacts/person@example.com/"
     assert response.status_code == 200
     assert b"Person@Example.COM" in response.content
-    assert f'action="{reverse("mailing:contact_state_update", args=[contact.normalized_email])}"'.encode() in response.content
-    assert f'action="{reverse("mailing:contact_subscription_update", args=[contact.normalized_email])}"'.encode() in response.content
-    assert f'action="{reverse("mailing:contact_tag_add", args=[contact.normalized_email])}"'.encode() in response.content
-    assert f'action="{reverse("mailing:contact_tag_remove", args=[contact.normalized_email])}"'.encode() in response.content
+    assert (
+        f'action="{reverse("mailing:contact_state_update", args=[contact.normalized_email])}?return=/contacts/"'.encode()
+        in response.content
+    )
+    assert (
+        f'action="{reverse("mailing:contact_subscription_update", args=[contact.normalized_email])}?return=/contacts/"'.encode()
+        in response.content
+    )
+    assert (
+        f'action="{reverse("mailing:contact_tag_add", args=[contact.normalized_email])}?return=/contacts/"'.encode() in response.content
+    )
+    assert (
+        f'action="{reverse("mailing:contact_tag_remove", args=[contact.normalized_email])}?return=/contacts/"'.encode()
+        in response.content
+    )
     assert f"/contacts/{contact.id}/".encode() not in response.content
 
 
@@ -669,6 +682,13 @@ def test_contact_mutation_routes_redirect_to_normalized_email(client, operator, 
         ),
     ]
 
+    assert responses[0].status_code == 200
+    review_token = responses[0].context["review_token"]
+    assert review_token
+    responses[0] = client.post(
+        reverse("mailing:contact_state_update", args=["PERSON@EXAMPLE.COM"]),
+        {"review_token": review_token},
+    )
     assert [response.status_code for response in responses] == [302, 302, 302, 302]
     assert [response["Location"] for response in responses] == [expected_location] * 4
 
@@ -682,7 +702,9 @@ def test_contact_email_url_unknown_and_numeric_ids_return_404(client, operator, 
     assert client.post(f"/contacts/{contact.id}/state/").status_code == 404
 
 
-def test_operator_contact_explorer_renders_filters_and_pagination_querystring(client, operator, audience, client_record):
+def test_operator_contact_explorer_renders_filters_and_pagination_querystring(
+    client, operator, audience, client_record
+):
     client.force_login(operator)
     for index in range(30):
         create_subscribed_contact(f"person-{index:02d}@example.com", audience, client_record)
@@ -693,7 +715,7 @@ def test_operator_contact_explorer_renders_filters_and_pagination_querystring(cl
     )
 
     assert response.status_code == 200
-    assert b"Contact Explorer" in response.content
+    assert b"Contacts" in response.content
     assert b"person-00@example.com" in response.content
     assert b"person-29@example.com" not in response.content
     assert b"Page 1 of 2" in response.content
@@ -762,11 +784,11 @@ def test_operator_contact_explorer_renders_redesigned_filter_groups_and_result_h
     assert "Subscription: Subscribed" in html
     assert "Validation: Valid email" in html
     assert "Includes tag: very-long-newsletter-segment-for-returning-learners" in html
-    assert 'class="table-wrap contact-explorer-table"' in html
+    assert 'class="table-wrap contact-explorer-table triage-table"' in html
     assert "Last activity" in html
     assert "Opened" in html
     assert "Clicked" in html
-    assert 'class="data-truncate" href="/contacts/reachable.person.with.long.address@example.com/"' in html
+    assert 'class="data-truncate" href="/contacts/reachable.person.with.long.address@example.com/?return=' in html
     assert "Subscribed" in html
     assert "Verified" in html
     assert "Valid" in html
@@ -798,7 +820,7 @@ def test_operator_contact_explorer_badges_suppressed_unverified_and_no_activity_
     html = response.content.decode()
 
     assert response.status_code == 200
-    assert 'href="/contacts/suppressed@example.com/"' in html
+    assert 'href="/contacts/suppressed@example.com/?return=' in html
     assert "Hard bounced" in html
     assert "Marked invalid" in html
     assert "Unverified" in html
@@ -931,9 +953,10 @@ def test_contact_detail_renders_summary_before_management_and_debug_sections(
     assert f"/campaigns/{campaign.id}/#recipient-{recipient.id}" in html
     assert html.index('id="sendability">Send Eligibility') < html.index('id="membership">Membership and Tags')
     assert html.index('id="membership">Membership and Tags') < html.index('id="manage-contact-heading">Manage contact')
-    assert html.index('id="manage-contact-heading">Manage contact') < html.index('id="recent-activity">Recent Activity')
-    manage_html = html[html.index('<section class="detail-section manage-contact-panel"') :]
-    assert manage_html.index("Subscription") < manage_html.index("State") < manage_html.index("Add tag")
+    assert html.index('id="recent-activity">Recent Activity') < html.index('id="membership">Membership and Tags')
+    manage_html = html[html.index('<details class="detail-section manage-contact-panel"') :]
+    assert manage_html.index("Subscription") < manage_html.index("Add tag")
+    assert manage_html.index("Remove tag") < manage_html.index("Global contact state")
     assert manage_html.index("Add tag") < manage_html.index("Remove tag")
     assert html.index("Full event timeline and audit details") > html.index("Recent Activity")
 
@@ -1040,7 +1063,7 @@ def test_campaign_list_renders_recent_campaigns(client, operator, campaign):
     assert "1 queued / 2 processed" not in html
     assert "0.03/sec" not in html
     assert "2.0/min" not in html
-    assert "3 sent / 2 delivered" in html
+    assert "3 currently sent / 2 delivery confirmations" in html
     assert "1 opens / 1 clicks" not in html
     assert "1 bounces / 1 complaints" in html
     assert '<span class="badge success">Sent</span>' in html
@@ -1202,8 +1225,21 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert f'href="{reverse("mailing:audience_detail", args=[audience.id])}"' in list_html
     assert detail_response.status_code == 200
     detail_html = detail_response.content.decode()
-    assert "Segmentation" in detail_html
-    assert "Membership" in detail_html
+    assert "Segments" in detail_html
+    assert 'id="audience-members"' in detail_html
+    segment_html = client.get(
+        reverse("mailing:audience_detail", args=[audience.id]), {"section": "segments"}
+    ).content.decode()
+    health_html = client.get(
+        reverse("mailing:audience_detail", args=[audience.id]), {"section": "health"}
+    ).content.decode()
+    campaign_html = client.get(
+        reverse("mailing:audience_detail", args=[audience.id]), {"section": "campaigns"}
+    ).content.decode()
+    activity_html = client.get(
+        reverse("mailing:audience_detail", args=[audience.id]), {"section": "activity"}
+    ).content.decode()
+    assert "Segmentation" in segment_html
     css = Path(finders.find("mailing/css/app.css")).read_text()
     assert ".audience-member-table table" in css
     assert "min-width: 760px" in css
@@ -1214,32 +1250,32 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert "<summary>Advanced filters</summary>" in detail_html
     assert "Inactive since" in detail_html
     assert 'name="include_tags" value="newsletter"' in detail_html
-    assert 'class="table-wrap audience-member-table"' in detail_html
+    assert 'class="table-wrap audience-member-table triage-table"' in detail_html
     assert '<th scope="col">Subscriptions</th>' not in detail_html
     assert '<th scope="col">Tags</th>' not in detail_html
-    assert ">+2</span>" in detail_html
+    assert "Cannot send —" in detail_html
     assert "Missing email DNS" in detail_html
-    assert "No MX: 1" not in detail_html
-    assert "Valid email: 1" in detail_html
-    assert "No validation data: 1" in detail_html
-    assert "Malformed email: 0" not in detail_html
-    assert "Sent: 2" in detail_html
-    assert "Skipped: 1" in detail_html
-    assert "Failed: 0" not in detail_html
-    assert "Invalid email: 1" in detail_html
-    assert "Client unsubscribe: 0" not in detail_html
-    assert "Hard bounced" in detail_html
+    assert "No MX: 1" not in segment_html
+    assert "Valid email: 1" in segment_html
+    assert "No validation data: 1" in segment_html
+    assert "Malformed email: 0" not in segment_html
+    assert "Sent: 2" in segment_html
+    assert "Skipped: 1" in segment_html
+    assert "Failed: 0" not in segment_html
+    assert "Invalid email: 1" in segment_html
+    assert "Client unsubscribe: 0" not in segment_html
+    assert "Hard bounced" in health_html
     assert "invalid@example.com" in detail_html
-    assert 'href="/contacts/invalid@example.com/"' in detail_html
+    assert 'href="/contacts/invalid@example.com/?return=' in detail_html
     assert '<div class="helptext">invalid@example.com</div>' not in detail_html
     assert "/operator/" not in detail_html
-    assert "Campaign History" in detail_html
-    assert "Recent Events" in detail_html
-    assert "Tracking" in detail_html
-    assert "reason: tracking" not in detail_html
-    assert "Provider details" in detail_html
-    assert "Provider event ID: aud-evt-123" in detail_html
-    assert "SES message ID: ses-aud-123" in detail_html
+    assert "Campaign History" in campaign_html
+    assert "Recent Events" in activity_html
+    assert "Tracking" in activity_html
+    assert "reason: tracking" not in activity_html
+    assert "Provider details" in activity_html
+    assert "Provider event ID: aud-evt-123" in activity_html
+    assert "SES message ID: ses-aud-123" in activity_html
 
 
 def test_audience_detail_membership_summaries_are_scoped_to_current_audience(
@@ -1354,41 +1390,35 @@ def test_audience_summary_links_map_to_explorer_filters(audience, client_record)
 
 def _seed_summary_signals(audience, client_record):
     create_subscribed_contact("subscribed@example.com", audience, client_record)
-    create_subscribed_contact(
-        "pending@example.com", audience, client_record, status=SubscriptionStatus.PENDING
-    )
+    create_subscribed_contact("pending@example.com", audience, client_record, status=SubscriptionStatus.PENDING)
     create_subscribed_contact(
         "unsubscribed@example.com", audience, client_record, status=SubscriptionStatus.UNSUBSCRIBED
     )
     create_subscribed_contact("unverified@example.com", audience, client_record, verified=False)
-    create_subscribed_contact(
-        "globalunsub@example.com", audience, client_record, global_unsubscribed_at=timezone.now()
-    )
+    create_subscribed_contact("globalunsub@example.com", audience, client_record, global_unsubscribed_at=timezone.now())
     create_subscribed_contact("bounced@example.com", audience, client_record, hard_bounced_at=timezone.now())
     create_subscribed_contact("complained@example.com", audience, client_record, complained_at=timezone.now())
 
 
-def test_audience_detail_renders_clickable_and_deferred_summary_stats(
-    client, operator, audience, client_record
-):
+def test_audience_detail_renders_clickable_and_deferred_summary_stats(client, operator, audience, client_record):
     client.force_login(operator)
     select_active_client(client, client_record)
     _seed_summary_signals(audience, client_record)
 
-    response = client.get(reverse("mailing:audience_detail", args=[audience.id]))
+    response = client.get(reverse("mailing:audience_detail", args=[audience.id]), {"section": "health"})
 
     assert response.status_code == 200
     html = response.content.decode()
     for href in (
-        "?#audience-members",
-        "?subscription_status=subscribed#audience-members",
-        "?subscription_status=pending#audience-members",
-        "?subscription_status=unsubscribed#audience-members",
-        "?verified=verified#audience-members",
-        "?verified=unverified#audience-members",
-        "?suppression=global_unsubscribed#audience-members",
-        "?suppression=hard_bounced#audience-members",
-        "?suppression=complained#audience-members",
+        "?section=members",
+        "?section=members&amp;subscription_status=subscribed",
+        "?section=members&amp;subscription_status=pending",
+        "?section=members&amp;subscription_status=unsubscribed",
+        "?section=members&amp;verified=verified",
+        "?section=members&amp;verified=unverified",
+        "?section=members&amp;suppression=global_unsubscribed",
+        "?section=members&amp;suppression=hard_bounced",
+        "?section=members&amp;suppression=complained",
     ):
         assert f'class="stat-value stat-link" href="{href}"' in html
     # Deferred stats are present as labels but never rendered as links.
@@ -1528,19 +1558,21 @@ def test_campaign_create_form_uses_sectioned_operational_layout(client, operator
 
     assert response.status_code == 200
     html = response.content.decode()
-    assert "Audience and sender" in html
-    assert "Recipient filters" in html
-    assert "Campaign metadata" in html
-    assert "Final pasted content" in html
-    assert "Sending controls" in html
-    assert "Include tags narrow the audience" in html
+    assert "1. Recipients" in html
+    assert "Optional tag filters" in html
+    assert "2. Message" in html
+    assert "Email content" in html
+    assert "Schedule for later" in html
+    assert "Saving does not send or schedule delivery" in html
+    assert "Visual composer" in html
+    assert "Include tags require every selected tag" in html
     assert "Tags must belong to the selected audience" in html
     assert "A tag cannot be both included and excluded" in html
-    assert "Paste the final HTML email body prepared outside Datamailer" in html
+    assert "Paste email HTML" in html
     assert 'name="html_body"' in html
-    assert 'rows="18"' in html
+    assert 'rows="10"' in html
     assert 'name="text_body"' in html
-    assert 'rows="12"' in html
+    assert 'rows="6"' in html
     assert 'class="action-row"' in html
     assert f'href="{reverse("mailing:campaign_list")}"' in html
 
@@ -1617,23 +1649,26 @@ def test_campaign_create_validation_rejects_same_tag_in_include_and_exclude(clie
     assert b"A tag cannot be both included and excluded" in response.content
 
 
-def test_campaign_create_validation_rejects_missing_final_bodies(client, operator, audience, client_record):
+def test_campaign_create_saves_incomplete_draft(client, operator, audience, client_record):
     client.force_login(operator)
-
     response = client.post(
         reverse("mailing:campaign_create"),
         {
             "audience": audience.id,
+            "client": client_record.id,
             "subject": "Incomplete",
             "html_body": "",
             "text_body": "",
         },
     )
-
-    assert response.status_code == 200
-    assert Campaign.objects.count() == 0
-    assert b"Paste the final HTML body before saving" in response.content
-    assert b"Paste the final text body before saving" in response.content
+    assert response.status_code == 302
+    draft = Campaign.objects.get()
+    assert draft.status == "draft"
+    assert draft.subject == "Incomplete"
+    assert not draft.html_body and not draft.text_body
+    detail = client.get(response.url)
+    assert b"Complete draft" in detail.content
+    assert b"Review and send" not in detail.content
 
 
 def test_operator_can_edit_draft_but_not_queued_send_content(client, operator, audience, client_record):
@@ -1732,23 +1767,23 @@ def test_campaign_detail_shows_draft_estimate_and_state_dependent_controls(clien
     draft_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
 
     assert draft_response.status_code == 200
-    assert b"Queue Preview" in draft_response.content
+    assert b"Recipient review" in draft_response.content
     assert b"Stats" not in draft_response.content
     assert b"Send progress" not in draft_response.content
-    assert b"Queue send" in draft_response.content
+    assert b"Review and send" in draft_response.content
     assert b"Snapshot and queue" not in draft_response.content
     assert b"Edit draft" in draft_response.content
-    assert b"No campaign email events found yet" in draft_response.content
+    assert b"No campaign email events found yet" not in draft_response.content
     confirm_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]), {"confirm_send": "1"})
-    assert b"Queue this send?" in confirm_response.content
-    assert b"Queue send to approximately 1 recipient" in confirm_response.content
-    assert b"Send campaign" in confirm_response.content
+    assert b"Send this campaign now?" in confirm_response.content
+    assert b"1 recipient will be queued for sending" in confirm_response.content
+    assert b"Send to 1 recipient now" in confirm_response.content
 
     campaign.status = "queued"
     campaign.save()
     queued_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]))
-    assert b"Queue Preview" not in queued_response.content
-    assert b"Queue send" not in queued_response.content
+    assert b"Recipient review" not in queued_response.content
+    assert b"Review and send" not in queued_response.content
     assert b"Edit draft" not in queued_response.content
 
     campaign.status = "snapshotting"
@@ -1794,13 +1829,9 @@ def test_queue_action_snapshots_enqueues_idempotently_and_does_not_call_ses(
     # callbacks must be executed for the enqueue to be observable. That
     # deferral is the point of the change: a rollback leaves nothing queued.
     with django_capture_on_commit_callbacks(execute=True):
-        first = client.post(
-            reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"}
-        )
+        first = client.post(reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"})
     with django_capture_on_commit_callbacks(execute=True):
-        second = client.post(
-            reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"}
-        )
+        second = client.post(reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"})
 
     campaign.refresh_from_db()
     assert first.status_code == 302
@@ -1894,7 +1925,7 @@ def test_contact_search_and_detail_render_product_context(client, operator, audi
     assert b"Global unsubscribe" in detail_response.content
     assert b"requested" in detail_response.content
     assert b"Newsletter" in detail_response.content
-    assert b'href="/contacts/person@example.com/"' in search_response.content
+    assert b'href="/contacts/person@example.com/?return=' in search_response.content
     assert f"/campaigns/{campaign.id}/#recipient-{recipient.id}".encode() in detail_response.content
     assert b"Transactional Messages" in detail_response.content
     assert b"Unsubscribe" in detail_response.content
@@ -2033,12 +2064,15 @@ def test_transactional_template_pages_show_operational_empty_states(client, oper
     detail_response = client.get(reverse("mailing:template_detail", args=[template.id]))
 
     assert filtered_empty.status_code == 200
-    assert b"Adjust the client filter" in filtered_empty.content
+    assert b"Create template" in filtered_empty.content
     assert detail_response.status_code == 200
-    assert b"This template can render without caller-supplied context." in detail_response.content
-    assert b"Preview rendering will use an empty context." in detail_response.content
+    assert b"No required context variables configured." in detail_response.content
+    assert b"Preview rendering uses an empty context." in detail_response.content
     assert b"Add a subject, text body, or HTML body before using this template." in detail_response.content
-    assert b"Messages sent with this template will appear here for debugging." in detail_response.content
+    assert (
+        b"Messages sent with this template will appear here so you can inspect their delivery outcome."
+        in detail_response.content
+    )
 
 
 def create_queued_message(
@@ -2095,9 +2129,7 @@ def test_transactional_queue_redirects_without_active_client(client, operator, c
     assert response["Location"] == reverse("mailing:dashboard")
 
 
-def test_transactional_queue_scopes_to_active_client_and_status(
-    client, operator, client_record, other_client
-):
+def test_transactional_queue_scopes_to_active_client_and_status(client, operator, client_record, other_client):
     client.force_login(operator)
     select_active_client(client, client_record)
     create_queued_message(client_record, email="waiting@example.com")
@@ -2137,9 +2169,7 @@ def test_transactional_queue_shows_row_details_and_contact_link(client, operator
 
     assert response.status_code == 200
     assert f'href="{reverse("mailing:transactional_message_detail", args=[message.id])}"' in html
-    assert (
-        f'href="{reverse("mailing:contact_detail", args=[message.contact.normalized_email])}"' in html
-    )
+    assert f'href="{reverse("mailing:contact_detail", args=[message.contact.normalized_email])}"' in html
     assert "Password reset" in html
     assert "password-reset" in html
     assert html.index("Password reset") < html.index("Integration key: password-reset")
@@ -2220,9 +2250,7 @@ def test_transactional_queue_queryset_filters_and_orders(client_record, other_cl
     assert results == [oldest, newest]
 
 
-def test_dashboard_transactional_backlog_links_and_is_client_scoped(
-    client, operator, client_record, other_client
-):
+def test_dashboard_transactional_backlog_links_and_is_client_scoped(client, operator, client_record, other_client):
     client.force_login(operator)
     create_queued_message(client_record, email="a@example.com")
     create_queued_message(client_record, email="b@example.com")
@@ -2301,5 +2329,3 @@ def test_campaign_detail_offers_assume_sent_only_for_failed_recipients(client, o
 
     assert f"/campaigns/{campaign.id}/recipients/{failed.id}/assume-sent/" in unfiltered_html
     assert f"/campaigns/{campaign.id}/recipients/{sent.id}/assume-sent/" not in unfiltered_html
-
-

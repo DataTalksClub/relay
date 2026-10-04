@@ -1,0 +1,20 @@
+<script>
+(() => {
+  document.querySelectorAll('main pre').forEach(pre => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'secondary'; button.textContent = 'Copy example';
+    const heading = pre.closest('.api-example')?.querySelector('h3')?.textContent.trim();
+    const language = pre.parentElement.querySelector('.code-label,summary')?.textContent.trim();
+    button.setAttribute('aria-label', ['Copy', language || 'example', heading].filter(Boolean).join(' '));
+    pre.tabIndex = 0;
+    pre.setAttribute('role', 'region');
+    pre.setAttribute('aria-label', [language || 'Code example', heading].filter(Boolean).join(' '));
+    const status = document.createElement('span'); status.setAttribute('role', 'status');
+    button.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(pre.textContent); status.textContent = ' Copied'; }
+      catch { status.textContent = ' Select and copy the example manually.'; }
+    });
+    pre.before(button, status);
+  });
+})();
+</script>

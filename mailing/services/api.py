@@ -36,6 +36,7 @@ from mailing.models import (
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
 from mailing.services.campaigns import (
+    CampaignNotReady,
     CampaignRecipientConflict,
     queue_campaign,
     recount_campaign_audience,
@@ -266,11 +267,14 @@ def validate_campaign_payload(data, authenticated_client):
     elif not isinstance(scheduled_at, str):
         errors["scheduled_at"] = "must_be_string"
     else:
-        scheduled_at = parse_datetime(scheduled_at.strip())
+        try:
+            scheduled_at = parse_datetime(scheduled_at.strip())
+        except ValueError:
+            scheduled_at = None
         if scheduled_at is None:
             errors["scheduled_at"] = "invalid"
         elif timezone.is_naive(scheduled_at):
-            scheduled_at = timezone.make_aware(scheduled_at, timezone.get_current_timezone())
+            errors["scheduled_at"] = "timezone_required"
 
     try:
         include_tags = validate_campaign_tag_filter(data.get("include_tags"), "include_tags")
@@ -381,11 +385,15 @@ def upsert_campaign_for_client(external_key, data, authenticated_client):
 
 def queue_campaign_for_client(external_key, data, authenticated_client):
     campaign = campaign_for_client(external_key, data, authenticated_client)
-    result = queue_campaign(campaign)
+    try:
+        result = queue_campaign(campaign)
+    except CampaignNotReady as exc:
+        raise ApiValidationError({"campaign": str(exc)}, status_code=409) from exc
     campaign.refresh_from_db()
     return {
         "campaign": campaign_payload(campaign),
         "queued": result.queued,
+        "scheduled": result.scheduled,
         "batch_count": result.batch_count,
         "recipient_count": result.recipient_count,
         "skipped_count": result.skipped_count,
@@ -395,16 +403,22 @@ def queue_campaign_for_client(external_key, data, authenticated_client):
 @transaction.atomic
 def cancel_campaign_for_client(external_key, data, authenticated_client):
     campaign = campaign_for_client(external_key, data, authenticated_client, for_update=True)
+    return cancel_campaign_instance(campaign)
+
+
+@transaction.atomic
+def cancel_campaign_instance(campaign):
+    """Cancel by internal identity too, including drafts with no API external key."""
+    campaign = Campaign.objects.select_for_update().get(pk=campaign.pk)
     if campaign.status == CampaignStatus.CANCELLED:
         return {"campaign": campaign_payload(campaign), "cancelled": False}
-    if campaign.status == CampaignStatus.DRAFT:
+    if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SCHEDULED}:
         campaign.status = CampaignStatus.CANCELLED
         campaign.save(update_fields=["status", "updated_at"])
         return {"campaign": campaign_payload(campaign), "cancelled": True}
     has_sent_recipients = CampaignRecipient.objects.filter(
         campaign=campaign,
-        status=CampaignRecipientStatus.SENT,
-    ).exists()
+    ).filter(Q(status=CampaignRecipientStatus.SENT) | Q(sent_at__isnull=False)).exists()
     if campaign.status == CampaignStatus.QUEUED and campaign.sent_count == 0 and not has_sent_recipients:
         skipped = CampaignRecipient.objects.filter(
             campaign=campaign,

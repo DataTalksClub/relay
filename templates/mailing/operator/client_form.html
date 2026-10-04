@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{% if mode == "create" %}Create client{% else %}Edit client{% endif %} | Datamailer{% endblock %}
+{% block title %}{% if mode == "create" %}Create client{% else %}Edit client{% endif %} | Relay{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -31,7 +31,7 @@
   <form class="form-page" method="post" novalidate>
     {% csrf_token %}
     {% if form.non_field_errors %}
-      <div class="form-errors">{{ form.non_field_errors }}</div>
+      <div class="form-errors" role="alert" tabindex="-1">{{ form.non_field_errors }}</div>
     {% endif %}
 
     <section class="form-section" aria-labelledby="client-scope-heading">
@@ -43,7 +43,7 @@
       </div>
       <div class="form-grid">
         <div class="form-field full">
-          {{ form.organization.label_tag }}
+          <label for="{{ form.organization.id_for_label }}">{{ form.organization.label }}</label>
           {{ form.organization }}
           {% if form.organization.help_text %}<div class="helptext">{{ form.organization.help_text }}</div>{% endif %}
           {% if form.organization.errors %}<div class="field-errors">{{ form.organization.errors }}</div>{% endif %}
@@ -60,13 +60,13 @@
       </div>
       <div class="form-grid">
         <div class="form-field">
-          {{ form.name.label_tag }}
+          <label for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
           {{ form.name }}
           {% if form.name.help_text %}<div class="helptext">{{ form.name.help_text }}</div>{% endif %}
           {% if form.name.errors %}<div class="field-errors">{{ form.name.errors }}</div>{% endif %}
         </div>
         <div class="form-field">
-          {{ form.slug.label_tag }}
+          <label for="{{ form.slug.id_for_label }}">{{ form.slug.label }}</label>
           {{ form.slug }}
           {% if form.slug.help_text %}<div class="helptext">{{ form.slug.help_text }}</div>{% endif %}
           {% if form.slug.errors %}<div class="field-errors">{{ form.slug.errors }}</div>{% endif %}
@@ -81,22 +81,29 @@
           <p>Configure the sender addresses this integration can use for transactional email.</p>
         </div>
       </div>
-      <div class="form-grid">
-        <div class="form-field">
-          {{ form.default_sender_id.label_tag }}
-          {{ form.default_sender_id }}
-          {% if form.default_sender_id.help_text %}<div class="helptext">{{ form.default_sender_id.help_text }}</div>{% endif %}
-          {% if form.default_sender_id.errors %}<div class="field-errors">{{ form.default_sender_id.errors }}</div>{% endif %}
+      <p>Sender IDs are used by API requests. Addresses may include a display name, such as <code>Courses &lt;courses@example.com&gt;</code>.</p>
+      {% if form.sender_emails.errors %}<div class="field-errors" id="sender-policy-errors" role="alert" tabindex="-1">{{ form.sender_emails.errors }}</div>{% endif %}
+      <label><input type="radio" name="sender_editor" value="rows" {% if form.data.sender_editor != 'import' %}checked{% endif %}> Edit address rows</label>
+      <input type="hidden" name="sender_count" id="sender-count" value="{{ form.sender_rows|length }}">
+      <div id="sender-rows">
+        {% for sender in form.sender_rows %}
+        <div class="form-grid" data-sender-row>
+          <div class="form-field"><label for="sender-{{ forloop.counter0 }}-id">Sender ID</label><input id="sender-{{ forloop.counter0 }}-id" name="sender-{{ forloop.counter0 }}-id" value="{{ sender.id }}" maxlength="80" data-sender-id{% if form.sender_emails.errors %} aria-invalid="true" aria-describedby="sender-policy-errors"{% endif %}></div>
+          <div class="form-field"><label for="sender-{{ forloop.counter0 }}-email">Sender address</label><input id="sender-{{ forloop.counter0 }}-email" name="sender-{{ forloop.counter0 }}-email" value="{{ sender.email }}" data-sender-email{% if form.sender_emails.errors %} aria-invalid="true" aria-describedby="sender-policy-errors"{% endif %}></div>
+          <div class="actions"><button type="button" class="secondary" data-remove-sender>Remove sender</button></div>
         </div>
-        <div class="form-field">
-          {{ form.sender_emails.label_tag }}
-          {{ form.sender_emails }}
-          {% if form.sender_emails.help_text %}<div class="helptext">{{ form.sender_emails.help_text }}</div>{% endif %}
-          {% if form.sender_emails.errors %}<div class="field-errors">{{ form.sender_emails.errors }}</div>{% endif %}
-        </div>
+        {% endfor %}
       </div>
+      <button type="button" class="secondary" id="add-sender">Add sender address</button>
+      <div class="form-field"><label for="{{ form.default_sender_id.id_for_label }}">{{ form.default_sender_id.label }}</label>{{ form.default_sender_id }}<div class="helptext">Used when a request omits from_email. If no default is selected, the first configured sender becomes the default.</div>{{ form.default_sender_id.errors }}</div>
+      <details{% if form.data.sender_editor == 'import' %} open{% endif %}><summary>Advanced: import sender lines</summary>
+        <label><input type="radio" name="sender_editor" value="import" {% if form.data.sender_editor == 'import' %}checked{% endif %}> Replace rows with imported lines</label>
+        <label for="{{ form.sender_emails.id_for_label }}">{{ form.sender_emails.label }}</label>{{ form.sender_emails }}<div class="helptext" id="id_sender_emails_helptext">{{ form.sender_emails.help_text }}</div>
+        <p>Import replaces the entire address list. The default must match an imported ID; otherwise clear the selection to use the first imported sender.</p>
+      </details>
     </section>
 
+    <details {% if form.mailchimp_api_key.errors or form.mailchimp_list_id.errors or form.cmp_webhook_url.errors or form.cmp_webhook_token.errors %}open{% endif %}><summary>Optional integrations: Mailchimp and callbacks</summary>
     <section class="form-section" aria-labelledby="client-mailchimp-heading">
       <div class="section-header">
         <div>
@@ -114,13 +121,13 @@
       </div>
       <div class="form-grid">
         <div class="form-field">
-          {{ form.mailchimp_api_key.label_tag }}
+          <label for="{{ form.mailchimp_api_key.id_for_label }}">{{ form.mailchimp_api_key.label }}</label>
           {{ form.mailchimp_api_key }}
           {% if form.mailchimp_api_key.help_text %}<div class="helptext">{{ form.mailchimp_api_key.help_text }}</div>{% endif %}
           {% if form.mailchimp_api_key.errors %}<div class="field-errors">{{ form.mailchimp_api_key.errors }}</div>{% endif %}
         </div>
         <div class="form-field">
-          {{ form.mailchimp_list_id.label_tag }}
+          <label for="{{ form.mailchimp_list_id.id_for_label }}">{{ form.mailchimp_list_id.label }}</label>
           {{ form.mailchimp_list_id }}
           {% if form.mailchimp_list_id.help_text %}<div class="helptext">{{ form.mailchimp_list_id.help_text }}</div>{% endif %}
           {% if form.mailchimp_list_id.errors %}<div class="field-errors">{{ form.mailchimp_list_id.errors }}</div>{% endif %}
@@ -136,11 +143,16 @@
       </div>
     </section>
 
+      <div class="form-grid">
+        <div class="form-field"><label for="{{ form.cmp_webhook_url.id_for_label }}">{{ form.cmp_webhook_url.label }}</label>{{ form.cmp_webhook_url }}{{ form.cmp_webhook_url.errors }}<div class="helptext">{{ form.cmp_webhook_url.help_text }}</div></div>
+        <div class="form-field"><label for="{{ form.cmp_webhook_token.id_for_label }}">{{ form.cmp_webhook_token.label }}</label>{{ form.cmp_webhook_token }}{{ form.cmp_webhook_token.errors }}<div class="helptext">{{ form.cmp_webhook_token.help_text }}</div></div>
+      </div>
+    </details>
     <section class="form-section" aria-labelledby="client-access-heading">
       <div class="section-header">
         <div>
           <h2 id="client-access-heading">API access state</h2>
-          <p>Use inactive when this integration should stop authenticating with Datamailer API keys.</p>
+          <p>Use inactive when this integration should stop authenticating with Relay API keys.</p>
         </div>
         {% if form.is_active.value %}
           <span class="badge success">Active</span>
@@ -166,7 +178,16 @@
       {% else %}
         <a class="button secondary" href="{% url 'mailing:client_list' %}">Cancel</a>
       {% endif %}
-      <button type="submit">{% if mode == "create" %}Create client{% else %}Save client{% endif %}</button>
+      <button type="submit" class="button">{% if mode == "create" %}Create client{% else %}Save client{% endif %}</button>
     </div>
   </form>
+<script>
+(() => {
+ const error=document.querySelector('.form-errors[role=alert],#sender-policy-errors');if(error)error.focus();
+ const rows=document.getElementById('sender-rows'), select=document.getElementById('id_default_sender_id');
+ const refresh=()=>{const selected=select.value; select.replaceChildren(new Option('Choose a default sender','')); rows.querySelectorAll('[data-sender-row]').forEach((row,i)=>{['id','email'].forEach(kind=>{const input=row.querySelector(`[data-sender-${kind}]`);input.name=input.id=`sender-${i}-${kind}`;input.previousElementSibling.htmlFor=input.id;});const id=row.querySelector('[data-sender-id]').value.trim();if(id&&!Array.from(select.options).some(o=>o.value===id))select.add(new Option(id,id));});if(Array.from(select.options).some(o=>o.value===selected))select.value=selected;document.getElementById('sender-count').value=rows.children.length;};
+ rows.addEventListener('input',refresh);rows.addEventListener('click',e=>{if(e.target.matches('[data-remove-sender]')){const row=e.target.closest('[data-sender-row]');const next=row.nextElementSibling||row.previousElementSibling;row.remove();refresh();(next?.querySelector('input')||document.getElementById('add-sender')).focus();}});
+ document.getElementById('add-sender').addEventListener('click',()=>{const row=document.createElement('div');row.className='form-grid';row.dataset.senderRow='';row.innerHTML='<div class="form-field"><label>Sender ID</label><input maxlength="80" data-sender-id{% if form.sender_emails.errors %} aria-invalid="true" aria-describedby="sender-policy-errors"{% endif %}></div><div class="form-field"><label>Sender address</label><input data-sender-email></div><div class="actions"><button type="button" class="secondary" data-remove-sender>Remove sender</button></div>';rows.append(row);refresh();row.querySelector('input').focus();});
+})();
+</script>
 {% endblock %}

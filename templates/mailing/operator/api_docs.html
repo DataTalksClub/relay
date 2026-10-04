@@ -1,208 +1,24 @@
 {% extends "base.html" %}
-
-{% block title %}API Docs | Datamailer{% endblock %}
-
+{% block title %}API Docs | Relay{% endblock %}
 {% block content %}
-  <div class="page-header api-docs-header">
-    <div>
-      <p class="breadcrumbs"><a href="{% url 'mailing:dashboard' %}">Dashboard</a> / API Docs</p>
-      <h1>API Docs</h1>
-      <p>Runnable Datamailer API workflows for staff and client developers. Examples use seeded demo keys, final <code>/api/...</code> paths, and a configurable default base URL of <code>{{ docs_base_url }}</code>.</p>
-    </div>
-    <div class="actions">
-      <a class="button" href="{% url openapi_json_url %}">OpenAPI JSON</a>
-      <a class="button secondary" href="{% url 'mailing:client_list' %}">Client key management</a>
-    </div>
-  </div>
-
-  <div class="api-docs-layout">
-    <aside class="api-docs-nav" aria-label="API docs sections">
-      <strong>Workflows</strong>
-      <nav>
-        {% for group in workflow_examples %}
-          <a href="#workflow-{{ forloop.counter }}">{{ group.section }}</a>
-        {% endfor %}
-        <a href="#common-errors">Common errors</a>
-        <a href="#endpoint-reference">Endpoint reference</a>
-      </nav>
-    </aside>
-
-    <div class="api-docs-main">
-      <section class="section api-docs-setup" aria-labelledby="auth">
-        <div class="section-header">
-          <div>
-            <h2 id="auth">Setup and Authentication</h2>
-            <p>Relay management uses separate admin keys and <code>/api/admin/</code> endpoints. <a href="{% url 'mailing:admin_api_keys' %}">Manage admin API keys</a>. Admin keys can run these client workflows under <code>/api/admin/clients/{client_id}/</code>; choose the client explicitly.</p>
-            <p>Client API calls use Bearer authentication. Each key belongs to one active client and is named by purpose so it can be rotated without disturbing unrelated integrations.</p>
-          </div>
-        </div>
-        <div class="meta-grid">
-          <div class="meta-item">
-            <span class="meta-label">Base URL</span>
-            <code>$DATAMAILER_URL</code>, default <code>{{ docs_base_url }}</code>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Header</span>
-            <code>Authorization: Bearer $DATAMAILER_API_KEY</code>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Manage keys</span>
-            <a href="{% url 'mailing:client_list' %}">Open Clients</a>, select a client, then create or revoke named keys.
-          </div>
-        </div>
-
-        <div class="api-key-grid">
-          {% for key in demo_api_keys %}
-            <div class="api-key-panel">
-              <div class="compact-row-main">
-                <span class="badge neutral">{{ key.client }}</span>
-                <strong>{{ key.name }}</strong>
-              </div>
-              <p>{{ key.purpose }}</p>
-              <dl class="api-key-meta">
-                <dt>Audience</dt>
-                <dd><code>{{ key.audience }}</code></dd>
-                <dt>Environment variable</dt>
-                <dd><code>{{ key.env_var }}</code></dd>
-                <dt>Seeded local value</dt>
-                <dd><code>{{ key.raw_key }}</code></dd>
-              </dl>
-            </div>
-          {% endfor %}
-        </div>
-      </section>
-
-      {% for group in workflow_examples %}
-        <section class="section api-workflow-section" aria-labelledby="workflow-{{ forloop.counter }}">
-          <div class="section-header">
-            <div>
-              <h2 id="workflow-{{ forloop.counter }}">{{ group.section }}</h2>
-            </div>
-          </div>
-
-          {% for example in group.items %}
-            <article class="api-example" id="{{ example.id }}">
-              <div class="api-example-copy">
-                <div class="api-example-title">
-                  <span class="badge">{{ example.method }}</span>
-                  <h3>{{ example.title }}</h3>
-                </div>
-                <p>{{ example.summary }}</p>
-                <dl class="api-example-meta">
-                  <dt>Path</dt>
-                  <dd><code>{{ example.path }}</code></dd>
-                  <dt>Demo key</dt>
-                  <dd>{{ example.key }}</dd>
-                </dl>
-              </div>
-
-              <div class="api-example-code">
-                <div class="code-block">
-                  <div class="code-label">Curl</div>
-                  <pre><code>{{ example.curl }}</code></pre>
-                </div>
-                {% if example.python %}
-                  <div class="code-block">
-                    <div class="code-label">Python</div>
-                    <pre><code>{{ example.python }}</code></pre>
-                  </div>
-                {% endif %}
-                {% if example.request %}
-                  <div class="code-block">
-                    <div class="code-label">Request</div>
-                    <pre><code>{{ example.request }}</code></pre>
-                  </div>
-                {% endif %}
-                <div class="code-grid">
-                  <div class="code-block success">
-                    <div class="code-label">Success response</div>
-                    <pre><code>{{ example.success }}</code></pre>
-                  </div>
-                  <div class="code-block danger">
-                    <div class="code-label">Common error</div>
-                    <pre><code>{{ example.error }}</code></pre>
-                  </div>
-                </div>
-              </div>
-            </article>
-          {% endfor %}
-        </section>
-      {% endfor %}
-
-      <section class="section" aria-labelledby="common-errors">
-        <div class="section-header">
-          <div>
-            <h2 id="common-errors">Common Errors</h2>
-            <p>All client API errors return JSON. Validation failures include field-level details; auth and scope failures do not expose key internals.</p>
-          </div>
-        </div>
-        <div class="detail-grid">
-          <div class="summary-panel">
-            <span class="badge danger">401</span>
-            <h3>Authentication failed</h3>
-            <pre><code>{
-  "error": {
-    "code": "invalid_api_key",
-    "message": "Authentication credentials were not accepted."
-  }
-}</code></pre>
-          </div>
-          <div class="summary-panel">
-            <span class="badge warning">403</span>
-            <h3>Client scope mismatch</h3>
-            <pre><code>{
-  "error": {
-    "code": "validation_error",
-    "fields": {"client": "forbidden"}
-  }
-}</code></pre>
-          </div>
-          <div class="summary-panel">
-            <span class="badge neutral">405</span>
-            <h3>Wrong method</h3>
-            <pre><code>{
-  "error": {
-    "code": "method_not_allowed",
-    "allowed_methods": ["GET", "POST"]
-  }
-}</code></pre>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" aria-labelledby="endpoint-reference">
-        <div class="section-header">
-          <div>
-            <h2 id="endpoint-reference">Endpoint Reference</h2>
-            <p>Implemented routes only. Public tracking, unsubscribe, and provider webhook routes are included for integration context; client application endpoints under <code>/api</code> use Bearer authentication.</p>
-          </div>
-        </div>
-        {% for group in endpoint_groups %}
-          <section class="detail-section" aria-labelledby="endpoint-group-{{ forloop.counter }}">
-            <h3 id="endpoint-group-{{ forloop.counter }}">{{ group.name }}</h3>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Method</th>
-                    <th>Path</th>
-                    <th>Purpose</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for method, path, purpose in group.endpoints %}
-                    <tr>
-                      <td class="nowrap"><span class="badge">{{ method }}</span></td>
-                      <td><code>{{ path }}</code></td>
-                      <td>{{ purpose }}</td>
-                    </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        {% endfor %}
-      </section>
-    </div>
-  </div>
+<div class="page-header"><div><h1>API Docs</h1><p>Connect a client, validate a message, then check its delivery.</p></div><div class="actions"><a class="button secondary" href="{% url 'mailing:api_docs_reference' %}">Search endpoints</a><a class="button secondary" href="{% url openapi_json_url %}">OpenAPI JSON</a></div></div>
+<section class="detail-section" aria-labelledby="quickstart"><h2 id="quickstart">Send a test email: quickstart</h2>
+<ol>
+<li><strong>Prepare your client.</strong> <a href="{% url 'mailing:client_list' %}">Open Clients</a>, configure sender addresses, create an active API key, and prepare an active transactional template with sample variables. Use the setup checklist on the client page.</li>
+<li><strong>Check the message without sending.</strong> Use your own client key and template; replace the example recipient and context with values required by that template. The URL below is the configured sandbox base URL.</li>
+</ol>
+<div class="code-block"><div class="code-label">Validate and render — no email is sent</div><pre><code>export DATAMAILER_URL="{{ docs_base_url }}"
+export DATAMAILER_API_KEY="YOUR_CLIENT_API_KEY"
+curl -sS "$DATAMAILER_URL/api/transactional/send" \
+  -H "Authorization: Bearer $DATAMAILER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","template_key":"YOUR_TEMPLATE_KEY","context":{},"dry_run":true}'</code></pre></div>
+<p>The dry-run response includes the rendered content, with no persisted or queued message. Validation errors identify missing variables or invalid sender policy. A successful dry run does not verify delivery.</p>
+<ol start="3"><li><strong>Send to an address you control.</strong> Review the content, then repeat the request with <code>dry_run:false</code> and a unique <code>idempotency_key</code>. This step sends an actual email.</li><li><strong>Check the outcome.</strong> Save the returned message ID and query <code>GET /api/transactional/messages/{message_id}</code>, or open <a href="{% url 'mailing:email_activity' %}">Email activity</a> with the same client selected. Queued and sent to provider are separate from delivered. A delivery event does not prove inbox placement.</li></ol>
+</section>
+<section class="detail-section"><h2>Choose your task</h2><div class="compact-list">{% for link in workflow_links %}<div class="compact-row"><a href="{{ link.url }}">{{ link.title }}</a></div>{% endfor %}</div></section>
+<section class="detail-section"><h2>Authentication and troubleshooting</h2><p>Client requests use <code>Authorization: Bearer $DATAMAILER_API_KEY</code>. Each key belongs to one client. Relay management uses separate <a href="{% url 'mailing:admin_api_keys' %}">admin API keys</a> and explicitly scoped <code>/api/admin/clients/{client_id}/</code> routes.</p><p>For invalid credentials, check client access and key revocation in settings. For validation errors, inspect the returned field details. Retry transient errors with the same idempotency key.</p><a href="{% url 'mailing:api_docs_legacy' %}#common-errors">Full error examples</a> · <a href="{% url 'mailing:api_docs_reference' %}">Searchable endpoint reference</a> · <a href="{% url 'mailing:api_docs_legacy' %}">Complete previous reference</a></section>
+{{ legacy_anchors|json_script:"legacy-doc-anchors" }}
+<script>(()=>{const anchors=JSON.parse(document.getElementById('legacy-doc-anchors').textContent);const move=()=>{const target=anchors[location.hash.slice(1)];if(target&&target!==location.pathname+location.hash)location.replace(target);};move();window.addEventListener('hashchange',move);})();</script>
+{% include "mailing/operator/_docs_copy.html" %}
 {% endblock %}

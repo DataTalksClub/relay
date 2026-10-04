@@ -26,7 +26,7 @@ management command can create a replacement if all existing keys are revoked.
 
 ```bash
 export RELAY_ADMIN_API_KEY='<new-admin-key>'
-export RELAY_URL='https://relay.datatalks.club'
+export RELAY_URL='https://relay.dtcdev.click'
 curl "$RELAY_URL/api/admin/" \
   -H "Authorization: Bearer $RELAY_ADMIN_API_KEY"
 ```
@@ -97,18 +97,6 @@ string or multipart `file` upload as the client endpoint. This namespace also
 covers recipient lists, transactional sends/templates, campaign workflows,
 contact history and Mailchimp settings. See [client API contracts](api.md).
 
-## Full-data transfer
-
-The host-to-host transfer services are also available with admin authentication:
-GET `transfer/export` returns the manifest; add `resource`, `offset`, and `limit`
-to export a resource page. POST `transfer/load` accepts the existing
-`version`/`resource`/`rows` document. Load resources in manifest order. These
-endpoints do not require enabling the temporary `RELAY_TRANSFER_TOKEN`.
-
-The transfer format intentionally includes client key hashes and integration
-secrets so that a restored host can continue serving existing integrations.
-Keep these archives private. Admin key records are not included in transfers.
-
 ## Operator interface parity
 
 Operator reads and actions have JSON counterparts. The API uses explicit client
@@ -166,3 +154,21 @@ Errors are JSON objects with an `error.code` and, for validation failures,
 field values return 400; missing resources return 404; unsupported methods return
 405; non-JSON management writes return 415; database uniqueness races return
 409. Existing scoped workflows preserve the client API's error contracts.
+
+## Jobs and schedule operations
+
+Management keys can inspect `GET jobs`, `GET jobs/{uuid}`, `GET schedules`, and
+`GET schedules/{uuid}`. Lists accept `client_id`; responses omit task payloads.
+These are shared-service resources, so their client is explicit on each record.
+
+`POST jobs/{uuid}/retry` and `POST schedules/{uuid}/action` use the same locked,
+confirmed operations as the staff interface. Supply `client_id`, the record's
+exact `updated_at` string as `revision`, and JSON `confirmed: true`. Schedule
+operations also require `action: "pause"` or `action: "resume"`. Incomplete,
+stale, or ineligible operations return HTTP 409. Only failed jobs can be retried.
+A retry may repeat a receiver side effect if a completion callback was lost.
+
+Pausing stops future submissions; queued or running jobs continue. Resuming sets
+the next future cron occurrence without submitting work immediately or replaying
+missed occurrences. Automatic campaign scheduling remains unavailable; these
+schedules describe Relay task submissions.

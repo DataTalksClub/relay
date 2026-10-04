@@ -244,37 +244,3 @@ def endpoint_index(request):
             ],
         }
     )
-
-
-@admin_endpoint(["GET", "POST"])
-def data_transfer(request, action):
-    from mailing.services.transfer import MAX_PAGE, TransferError, export_page, load_page, manifest  # noqa: PLC0415
-
-    if (action == "export") != (request.method == "GET"):
-        raise ApiError("method_not_allowed", 405)
-    try:
-        if action == "export":
-            resource = request.GET.get("resource", "").strip()
-            if not resource:
-                return JsonResponse(manifest())
-            try:
-                offset = int(request.GET.get("offset", 0))
-                limit = int(request.GET.get("limit", 200))
-            except ValueError:
-                raise ApiError("invalid_pagination") from None
-            if offset < 0 or limit < 1:
-                raise ApiError("invalid_pagination")
-            return JsonResponse(export_page(resource, offset, min(limit, MAX_PAGE)))
-        data = body(request, {"version", "resource", "rows", "offset", "total"})
-        result = load_page(data)
-    except TransferError as exc:
-        raise ApiError("validation_error", fields={"transfer": exc.message}) from None
-    # The existing transfer format can restore many different models. Attribute
-    # the operation to the credential, recording only resource/count metadata.
-    record_audit(
-        request,
-        "admin.transfer.load",
-        request.admin_key,
-        {"resource": result["resource"], "upserted": result["upserted"]},
-    )
-    return JsonResponse(result)

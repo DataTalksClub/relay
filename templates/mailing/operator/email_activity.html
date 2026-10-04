@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Email activity | Relay{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Email activity</h1>
+      <p>Find campaign and transactional emails for {{ active_client.name }} and see what happened.</p>
+    </div>
+    <div class="actions">
+      <a class="button secondary" href="{% url 'mailing:transactional_queue' %}">Waiting to send</a>
+      <a class="button secondary" href="{% url 'mailing:campaign_list' %}">Campaign results</a>
+    </div>
+  </div>
+  <form method="get" class="section">
+    <div class="filter-grid">
+      <div class="form-field full">
+        <label for="activity-q">Search recipient, subject, or template</label>
+        <input type="search" id="activity-q" name="q" value="{{ query }}" placeholder="person@example.com">
+      </div>
+      <div class="form-field">
+        <label for="activity-status">Status</label>
+        <select id="activity-status" name="status">
+          <option value="">All statuses</option>
+          {% for value, label in status_options %}<option value="{{ value }}"{% if status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="activity-period">Created</label>
+        <select id="activity-period" name="period">
+          <option value="">Any time</option>
+          <option value="1"{% if period == '1' %} selected{% endif %}>Last 24 hours</option>
+          <option value="7"{% if period == '7' %} selected{% endif %}>Last 7 days</option>
+          <option value="30"{% if period == '30' %} selected{% endif %}>Last 30 days</option>
+        </select>
+      </div>
+    </div>
+    <details class="advanced-panel"{% if kind or campaign_filter or template_filter %} open{% endif %}><summary>Message type, campaign, or template</summary><div class="filter-grid">
+      <div class="form-field"><label for="activity-type">Message type</label><select name="type" id="activity-type"><option value="">All email</option><option value="transactional"{% if kind == 'transactional' %} selected{% endif %}>Transactional</option><option value="campaign"{% if kind == 'campaign' %} selected{% endif %}>Campaign</option></select></div>
+      <div class="form-field"><label for="activity-template">Template</label><select name="template" id="activity-template"><option value="">Any template</option>{% for item in templates %}<option value="{{ item.id }}"{% if template_filter == item.id|stringformat:'s' %} selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
+      <div class="form-field"><label for="activity-campaign">Campaign</label><select name="campaign" id="activity-campaign"><option value="">Any campaign</option>{% for item in campaigns %}<option value="{{ item.id }}"{% if campaign_filter == item.id|stringformat:'s' %} selected{% endif %}>{{ item.subject|default:'Untitled draft' }}</option>{% endfor %}</select></div>
+    </div><p class="helptext">Selectors show up to 100 templates and the 100 most recent campaigns, plus your current selection. Search above by subject or template name to find older email; <a href="{% url 'mailing:campaign_list' %}">campaigns</a> and <a href="{% url 'mailing:template_catalog' %}">templates</a> remain available in their full lists.</p></details>
+    <div class="toolbar">
+      <button type="submit">Search emails</button>
+      {% if query or status or period or kind or campaign_filter or template_filter %}<a class="button secondary" href="{% url 'mailing:email_activity' %}">Clear filters</a>{% endif %}
+    </div>
+  </form>
+  <section class="section" aria-labelledby="activity-results">
+    <div class="section-header"><div><h2 id="activity-results">{{ activity.paginator.count }} email{{ activity.paginator.count|pluralize }}</h2><p class="muted">Latest activity first. Delivery confirms the receiving server accepted the email.</p></div></div>
+    {% if message_rows %}
+      <div class="compact-list">
+        {% for row in message_rows %}
+          <article class="compact-row">
+            <div class="compact-row-main">
+              <a href="{{ row.url }}{% if row.kind == "transactional" %}?return={{ request.get_full_path|urlencode }}{% endif %}"><strong>{{ row.subject|default:'(no subject)' }}</strong></a>
+              <span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span>
+            </div>
+            <div class="compact-row-meta">
+              <span>{{ row.message.email }}</span>
+              <span class="muted">{{ row.source }}</span>
+              <span class="helptext">Latest activity {{ row.activity_at|date:'M j, Y H:i' }} UTC</span>
+              {% if row.message.delivered_at %}<span class="helptext">Delivered {{ row.message.delivered_at|date:'M j, Y H:i' }} UTC</span>{% endif %}
+              {% if row.issue %}<span>{{ row.issue|truncatechars:140 }}</span>{% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+      {% include 'mailing/operator/_pagination.html' with page_obj=activity querystring=pagination_querystring %}
+    {% else %}
+      <div class="empty-state">
+        {% if query or status or period or kind or campaign_filter or template_filter %}<strong>No emails match these filters.</strong><p>Try a different recipient, status, or time range.</p><a class="button secondary" href="{% url 'mailing:email_activity' %}">Clear filters</a>
+        {% else %}<strong>No emails for {{ active_client.name }} yet.</strong><p>Emails accepted from this integration and campaign recipients will appear here.</p><a class="button secondary" href="{% url 'mailing:template_catalog' %}">View templates</a>{% endif %}
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

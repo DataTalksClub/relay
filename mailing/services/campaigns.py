@@ -1,3 +1,4 @@
+import logging
 import uuid
 from dataclasses import dataclass
 
@@ -10,6 +11,7 @@ import taskdeck
 from mailing.enqueue import enqueue_campaign_email
 from mailing.models import (
     Campaign,
+    CampaignDispatch,
     CampaignRecipient,
     CampaignRecipientSkipReason,
     CampaignRecipientStatus,
@@ -24,6 +26,7 @@ from mailing.models import (
     normalize_tag_filter,
 )
 from mailing.queue_contracts import CAMPAIGN_EMAIL_CONTRACT, CONTRACT_VERSION, validate_campaign_email_message
+from mailing.services.campaign_composer import composer_send_issues
 from mailing.services.contacts import (
     has_invalid_email_validation,
     is_verified_for_marketing,
@@ -44,6 +47,14 @@ class RecipientPreviewRow:
     status: str
     skip_reason: str
 
+    @property
+    def status_label(self):
+        return "Eligible" if self.status == CampaignRecipientStatus.PENDING else "Excluded"
+
+    @property
+    def skip_reason_label(self):
+        return CampaignRecipientSkipReason(self.skip_reason).label if self.skip_reason else ""
+
 
 @dataclass(frozen=True)
 class RecipientEstimate:
@@ -54,6 +65,10 @@ class RecipientEstimate:
     skip_reason_counts: dict[str, int]
     preview_rows: list[RecipientPreviewRow]
 
+    @property
+    def skip_reason_labels(self):
+        return {CampaignRecipientSkipReason(reason).label: count for reason, count in self.skip_reason_counts.items()}
+
 
 @dataclass(frozen=True)
 class QueueCampaignResult:
@@ -62,6 +77,7 @@ class QueueCampaignResult:
     batch_count: int
     recipient_count: int
     skipped_count: int
+    scheduled: bool = False
 
 
 class CampaignRecipientConflict(Exception):
@@ -124,7 +140,7 @@ def retry_campaign_recipient(campaign, recipient_id):
         .get(pk=recipient_id, campaign=campaign)
     )
 
-    if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.CANCELLED}:
+    if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SCHEDULED, CampaignStatus.CANCELLED}:
         raise CampaignRecipientConflict("campaign_cannot_send")
 
     if recipient.status != CampaignRecipientStatus.FAILED:
@@ -246,21 +262,60 @@ def _enqueue_campaign_batch(correlation_id, payload):
         enqueue_campaign_email(payload)
 
 
-def queue_campaign(campaign, *, batch_size=None):
+class CampaignNotReady(ValueError):
+    """A draft cannot safely be queued for immediate sending."""
+
+
+def campaign_send_issues(campaign):
+    issues = list(composer_send_issues(campaign))
+    if not campaign.subject.strip():
+        issues.append("Add a subject before sending.")
+    if not campaign.html_body.strip() and not campaign.text_body.strip():
+        issues.append("Add HTML or plain-text email content before sending.")
+    if campaign.scheduled_at and timezone.is_naive(campaign.scheduled_at):
+        issues.append("Choose a send time with an explicit timezone.")
+    return issues
+
+
+def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
+                   expected_revision=None, reject_past_schedule=False):
     batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 10)
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
 
     with transaction.atomic():
         locked_campaign = Campaign.objects.select_for_update().get(pk=campaign.pk)
-        if locked_campaign.status != CampaignStatus.DRAFT:
+        now = now or timezone.now()
+        dispatching = dispatch_due and locked_campaign.status == CampaignStatus.SCHEDULED
+        if locked_campaign.status != CampaignStatus.DRAFT and not dispatching:
             return QueueCampaignResult(
                 campaign_id=locked_campaign.id,
                 queued=False,
                 batch_count=0,
                 recipient_count=locked_campaign.recipient_count,
                 skipped_count=locked_campaign.skipped_count,
+                scheduled=locked_campaign.status == CampaignStatus.SCHEDULED,
             )
+
+        if expected_revision is not None and str(expected_revision) != locked_campaign.updated_at.isoformat():
+            raise CampaignNotReady("This campaign changed after review. Review the updated message and send time before confirming.")
+        if (reject_past_schedule and locked_campaign.status == CampaignStatus.DRAFT
+                and locked_campaign.scheduled_at is not None and locked_campaign.scheduled_at <= now):
+            raise CampaignNotReady("The scheduled time has passed. Choose a future time or explicitly choose Send now before confirming.")
+
+        issues = campaign_send_issues(locked_campaign)
+        if issues:
+            raise CampaignNotReady(" ".join(issues))
+
+        if locked_campaign.scheduled_at and locked_campaign.scheduled_at > now:
+            if locked_campaign.status == CampaignStatus.DRAFT:
+                locked_campaign.status = CampaignStatus.SCHEDULED
+                locked_campaign.save(update_fields=["status", "updated_at"])
+                return QueueCampaignResult(locked_campaign.id, True, 0, 0, 0, scheduled=True)
+            return QueueCampaignResult(locked_campaign.id, False, 0, locked_campaign.recipient_count,
+                                       locked_campaign.skipped_count, scheduled=True)
+        if dispatching and locked_campaign.scheduled_at is None:
+            raise CampaignNotReady("The scheduled campaign has no send time.")
 
         snapshot_campaign_recipients(locked_campaign)
         locked_campaign.refresh_from_db()
@@ -273,8 +328,10 @@ def queue_campaign(campaign, *, batch_size=None):
             .values_list("id", flat=True)
         )
         payloads = _campaign_email_payloads(locked_campaign.id, recipient_ids, batch_size)
-        locked_campaign.status = CampaignStatus.QUEUED
-        locked_campaign.save(update_fields=["status", "updated_at"])
+        locked_campaign.status = CampaignStatus.SENT if dispatching and not payloads else CampaignStatus.QUEUED
+        if dispatching and not payloads:
+            locked_campaign.sent_at = now
+        locked_campaign.save(update_fields=["status", "sent_at", "updated_at"])
         _append_queue_audit_events(locked_campaign, recipient_ids, len(payloads))
 
         # Enqueue only once this transaction commits.
@@ -291,10 +348,15 @@ def queue_campaign(campaign, *, batch_size=None):
         # around this loop: on-commit callbacks run after the block exits, by
         # which point a context manager here would already have reset.
         send_correlation_id = uuid.uuid4()
-        for payload in payloads:
-            taskdeck.enqueue_on_commit(
-                _enqueue_campaign_batch, send_correlation_id, payload
+        if dispatching:
+            dispatch, _ = CampaignDispatch.objects.get_or_create(
+                campaign=locked_campaign,
+                defaults={"payloads": payloads, "correlation_id": send_correlation_id},
             )
+            transaction.on_commit(lambda: _enqueue_scheduled_dispatch(dispatch.pk), robust=True)
+        else:
+            for payload in payloads:
+                taskdeck.enqueue_on_commit(_enqueue_campaign_batch, send_correlation_id, payload)
 
     return QueueCampaignResult(
         campaign_id=locked_campaign.id,
@@ -303,6 +365,65 @@ def queue_campaign(campaign, *, batch_size=None):
         recipient_count=locked_campaign.recipient_count,
         skipped_count=locked_campaign.skipped_count,
     )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _enqueue_scheduled_dispatch(dispatch_id):
+    """Task inserts and the completion marker commit together on the DB backend.
+
+    An external backend may redeliver after an uncertain enqueue; recipient
+    row locks and persisted provider IDs keep repeated task execution safe.
+    """
+    try:
+        with transaction.atomic():
+            dispatch = CampaignDispatch.objects.select_for_update().select_related("campaign").get(pk=dispatch_id)
+            if dispatch.enqueued_at is not None:
+                return False
+            if dispatch.campaign.status != CampaignStatus.CANCELLED:
+                for payload in dispatch.payloads:
+                    _enqueue_campaign_batch(dispatch.correlation_id, payload)
+            dispatch.enqueued_at = timezone.now()
+            dispatch.last_error = ""
+            dispatch.save(update_fields=["enqueued_at", "last_error", "updated_at"])
+            return True
+    except Exception as exc:
+        CampaignDispatch.objects.filter(pk=dispatch_id).update(last_error=str(exc)[:2000])
+        raise
+
+
+def recover_campaign_dispatches(*, limit=100):
+    recovered = 0
+    for dispatch_id in CampaignDispatch.objects.filter(enqueued_at__isnull=True).order_by("id").values_list("id", flat=True)[:limit]:
+        try:
+            recovered += bool(_enqueue_scheduled_dispatch(dispatch_id))
+        except Exception:
+            logger.exception("Scheduled campaign dispatch %s could not be enqueued", dispatch_id)
+    return recovered
+
+
+def dispatch_due_campaigns(*, now=None, limit=100):
+    """Called by Relay's existing scheduler; delayed work is never fired early."""
+    now = now or timezone.now()
+    recover_campaign_dispatches(limit=limit)
+    due_ids = list(Campaign.objects.filter(status=CampaignStatus.SCHEDULED, scheduled_at__lte=now)
+                   .order_by("scheduled_at", "id").values_list("id", flat=True)[:limit])
+    results = []
+    for campaign_id in due_ids:
+        try:
+            result = queue_campaign(Campaign(pk=campaign_id), dispatch_due=True, now=now)
+            if result.queued:
+                results.append(result)
+        except CampaignNotReady as exc:
+            with transaction.atomic():
+                failed = Campaign.objects.select_for_update().get(pk=campaign_id)
+                if failed.status == CampaignStatus.SCHEDULED:
+                    failed.status = CampaignStatus.FAILED
+                    failed.metadata = dict(failed.metadata or {}) | {"scheduling_error": str(exc)}
+                    failed.save(update_fields=["status", "metadata", "updated_at"])
+            logger.exception("Scheduled campaign %s is not ready for dispatch", campaign_id)
+    return results
 
 
 def _candidate_contacts(campaign, include_tags, exclude_tags):

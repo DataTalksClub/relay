@@ -8,12 +8,14 @@ from django.forms.models import model_to_dict
 from django.http import JsonResponse
 from django.utils import timezone
 
-from jobs.models import Job, JobStatus
+from jobs.models import Job, JobStatus, Schedule
+from jobs.operator_actions import OperationConflict, change_schedule_state, retry_failed_job
 from jobs.services import enqueue_job
 from mailing import models
 from mailing.admin_api import ApiError, admin_endpoint, body, get_record, listing, record_audit, serialize
 from mailing.forms import CampaignForm, ClientForm, ContactStateForm, ContactSubscriptionForm, ContactTagAddForm
 from mailing.services.campaigns import (
+    CampaignNotReady,
     CampaignRecipientConflict,
     estimate_campaign_recipients,
     queue_campaign,
@@ -43,6 +45,8 @@ from mailing.services.worker_status import worker_status_payload
 # Explicit read projections keep credentials and signing/tracking tokens out of
 # API responses. These are operator resources, not arbitrary database access.
 READ_FIELDS = {
+    "jobs": (Job, "id client_id schedule_id task_type status attempt max_attempts run_after lease_expires_at started_at finished_at error created_at updated_at"),
+    "schedules": (Schedule, "id client_id name task_type cron enabled next_run_at last_run_at last_success_at last_missed_at last_job_id created_at updated_at"),
     "subscriptions": (
         models.Subscription,
         "id contact_id audience_id client_id status verified_at unsubscribed_at unsubscribe_reason",
@@ -219,7 +223,10 @@ def campaign_queue(request, campaign_id):
         return JsonResponse({"estimate": asdict(estimate)})
     if body(request, {"confirm"}).get("confirm") is not True:
         raise ApiError("confirmation_required")
-    result = queue_campaign(campaign)
+    try:
+        result = queue_campaign(campaign)
+    except CampaignNotReady as exc:
+        raise ApiError("campaign_not_ready", 409, fields={"campaign": str(exc)}) from None
     record_audit(request, "admin.campaign.queue", campaign)
     return JsonResponse(result.__dict__)
 
@@ -418,3 +425,27 @@ def dead_letter_retry(request, task_id):
     transaction.on_commit(lambda: enqueue_job(job.pk))
     record_audit(request, "admin.dead_letter.retry", job.client, {"task_id": str(job.pk)})
     return JsonResponse({"id": str(job.pk), "status": JobStatus.QUEUED})
+
+
+@admin_endpoint(["POST"])
+def job_retry(request, task_id):
+    data = body(request, {"client_id", "revision", "confirmed"})
+    try:
+        job = retry_failed_job(task_id, client_id=data.get("client_id"), revision=data.get("revision"), confirmed=data.get("confirmed"))
+    except Job.DoesNotExist as exc:
+        raise ApiError("not_found", status=404) from exc
+    except OperationConflict as exc:
+        raise ApiError("confirmation_conflict", status=409, fields={"confirmation": str(exc)}) from exc
+    return JsonResponse(projection("jobs", job))
+
+
+@admin_endpoint(["POST"])
+def schedule_action(request, schedule_id):
+    data = body(request, {"client_id", "revision", "confirmed", "action"})
+    try:
+        schedule = change_schedule_state(schedule_id, data.get("action"), client_id=data.get("client_id"), revision=data.get("revision"), confirmed=data.get("confirmed"))
+    except Schedule.DoesNotExist as exc:
+        raise ApiError("not_found", status=404) from exc
+    except OperationConflict as exc:
+        raise ApiError("confirmation_conflict", status=409, fields={"confirmation": str(exc)}) from exc
+    return JsonResponse(projection("schedules", schedule))

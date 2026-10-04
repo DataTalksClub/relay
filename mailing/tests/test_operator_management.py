@@ -157,13 +157,26 @@ def test_client_detail_renders_identity_status_and_api_key_rows(client, operator
     page = response.content.decode()
 
     assert response.status_code == 200
-    assert "Integration summary" in page
-    assert "<code>dtc</code>" in page
-    assert '<span class="badge success">1 active API keys</span>' in page
-    assert '<span class="badge neutral">1 revoked</span>' in page
+    assert 'id="setup-readiness"' in page
+    assert "Setup checklist" in page
+    assert client_record.name in page
+    assert f"{client_record.organization.name} / {client_record.slug}" in page
+    assert "Active key available" in page
+    assert "Not verified" in page
+    assert 'id="senders"' in page
+    assert 'id="api-keys"' in page
+    assert page.index('id="senders"') < page.index('id="api-keys"') < page.index('id="integrations"')
+    assert '<details class="detail-section" id="diagnostics">' in page
+    assert '<span class="badge success">1 active API key</span>' in page
+    revoked_prefix_position = page.index(revoked_key.display_prefix)
+    revoked_row = page[page.rfind("<tr", 0, revoked_prefix_position):]
+    revoked_row = revoked_row[:revoked_row.index("</tr>")]
+    assert '<span class="badge danger">Revoked</span>' in revoked_row
+    assert "Revoke key" not in revoked_row
     assert "Key and purpose" in page
     assert "Safe prefix" in page
     assert "Used by public signup." in page
+    assert timezone.localtime(active_key.last_used_at).strftime("%Y-%m-%d %H:%M") in page
     assert active_key.display_prefix in page
     assert revoked_key.display_prefix in page
     assert '<span class="badge danger">Revoked</span>' in page
@@ -340,8 +353,16 @@ def test_contact_state_and_subscription_mutations_are_audited_and_idempotent(cli
         "hard_bounced": "",
         "complained": "",
     }
-    client.post(reverse("mailing:contact_state_update", args=[contact.normalized_email]), state_payload)
-    client.post(reverse("mailing:contact_state_update", args=[contact.normalized_email]), state_payload)
+    state_url = reverse("mailing:contact_state_update", args=[contact.normalized_email])
+    review = client.post(state_url, state_payload)
+    assert review.status_code == 200
+    contact.refresh_from_db()
+    assert contact.verified_at is None
+    assert not contact.global_unsubscribed_at
+    assert client.post(state_url, {"review_token": review.context["review_token"]}).status_code == 302
+    repeated_review = client.post(state_url, state_payload)
+    assert repeated_review.status_code == 200
+    assert not repeated_review.context["review_token"]
     contact.refresh_from_db()
     assert contact.verified_at is not None
     assert contact.email_validation_status == EmailValidationStatus.MANUALLY_INVALID
@@ -543,5 +564,4 @@ def test_campaign_recipient_assume_sent_view_marks_failed_recipient_without_rese
     recipient.refresh_from_db()
     assert recipient.status == CampaignRecipientStatus.SENT
     assert OperatorAudit.objects.filter(action="campaign.recipient.assume_sent").count() == 1
-
 

@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}Review global contact changes | Relay{% endblock %}
+{% block content %}
+<div class="page-header"><div><h1>Review global contact changes</h1><p>{{ contact.email }} · All clients and audiences</p></div></div>
+<section class="section">
+<p>These settings affect this person everywhere in Relay. Global unsubscribe blocks marketing. Hard bounce and complaint flags block marketing and transactional mail. Clearing a flag can allow future sends; it does not restore consent or resend past mail.</p>
+{% if review_token %}
+<div class="table-wrap triage-table"><table><thead><tr><th>Setting</th><th>Current</th><th>After confirmation</th></tr></thead><tbody>{% for change in changes %}<tr><td data-label="Setting">{{ change.label }}</td><td data-label="Current">{{ change.before }}</td><td data-label="After confirmation">{{ change.after }}</td></tr>{% endfor %}</tbody></table></div>
+<form method="post">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="review_token" value="{{ review_token }}"><div class="toolbar"><button type="submit">Confirm changes for all clients</button><a class="button secondary" href="{{ contact_url }}">Cancel</a></div></form>
+{% elif form.errors %}
+<form method="post">{% csrf_token %}{% include 'mailing/operator/_form_fields.html' with form=form %}<div class="toolbar"><button type="submit">Review changes</button><a class="button secondary" href="{{ contact_url }}">Cancel</a></div></form>
+{% else %}<p>No settings changed.</p><a class="button secondary" href="{{ contact_url }}">Return to contact</a>{% endif %}
+</section>
+{% endblock %}

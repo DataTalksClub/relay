@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ group.section }} | API Docs{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{% url 'mailing:api_docs' %}">API Docs</a><span>/</span><span>{{ group.section }}</span></nav>
+<div class="page-header"><div><h1 id="workflow-{{ group.index }}">{{ group.section }}</h1><p>Examples use the configured sandbox base URL <code>{{ docs_base_url }}</code>. Demo keys belong to synthetic seed data; replace them with your client's key and scope.</p></div><a class="button secondary" href="{% url 'mailing:api_docs_reference' %}">Endpoint reference</a></div>
+<nav class="actions" aria-label="Workflow steps">{% for example in group.items %}<a href="#{{ example.id }}">{{ example.title }}</a>{% endfor %}</nav>
+<div class="api-docs-main">          {% for example in group.items %}
+            <article class="api-example" id="{{ example.id }}">
+              <div class="api-example-copy">
+                <div class="api-example-title">
+                  <span class="badge">{{ example.method }}</span>
+                  <h3>{{ example.title }}</h3>
+                </div>
+                <p>{{ example.summary }}</p>
+                <dl class="api-example-meta">
+                  <dt>Path</dt>
+                  <dd><code>{{ example.path }}</code></dd>
+                  <dt>Demo key</dt>
+                  <dd>{{ example.key }}</dd>
+                </dl>
+              </div>
+
+              <div class="api-example-code">
+                <div class="code-block">
+                  <div class="code-label">Curl</div>
+                  <pre><code>{{ example.curl }}</code></pre>
+                </div>
+                {% if example.python %}
+                  <div class="code-block">
+                    <div class="code-label">Python</div>
+                    <pre><code>{{ example.python }}</code></pre>
+                  </div>
+                {% endif %}
+                {% if example.request %}
+                  <div class="code-block">
+                    <div class="code-label">Request</div>
+                    <pre><code>{{ example.request }}</code></pre>
+                  </div>
+                {% endif %}
+                <div class="code-grid">
+                  <div class="code-block success">
+                    <div class="code-label">Success response</div>
+                    <pre><code>{{ example.success }}</code></pre>
+                  </div>
+                  <div class="code-block danger">
+                    <div class="code-label">Common error</div>
+                    <pre><code>{{ example.error }}</code></pre>
+                  </div>
+                </div>
+              </div>
+            </article>
+          {% endfor %}</div>
+{% include "mailing/operator/_docs_copy.html" %}
+{% endblock %}

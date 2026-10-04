@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ template.name }} | Datamailer{% endblock %}
+{% block title %}{{ template.name }} | Relay{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -27,84 +27,89 @@
     </div>
   </div>
 
-  <section class="detail-section" aria-labelledby="template-state">
-    <div class="section-header">
-      <h2 id="template-state">Template Summary</h2>
-    </div>
-    <div class="meta-grid">
-      <div class="meta-item"><span class="meta-label">Client</span>{{ template.client.name }}<div class="muted">{{ template.client.slug }}</div></div>
-      <div class="meta-item"><span class="meta-label">Integration key</span>{{ template.key }}</div>
-      <div class="meta-item"><span class="meta-label">Usage</span>{% if template.is_transactional %}Transactional{% else %}Campaign only{% endif %}</div>
-      <div class="meta-item"><span class="meta-label">Updated</span>{{ template.updated_at|date:"Y-m-d H:i" }}</div>
-    </div>
-    {% if template.description %}
-      <p>{{ template.description }}</p>
-    {% endif %}
-  </section>
-
-  <section class="detail-section" aria-labelledby="context">
-    <div class="section-header">
-      <h2 id="context">Context Contract</h2>
-    </div>
-    {% if requirements %}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Variable</th>
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for requirement in requirements %}
-              <tr>
-                <td><code>{{ requirement.name }}</code></td>
-                <td>{{ requirement.description|default:"Required by this template." }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="empty-state">
-        <strong>No required context variables configured.</strong>
-        <div class="muted">This template can render without caller-supplied context.</div>
-      </div>
-    {% endif %}
-
-    <h3>Example context</h3>
-    {% if example_context %}
-      <pre><code>{{ example_context }}</code></pre>
-    {% else %}
-      <div class="empty-state">
-        <strong>No example context configured.</strong>
-        <div class="muted">Preview rendering will use an empty context.</div>
-      </div>
-    {% endif %}
-  </section>
+  {% if template.description %}<p>{{ template.description }}</p>{% endif %}
 
   <section class="detail-section" aria-labelledby="preview">
     <div class="section-header">
-      <h2 id="preview">Rendered Preview</h2>
+      <div>
+        <h2 id="preview">Rendered Preview</h2>
+        <p class="muted">Rendered with the sample values below. Check compatibility in your email clients before sending.</p>
+      </div>
     </div>
-    {% if preview.subject %}
-      <div class="meta-item template-preview-subject"><span class="meta-label">Subject</span>{{ preview.subject }}</div>
+    {% if preview_error %}<div class="form-errors" role="alert">{{ preview_error }}</div>{% endif %}
+    <details class="secondary-section"{% if sample_form.errors %} open{% endif %}>
+      <summary>Edit sample variables</summary>
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+        {% if sample_form.errors %}
+          <div class="form-errors" role="alert" tabindex="-1">
+            <strong>Check the sample values:</strong>
+            {{ sample_form.non_field_errors }}
+            {% for error in sample_form.sample_context.errors %}
+              <p><a href="#{{ sample_form.sample_context.id_for_label }}">Sample variables: {{ error }}</a></p>
+            {% endfor %}
+          </div>
+        {% endif %}
+        <label for="{{ sample_form.sample_context.id_for_label }}">{{ sample_form.sample_context.label }}</label>
+        {{ sample_form.sample_context }}
+        <p class="helptext" id="id_sample_context_helptext">{{ sample_form.sample_context.help_text }}</p>
+        <button type="submit">Update preview</button>
+        <a class="button secondary" href="{% url 'mailing:template_detail' template.id %}">Reset sample values</a>
+      </form>
+    </details>
+    {% if full_preview.html_body %}{% include "mailing/operator/_preview_sizes.html" %}{% endif %}
+    {% if full_preview.subject %}
+      <div class="meta-item template-preview-subject"><span class="meta-label">Subject</span>{{ full_preview.subject|force_escape }}</div>
     {% endif %}
-    {% if preview.text_body %}
-      <h3>Text</h3>
-      <pre><code>{{ preview.text_body }}</code></pre>
+    {% if full_preview.html_body %}
+      <iframe class="email-preview-frame" title="Template email preview" sandbox="" referrerpolicy="no-referrer" srcdoc="{{ full_preview.html_body|force_escape }}"></iframe>
     {% endif %}
-    {% if preview.html_body %}
-      <h3>HTML</h3>
-      <pre><code>{{ preview.html_body }}</code></pre>
+    {% if full_preview.text_body %}
+      <details class="secondary-section"{% if not full_preview.html_body %} open{% endif %}>
+        <summary>Plain-text email</summary>
+        <pre>{{ full_preview.text_body|force_escape }}</pre>
+      </details>
     {% endif %}
-    {% if not preview %}
+    {% if not full_preview and not sample_form.errors and not preview_error %}
       <div class="empty-state">
         <strong>No previewable body content.</strong>
-        <div class="muted">Add a subject, text body, or HTML body before using this template.</div>
+        <p>Add a subject, text body, or HTML body before using this template.</p>
+        <a class="button secondary" href="/admin/mailing/emailtemplate/{{ template.id }}/change/">Edit template</a>
       </div>
     {% endif %}
   </section>
+
+  <details class="secondary-section">
+    <summary>Developer setup and template source</summary>
+    <section aria-labelledby="context">
+      <h2 id="context">Required template variables</h2>
+      {% if requirements %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+            <tbody>
+              {% for requirement in requirements %}
+                <tr><td><code>{{ requirement.name }}</code></td><td>{{ requirement.description|default:"Required by this template." }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p>No required context variables configured.</p>
+      {% endif %}
+      <h3>Example context</h3>
+      {% if example_context %}
+        <pre><code>{{ example_context }}</code></pre>
+      {% else %}
+        <p>No example context configured. Preview rendering uses an empty context.</p>
+      {% endif %}
+      {% if full_preview.html_body %}<h3>Rendered HTML source</h3><pre><code>{{ full_preview.html_body|force_escape }}</code></pre>{% endif %}
+      <p class="helptext">Updated {{ template.updated_at|date:"Y-m-d H:i" }} · Integration key: {{ template.key }}</p>
+      <a class="button secondary" href="{% url 'mailing:api_docs' %}">API reference</a>
+      <a class="button secondary" href="/admin/mailing/emailtemplate/{{ template.id }}/change/">Edit template</a>
+    </section>
+  </details>
 
   <section class="detail-section" aria-labelledby="recent-messages">
     <div class="section-header">
@@ -141,7 +146,7 @@
     {% else %}
       <div class="empty-state">
         <strong>No recent transactional messages.</strong>
-        <div class="muted">Messages sent with this template will appear here for debugging.</div>
+        <div class="muted">Messages sent with this template will appear here so you can inspect their delivery outcome.</div>
       </div>
     {% endif %}
   </section>

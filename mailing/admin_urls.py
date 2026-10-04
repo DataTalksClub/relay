@@ -19,9 +19,9 @@ def resource_dispatch(resource, write, id_arg):
 
 
 urlpatterns = [
+    path("jobs/<uuid:task_id>/retry", operations.job_retry, name="job_retry"),
+    path("schedules/<uuid:schedule_id>/action", operations.schedule_action, name="schedule_action"),
     path("", admin_api.endpoint_index, name="index"),
-    path("transfer/export", admin_api.data_transfer, {"action": "export"}, name="transfer_export"),
-    path("transfer/load", admin_api.data_transfer, {"action": "load"}, name="transfer_load"),
     path("api-keys", admin_api.admin_keys, name="keys"),
     path("api-keys/<int:key_id>/revoke", admin_api.revoke_key, name="key_revoke"),
     path("clients/<int:client_id>/api-keys", admin_api.client_keys, name="client_keys"),
@@ -93,7 +93,7 @@ WRITE_RESOURCES = {
     "blocked-senders": (operations.blocked_delete, "rule_id"),
 }
 for resource in operations.READ_FIELDS:
-    converter = "uuid" if resource == "dead-letters" else "int"
+    converter = "uuid" if resource in {"dead-letters", "jobs", "schedules"} else "int"
     if resource in WRITE_RESOURCES:
         write, id_arg = WRITE_RESOURCES[resource]
         # Blocking starts with an inbound message; only existing rules can be deleted.
@@ -123,6 +123,11 @@ for resource in operations.READ_FIELDS:
 # Capability mapping, enforced by tests when staff UI endpoints are added.
 # Client selection is explicit in API paths instead of stored in a session.
 OPERATOR_API_PARITY = {
+    "api_docs_workflow": "index", "api_docs_reference": "index", "api_docs_legacy": "index",
+    "campaign_test_send": "scoped_api_campaign_test_send", "campaign_cancel": "scoped_api_campaign_cancel",
+    "job_list": "read_jobs", "job_detail": "read_jobs_detail", "job_retry": "job_retry",
+    "schedule_list": "read_schedules", "schedule_detail_ui": "read_schedules_detail", "schedule_action": "schedule_action",
+    "service_health": "workers",
     "dashboard": "dashboard",
     "api_docs": "index",
     "api_docs_json": "index",
@@ -130,6 +135,7 @@ OPERATOR_API_PARITY = {
     "template_catalog": "read_templates",
     "template_detail": "read_templates_detail",
     "transactional_queue": "read_transactional-messages",
+    "email_activity": "read_transactional-messages",
     "transactional_message_detail": "read_transactional-messages_detail",
     "inbound_list": "read_inbound-messages",
     "inbound_message_detail": "read_inbound-messages_detail",
@@ -164,8 +170,8 @@ OPERATOR_API_PARITY = {
     "client_edit": "client_settings",
     "client_api_key_create": "client_keys",
     "client_api_key_revoke": "client_key_revoke",
-    "admin_keys": "keys",
-    "revoke_admin_key": "key_revoke",
+    "admin_api_keys": "keys",
+    "admin_api_key_revoke": "key_revoke",
     "dead_letter_list": "read_dead-letters",
     "dead_letter_retry": "dead_letter_retry",
 }

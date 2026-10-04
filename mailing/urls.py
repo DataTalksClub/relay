@@ -1,10 +1,23 @@
 from django.urls import path
 
-from mailing import admin_key_views, ops_views, views
+from mailing import (
+    activity_ui_views,
+    admin_key_views,
+    campaign_ui_views,
+    contact_ui_views,
+    documentation_views,
+    ops_views,
+    setup_views,
+    template_ui_views,
+    views,
+)
 
 app_name = "mailing"
 
 urlpatterns = [
+    path("api-docs/workflows/<slug:workflow>/", documentation_views.api_docs_workflow, name="api_docs_workflow"),
+    path("api-docs/reference/", documentation_views.api_docs_reference, name="api_docs_reference"),
+    path("api-docs/legacy/", documentation_views.api_docs_legacy, name="api_docs_legacy"),
     path("admin-api-keys/", admin_key_views.admin_keys, name="admin_api_keys"),
     path("admin-api-keys/<int:key_id>/revoke/", admin_key_views.revoke_admin_key, name="admin_api_key_revoke"),
     path("", views.dashboard, name="dashboard"),
@@ -16,6 +29,8 @@ urlpatterns = [
     path("campaigns/<int:campaign_id>/", views.campaign_detail, name="campaign_detail"),
     path("campaigns/<int:campaign_id>/edit/", views.campaign_edit, name="campaign_edit"),
     path("campaigns/<int:campaign_id>/queue/", views.campaign_queue, name="campaign_queue"),
+    path("campaigns/<int:campaign_id>/test-send/", campaign_ui_views.campaign_test_send, name="campaign_test_send"),
+    path("campaigns/<int:campaign_id>/cancel/", campaign_ui_views.campaign_cancel, name="campaign_cancel"),
     path(
         "campaigns/<int:campaign_id>/recipients/<int:recipient_id>/assume-sent/",
         views.campaign_recipient_assume_sent,
@@ -30,9 +45,9 @@ urlpatterns = [
     path("tags/<int:tag_id>/edit/", views.tag_edit, name="tag_edit"),
     path("clients/", views.client_list, name="client_list"),
     path("clients/select/", views.client_select, name="client_select"),
-    path("clients/new/", views.client_create, name="client_create"),
+    path("clients/new/", setup_views.client_create, name="client_create"),
     path("clients/<int:client_id>/", views.client_detail, name="client_detail"),
-    path("clients/<int:client_id>/edit/", views.client_edit, name="client_edit"),
+    path("clients/<int:client_id>/edit/", setup_views.client_edit, name="client_edit"),
     path(
         "clients/<int:client_id>/mailchimp/tag-mappings/",
         views.client_mailchimp_tag_mappings,
@@ -52,7 +67,7 @@ urlpatterns = [
     path("contacts/<str:contact_email>/", views.contact_detail, name="contact_detail"),
     path(
         "contacts/<str:contact_email>/state/",
-        views.contact_state_update,
+        contact_ui_views.contact_state_update,
         name="contact_state_update",
     ),
     path(
@@ -66,7 +81,7 @@ urlpatterns = [
         views.contact_tag_remove,
         name="contact_tag_remove",
     ),
-    path("api-docs/", views.api_docs, name="api_docs"),
+    path("api-docs/", documentation_views.api_docs, name="api_docs"),
     path("api-docs/openapi.json", views.api_docs_json, name="api_docs_json"),
     path("api/workers/status", views.api_worker_status, name="api_worker_status"),
     path("inbound/", views.inbound_list, name="inbound_list"),
@@ -88,8 +103,9 @@ urlpatterns = [
         name="blocked_sender_delete",
     ),
     path("templates/", views.template_catalog, name="template_catalog"),
-    path("templates/<int:template_id>/", views.template_detail, name="template_detail"),
+    path("templates/<int:template_id>/", template_ui_views.template_detail, name="template_detail"),
     path("transactional/queue/", views.transactional_queue, name="transactional_queue"),
+    path("email-activity/", activity_ui_views.email_activity, name="email_activity"),
     path(
         "transactional/messages/<int:message_id>/",
         views.transactional_message_detail,
