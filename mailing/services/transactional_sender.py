@@ -68,6 +68,7 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
                 bcc=message.metadata.get("bcc", []),
                 headers=message.metadata.get("headers", {}),
                 message_parts=message.metadata.get("message_parts", []),
+                calendar_alternative=message.metadata.get("calendar_alternative"),
             )
         except ClientError as exc:
             if _is_permanent_client_error(exc):
