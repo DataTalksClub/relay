@@ -2,19 +2,19 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 [--environment sandbox|production] <git-commit>" >&2
+  echo "usage: $0 [--environment sandbox|production|development] <git-commit>" >&2
 }
 
 help() {
   cat <<HELP
-Usage: $0 [--environment sandbox|production] <git-commit>
+Usage: $0 [--environment sandbox|production|development] <git-commit>
 
 Deploy one Relay release on this host. The host is prepared by Terraform
-(sandbox/relay or main/relay in DataTalksClub/aws-infra).
+(sandbox/relay, main/relay, or main/dev in DataTalksClub/aws-infra).
 
 Options:
-  --environment sandbox|production  Target environment. Default: sandbox.
-  --help                            Show this help.
+  --environment sandbox|production|development  Target environment. Default: sandbox.
+  --help                                        Show this help.
 
 The environment selects the CloudWatch log group, the web listener address,
 the release health check, and the environment-specific bootstrap of
@@ -22,6 +22,10 @@ the release health check, and the environment-specific bootstrap of
 production uses the RDS database and the shared load balancer, publishes the
 web container on all interfaces, starts no PostgreSQL or Caddy, no inbound
 mail ingress, and gives every container an explicit memory limit.
+Development also uses the shared RDS database and the shared load balancer:
+it runs no PostgreSQL, Caddy, or inbound mail drain, gives every container an
+explicit memory limit, pins the dev.relay.datatalks.club host settings, and
+bootstraps its client scope and API key from RELAY_BOOTSTRAP_API_KEY.
 HELP
 }
 
@@ -67,6 +71,7 @@ release="$1"
 case "$environment" in
   sandbox) ;;
   production) ;;
+  development) ;;
   *)
     usage
     exit 2
@@ -86,6 +91,13 @@ case "$environment" in
     # health URL to poll from outside. The local readiness check and the
     # in-host smoke test below are the release gate.
     public_health_url=""
+    ;;
+  development)
+    log_group="/relay/dev/host"
+    # The development host sits behind the shared ALB/CloudFront path, so the
+    # web container binds the ALB target port on all interfaces.
+    web_bind="0.0.0.0:8000"
+    public_health_url="https://dev.relay.datatalks.club/health/ready"
     ;;
 esac
 
@@ -151,6 +163,32 @@ TASKDECK_STATUS_TOKEN=${status_token}
 RELAY_REQUIRE_TASK_ROLES=True
 RELAY_WORKER_STATUS_SYSTEMD_ENABLED=False
 ENV
+  elif [[ "$environment" == development ]]; then
+    # Development mirrors the production secret pattern: the Django secret
+    # key and DATABASE_URL come from Secrets Manager (the shared dev RDS
+    # database), so a missing secret fails the deploy here. The dev
+    # infrastructure.env does not carry the public hostname, so the host
+    # settings are pinned here; everything else (PUBLIC_BASE_URL,
+    # DEFAULT_FROM_EMAIL, AWS_SES_*) flows from infrastructure.env. The
+    # bootstrap API key follows the sandbox pattern so the release smoke
+    # test can submit system.echo. No send mode is ever written here: the
+    # dry-run posture stays operator-owned.
+    secret_key="$(secret_from_secrets_manager RELAY_SECRET_KEY_SECRET_ARN)"
+    database_url="$(secret_from_secrets_manager RELAY_DATABASE_URL_SECRET_ARN)"
+    status_token="$(openssl rand -hex 32)"
+    api_public_id="dtccourses$(openssl rand -hex 4)"
+    api_secret="$(openssl rand -hex 32)"
+    cat >"$runtime_env" <<ENV
+DEBUG=False
+SECRET_KEY=${secret_key}
+DATABASE_URL=${database_url}
+ALLOWED_HOSTS=dev.relay.datatalks.club,127.0.0.1,localhost
+CSRF_TRUSTED_ORIGINS=https://dev.relay.datatalks.club
+RELAY_BOOTSTRAP_API_KEY=relay_${api_public_id}_${api_secret}
+TASKDECK_STATUS_TOKEN=${status_token}
+RELAY_REQUIRE_TASK_ROLES=True
+RELAY_WORKER_STATUS_SYSTEMD_ENABLED=False
+ENV
   else
     # Production keeps every name-derived value in infrastructure.env
     # (ALLOWED_HOSTS including the instance IP, CSRF_TRUSTED_ORIGINS,
@@ -192,7 +230,25 @@ if [[ "$environment" == sandbox ]]; then
   set_runtime_value RELAY_SES_MAX_SEND_RATE 14
   set_runtime_value RELAY_PUBLIC_LISTS 'pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=confirm-signup confirm_base=https://pocketshell.io/'
   set_runtime_value RELAY_PUBLIC_SUBSCRIBE_ORIGINS 'https://pocketshell.io,https://www.pocketshell.io,http://localhost:4000,http://127.0.0.1:4000'
-else
+elif [[ "$environment" == development ]]; then
+  # The DTC website calls the private in-VPC API at RELAY_INTERNAL_URL from
+  # infrastructure.env (aws-infra main/dev website_service.tf), so Django
+  # would see that hostname as the request Host. infrastructure.env carries
+  # no internal URL at the audited revision, so this stays a no-op until the
+  # infra operator exports the seam; the public hostname stays the primary
+  # contract. Host names only — a wildcard or list value is ignored, never
+  # turned into an allowed host.
+  dev_internal_url="$(sed -n 's/^RELAY_INTERNAL_URL=//p' "$infra_env")"
+  dev_internal_url="${dev_internal_url//[[:space:]]/}"
+  if [[ -n "$dev_internal_url" ]]; then
+    dev_internal_host="${dev_internal_url#*://}"
+    dev_internal_host="${dev_internal_host%%:*}"
+    dev_internal_host="${dev_internal_host%%/*}"
+    if [[ -n "$dev_internal_host" && "$dev_internal_host" != *[*]* && "$dev_internal_host" != *,* ]]; then
+      set_runtime_value ALLOWED_HOSTS "dev.relay.datatalks.club,${dev_internal_host},127.0.0.1,localhost"
+    fi
+  fi
+elif [[ "$environment" == production ]]; then
   sandbox_role="$(sed -n 's/^RELAY_SANDBOX_EMAIL_SEND_ROLE_ARN=//p' "$infra_env")"
   if [[ -n "$sandbox_role" ]]; then
     set_runtime_value RELAY_SES_DOMAIN_ROUTES "dtcdev.click role=${sandbox_role} region=us-east-1 configuration_set=datamailer-sandbox;pocketshell.io role=${sandbox_role} region=us-east-1 configuration_set=datamailer-sandbox"
@@ -243,12 +299,13 @@ log_options=(
 )
 
 # The production host has 2 GiB and no PostgreSQL, so every container carries
-# an explicit memory limit (the main/relay host contract). The sandbox host
-# keeps its historical limits-free invocations.
+# an explicit memory limit (the main/relay host contract). The development
+# host has 1 GiB plus 2 GB swap and no PostgreSQL, so it carries the same
+# limits table. The sandbox host keeps its historical limits-free invocations.
 memory_args=()
 set_memory_args() {
   memory_args=()
-  if [[ "$environment" != production ]]; then
+  if [[ "$environment" == sandbox ]]; then
     return 0
   fi
   case "$1" in
@@ -315,6 +372,22 @@ if [[ "$environment" == sandbox ]]; then
     --default-sender courses \
     --sender 'courses=DataTalks.Club Courses <courses@dtcdev.click>' \
     --sender 'no-reply=DataTalksClub <no-reply@dtcdev.click>'
+elif [[ "$environment" == development ]]; then
+  # Development provisions the same client scope and registers the generated
+  # RELAY_BOOTSTRAP_API_KEY as its deployment key so the release smoke test
+  # can submit system.echo. It sets no senders and no public-list env: no
+  # email is sent from development.
+  run_app python manage.py provision_client_scope \
+    --organization datatalksclub \
+    --organization-name DataTalksClub \
+    --audience dtc-courses \
+    --audience-name "DataTalksClub Courses" \
+    --client dtc-courses \
+    --client-name "DTC Courses"
+  run_app python manage.py provision_client_api_key \
+    --organization datatalksclub \
+    --client dtc-courses \
+    --name development-deployment
 else
   bash "$app_dir/scripts/provision_production_tenant.sh"
 fi
