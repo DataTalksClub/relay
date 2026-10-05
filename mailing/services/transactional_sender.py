@@ -4,6 +4,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from mailing.aws import ses_client_for_source
+from mailing.dry_run import DryRunSuppressed
 from mailing.models import EmailEvent, EmailEventType, TransactionalMessage, TransactionalMessageStatus
 from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
@@ -94,6 +95,11 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
     except TransientSendFailure as exc:
         _record_retryable_error(message_id, str(exc))
         raise
+    except DryRunSuppressed as exc:
+        # Covers both the client factory and the send call: dry run suppresses
+        # the transport, the record is acknowledged durably, and nothing
+        # redrives.
+        return _mark_skipped_dry_run(message_id, str(exc))
 
 
 def _is_permanent_client_error(exc):
@@ -154,6 +160,26 @@ def _mark_sent(message_id, ses_message_id, metadata):
         message.last_error = ""
         message.save(update_fields=["status", "ses_message_id", "sent_at", "last_error", "updated_at"])
         _append_event(message, EmailEventType.SENT, metadata)
+        return message
+
+
+def _mark_skipped_dry_run(message_id, reason):
+    with transaction.atomic():
+        message = (
+            TransactionalMessage.objects.select_for_update().select_related("client", "contact").get(id=message_id)
+        )
+        if message.status in TERMINAL_ACK_STATUSES:
+            return message
+
+        metadata = dict(message.metadata or {})
+        metadata["dry_run"] = True
+        metadata["skip_reason"] = "dry_run"
+        message.metadata = metadata
+        message.status = TransactionalMessageStatus.SKIPPED
+        # ses_message_id stays empty: dry run never contacts SES, so there is
+        # no message id to record and the status must not claim a send.
+        message.save(update_fields=["status", "metadata", "updated_at"])
+        _append_event(message, EmailEventType.SKIPPED, {"reason": "dry_run", "error": reason})
         return message
 
 

@@ -7,6 +7,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
 
 import taskdeck
+from mailing.dry_run import DryRunGuardClient, dry_run_enforced
 from mailing.ses_routes import route_for_source
 
 _credential_cache = {}
@@ -67,6 +68,11 @@ def sqs_client(*, endpoint_url=None):
 
 
 def ses_client(*, endpoint_url=None):
+    if dry_run_enforced():
+        # Inert transport guard, not a boto3 client: no STS, no network, and
+        # no raise here — suppression surfaces at the send gate so pre-loop
+        # factory resolution (e.g. campaign batches) stays non-raising.
+        return DryRunGuardClient()
     return aws_client(
         "ses",
         endpoint_url=endpoint_url,
@@ -76,6 +82,8 @@ def ses_client(*, endpoint_url=None):
 
 
 def ses_client_for_source(source, *, endpoint_url=None):
+    if dry_run_enforced():
+        return DryRunGuardClient()
     route = route_for_source(source)
     if route is None:
         return ses_client(endpoint_url=endpoint_url)

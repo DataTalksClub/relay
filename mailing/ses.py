@@ -6,6 +6,7 @@ from email.message import EmailMessage, Message
 from django.conf import settings
 
 from mailing.calendar_mime import add_calendar_alternative, validate_calendar_alternative
+from mailing.dry_run import ensure_transport_allowed
 
 _rate_limit_lock = threading.Lock()
 _last_ses_send_monotonic = None
@@ -50,10 +51,13 @@ def send_email(
     calendar = validate_calendar_alternative(calendar_alternative, text_body, html_body, message_parts, headers)
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
     content = _Content(subject, html_body, text_body, headers, message_parts, calendar)
+    raw = bool(headers or message_parts or calendar is not None)
+    parameters = _raw_parameters(envelope, content) if raw else _simple_parameters(envelope, content)
+    ensure_transport_allowed("SES send_email")
     throttle_ses_send()
-    if headers or message_parts or calendar is not None:
-        return _send_raw(ses_client, envelope, content)
-    return ses_client.send_email(**_simple_parameters(envelope, content))["MessageId"]
+    if raw:
+        return ses_client.send_raw_email(**parameters)["MessageId"]
+    return ses_client.send_email(**parameters)["MessageId"]
 
 
 def send_raw_email(
@@ -75,7 +79,9 @@ def send_raw_email(
     calendar = validate_calendar_alternative(calendar_alternative, text_body, html_body, message_parts, headers)
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
     content = _Content(subject, html_body, text_body, headers, message_parts, calendar)
-    return _send_raw(ses_client, envelope, content)
+    parameters = _raw_parameters(envelope, content)
+    ensure_transport_allowed("SES send_raw_email")
+    return ses_client.send_raw_email(**parameters)["MessageId"]
 
 
 def _simple_parameters(envelope, content):
@@ -98,7 +104,7 @@ def _simple_parameters(envelope, content):
     return params
 
 
-def _send_raw(ses_client, envelope, content):
+def _raw_parameters(envelope, content):
     message = _raw_message(envelope, content)
     params = {
         "Source": envelope.source,
@@ -106,7 +112,7 @@ def _send_raw(ses_client, envelope, content):
         "RawMessage": {"Data": message.as_bytes()},
     }
     _configuration(params, envelope.configuration_set)
-    return ses_client.send_raw_email(**params)["MessageId"]
+    return params
 
 
 def _configuration(params, configuration_set):
