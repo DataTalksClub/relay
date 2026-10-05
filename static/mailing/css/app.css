@@ -129,8 +129,8 @@ body {
   display: block;
 }
 
-/* Account control: avatar chip + name + chevron opening a small disclosure
-   menu (the family's toolbar account pattern). */
+/* Account control: avatar chip + name + chevron opening the family
+   account popover (identity, appearance, sign-out). */
 .account-menu {
   position: relative;
 }
@@ -196,28 +196,180 @@ body {
   right: 0;
   z-index: 20;
   display: grid;
-  min-width: 180px;
-  padding: var(--dk-space-1);
+  align-content: start;
+  width: min(380px, calc(100vw - var(--dk-space-7)));
+  overflow: auto;
+  max-height: calc(100vh - 80px);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-lg);
   background: var(--dk-bg-surface);
   box-shadow: var(--dk-shadow-overlay);
 }
 
-.account-panel a {
+.account-panel-header {
   display: flex;
   align-items: center;
-  min-height: 34px;
-  padding: 0 var(--dk-space-3);
-  border-radius: var(--dk-radius-sm);
-  color: var(--dk-text-primary);
+  justify-content: space-between;
+  gap: var(--dk-space-3);
+  min-height: 54px;
+  padding: var(--dk-space-2) var(--dk-space-2) var(--dk-space-2) var(--dk-space-4);
+  border-bottom: 1px solid var(--dk-border-default);
+  background: var(--dk-bg-muted);
+}
+
+.account-panel-header strong {
+  color: var(--dk-text-heading);
+  font-size: var(--dk-text-lg);
+}
+
+.account-identity {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--dk-space-3);
+  padding: 14px var(--dk-space-4);
+  border-bottom: 1px solid var(--dk-border-default);
+  background: var(--dk-bg-surface);
+}
+
+.account-avatar-large {
+  width: 40px;
+  height: 40px;
+  font-size: 14px;
+}
+
+.account-identity-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.account-identity-copy small,
+.account-identity-copy > span {
+  overflow: hidden;
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-identity-copy strong {
+  overflow: hidden;
+  color: var(--dk-text-heading);
   font-size: var(--dk-text-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-section-label {
+  margin: 0;
+  padding: var(--dk-space-2) var(--dk-space-4);
+  border-bottom: 1px solid var(--dk-border-default);
+  background: var(--dk-bg-muted);
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-sm);
+  font-weight: var(--dk-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.account-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: stretch;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  padding: 10px var(--dk-space-4);
+  border: 0;
+  border-bottom: 1px solid var(--dk-border-default);
+  border-radius: 0;
+  background: var(--dk-bg-surface);
+  color: var(--dk-text-primary);
+  font: inherit;
+  white-space: normal;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.account-item:hover {
+  border-color: var(--dk-border-default);
+  background: var(--dk-bg-hover);
+  color: var(--dk-text-primary);
   text-decoration: none;
 }
 
-.account-panel a:hover {
+.account-item:last-child {
+  border-bottom: 0;
+}
+
+.account-item > span:nth-child(2) {
+  display: grid;
+  gap: 2px;
+}
+
+.account-item strong {
+  color: var(--dk-text-heading);
+  font-size: var(--dk-text-body);
+}
+
+.account-item small {
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-sm);
+  font-weight: var(--dk-weight-regular);
+}
+
+.account-item-icon {
+  display: grid;
+  place-items: center;
+  color: var(--dk-text-muted);
+}
+
+.account-theme-label {
+  color: var(--dk-text-heading);
+  font-weight: var(--dk-weight-semibold);
+}
+
+.account-toggle-track {
+  display: flex;
+  width: 36px;
+  height: 20px;
+  align-items: center;
+  border-radius: var(--dk-radius-full);
+  background: var(--dk-border-strong);
+  padding: 2px;
+  transition: background 140ms ease;
+}
+
+.account-toggle-track span {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--dk-radius-full);
+  background: var(--dk-text-on-deep);
+  transition: transform 140ms ease;
+}
+
+.account-theme-toggle[aria-pressed="true"] .account-toggle-track {
+  background: var(--dk-accent-default);
+}
+
+.account-theme-toggle[aria-pressed="true"] .account-toggle-track span {
+  transform: translateX(16px);
+}
+
+.account-sign-out,
+.account-sign-out:hover,
+.account-sign-out strong,
+.account-sign-out:hover strong,
+.account-sign-out .account-item-icon,
+.account-sign-out:hover .account-item-icon {
+  color: var(--dk-danger-text);
+}
+
+.account-sign-out:hover {
+  border-color: var(--dk-border-default);
   background: var(--dk-bg-hover);
-  text-decoration: none;
 }
 
 .client-switcher {
@@ -2341,6 +2493,50 @@ pre {
     flex: none;
   }
 
+  /* Family mobile top bar: avatar alone, popover becomes a full-screen sheet. */
+  .account-button {
+    min-width: var(--dk-size-touch);
+    min-height: var(--dk-size-touch);
+    justify-content: center;
+    padding: 0;
+  }
+
+  .account-button-name,
+  .account-button > .icon {
+    display: none;
+  }
+
+  .account-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    width: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .account-panel-header {
+    display: grid;
+    grid-template-columns: var(--dk-size-touch) minmax(0, 1fr) var(--dk-size-touch);
+    min-height: 64px;
+    padding: 0 var(--dk-space-2);
+  }
+
+  .account-panel-header strong {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: center;
+  }
+
+  .account-panel-close {
+    grid-column: 1;
+    grid-row: 1;
+    width: var(--dk-size-touch);
+    min-width: var(--dk-size-touch);
+    height: var(--dk-size-touch);
+  }
+
   .sidebar-toggle {
     display: none;
   }
@@ -2433,19 +2629,6 @@ pre {
   .app-toolbar {
     padding-right: 14px;
     padding-left: 14px;
-  }
-
-  /* The account chip keeps its avatar at phone widths; only the name drops. */
-  .account-button {
-    min-width: 44px;
-    min-height: 44px;
-    justify-content: center;
-    padding: 0;
-  }
-
-  .account-button .account-button-name,
-  .account-button > .icon {
-    display: none;
   }
 
   h1 {

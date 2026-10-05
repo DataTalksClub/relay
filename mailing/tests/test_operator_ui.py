@@ -149,7 +149,7 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     assert b'href="/static/mailing/css/app.css"' in response.content
     assert b"<style>" not in response.content
     assert b'class="brand-name">Relay</span>' in response.content
-    assert b'data-theme-toggle aria-label="Toggle dark mode"' in response.content
+    assert b'data-theme-toggle' in response.content
     assert b'data-sidebar-toggle aria-expanded="true"' in response.content
     assert b'data-sidebar-menu-toggle aria-expanded="false"' in response.content
     assert b'matchMedia("(max-width: 860px)")' in response.content
@@ -185,6 +185,43 @@ def test_chrome_icons_use_family_24grid_geometry(client, operator):
     assert b'viewBox="0 0 16 16"' not in content
     assert b'width="16" height="16"' not in content
     assert b'stroke-width="1.5"' not in content
+
+
+def test_operator_account_chrome_owns_identity_appearance_and_sign_out(client, operator):
+    """Toolbar Account popover is the only identity/theme/sign-out control.
+
+    dakit family.md §Account chrome: avatar + name + chevron trigger, popover
+    titled Account with Identity, Appearance (labeled track switch), Sign out.
+    """
+    client.force_login(operator)
+
+    response = client.get(reverse("mailing:dashboard"))
+    html = response.content.decode()
+    css = Path(finders.find("mailing/css/app.css")).read_text()
+
+    assert response.status_code == 200
+    assert 'aria-label="Account"' in html
+    assert 'class="account-button-name">operator</span>' in html
+    assert 'id="account-menu-title">Account</strong>' in html
+    assert "Signed in as" in html
+    assert "operator@example.com" in html
+    assert 'class="account-section-label">Appearance</p>' in html
+    assert 'data-theme-label>Dark mode</span>' in html
+    assert 'class="account-toggle-track"' in html
+    assert "<strong>Sign out</strong>" in html
+    assert 'href="/auth/logout"' in html
+    assert "Log out" not in html
+    assert 'class="icon-button theme-toggle"' not in html
+    assert html.index("account-panel") < html.index("data-theme-toggle")
+    assert html.index("data-theme-toggle") < html.index("account-sign-out")
+    sidebar_html = html[html.index("app-sidebar") : html.index("app-toolbar")]
+    assert "data-theme-toggle" not in sidebar_html
+    assert "Sign out" not in sidebar_html
+    assert ".account-panel" in css
+    assert "var(--dk-radius-lg)" in css
+    assert "var(--dk-shadow-overlay)" in css
+    assert ".account-toggle-track" in css
+    assert ".account-theme-toggle[aria-pressed=" in css
 
 
 def test_sidebar_links_transactional_queue(client, operator, client_record):
