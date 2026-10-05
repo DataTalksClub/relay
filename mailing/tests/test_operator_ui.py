@@ -188,10 +188,11 @@ def test_chrome_icons_use_family_24grid_geometry(client, operator):
 
 
 def test_operator_account_chrome_owns_identity_appearance_and_sign_out(client, operator):
-    """Toolbar Account popover is the only identity/theme/sign-out control.
+    """Sidebar-footer Account popover is the only identity/theme/sign-out control.
 
-    dakit family.md §Account chrome: avatar + name + chevron trigger, popover
-    titled Account with Identity, Appearance (labeled track switch), Sign out.
+    dakit family.md §Account chrome: avatar + name + chevron trigger in the
+    sidebar footer, popover titled Account with Identity, Appearance (labeled
+    track switch), Sign out. The operator shell has no desktop top bar.
     """
     client.force_login(operator)
 
@@ -214,9 +215,15 @@ def test_operator_account_chrome_owns_identity_appearance_and_sign_out(client, o
     assert 'class="icon-button theme-toggle"' not in html
     assert html.index("account-panel") < html.index("data-theme-toggle")
     assert html.index("data-theme-toggle") < html.index("account-sign-out")
-    sidebar_html = html[html.index("app-sidebar") : html.index("app-toolbar")]
-    assert "data-theme-toggle" not in sidebar_html
-    assert "Sign out" not in sidebar_html
+    foot_html = html[html.index("sidebar-foot") : html.index("app-column")]
+    assert 'class="account-button-name">operator</span>' in foot_html
+    assert "data-theme-toggle" in foot_html
+    assert "Sign out" in foot_html
+    assert html.index("app-sidebar") < html.index("sidebar-foot") < html.index("app-column")
+    toolbar_html = html[html.index("app-toolbar") : html.index("<main")]
+    assert "data-account-menu" not in toolbar_html
+    assert ".has-sidebar .app-toolbar" in css
+    assert "display: none" in css.split(".has-sidebar .app-toolbar {", 1)[1].split("}", 1)[0]
     assert ".account-panel" in css
     assert "var(--dk-radius-lg)" in css
     assert "var(--dk-shadow-overlay)" in css

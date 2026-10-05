@@ -133,6 +133,50 @@
               </a>
             </div>
           </nav>
+          <footer class="sidebar-foot">
+            {% with account_name=user.get_full_name|default:user.get_username %}
+            <details class="account-menu" data-account-menu>
+              <summary class="account-button" aria-label="Account">
+                <span class="account-avatar" aria-hidden="true">{{ account_name|first|upper }}</span>
+                <span class="account-button-name">{{ account_name }}</span>
+                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </summary>
+              <div class="account-panel" role="dialog" aria-labelledby="account-menu-title">
+                <header class="account-panel-header">
+                  <strong id="account-menu-title">Account</strong>
+                  <button class="icon-button account-panel-close" type="button" data-account-close aria-label="Close account menu">
+                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                  </button>
+                </header>
+                <section class="account-identity">
+                  <span class="account-avatar account-avatar-large" aria-hidden="true">{{ account_name|first|upper }}</span>
+                  <span class="account-identity-copy">
+                    <small>Signed in as</small>
+                    <strong>{{ account_name }}</strong>
+                    {% if user.email %}<span>{{ user.email }}</span>{% endif %}
+                  </span>
+                </section>
+                <p class="account-section-label">Appearance</p>
+                <button class="account-item account-theme-toggle" type="button" data-theme-toggle aria-pressed="false" aria-label="Switch to dark mode" title="Switch to dark mode">
+                  <span class="account-item-icon" aria-hidden="true">
+                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 15.5A8 8 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/></svg>
+                  </span>
+                  <span class="account-theme-label" data-theme-label>Dark mode</span>
+                  <span class="account-toggle-track" aria-hidden="true"><span></span></span>
+                </button>
+                <a class="account-item account-sign-out" href="{% url 'oidc-logout' %}">
+                  <span class="account-item-icon" aria-hidden="true">
+                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9"/></svg>
+                  </span>
+                  <span>
+                    <strong>Sign out</strong>
+                    <small>End this browser session.</small>
+                  </span>
+                </a>
+              </div>
+            </details>
+            {% endwith %}
+          </footer>
         </aside>
       {% endif %}
       <div class="sidebar-scrim" data-sidebar-scrim hidden></div>
@@ -145,7 +189,7 @@
           {% endif %}
           <span class="topbar-title">{% block topbar_title %}Relay{% endblock %}</span>
           <div class="toolbar-actions">
-            {% if user.is_authenticated %}
+            {% if user.is_authenticated and not user.is_staff %}
               {% with account_name=user.get_full_name|default:user.get_username %}
               <details class="account-menu" data-account-menu>
                 <summary class="account-button" aria-label="Account">
@@ -188,7 +232,7 @@
                 </div>
               </details>
               {% endwith %}
-            {% else %}
+            {% elif not user.is_authenticated %}
               <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false" title="Toggle theme">
                 <svg class="icon theme-icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.8 14.4A8.25 8.25 0 119.6 4.2a6.45 6.45 0 0010.2 10.2Z"/></svg>
                 <svg class="icon theme-icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.8"/><path d="M12 1.8v2.55M12 19.65v2.55M4.35 4.35l1.8 1.8M17.85 17.85l1.8 1.8M1.8 12h2.55M19.65 12h2.55M4.35 19.65l1.8-1.8M17.85 6.15l1.8-1.8"/></svg>

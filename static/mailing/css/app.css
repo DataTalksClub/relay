@@ -70,8 +70,13 @@ body {
   text-decoration: none;
 }
 
-/* Canvas toolbar: global actions only — quiet icon buttons and the account
-   control, the family toolbar pattern. Navigation lives in the sidebar. */
+/* Canvas toolbar: the family shell has no top bar on desktop — the sidebar
+   footer carries the global controls. For operator shells the toolbar is the
+   mobile top bar only (menu + page title); standalone views keep it. */
+.has-sidebar .app-toolbar {
+  display: none;
+}
+
 .app-toolbar {
   position: sticky;
   top: 0;
@@ -632,6 +637,55 @@ main,
 
 .sidebar-collapsed .sidebar-head {
   justify-content: center;
+}
+
+/* Sidebar footer: the shell's only global strip — account trigger on the
+   collapsed rail too (avatar only, panel anchored above it). */
+.sidebar-foot {
+  margin-top: auto;
+  border-top: 1px solid var(--dk-border-default);
+  padding-top: var(--dk-space-3);
+}
+
+.sidebar-collapsed .sidebar-foot {
+  padding-top: var(--dk-space-2);
+}
+
+.sidebar-foot .account-menu {
+  position: relative;
+  display: block;
+}
+
+.sidebar-foot .account-button {
+  width: 100%;
+  justify-content: flex-start;
+  padding: var(--dk-space-1) var(--dk-space-2);
+}
+
+.sidebar-foot .account-button-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.sidebar-foot .account-panel {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: auto;
+}
+
+.sidebar-collapsed .account-button-name,
+.sidebar-collapsed .account-button > .icon {
+  display: none;
+}
+
+.sidebar-collapsed .account-button {
+  justify-content: center;
+  padding: 0;
 }
 
 .sidebar-collapsed .brand-text,
@@ -2453,8 +2507,12 @@ pre {
     min-height: 0;
   }
 
-  /* The toolbar becomes the 64px top bar: menu control and page title left,
-     global actions right — the family's mobile top bar. */
+  /* The toolbar returns as the 64px top bar: menu control and page title —
+     the family's mobile top bar; account lives in the drawer footer. */
+  .has-sidebar .app-toolbar {
+    display: flex;
+  }
+
   .app-toolbar {
     min-height: 64px;
     padding: 0 var(--dk-space-3);
@@ -2493,17 +2551,33 @@ pre {
     flex: none;
   }
 
-  /* Family mobile top bar: avatar alone, popover becomes a full-screen sheet. */
-  .account-button {
+  /* Standalone toolbars collapse their account control to the bare avatar;
+     the operator drawer's footer row keeps its label at the touch scale. */
+  .toolbar-actions .account-button {
     min-width: var(--dk-size-touch);
     min-height: var(--dk-size-touch);
     justify-content: center;
     padding: 0;
   }
 
-  .account-button-name,
-  .account-button > .icon {
+  .toolbar-actions .account-button-name,
+  .toolbar-actions .account-button > .icon {
     display: none;
+  }
+
+  .sidebar-foot .account-button {
+    min-height: var(--dk-size-touch);
+  }
+
+  /* The drawer scrolls; pin the account row to its bottom edge so the
+     trigger never falls below the fold. */
+  .sidebar-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin-top: auto;
+    padding: var(--dk-space-3) 0 0;
+    background: var(--dk-bg-muted);
   }
 
   .account-panel {
