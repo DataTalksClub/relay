@@ -1,8 +1,13 @@
+import json
+from datetime import datetime
+from datetime import timezone as datetime_timezone
 from email.utils import parseaddr
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django import forms
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email, validate_slug
+from django.utils import timezone
 from django.utils.text import slugify
 
 from mailing.models import (
@@ -17,6 +22,7 @@ from mailing.models import (
     SubscriptionStatus,
     Tag,
 )
+from mailing.services.campaign_composer import EDITOR_METADATA_KEY, parse_blocks, render_blocks
 
 
 class OperatorForm:
@@ -27,6 +33,15 @@ class OperatorForm:
         self.label_suffix = ""
 
 class CampaignForm(OperatorForm, forms.ModelForm):
+    editor_mode = forms.ChoiceField(choices=[("source", "HTML or plain text"), ("blocks", "Visual composer")],
+                                  required=False, widget=forms.HiddenInput)
+    editor_blocks = forms.CharField(required=False, widget=forms.HiddenInput)
+    send_mode = forms.ChoiceField(label="When to send", required=False,
+                                 choices=[("now", "Send after review"), ("later", "Schedule for later")])
+    scheduled_at = forms.CharField(label="Send date and time", required=False,
+                                  widget=forms.TextInput(attrs={"type": "datetime-local"}))
+    schedule_timezone = forms.CharField(label="Timezone", required=False, initial="UTC",
+                                       help_text="Use an IANA timezone, such as Europe/Berlin or America/New_York.")
     include_tags = forms.ModelMultipleChoiceField(
         queryset=Tag.objects.select_related("audience").order_by("audience__slug", "slug"),
         required=False,
@@ -39,11 +54,6 @@ class CampaignForm(OperatorForm, forms.ModelForm):
         widget=forms.SelectMultiple,
         help_text="Skip contacts with any selected exclude tag. A tag cannot be both included and excluded.",
     )
-    scheduled_at = forms.DateTimeField(
-        required=False,
-        input_formats=["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"],
-        widget=forms.DateTimeInput(attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"),
-    )
 
     class Meta:
         model = Campaign
@@ -54,17 +64,33 @@ class CampaignForm(OperatorForm, forms.ModelForm):
             "preview_text",
             "html_body",
             "text_body",
-            "scheduled_at",
         ]
         widgets = {
-            "html_body": forms.Textarea(attrs={"rows": 18}),
-            "text_body": forms.Textarea(attrs={"rows": 12}),
+            "html_body": forms.Textarea(attrs={"rows": 10}),
+            "text_body": forms.Textarea(attrs={"rows": 6}),
             "preview_text": forms.Textarea(attrs={"rows": 2}),
         }
 
     def __init__(self, *args, active_client=None, **kwargs):
         self.active_client = active_client
         super().__init__(*args, **kwargs)
+        metadata = self.instance.metadata if isinstance(self.instance.metadata, dict) else {}
+        saved_editor = metadata.get(EDITOR_METADATA_KEY, {})
+        if isinstance(saved_editor, dict) and isinstance(saved_editor.get("blocks"), list):
+            self.initial["editor_mode"] = "blocks"
+            self.initial["editor_blocks"] = json.dumps(saved_editor["blocks"])
+        else:
+            self.initial["editor_mode"] = "source" if self.instance.html_body or self.instance.text_body else "blocks"
+            self.initial["editor_blocks"] = "[]"
+        zone_name = metadata.get("operator_schedule_timezone", "UTC")
+        try:
+            zone = ZoneInfo(zone_name)
+        except (ZoneInfoNotFoundError, TypeError, ValueError):
+            zone_name, zone = "UTC", ZoneInfo("UTC")
+        self.initial["schedule_timezone"] = zone_name
+        self.initial["send_mode"] = "later" if self.instance.scheduled_at else "now"
+        if self.instance.scheduled_at:
+            self.initial["scheduled_at"] = self.instance.scheduled_at.astimezone(zone).strftime("%Y-%m-%dT%H:%M")
         self.fields["html_body"].label = "HTML body"
         self.fields["html_body"].help_text = "Paste the final HTML email body prepared outside Datamailer."
         self.fields["text_body"].label = "Text body"
@@ -73,8 +99,12 @@ class CampaignForm(OperatorForm, forms.ModelForm):
         self.fields[
             "preview_text"
         ].help_text = "Optional inbox preview text shown after the subject by many email clients."
-        self.fields["scheduled_at"].help_text = "Optional. Leave blank to keep the draft unscheduled."
-        self.fields["audience"].empty_label = "Select audience"
+        for field_name in ("subject", "html_body", "text_body"):
+            self.fields[field_name].required = False
+        self.fields["subject"].help_text = "You can leave this blank while drafting. Add a subject before sending."
+        self.fields["html_body"].help_text = "Paste email HTML. Save the draft to inspect its rendered preview."
+        self.fields["text_body"].help_text = "Plain-text alternative for readers who cannot display HTML."
+
         self.fields["audience"].queryset = Audience.objects.select_related("organization").order_by(
             "organization__slug", "slug"
         )
@@ -100,6 +130,10 @@ class CampaignForm(OperatorForm, forms.ModelForm):
                 .filter(audience__organization=active_client.organization)
                 .order_by("audience__slug", "slug")
             )
+        self.tag_audiences = {
+            str(tag.pk): str(tag.audience_id)
+            for tag in self.fields["include_tags"].queryset
+        }
         if self.instance and self.instance.pk:
             self.fields["include_tags"].initial = Tag.objects.filter(
                 audience=self.instance.audience,
@@ -132,10 +166,36 @@ class CampaignForm(OperatorForm, forms.ModelForm):
         if audience and client and audience.organization_id != client.organization_id:
             self.add_error("client", "Client must belong to the selected audience organization.")
 
-        if not html_body:
-            self.add_error("html_body", "Paste the final HTML body before saving.")
-        if not text_body:
-            self.add_error("text_body", "Paste the final text body before saving.")
+        cleaned_data["html_body"] = html_body
+        cleaned_data["text_body"] = text_body
+
+        if cleaned_data.get("editor_mode") == "blocks":
+            try:
+                blocks = parse_blocks(cleaned_data.get("editor_blocks", ""))
+                cleaned_data["editor_blocks"] = blocks
+                cleaned_data["html_body"], cleaned_data["text_body"] = render_blocks(blocks)
+            except ValidationError as exc:
+                self.add_error("editor_blocks", exc)
+        if cleaned_data.get("send_mode") == "later":
+            try:
+                zone = ZoneInfo(cleaned_data.get("schedule_timezone") or "UTC")
+                local = datetime.fromisoformat(cleaned_data.get("scheduled_at") or "")
+                if local.tzinfo is not None:
+                    raise ValueError
+                candidates = {local.replace(tzinfo=zone, fold=fold).astimezone(datetime_timezone.utc)
+                              for fold in (0, 1)
+                              if local.replace(tzinfo=zone, fold=fold).astimezone(datetime_timezone.utc)
+                              .astimezone(zone).replace(tzinfo=None) == local}
+                if len(candidates) != 1:
+                    self.add_error("scheduled_at", "This time is missing or ambiguous during a clock change. Choose another time.")
+                else:
+                    cleaned_data["scheduled_at"] = candidates.pop()
+                    if cleaned_data["scheduled_at"] <= timezone.now():
+                        self.add_error("scheduled_at", "Choose a future send time.")
+            except (ZoneInfoNotFoundError, ValueError, TypeError):
+                self.add_error("scheduled_at", "Enter a valid date, time, and IANA timezone.")
+        else:
+            cleaned_data["scheduled_at"] = None
 
         for field_name, selected_tags in (("include_tags", include_tags), ("exclude_tags", exclude_tags)):
             if audience and any(tag.audience_id != audience.id for tag in selected_tags):
@@ -150,6 +210,16 @@ class CampaignForm(OperatorForm, forms.ModelForm):
 
     def save(self, commit=True):
         campaign = super().save(commit=False)
+        campaign.scheduled_at = self.cleaned_data.get("scheduled_at")
+        metadata = dict(campaign.metadata) if isinstance(campaign.metadata, dict) else {}
+        if self.cleaned_data.get("editor_mode") == "blocks":
+            metadata[EDITOR_METADATA_KEY] = {"version": 1, "blocks": self.cleaned_data["editor_blocks"]}
+        else:
+            metadata.pop(EDITOR_METADATA_KEY, None)
+        metadata["operator_schedule_timezone"] = self.cleaned_data.get("schedule_timezone") or "UTC"
+        campaign.metadata = metadata
+        campaign.html_body = self.cleaned_data["html_body"]
+        campaign.text_body = self.cleaned_data["text_body"]
         campaign.include_tags = [tag.slug for tag in self.cleaned_data["include_tags"]]
         campaign.exclude_tags = [tag.slug for tag in self.cleaned_data["exclude_tags"]]
         if commit:

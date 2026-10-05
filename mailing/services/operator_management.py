@@ -3,6 +3,7 @@ from django.utils import timezone
 
 from mailing.models import (
     Audience,
+    Campaign,
     CampaignRecipient,
     CampaignRecipientStatus,
     Client,
@@ -331,6 +332,8 @@ def assume_recipient_sent(*, actor, campaign, recipient):
     disposition moves to ``sent`` through an explicit email event and an
     operator audit entry.
     """
+    # Every campaign writer locks the parent before its recipient.
+    campaign = Campaign.objects.select_for_update().get(pk=campaign.pk)
     recipient = (
         CampaignRecipient.objects.select_for_update()
         .select_related("campaign", "campaign__client", "campaign__audience", "contact")

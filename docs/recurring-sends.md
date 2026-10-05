@@ -3,6 +3,10 @@
 Deadline reminders go out on a timer. This records where that timer lives, why
 it is not in Datamailer, and what Datamailer does instead.
 
+This describes caller-owned transactional reminders. Operator campaigns now
+support one-shot scheduling through Relay's existing scheduler; this does not
+move CMP reminder decisions or timers into Relay. See [campaign scheduling](campaign-scheduling.md).
+
 ## Where the schedule lives
 
 EventBridge, on the CMP side. `aws-infra` `main/cmp/cmp_deadline_reminder.tf`

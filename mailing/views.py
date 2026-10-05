@@ -1,4 +1,6 @@
 import json
+from datetime import timedelta
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.contrib import messages
@@ -8,12 +10,14 @@ from django.db import connection
 from django.db.models import Count, Max, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
+from django.urls import Resolver404, resolve, reverse
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from mailing.context_processors import ACTIVE_CLIENT_SESSION_KEY
+from mailing.filter_navigation import removable_contact_filters
 from mailing.forms import (
     AudienceForm,
     CampaignForm,
@@ -38,7 +42,6 @@ from mailing.models import (
     ClientCallback,
     CmpCallback,
     EmailEvent,
-    EmailEventType,
     InboundAddress,
     InboundMessage,
     MailchimpSync,
@@ -88,8 +91,11 @@ from mailing.services.api_docs import (
     workflow_examples,
 )
 from mailing.services.auth import authenticate_bearer_token
+from mailing.services.campaign_sender import render_campaign_message
 from mailing.services.campaigns import (
+    CampaignNotReady,
     CampaignRecipientConflict,
+    campaign_send_issues,
     estimate_campaign_recipients,
     queue_campaign,
 )
@@ -132,14 +138,9 @@ from mailing.services.operator_management import (
 from mailing.services.operator_ui import (
     RECIPIENT_FILTER_LABELS,
     Badge,
-    active_contact_filters,
-    audience_breakdowns,
-    audience_campaign_history,
     audience_detail_queryset,
     audience_list_rows,
     audience_queryset,
-    audience_recent_events,
-    audience_summary,
     campaign_list_rows,
     campaign_queryset,
     campaign_recent_events,
@@ -147,7 +148,6 @@ from mailing.services.operator_ui import (
     campaign_send_progress,
     campaign_stat_groups,
     campaign_status_badge,
-    choices_from_text_choices,
     contact_campaign_history,
     contact_detail_context,
     contact_detail_queryset,
@@ -198,6 +198,7 @@ from mailing.services.transactional_catalog import (
     transactional_template_queryset,
 )
 from mailing.services.worker_status import worker_status_payload
+from mailing.setup_views import client_setup_context
 
 
 def health(request):
@@ -238,6 +239,10 @@ def scoped_redirect_url(request):
 
 def require_active_client(request):
     client = active_operator_client(request)
+    expected_client = request.POST.get("operator_client_id") if request.method == "POST" else None
+    if expected_client and (client is None or expected_client != str(client.id)):
+        messages.warning(request, "The active client changed in another tab. Review the selected client before trying again.")
+        return None
     if client is None:
         messages.info(request, "Select an active client before using this section.")
     return client
@@ -353,6 +358,49 @@ def transactional_queue(request):
 
 
 @staff_member_required
+def email_activity(request):
+    active_client = require_active_client(request)
+    if active_client is None:
+        return redirect("mailing:dashboard")
+    query = request.GET.get("q", "").strip()[:320]
+    status = request.GET.get("status", "")
+    period = request.GET.get("period", "")
+    status_options = [("delivered", "Delivered"), *TransactionalMessageStatus.choices]
+    if status not in dict(status_options):
+        status = ""
+    if period not in {"", "1", "7", "30"}:
+        period = ""
+    queryset = TransactionalMessage.objects.filter(client=active_client).select_related("contact", "template")
+    if query:
+        queryset = queryset.filter(
+            Q(email__icontains=query) | Q(subject__icontains=query) | Q(template__name__icontains=query)
+        )
+    if status == "delivered":
+        queryset = queryset.filter(delivered_at__isnull=False)
+    elif status:
+        queryset = queryset.filter(status=status)
+    if period:
+        queryset = queryset.filter(created_at__gte=timezone.now() - timedelta(days=int(period)))
+    activity = paginate(request, queryset.order_by("-created_at", "-id"), per_page=25)
+    rows = []
+    for row in recent_message_rows(activity.object_list):
+        badge = row.badge
+        if row.message.status == TransactionalMessageStatus.SENT:
+            badge = Badge("Delivered", "success") if row.message.delivered_at else Badge("Sent to provider", "neutral")
+        rows.append({"message": row.message, "badge": badge})
+    return render(request, "mailing/operator/email_activity.html", {
+        "active_client": active_client,
+        "activity": activity,
+        "message_rows": rows,
+        "query": query,
+        "status": status,
+        "period": period,
+        "status_options": status_options,
+        "pagination_querystring": pagination_querystring(request),
+    })
+
+
+@staff_member_required
 def transactional_message_detail(request, message_id):
     active_client = require_active_client(request)
     if active_client is None:
@@ -377,12 +425,16 @@ def transactional_message_detail(request, message_id):
     cmp_callback_rows = CmpCallback.objects.filter(
         email_event__transactional_message=message,
     ).order_by("-created_at", "-id")
+    badge = Badge(message.get_status_display(), delivery_tone(message.status))
+    if message.status == TransactionalMessageStatus.SENT:
+        badge = Badge("Delivered", "success") if message.delivered_at else Badge("Sent to provider", "neutral")
     return render(
         request,
         "mailing/operator/transactional_message_detail.html",
         {
             "message": message,
-            "badge": Badge(message.get_status_display(), delivery_tone(message.status)),
+            "return_url": email_activity_return_url(request),
+            "badge": badge,
             "event_rows": event_rows,
             "callback_rows": callback_rows,
             "cmp_callback_rows": cmp_callback_rows,
@@ -444,6 +496,12 @@ def inbound_message_detail(request, message_id):
         if action == "mark_read":
             mark_read(message)
             messages.success(request, "Message marked as read.")
+        elif action == "mark_unread":
+            if message.state == "read":
+                message.state = "received"
+                message.save(update_fields=["state", "updated_at"])
+                messages.success(request, "Message marked as unread.")
+            return redirect(inbox_return_url(request))
         elif action == BLOCK_ORIGIN_BUTTON:
             scope = request.POST.get("scope", "address")
             blocked, created = block_sender(
@@ -471,7 +529,7 @@ def inbound_message_detail(request, message_id):
         return redirect("mailing:inbound_message_detail", message_id=message.pk)
 
     body = ""
-    if message.has_body:
+    if message.has_body and message.state != "blocked":
         from mailing.services.inbound_email import load_body_text  # noqa: PLC0415 - avoids an import cycle
 
         body = load_body_text(message)
@@ -484,6 +542,7 @@ def inbound_message_detail(request, message_id):
         {
             "message": message,
             "body": body,
+            "return_url": inbox_return_url(request),
             "badge": Badge(
                 message.get_state_display(),
                 {"blocked": "danger", "read": "neutral"}.get(message.state, "warning"),
@@ -621,29 +680,48 @@ def campaign_detail(request, campaign_id):
         client=active_client,
     )
     active_filter = request.GET.get("filter", "")
-    recipients = paginate(request, campaign_recipient_queryset(campaign, active_filter), per_page=50)
+    recipient_query = request.GET.get("recipient_q", "").strip()[:320]
+    recipient_queryset = campaign_recipient_queryset(campaign, active_filter)
+    if recipient_query:
+        recipient_queryset = recipient_queryset.filter(email__icontains=recipient_query)
+    recipients = paginate(request, recipient_queryset, per_page=50)
     recipient_rows = [
         {"recipient": recipient, "badge": Badge(recipient.get_status_display(), delivery_tone(recipient.status))}
         for recipient in recipients.object_list
     ]
-    estimate = estimate_campaign_recipients(campaign) if campaign.status == CampaignStatus.DRAFT else None
+    estimate = estimate_campaign_recipients(campaign) if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SCHEDULED} else None
     preview_rows = [
         {"row": row, "tone": "success" if row.status == CampaignRecipientStatus.PENDING else "warning"}
         for row in (estimate.preview_rows if estimate else [])
     ]
     confirm_queue = request.GET.get("confirm_send") == "1" and campaign.status == CampaignStatus.DRAFT
     stat_groups = campaign_stat_groups(campaign)
+    send_issues = campaign_send_issues(campaign)
+    preview_error = ""
+    try:
+        rendered_preview = render_campaign_message(campaign)
+    except ValueError:
+        rendered_preview = None
+        preview_error = "The message could not be previewed. Review the content before sending."
     events = campaign_recent_events(campaign)[:10]
     event_rows = [{"event": event, "metadata_summary": metadata_summary(event.metadata)} for event in events]
+    from mailing.campaign_ui_views import campaign_timing_context  # noqa: PLC0415 - URL imports operator actions
+
     return render(
         request,
         "mailing/operator/campaign_detail.html",
         {
+            **campaign_timing_context(campaign),
             "campaign": campaign,
+            "recipient_query": recipient_query,
             "active_client": active_client,
             "campaign_badge": campaign_status_badge(campaign.status),
             "can_edit": campaign.status == CampaignStatus.DRAFT,
-            "can_queue": campaign.status == CampaignStatus.DRAFT,
+            "can_queue": campaign.status == CampaignStatus.DRAFT and not send_issues,
+            "send_issues": send_issues,
+            "rendered_preview": rendered_preview,
+            "preview_error": preview_error,
+            "campaign_sender": settings.DEFAULT_FROM_EMAIL,
             "confirm_queue": confirm_queue,
             "estimate": estimate,
             "stat_groups": stat_groups,
@@ -669,8 +747,18 @@ def campaign_queue(request, campaign_id):
     if request.POST.get("confirm") != "1":
         messages.warning(request, "Confirm the recipient estimate before queueing this campaign.")
         return redirect(f"{reverse('mailing:campaign_detail', args=[campaign.id])}?confirm_send=1")
-    result = queue_campaign(campaign)
-    if result.queued:
+    reviewed_count = request.POST.get("reviewed_recipient_count")
+    if reviewed_count is not None and reviewed_count != str(estimate_campaign_recipients(campaign).recipient_count):
+        messages.warning(request, "The recipient count changed. Review the updated recipients before sending.")
+        return redirect(f"{reverse('mailing:campaign_detail', args=[campaign.id])}?confirm_send=1")
+    try:
+        result = queue_campaign(campaign, expected_revision=request.POST.get("review_revision"), reject_past_schedule=True)
+    except CampaignNotReady as exc:
+        messages.error(request, str(exc))
+        return redirect("mailing:campaign_detail", campaign_id=campaign.id)
+    if result.scheduled:
+        messages.success(request, "Campaign scheduled. Eligible recipients will be selected at dispatch time; no email was sent.")
+    elif result.queued:
         messages.success(
             request,
             f"Campaign queued with {result.recipient_count} recipients, {result.skipped_count} skipped, "
@@ -707,8 +795,8 @@ def contact_search(request):
     if active_client is None:
         return redirect("mailing:dashboard")
     filters = parse_contact_explorer_filters(request.GET, forced_client_id=active_client.id)
-    contacts = paginate(request, contact_explorer_queryset(filters), per_page=25) if filters.has_filters else None
-    rows = contact_result_rows(contacts.object_list, client=active_client) if contacts is not None else []
+    contacts = paginate(request, contact_explorer_queryset(filters), per_page=25)
+    rows = contact_result_rows(contacts.object_list, client=active_client)
     return render(
         request,
         "mailing/operator/contact_search.html",
@@ -718,7 +806,7 @@ def contact_search(request):
             "options": contact_explorer_options(active_client),
             "contacts": contacts,
             "contact_rows": rows,
-            "active_filters": active_contact_filters(filters),
+            "active_filters": removable_contact_filters(request, filters),
             "pagination_querystring": pagination_querystring(request),
         },
     )
@@ -729,7 +817,7 @@ def get_contact_by_email_or_404(contact_email):
 
 
 @staff_member_required
-def contact_detail(request, contact_email):
+def contact_detail(request, contact_email, *, bound_forms=None):
     active_client = require_active_client(request)
     if active_client is None:
         return redirect("mailing:dashboard")
@@ -767,7 +855,9 @@ def contact_detail(request, contact_email):
             "events": events,
             "event_rows": event_rows,
             "audit_rows": latest_audits_for(contact),
+            "return_url": contact_return_url(request),
             "contact_state_form": ContactStateForm(
+                auto_id="state_%s",
                 initial={
                     "verified_state": "verified" if contact.verified_at else "unverified",
                     "email_validation_status": contact.email_validation_status,
@@ -777,17 +867,57 @@ def contact_detail(request, contact_email):
                     "complained": contact.complained_at is not None,
                 }
             ),
-            "subscription_form": ContactSubscriptionForm(active_client=active_client),
-            "tag_add_form": ContactTagAddForm(active_client=active_client),
-            "tag_remove_form": ContactTagRemoveForm(contact=contact, active_client=active_client),
+            "subscription_form": ContactSubscriptionForm(active_client=active_client, auto_id="subscription_%s"),
+            "tag_add_form": ContactTagAddForm(active_client=active_client, auto_id="tag_add_%s"),
+            "tag_remove_form": ContactTagRemoveForm(
+                contact=contact, active_client=active_client, auto_id="tag_remove_%s"
+            ),
             "pagination_querystring": pagination_querystring(request),
+            **(bound_forms or {}),
         },
     )
+
+
+def contact_return_url(request):
+    candidate = request.GET.get("return_to", "") or request.GET.get("return", "") or request.headers.get("Referer", "")
+    if candidate and url_has_allowed_host_and_scheme(candidate, allowed_hosts={request.get_host()}):
+        parsed = urlsplit(candidate)
+        if parsed.path == reverse("mailing:contact_search") or parsed.path.startswith("/audiences/"):
+            return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+    return reverse("mailing:contact_search")
+
+
+def contact_record_redirect(request, contact):
+    destination = reverse("mailing:contact_detail", args=[contact.normalized_email])
+    if request.GET.get("return"):
+        from urllib.parse import urlencode  # noqa: PLC0415
+        destination += "?" + urlencode({"return": contact_return_url(request)})
+    return redirect(destination)
+
+
+def email_activity_return_url(request):
+    candidate = request.GET.get("return", "")
+    if candidate and url_has_allowed_host_and_scheme(candidate, allowed_hosts={request.get_host()}):
+        parsed = urlsplit(candidate)
+        if parsed.path in {reverse("mailing:email_activity"), reverse("mailing:transactional_queue")}:
+            return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+    return reverse("mailing:email_activity")
+
+
+def inbox_return_url(request):
+    candidate = request.GET.get("return", "")
+    if candidate and url_has_allowed_host_and_scheme(candidate, allowed_hosts={request.get_host()}):
+        parsed = urlsplit(candidate)
+        if parsed.path == reverse("mailing:inbound_list"):
+            return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+    return reverse("mailing:inbound_list")
 
 
 @staff_member_required
 @require_POST
 def contact_state_update(request, contact_email):
+    if require_active_client(request) is None:
+        return redirect("mailing:dashboard")
     contact = get_contact_by_email_or_404(contact_email)
     form = ContactStateForm(request.POST)
     if form.is_valid():
@@ -806,7 +936,7 @@ def contact_state_update(request, contact_email):
         messages.success(request, "Contact state updated.")
     else:
         messages.error(request, "Contact state was not updated; check the form values.")
-    return redirect("mailing:contact_detail", contact_email=contact.normalized_email)
+    return contact_record_redirect(request, contact)
 
 
 @staff_member_required
@@ -816,7 +946,7 @@ def contact_subscription_update(request, contact_email):
     if active_client is None:
         return redirect("mailing:dashboard")
     contact = get_contact_by_email_or_404(contact_email)
-    form = ContactSubscriptionForm(request.POST, active_client=active_client)
+    form = ContactSubscriptionForm(request.POST, active_client=active_client, auto_id="subscription_%s")
     if form.is_valid():
         update_subscription(
             actor=request.user,
@@ -830,7 +960,9 @@ def contact_subscription_update(request, contact_email):
         messages.success(request, "Subscription updated.")
     else:
         messages.error(request, "Subscription was not updated; check the form values.")
-    return redirect("mailing:contact_detail", contact_email=contact.normalized_email)
+    if form.errors:
+        return contact_detail(request, contact_email, bound_forms={"subscription_form": form})
+    return contact_record_redirect(request, contact)
 
 
 @staff_member_required
@@ -840,7 +972,7 @@ def contact_tag_add(request, contact_email):
     if active_client is None:
         return redirect("mailing:dashboard")
     contact = get_contact_by_email_or_404(contact_email)
-    form = ContactTagAddForm(request.POST, active_client=active_client)
+    form = ContactTagAddForm(request.POST, active_client=active_client, auto_id="tag_add_%s")
     if form.is_valid():
         add_contact_tag(
             actor=request.user,
@@ -853,7 +985,9 @@ def contact_tag_add(request, contact_email):
         messages.success(request, "Tag added.")
     else:
         messages.error(request, "Tag was not added; check the form values.")
-    return redirect("mailing:contact_detail", contact_email=contact.normalized_email)
+    if form.errors:
+        return contact_detail(request, contact_email, bound_forms={"tag_add_form": form})
+    return contact_record_redirect(request, contact)
 
 
 @staff_member_required
@@ -863,13 +997,15 @@ def contact_tag_remove(request, contact_email):
     if active_client is None:
         return redirect("mailing:dashboard")
     contact = get_contact_by_email_or_404(contact_email)
-    form = ContactTagRemoveForm(request.POST, contact=contact, active_client=active_client)
+    form = ContactTagRemoveForm(request.POST, contact=contact, active_client=active_client, auto_id="tag_remove_%s")
     if form.is_valid():
         remove_contact_tag(actor=request.user, contact=contact, tag=form.cleaned_data["membership"].tag)
         messages.success(request, "Tag removed.")
     else:
         messages.error(request, "Tag was not removed; check the form values.")
-    return redirect("mailing:contact_detail", contact_email=contact.normalized_email)
+    if form.errors:
+        return contact_detail(request, contact_email, bound_forms={"tag_remove_form": form})
+    return contact_record_redirect(request, contact)
 
 
 @staff_member_required
@@ -927,46 +1063,13 @@ def audience_edit(request, audience_id):
 
 @staff_member_required
 def audience_detail(request, audience_id):
+    from mailing.audience_ui import audience_page_context  # noqa: PLC0415
+
     active_client = require_active_client(request)
     if active_client is None:
         return redirect("mailing:dashboard")
     audience = get_object_or_404(audience_detail_queryset(), pk=audience_id, organization=active_client.organization)
-    filters = parse_contact_explorer_filters(
-        request.GET,
-        forced_audience_id=audience.id,
-        forced_client_id=active_client.id,
-    )
-    members = paginate(request, contact_explorer_queryset(filters), per_page=25)
-    member_rows = contact_result_rows(members.object_list, audience=audience, client=active_client)
-    campaigns = paginate(request, audience_campaign_history(audience, active_client), per_page=10)
-    event_type = request.GET.get("event_type", "")
-    events = paginate(request, audience_recent_events(audience, event_type, active_client), per_page=25)
-    event_rows = [
-        {"event": event, "context": event_context(event), "metadata_summary": metadata_summary(event.metadata)}
-        for event in events.object_list
-    ]
-    return render(
-        request,
-        "mailing/operator/audience_detail.html",
-        {
-            "audience": audience,
-            "active_client": active_client,
-            "summary": audience_summary(audience, active_client),
-            "breakdowns": audience_breakdowns(audience, active_client),
-            "filters": filters,
-            "options": contact_explorer_options(active_client),
-            "members": members,
-            "member_rows": member_rows,
-            "campaigns": campaigns,
-            "events": events,
-            "event_rows": event_rows,
-            "tag_form": TagForm(audience=audience),
-            "audit_rows": latest_audits_for(audience),
-            "event_type": event_type,
-            "event_type_options": choices_from_text_choices(EmailEventType),
-            "pagination_querystring": pagination_querystring(request),
-        },
-    )
+    return render(request, "mailing/operator/audience_detail.html", audience_page_context(request, audience, active_client))
 
 
 @staff_member_required
@@ -1055,7 +1158,24 @@ def client_select(request):
     else:
         request.session.pop(ACTIVE_CLIENT_SESSION_KEY, None)
         messages.info(request, "Active client cleared.")
-    return redirect(scoped_redirect_url(request))
+    destination = scoped_redirect_url(request)
+    try:
+        match = resolve(urlsplit(destination).path)
+    except Resolver404:
+        return redirect("mailing:dashboard")
+    landing_pages = {
+        "campaign_detail": "campaign_list", "campaign_edit": "campaign_list",
+        "campaign_create": "campaign_list", "template_detail": "template_catalog",
+        "transactional_message_detail": "email_activity", "client_detail": "dashboard",
+        "client_edit": "dashboard", "audience_detail": "audience_list",
+        "audience_edit": "audience_list", "audience_create": "audience_list",
+        "tag_detail": "audience_list", "tag_edit": "audience_list", "tag_create": "audience_list",
+    }
+    if not client_id:
+        return redirect("mailing:dashboard")
+    if match.namespace == "mailing" and match.url_name in landing_pages:
+        return redirect(f"mailing:{landing_pages[match.url_name]}")
+    return redirect(destination)
 
 
 @staff_member_required
@@ -1100,6 +1220,7 @@ def client_detail(request, client_id):
         {
             "client": client,
             "api_keys": api_keys,
+            **client_setup_context(client),
             "active_key_count": sum(1 for api_key in api_keys if api_key.revoked_at is None),
             "revoked_key_count": sum(1 for api_key in api_keys if api_key.revoked_at is not None),
             "key_form": key_form,
@@ -1258,7 +1379,7 @@ def public_unsubscribe(request, unsubscribe_token):
 
 
 def authenticate_api_request(request):
-    # Set only by the authenticated admin wrapper, never from HTTP input.
+    # Set only by the authenticated admin API wrapper, never from HTTP input.
     if getattr(request, "_admin_api_client", None) is not None:
         return request._admin_api_client, None
     auth_result = authenticate_bearer_token(request.headers.get("Authorization"))

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Transactional Templates | Datamailer{% endblock %}
-  {% block topbar_title %}Templates{% endblock %}
+{% block title %}Transactional Templates | Relay{% endblock %}
+{% block topbar_title %}Templates{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
       <h1>Transactional Templates</h1>
-      <p>Templates, required context, and recent send state for {{ active_client.name }}.</p>
+      <p>Choose a template to preview the email or inspect recent delivery for {{ active_client.name }}.</p>
     </div>
     <div class="actions">
       <a class="button secondary" href="{% url 'mailing:api_docs' %}">API docs</a>
@@ -78,8 +78,9 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <span class="badge neutral">EMPTY</span>
-      <p><strong>No transactional templates found.</strong> Adjust the client filter or seed a transactional template for this client.</p>
+      <strong>No transactional templates found.</strong>
+      <p class="muted">No transactional templates are configured for {{ active_client.name }}. Create one to prepare reusable email content.</p>
+      <a class="button secondary" href="/admin/mailing/emailtemplate/add/">Create template</a>
     </div>
   {% endif %}
 {% endblock %}

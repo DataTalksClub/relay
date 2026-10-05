@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}Datamailer{% endblock %}
-  {% block topbar_title %}{% if active_client %}{{ active_client.name }}{% else %}Datamailer{% endif %}{% endblock %}
+{% block title %}Overview · Relay{% endblock %}
+{% block topbar_title %}{% if active_client %}{{ active_client.name }}{% else %}Datamailer{% endif %}{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -9,7 +9,7 @@
       <h1>{% if active_client %}{{ active_client.name }}{% else %}Select a client{% endif %}</h1>
       <p class="muted">
         {% if active_client %}
-          Client dashboard for campaigns, audience health, API access, and templates.
+          Review delivery issues, continue a campaign, or find a contact.
         {% else %}
           Choose the active client before working with campaigns, audiences, contacts, or templates.
         {% endif %}
@@ -17,10 +17,8 @@
     </div>
     <div class="actions">
       {% if active_client %}
-        <a class="button" href="{% url 'mailing:campaign_create' %}">
-          <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-          Create campaign</a>
-        <a class="button secondary" href="{% url 'mailing:api_docs' %}">API docs</a>
+        <a class="button" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
+        <a class="button secondary" href="{% url 'mailing:contact_search' %}">Find a contact</a>
       {% else %}
         <a class="button" href="{% url 'mailing:client_list' %}">Open clients</a>
       {% endif %}
@@ -92,90 +90,77 @@
     </div>
   {% endif %}
 
-  <div class="stats-grid">
-    {% for stat in dashboard.summary_stats %}
-      <div class="stat">
-        <span class="stat-label"><span class="stat-dot {{ stat.tone }}"></span>{{ stat.label }}</span>
-        <span class="stat-value">{{ stat.value }}</span>
-        {% if stat.rate %}<span class="helptext">{{ stat.rate }}</span>{% endif %}
+    <section class="section panel" aria-labelledby="deliverability-attention">
+      <div class="section-header">
+        <div>
+          <h2 id="deliverability-attention">Deliverability Attention</h2>
+          <p class="muted">Recent failures, bounces, and complaints in this client. Open a contact to investigate.</p>
+        </div>
+        <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
       </div>
-    {% endfor %}
-  </div>
+      {% if dashboard.attention_items %}
+        <div class="compact-list">
+          {% for item in dashboard.attention_items %}
+            <div class="compact-row">
+              <div class="compact-row-main">
+                <span class="badge {{ item.badge.tone }}">{{ item.badge.label }}</span>
+                {% if item.href %}
+                  <a href="{{ item.href }}"><strong>{{ item.title }}</strong></a>
+                {% else %}
+                  <strong>{{ item.title }}</strong>
+                {% endif %}
+              </div>
+              <div class="compact-row-meta">
+                {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
+                <span class="muted">{{ item.detail }}</span>
+                {% if item.occurred_at %}<span class="helptext">{{ item.occurred_at|date:"M j, Y H:i" }}</span>{% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state">
+          <strong>No recent delivery incidents found</strong>
+          <p>Routine subscription exclusions are not incidents. Review a contact to understand why they cannot receive marketing.</p>
+        </div>
+      {% endif %}
+    </section>
 
-  <section class="section panel" aria-labelledby="deliverability-attention">
-    <div class="panel-header">
-      <h2 id="deliverability-attention">Deliverability attention</h2>
-      <span class="muted">Failures, suppressions, bounces, complaints, skips</span>
+  <section class="section panel" aria-labelledby="recent-campaigns">
+    <div class="section-header">
+      <div>
+        <h2 id="recent-campaigns">Recent Campaign Activity</h2>
+        <p class="muted">Sending campaigns and drafts appear first. Choose a campaign to continue.</p>
+      </div>
+      <a class="button secondary" href="{% url 'mailing:campaign_list' %}">View campaigns</a>
     </div>
-    {% if dashboard.attention_items %}
+    {% if dashboard.recent_campaigns %}
       <div class="compact-list">
-        {% for item in dashboard.attention_items %}
+        {% for row in dashboard.recent_campaigns %}
           <div class="compact-row">
             <div class="compact-row-main">
-              <span class="badge {{ item.badge.tone }}">{{ item.badge.label }}</span>
-              {% if item.href %}
-                <a href="{{ item.href }}"><strong>{{ item.title }}</strong></a>
-              {% else %}
-                <strong>{{ item.title }}</strong>
-              {% endif %}
+              <span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span>
+              <a href="{% url 'mailing:campaign_detail' row.campaign.id %}"><strong>{{ row.campaign.subject|default:"Untitled draft" }}</strong></a>
             </div>
             <div class="compact-row-meta">
-              {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
-              <span class="muted">{{ item.detail }}</span>
-              {% if item.occurred_at %}<span class="helptext">{{ item.occurred_at|date:"M j, Y H:i" }}</span>{% endif %}
+              <span>{{ row.campaign.audience.name }}</span>
+              {% if row.campaign.status == "draft" %}
+                <a href="{% url 'mailing:campaign_edit' row.campaign.id %}">Resume draft</a>
+              {% else %}
+                <span class="muted">{{ row.campaign.recipient_count }} recipients · {{ row.campaign.delivered_count }} delivered</span>
+                <a href="{% url 'mailing:campaign_detail' row.campaign.id %}">View progress and results</a>
+              {% endif %}
             </div>
           </div>
         {% endfor %}
       </div>
     {% else %}
       <div class="empty-state">
-        <span class="badge success">CLEAR</span>
-        <p><strong>No deliverability issues found.</strong> Bounces, complaints, failed sends, skipped recipients, and suppressed contacts will appear here.</p>
-      </div>
-    {% endif %}
-  </section>
-
-  <section class="section panel" aria-labelledby="recent-campaigns">
-    <div class="panel-header">
-      <h2 id="recent-campaigns">Recent campaign activity</h2>
-      <span class="muted">Latest drafts, queued sends, and completed campaigns</span>
-    </div>
-    {% if dashboard.recent_campaigns %}
-      <div class="table-wrap stack-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Campaign</th>
-              <th>Status</th>
-              <th class="nowrap">Recipients</th>
-              <th class="nowrap">Delivered</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in dashboard.recent_campaigns %}
-              <tr>
-                <td data-label="Campaign">
-                  <a href="{% url 'mailing:campaign_detail' row.campaign.id %}">{{ row.campaign.subject }}</a>
-                  <div class="helptext">{{ row.campaign.client.name }} / {{ row.campaign.audience.name }}</div>
-                </td>
-                <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
-                <td class="nowrap" data-label="Recipients">{{ row.campaign.recipient_count }}</td>
-                <td class="nowrap" data-label="Delivered">{{ row.campaign.delivered_count }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="empty-state">
-        <span class="badge neutral">EMPTY</span>
-        <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a send.</p>
+        <strong>No campaigns yet</strong>
+        <p>Create a campaign draft when an audience is ready for a send.</p>
         <a class="button secondary" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
       </div>
     {% endif %}
-    <div class="panel-footer">
-      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
-    </div>
   </section>
 
   <section class="section panel" aria-labelledby="background-processing">
@@ -186,6 +171,10 @@
         <span class="muted">{{ dashboard.worker_waiting_count }} item{{ dashboard.worker_waiting_count|pluralize }} waiting across background work.</span>
       </div>
     </div>
+    <p class="muted">Service-wide processing status. Waiting counts alone do not indicate a failure.</p>
+    <p><a href="{% url 'mailing:transactional_queue' %}">Review this client's waiting emails ({{ dashboard.transactional_backlog_count }})</a> · <a href="/jobs/dead-letters/">Review failed service jobs</a></p>
+    <details class="secondary-section panel-diagnostics">
+      <summary>Processing diagnostics</summary>
     <div class="stats-grid">
       {% for worker in dashboard.worker_statuses %}
         <div class="stat">
@@ -201,8 +190,6 @@
         </div>
       {% endfor %}
     </div>
-    <details class="panel-diagnostics">
-      <summary>Processing diagnostics</summary>
       <div class="table-wrap">
         <table>
           <thead>
@@ -238,10 +225,47 @@
     </details>
   </section>
 
-  <p class="muted quick-links">Common workflows:
-    <a href="{% url 'mailing:audience_list' %}">Audiences</a>
-    <a href="{% url 'mailing:contact_search' %}">Contacts</a>
-    <a href="/admin/">Admin</a>
-  </p>
+  <details class="secondary-section panel-diagnostics">
+    <summary>Operational Summary</summary>
+    <div class="section-header">
+      <div>
+        <h2>Client inventory</h2>
+        <p class="muted">Subscription totals describe consent, not effective eligibility.</p>
+      </div>
+    </div>
+    <div class="stats-grid">
+      {% for stat in dashboard.summary_stats %}
+        <div class="stat">
+          <a class="stat-value" href="{{ stat.href }}">{{ stat.value }}</a>
+          <span class="stat-label"><span class="stat-dot {{ stat.tone }}"></span>{{ stat.label }}</span>
+          {% if stat.rate %}<span class="helptext">{{ stat.rate }}</span>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </details>
+
+
+  <section class="section panel" aria-labelledby="quick-links">
+    <div class="section-header">
+      <div>
+        <h2 id="quick-links">Quick Links</h2>
+        <p class="muted">Common operator workflows.</p>
+      </div>
+    </div>
+    <div class="compact-list">
+      <a class="compact-row" href="{% url 'mailing:audience_list' %}">
+        <strong>Audiences</strong>
+        <span class="helptext">Find members and manage subscriptions.</span>
+      </a>
+      <a class="compact-row" href="{% url 'mailing:contact_search' %}">
+        <strong>Contacts</strong>
+        <span class="helptext">Find a person and explain their email delivery.</span>
+      </a>
+      <a class="compact-row" href="{% url 'mailing:client_detail' active_client.id %}">
+        <strong>Client settings</strong>
+        <span class="helptext">Configure senders, API keys, and integrations.</span>
+      </a>
+    </div>
+  </section>
   {% endif %}
 {% endblock %}

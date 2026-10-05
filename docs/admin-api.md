@@ -166,3 +166,21 @@ Errors are JSON objects with an `error.code` and, for validation failures,
 field values return 400; missing resources return 404; unsupported methods return
 405; non-JSON management writes return 415; database uniqueness races return
 409. Existing scoped workflows preserve the client API's error contracts.
+
+## Jobs and schedule operations
+
+Management keys can inspect `GET jobs`, `GET jobs/{uuid}`, `GET schedules`, and
+`GET schedules/{uuid}`. Lists accept `client_id`; responses omit task payloads.
+These are shared-service resources, so their client is explicit on each record.
+
+`POST jobs/{uuid}/retry` and `POST schedules/{uuid}/action` use the same locked,
+confirmed operations as the staff interface. Supply `client_id`, the record's
+exact `updated_at` string as `revision`, and JSON `confirmed: true`. Schedule
+operations also require `action: "pause"` or `action: "resume"`. Incomplete,
+stale, or ineligible operations return HTTP 409. Only failed jobs can be retried.
+A retry may repeat a receiver side effect if a completion callback was lost.
+
+Pausing stops future submissions; queued or running jobs continue. Resuming sets
+the next future cron occurrence without submitting work immediately or replaying
+missed occurrences. Automatic campaign scheduling remains unavailable; these
+schedules describe Relay task submissions.

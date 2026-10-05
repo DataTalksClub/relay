@@ -6,21 +6,22 @@
 {% block content %}
   <div class="page-header">
     <div>
-      <h1>Dead-letter tasks</h1>
-      <p>Tasks that finished as `failed` after exhausting their attempts (or that a client failed, or whose lease expired). Retrying resets attempts and re-enqueues the task.</p>
+      <h1>Failed jobs</h1>
+      <p>Failed jobs across all clients. Review the failure and affected client before retrying; a repeated task can repeat an external action.</p>
     </div>
     <div class="actions">
       <a class="button secondary" href="{% url 'mailing:dashboard' %}">Dashboard</a>
     </div>
   </div>
 
+  {% include "jobs/_navigation.html" %}
   {% if page.object_list %}
     <section class="section panel" aria-labelledby="dead-letter-table">
       <div class="panel-header">
         <h2 id="dead-letter-table">Failed tasks</h2>
         <span class="muted">{{ page.paginator.count }} task{{ page.paginator.count|pluralize }} in the dead-letter list</span>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap triage-table">
         <table>
           <thead>
             <tr>
@@ -36,21 +37,18 @@
           <tbody>
             {% for job in page.object_list %}
               <tr>
-                <td>
+                <td data-label="Job">
                   <div class="nowrap">{{ job.task_type }}</div>
                   <div class="muted">{{ job.id }}</div>
                   {% if job.idempotency_key %}<div class="helptext">{{ job.idempotency_key }}</div>{% endif %}
                 </td>
-                <td>{{ job.client.slug }}</td>
-                <td class="nowrap">{{ job.attempt }}/{{ job.max_attempts }}</td>
-                <td class="nowrap">{% if job.response_status %}HTTP {{ job.response_status }}{% else %}-{% endif %}</td>
-                <td class="nowrap">{{ job.finished_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td class="truncate">{{ job.error|default:"—" }}</td>
-                <td>
-                  <form method="post" action="{% url 'jobs:dead_letter_retry' job.id %}">
-                    {% csrf_token %}
-                    <button type="submit" class="button secondary">Retry</button>
-                  </form>
+                <td data-label="Client">{{ job.client.slug }}</td>
+                <td data-label="Attempts" class="nowrap">{{ job.attempt }}/{{ job.max_attempts }}</td>
+                <td data-label="Response" class="nowrap">{% if job.response_status %}HTTP {{ job.response_status }}{% else %}-{% endif %}</td>
+                <td data-label="Failed" class="nowrap">{{ job.finished_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Error" class="truncate">{{ job.error|default:"-" }}</td>
+                <td data-label="Action">
+                  <a class="button secondary" href="{% url 'jobs:job_detail' job.id %}?return={{ request.get_full_path|urlencode }}">Review and retry</a>
                 </td>
               </tr>
             {% endfor %}
@@ -61,8 +59,8 @@
     </section>
   {% else %}
     <div class="empty-state">
-      <span class="badge success">Clear</span>
-      <p><strong>No dead-letter tasks.</strong> Tasks that fail after all attempts will appear here with a retry action.</p>
+      <strong>No failed jobs.</strong>
+      <p>Failed jobs will appear here with a link to review the failure and retry safely.</p>
     </div>
   {% endif %}
 {% endblock %}

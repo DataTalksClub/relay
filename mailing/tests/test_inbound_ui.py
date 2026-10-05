@@ -208,7 +208,7 @@ def test_a_blocked_message_offers_unblocking(client, operator, address):
 
     response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
 
-    assert b"Unblock this sender" in response.content
+    assert b"Remove this block rule" in response.content
     assert b"will keep future mail" not in response.content
 
 
@@ -223,7 +223,7 @@ def test_a_blocked_message_explains_that_its_body_was_not_kept(client, operator,
 
     response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
 
-    assert b"the body was not kept" in response.content
+    assert b"its body was not kept" in response.content
     # A blocked message must not render a body even if one is somehow present.
     assert b"wanted to ask about pricing" not in response.content
 
@@ -365,7 +365,7 @@ def test_a_blocked_sender_can_be_unblocked_from_the_address_page(client, operato
 
 
 def test_the_ses_spam_verdict_is_shown_as_a_signal_not_as_a_verdict(client, operator, address):
-    """A verdict is a claim by the sending domain; the page has to say so.
+    """A service spam warning is a signal to investigate rather than certainty.
 
     Showing "spam" next to a message with no explanation invites an operator to
     act on SES's opinion as though it were a finding.
@@ -375,7 +375,7 @@ def test_the_ses_spam_verdict_is_shown_as_a_signal_not_as_a_verdict(client, oper
 
     response = client.get(reverse("mailing:inbound_list"))
 
-    assert b"SES: spam" in response.content
+    assert b"Suspected spam" in response.content
 
 
 def test_the_nav_reaches_the_mailbox_and_the_addresses(client, operator, address):

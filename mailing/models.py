@@ -438,6 +438,7 @@ class RecipientListImportJob(TimeStampedModel):
 
 class CampaignStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
+    SCHEDULED = "scheduled", "Scheduled"
     QUEUED = "queued", "Queued"
     SNAPSHOTTING = "snapshotting", "Snapshotting"
     SENDING = "sending", "Sending"
@@ -511,6 +512,19 @@ class Campaign(TimeStampedModel):
 
     def __str__(self):
         return self.subject
+
+
+class CampaignDispatch(TimeStampedModel):
+    """Durable dispatch intent for a due scheduled campaign."""
+    campaign = models.OneToOneField(Campaign, on_delete=models.CASCADE, related_name="scheduled_dispatch")
+    payloads = models.JSONField(default=list)
+    correlation_id = models.UUIDField()
+    enqueued_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "campaign_dispatches"
+        indexes = [models.Index(fields=["enqueued_at"], name="campaign_dispatch_pending_idx")]
 
 
 class CampaignRecipientStatus(models.TextChoices):

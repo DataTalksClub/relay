@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, time
 
-from django.db.models import Count, Exists, Max, Min, OuterRef, Q, QuerySet
+from django.db.models import Case, Count, Exists, IntegerField, Max, Min, OuterRef, Q, QuerySet, When
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
@@ -33,6 +33,7 @@ from mailing.services.contacts import has_invalid_email_validation, normalize_em
 from mailing.services.worker_status import WorkerStatus, sandbox_worker_statuses
 
 RECIPIENT_FILTERS = {
+    "delivered": Q(delivered_at__isnull=False),
     "opened": Q(first_opened_at__isnull=False),
     "clicked": Q(first_clicked_at__isnull=False),
     "not_opened": Q(first_opened_at__isnull=True),
@@ -54,6 +55,7 @@ PROCESSED_RECIPIENT_STATUSES = {
 }
 
 RECIPIENT_FILTER_LABELS = {
+    "delivered": "Delivered",
     "opened": "Opened",
     "clicked": "Clicked",
     "not_opened": "Not opened",
@@ -153,14 +155,16 @@ class ContactResultRow:
     last_opened_at: object | None
     last_clicked_at: object | None
     recent_issue: str
+    eligibility_badge: "Badge" | None = None
+    eligibility_reasons: tuple[str, ...] = ()
 
     @property
     def primary_status_badge(self) -> "Badge":
-        return self.subscription_badge
+        return self.eligibility_badge or self.subscription_badge
 
     @property
     def hidden_status_badges(self) -> tuple["Badge", ...]:
-        return (self.validation_badge, self.verification_badge)
+        return (self.subscription_badge, self.validation_badge, self.verification_badge)
 
     @property
     def hidden_status_badge_count(self) -> int:
@@ -339,6 +343,7 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
 
     active_campaigns = campaign_scope.filter(
         status__in=[
+            CampaignStatus.SCHEDULED,
             CampaignStatus.QUEUED,
             CampaignStatus.SNAPSHOTTING,
             CampaignStatus.SENDING,
@@ -362,7 +367,12 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
 
     recent_campaigns = [
         DashboardCampaign(campaign, campaign_status_badge(campaign.status))
-        for campaign in campaign_scope.select_related("client", "audience").order_by("-updated_at", "-id")[:5]
+        for campaign in campaign_scope.select_related("client", "audience")
+        .annotate(work_priority=Case(
+            When(status__in=[CampaignStatus.SCHEDULED, CampaignStatus.QUEUED, CampaignStatus.SNAPSHOTTING, CampaignStatus.SENDING], then=0),
+            When(status=CampaignStatus.DRAFT, then=1), default=2, output_field=IntegerField(),
+        ))
+        .order_by("work_priority", "-updated_at", "-id")[:5]
     ]
     integration_clients = [
         DashboardClient(scope_client, scope_client.active_api_key_count)
@@ -376,12 +386,14 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
                 "Campaigns",
                 campaign_scope.count(),
                 f"{active_campaigns} active / {draft_campaigns} drafts",
+                href="/campaigns/",
             ),
             Stat(
                 "contacts",
                 "Contacts",
                 scoped_contacts.count(),
                 f"{subscribed_contacts} subscribed / {audience_scope.count()} audiences",
+                    href="/contacts/",
             ),
             Stat(
                 "deliverability",
@@ -389,9 +401,10 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
                 suppressed_contacts,
                 f"{hard_bounces} bounces / {complaints} complaints",
                 tone="danger" if suppressed_contacts else "",
+                href="/contacts/",
             ),
-            Stat("api_access", "API access", active_clients, f"{active_api_keys} active keys"),
-            Stat("templates", "Transactional templates", active_templates, "active templates"),
+            Stat("api_access", "API access", active_clients, f"{active_api_keys} active keys", href="/clients/"),
+            Stat("templates", "Transactional templates", active_templates, "active templates", href="/templates/"),
         ],
         recent_campaigns=recent_campaigns,
         attention_items=dashboard_attention_items(client),
@@ -412,8 +425,8 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
 def worker_health(workers: list[WorkerStatus]) -> tuple[str, str]:
     if any(worker.badge_tone in {"danger", "warning"} for worker in workers):
         return "Degraded", "danger"
-    if any(worker.alive is None for worker in workers):
-        return "Unknown", "neutral"
+    if not workers or any(worker.alive is None for worker in workers):
+        return "Processing health unavailable", "neutral"
     return "Healthy", "success"
 
 
@@ -438,44 +451,22 @@ def dashboard_attention_items(client: Client | None = None) -> list[DashboardAtt
     event_queryset = EmailEvent.objects.select_related("contact", "client", "audience", "campaign")
     if client is not None:
         event_queryset = event_queryset.filter(client=client)
-    event_items = [
+    next_steps = {
+        EmailEventType.BOUNCE: "Review the delivery reason and confirm the address before sending again.",
+        EmailEventType.COMPLAINT: "Keep this contact suppressed; review consent and the campaign audience.",
+        EmailEventType.FAILED: "Review the failure reason and sending configuration before retrying.",
+    }
+    return [
         DashboardAttentionItem(
             event.created_at,
             Badge(event.get_event_type_display(), event_tone(event.event_type)),
             event.contact.email if event.contact_id else event_context(event),
-            metadata_summary(event.metadata) or event.url or "Email event recorded",
+            f"{metadata_summary(event.metadata) or event.url or event.get_event_type_display()}. "
+            f"{next_steps[event.event_type]}",
             context=event_context(event),
             href=f"/contacts/{event.contact.normalized_email}/" if event.contact_id else "",
         )
-        for event in event_queryset.filter(
-            event_type__in=[
-                EmailEventType.BOUNCE,
-                EmailEventType.COMPLAINT,
-                EmailEventType.FAILED,
-                EmailEventType.SKIPPED,
-                EmailEventType.UNSUBSCRIBE,
-            ]
-        ).order_by("-created_at", "-id")[:5]
-    ]
-    if event_items:
-        return event_items
-
-    return [
-        DashboardAttentionItem(
-            latest_datetime(
-                contact.global_unsubscribed_at,
-                contact.hard_bounced_at,
-                contact.complained_at,
-                contact.updated_at,
-            ),
-            subscription_badge(contact, contact.subscriptions.all()),
-            contact.normalized_email,
-            "Suppressed contact needs review before future sends.",
-            href=f"/contacts/{contact.normalized_email}/",
-        )
-        for contact in suppressed_contact_queryset(client)
-        .prefetch_related("subscriptions")
-        .order_by("-updated_at", "normalized_email")[:5]
+        for event in event_queryset.filter(event_type__in=next_steps).order_by("-created_at", "-id")[:5]
     ]
 
 
@@ -485,7 +476,7 @@ def campaign_status_badge(status: str) -> Badge:
         label = "Preparing recipients"
     if status == CampaignStatus.SENT:
         return Badge(label, "success")
-    if status in {CampaignStatus.QUEUED, CampaignStatus.SNAPSHOTTING, CampaignStatus.SENDING}:
+    if status in {CampaignStatus.SCHEDULED, CampaignStatus.QUEUED, CampaignStatus.SNAPSHOTTING, CampaignStatus.SENDING}:
         return Badge(label, "warning")
     if status in {CampaignStatus.FAILED, CampaignStatus.CANCELLED}:
         return Badge(label, "danger")
@@ -495,7 +486,7 @@ def campaign_status_badge(status: str) -> Badge:
 def campaign_timing(campaign: Campaign) -> tuple[str, object | None]:
     if campaign.sent_at:
         return "Sent", campaign.sent_at
-    if campaign.scheduled_at:
+    if campaign.status == CampaignStatus.SCHEDULED and campaign.scheduled_at:
         return "Scheduled", campaign.scheduled_at
     if campaign.status in {CampaignStatus.QUEUED, CampaignStatus.SNAPSHOTTING, CampaignStatus.SENDING}:
         return "Queued", campaign.updated_at
@@ -765,16 +756,23 @@ def contact_explorer_queryset(filters: ContactExplorerFilters) -> QuerySet[Conta
         queryset = queryset.filter(Exists(contact_tag_scope_queryset(filters).filter(tag__slug=tag_slug)))
     for tag_slug in filters.exclude_tags:
         queryset = queryset.exclude(Exists(contact_tag_scope_queryset(filters).filter(tag__slug=tag_slug)))
-    if filters.campaign_status:
-        queryset = queryset.filter(campaign_recipients__status=filters.campaign_status)
-        if filters.client_id:
-            queryset = queryset.filter(campaign_recipients__campaign__client_id=filters.client_id)
-    if filters.skip_reason:
-        queryset = queryset.filter(campaign_recipients__skip_reason=filters.skip_reason)
-        if filters.client_id:
-            queryset = queryset.filter(campaign_recipients__campaign__client_id=filters.client_id)
+    if filters.campaign_status or filters.skip_reason:
+        matching_recipients = CampaignRecipient.objects.filter(**campaign_scope_filter(filters))
+        if filters.campaign_status:
+            matching_recipients = matching_recipients.filter(status=filters.campaign_status)
+        if filters.skip_reason:
+            matching_recipients = matching_recipients.filter(skip_reason=filters.skip_reason)
+        queryset = queryset.filter(Exists(matching_recipients))
 
     queryset = apply_engagement_filter(queryset, filters)
+    campaign_activity_scope = Q()
+    transactional_activity_scope = Q()
+    if filters.client_id:
+        campaign_activity_scope &= Q(campaign_recipients__campaign__client_id=filters.client_id)
+        transactional_activity_scope &= Q(transactional_messages__client_id=filters.client_id)
+    if filters.audience_id:
+        campaign_activity_scope &= Q(campaign_recipients__campaign__audience_id=filters.audience_id)
+
     return (
         queryset.prefetch_related(
             "subscriptions__audience",
@@ -782,14 +780,14 @@ def contact_explorer_queryset(filters: ContactExplorerFilters) -> QuerySet[Conta
             "contact_tags__tag__audience",
         )
         .annotate(
-            campaign_recipient_count=Count("campaign_recipients", distinct=True),
-            transactional_message_count=Count("transactional_messages", distinct=True),
-            last_campaign_sent_at=Max("campaign_recipients__sent_at"),
-            last_transactional_sent_at=Max("transactional_messages__sent_at"),
-            last_campaign_opened_at=Max("campaign_recipients__first_opened_at"),
-            last_transactional_opened_at=Max("transactional_messages__first_opened_at"),
-            last_campaign_clicked_at=Max("campaign_recipients__first_clicked_at"),
-            last_transactional_clicked_at=Max("transactional_messages__first_clicked_at"),
+            campaign_recipient_count=Count("campaign_recipients", filter=campaign_activity_scope, distinct=True),
+            transactional_message_count=Count("transactional_messages", filter=transactional_activity_scope, distinct=True),
+            last_campaign_sent_at=Max("campaign_recipients__sent_at", filter=campaign_activity_scope),
+            last_transactional_sent_at=Max("transactional_messages__sent_at", filter=transactional_activity_scope),
+            last_campaign_opened_at=Max("campaign_recipients__first_opened_at", filter=campaign_activity_scope),
+            last_transactional_opened_at=Max("transactional_messages__first_opened_at", filter=transactional_activity_scope),
+            last_campaign_clicked_at=Max("campaign_recipients__first_clicked_at", filter=campaign_activity_scope),
+            last_transactional_clicked_at=Max("transactional_messages__first_clicked_at", filter=transactional_activity_scope),
         )
         .distinct()
         .order_by("normalized_email", "id")
@@ -903,8 +901,19 @@ def contact_result_rows(
     contact_ids = [contact.id for contact in contacts]
     recent_issues = recent_contact_issues(contact_ids, audience=audience, client=client)
     for contact in contacts:
-        subscriptions = scoped_subscriptions(contact.subscriptions.all(), audience)
-        contact_tags = scoped_contact_tags(contact.contact_tags.all(), audience)
+        all_subscriptions = list(contact.subscriptions.all())
+        subscriptions = scoped_subscriptions(all_subscriptions, audience, client)
+        eligibility = eligibility_items(contact, subscriptions, all_subscriptions=all_subscriptions)
+        can_send = any(item.can_send_marketing for item in eligibility)
+        reasons = unique_reasons(
+            reason for item in eligibility for reason in item.marketing_reasons
+            if not can_send and reason != "eligible"
+        )
+        eligibility_badge = Badge(
+            "Can send marketing" if can_send else f"Cannot send — {', '.join(reasons)}",
+            "success" if can_send else "warning",
+        )
+        contact_tags = scoped_contact_tags(contact.contact_tags.all(), audience, client)
         rows.append(
             ContactResultRow(
                 contact=contact,
@@ -917,21 +926,27 @@ def contact_result_rows(
                 last_opened_at=max_date(contact.last_campaign_opened_at, contact.last_transactional_opened_at),
                 last_clicked_at=max_date(contact.last_campaign_clicked_at, contact.last_transactional_clicked_at),
                 recent_issue=recent_issues.get(contact.id, ""),
+                eligibility_badge=eligibility_badge,
+                eligibility_reasons=reasons,
             )
         )
     return rows
 
 
-def scoped_subscriptions(subscriptions, audience: Audience | None):
-    if audience is None:
-        return subscriptions
-    return [subscription for subscription in subscriptions if subscription.audience_id == audience.id]
+def scoped_subscriptions(subscriptions, audience: Audience | None, client: Client | None = None):
+    return [
+        subscription for subscription in subscriptions
+        if (audience is None or subscription.audience_id == audience.id)
+        and (client is None or subscription.client_id == client.id)
+    ]
 
 
-def scoped_contact_tags(contact_tags, audience: Audience | None):
-    if audience is None:
-        return contact_tags
-    return [membership for membership in contact_tags if membership.tag.audience_id == audience.id]
+def scoped_contact_tags(contact_tags, audience: Audience | None, client: Client | None = None):
+    return [
+        membership for membership in contact_tags
+        if (audience is None or membership.tag.audience_id == audience.id)
+        and (client is None or membership.tag.audience.organization_id == client.organization_id)
+    ]
 
 
 def max_date(*values):
@@ -1032,7 +1047,9 @@ def contact_detail_context(contact: Contact, client: Client | None = None) -> Co
     )
     if client is not None:
         subscriptions = subscriptions.filter(client=client)
-    eligibility = eligibility_items(contact, subscriptions)
+    eligibility = eligibility_items(
+        contact, subscriptions, all_subscriptions=list(contact.subscriptions.select_related("audience", "client"))
+    )
     contact_tags = contact.contact_tags.select_related("tag", "tag__audience").order_by(
         "tag__audience__slug",
         "tag__slug",
@@ -1272,17 +1289,20 @@ def delivery_tone(status: str) -> str:
     return "neutral"
 
 
-def eligibility_items(contact: Contact, subscriptions) -> list[EligibilityItem]:
+def eligibility_items(contact: Contact, subscriptions, *, all_subscriptions=None) -> list[EligibilityItem]:
+    subscriptions = list(subscriptions)
+    if all_subscriptions is None:
+        all_subscriptions = subscriptions
     rows = []
     for subscription in subscriptions:
-        rows.append(eligibility_item(contact, subscription))
+        rows.append(eligibility_item(contact, subscription, all_subscriptions=all_subscriptions))
     if not rows:
         tx_reasons = transactional_reasons(contact)
         rows.append(
             EligibilityItem(
                 scope="No audience/client subscription",
                 can_send_marketing=False,
-                marketing_reasons=("not subscribed",),
+                marketing_reasons=tuple(marketing_contact_reasons(contact)) + ("not subscribed",),
                 can_send_transactional=not tx_reasons,
                 transactional_reasons=tuple(tx_reasons or ["eligible"]),
             )
@@ -1290,9 +1310,9 @@ def eligibility_items(contact: Contact, subscriptions) -> list[EligibilityItem]:
     return rows
 
 
-def eligibility_item(contact: Contact, subscription: Subscription) -> EligibilityItem:
+def eligibility_item(contact: Contact, subscription: Subscription, *, all_subscriptions=None) -> EligibilityItem:
     scope = f"{subscription.audience.name} / {subscription.client.name if subscription.client_id else 'Audience-wide'}"
-    marketing = list(marketing_reasons(contact, subscription))
+    marketing = list(marketing_reasons(contact, subscription, all_subscriptions=all_subscriptions))
     tx_reasons = transactional_reasons(contact)
     return EligibilityItem(
         scope=scope,
@@ -1303,8 +1323,32 @@ def eligibility_item(contact: Contact, subscription: Subscription) -> Eligibilit
     )
 
 
-def marketing_reasons(contact: Contact, subscription: Subscription):
-    if contact.verified_at is None:
+def marketing_reasons(contact: Contact, subscription: Subscription, *, all_subscriptions=None):
+    # Match campaign sending: audience-wide consent overrides client consent,
+    # and verification may be stored globally or on either subscription.
+    audience_subscription = next((
+        item for item in (all_subscriptions or [subscription])
+        if item.audience_id == subscription.audience_id and item.client_id is None
+    ), None)
+    verified = bool(contact.verified_at or subscription.verified_at
+                    or (audience_subscription and audience_subscription.verified_at))
+    yield from marketing_contact_reasons(contact, verified=verified)
+    if (subscription.client_id and audience_subscription
+            and audience_subscription.status == SubscriptionStatus.UNSUBSCRIBED):
+        yield "audience unsubscribe"
+    if subscription.status == SubscriptionStatus.UNSUBSCRIBED:
+        if subscription.client_id:
+            yield "client unsubscribe"
+        else:
+            yield "audience unsubscribe"
+    elif subscription.status != SubscriptionStatus.SUBSCRIBED:
+        yield f"{subscription.get_status_display().lower()} / not subscribed"
+
+
+def marketing_contact_reasons(contact: Contact, *, verified: bool | None = None):
+    if verified is None:
+        verified = contact.verified_at is not None
+    if not verified:
         yield "unverified"
     if has_invalid_email_validation(contact):
         yield f"invalid email validation: {email_validation_label(contact.email_validation_status)}"
@@ -1314,13 +1358,6 @@ def marketing_reasons(contact: Contact, subscription: Subscription):
         yield "hard bounce"
     if contact.complained_at is not None:
         yield "complaint"
-    if subscription.status == SubscriptionStatus.UNSUBSCRIBED:
-        if subscription.client_id:
-            yield "client unsubscribe"
-        else:
-            yield "audience unsubscribe"
-    elif subscription.status != SubscriptionStatus.SUBSCRIBED:
-        yield f"{subscription.get_status_display().lower()} / not subscribed"
 
 
 def transactional_reasons(contact: Contact):
@@ -1375,7 +1412,7 @@ def metadata_summary(metadata) -> str:
     if bounce_type not in (None, "", [], {}):
         preferred.append(humanize_metadata_value("bounce_type", bounce_type))
 
-    complaint_type = metadata.get("complaint_feedback_type")
+    complaint_type = metadata.get("complaint_feedback_type") or metadata.get("feedback_type")
     if complaint_type not in (None, "", [], {}):
         preferred.append(humanize_metadata_value("complaint_feedback_type", complaint_type))
 

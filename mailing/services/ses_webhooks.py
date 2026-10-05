@@ -247,19 +247,22 @@ def correlate_ses_message(ses_message_id):
     if not ses_message_id:
         return None
 
-    campaign_recipients = (
-        CampaignRecipient.objects.select_for_update()
-        .select_related("campaign", "campaign__client", "campaign__audience", "contact")
-        .filter(ses_message_id=ses_message_id)
-    )
+    # Resolve uniqueness without locking children, then use the same parent-first
+    # order as the sender, cancellation, tracking and operator reconciliation.
+    candidates = list(CampaignRecipient.objects.filter(ses_message_id=ses_message_id)
+                      .values("pk", "campaign_id")[:2])
     transactional_messages = (
         TransactionalMessage.objects.select_for_update()
         .select_related("client", "contact")
         .filter(ses_message_id=ses_message_id)
     )
-    if campaign_recipients.count() == 1 and not transactional_messages.exists():
-        return campaign_recipients.first()
-    if transactional_messages.count() == 1 and not campaign_recipients.exists():
+    if len(candidates) == 1 and not transactional_messages.exists():
+        candidate = candidates[0]
+        Campaign.objects.select_for_update().get(pk=candidate["campaign_id"])
+        return (CampaignRecipient.objects.select_for_update()
+                .select_related("campaign", "campaign__client", "campaign__audience", "contact")
+                .filter(pk=candidate["pk"], ses_message_id=ses_message_id).first())
+    if transactional_messages.count() == 1 and not candidates:
         return transactional_messages.first()
     return None
 

@@ -105,8 +105,9 @@ RELAY_TRANSFER_TOKEN = os.environ.get("RELAY_TRANSFER_TOKEN", "")
 
 # Recurring sends that something outside this service triggers on a timer.
 #
-# Datamailer has no scheduler and should not grow one: the caller decides who
-# gets a reminder and when, and it already owns a schedule. What was missing is
+# Transactional reminders are scheduled by their caller, which decides who
+# receives a reminder and when. Relay's campaign scheduler does not take over
+# those caller-owned reminder schedules. What was missing is
 # that a schedule which silently stops firing looked exactly like a quiet
 # period. Declaring the expectation here lets the status contract report the
 # last run against it, so a missed sweep is visible.
@@ -137,6 +138,7 @@ MIDDLEWARE = [
     # environments run with DEBUG off and authenticate through relay.oidc.
     "relay.dev_auth.DevAutoLoginMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "mailing.operator_scope.OperatorRecordScopeMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 

@@ -7,7 +7,16 @@ from botocore.exceptions import ClientError
 from django.db import connection
 from django.db.models.query import QuerySet
 
-from mailing.models import Audience, Campaign, CampaignRecipient, Client, Contact, EmailEvent, Organization
+from mailing.models import (
+    Audience,
+    Campaign,
+    CampaignRecipient,
+    CampaignStatus,
+    Client,
+    Contact,
+    EmailEvent,
+    Organization,
+)
 from mailing.services import campaign_sender as sender
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -29,7 +38,8 @@ def pending():
     audience = Audience.objects.create(organization=organization, name="Audience", slug="audience")
     client = Client.objects.create(organization=organization, name="Client", slug="client")
     campaign = Campaign.objects.create(
-        client=client, audience=audience, subject="Café", html_body="<p>Café</p>", text_body="Café"
+        client=client, audience=audience, subject="Café", html_body="<p>Café</p>", text_body="Café",
+        status=CampaignStatus.QUEUED,
     )
     contact = Contact.objects.create(email="recipient@example.invalid")
     recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)

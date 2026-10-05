@@ -32,6 +32,8 @@ def record_open(raw_token):
     if recipient is None:
         return None
 
+    # Match sender/cancellation lock order before updating campaign counters.
+    Campaign.objects.select_for_update().get(pk=recipient.campaign_id)
     recipient = (
         CampaignRecipient.objects.select_for_update()
         .select_related(
@@ -64,6 +66,8 @@ def record_click(raw_token, destination_url):
     if recipient is None:
         return None
 
+    # Match sender/cancellation lock order before updating campaign counters.
+    Campaign.objects.select_for_update().get(pk=recipient.campaign_id)
     recipient = (
         CampaignRecipient.objects.select_for_update()
         .select_related(
@@ -96,6 +100,8 @@ def apply_unsubscribe(raw_token, scope):
     if recipient is None:
         return None
 
+    # Match sender/cancellation lock order before updating campaign counters.
+    Campaign.objects.select_for_update().get(pk=recipient.campaign_id)
     recipient = (
         CampaignRecipient.objects.select_for_update()
         .select_related(

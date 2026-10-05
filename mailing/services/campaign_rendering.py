@@ -1,5 +1,6 @@
 """Pure campaign body rendering and action-link rewriting."""
 
+import re
 from html import escape
 from html.parser import HTMLParser
 from urllib.parse import urlparse
@@ -12,6 +13,11 @@ def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
     pixel = f'<img src="{escape(open_pixel_url(tracking_token), quote=True)}" width="1" height="1" alt="" />'
     unsubscribe_href = escape(unsubscribe_url(unsubscribe_token), quote=True)
     footer = f'<p><a href="{unsubscribe_href}">Unsubscribe or manage preferences</a></p>'
+    additions = f"\n{footer}\n{pixel}\n"
+    closing_body = list(re.finditer(r"</body\s*>", body, flags=re.IGNORECASE))
+    if closing_body:
+        position = closing_body[-1].start()
+        return body[:position] + additions + body[position:]
     return f"{body}\n{footer}\n{pixel}"
 
 

@@ -1797,7 +1797,8 @@ OPENAPI_SPEC = {
                             "preview_text": {"type": "string", "maxLength": 255},
                             "html_body": {"type": "string"},
                             "text_body": {"type": "string"},
-                            "scheduled_at": {"type": ["string", "null"], "format": "date-time"},
+                            "scheduled_at": {"type": ["string", "null"], "format": "date-time",
+                                             "description": "Future dispatch time with an explicit UTC offset. Queue confirms the schedule; recipients are selected at dispatch time."},
                             "category_tag": {"type": "string", "maxLength": 80},
                             "recipient_list_key": {"type": "string", "maxLength": 255},
                             "include_tags": {"type": "array", "items": {"type": "string"}},
@@ -1856,6 +1857,7 @@ OPENAPI_SPEC = {
                 "properties": {
                     "campaign": {"$ref": "#/components/schemas/Campaign"},
                     "queued": {"type": "boolean"},
+                    "scheduled": {"type": "boolean", "description": "True when dispatch is waiting for scheduled_at; no audience snapshot or send has happened."},
                     "batch_count": {"type": "integer"},
                     "recipient_count": {"type": "integer"},
                     "skipped_count": {"type": "integer"},

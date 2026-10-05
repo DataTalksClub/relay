@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Campaigns | Datamailer{% endblock %}
-  {% block topbar_title %}Campaigns{% endblock %}
+{% block title %}Campaigns | Relay{% endblock %}
+{% block topbar_title %}Campaigns{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
       <h1>Campaigns</h1>
-      <p>Recent campaign status, schedule, and high-level engagement for {{ active_client.name }}.</p>
+      <p>Prepare drafts and follow delivery progress for {{ active_client.name }}.</p>
     </div>
     <div class="actions">
       <a class="button" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
@@ -39,11 +39,15 @@
               {% with campaign=row.campaign %}
               <tr>
                 <td class="truncate" data-label="Campaign">
-                  <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject }}</a>
+                  <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject|default:"Untitled draft" }}</a>
                   <div class="helptext">
                     {{ active_client.name }}
                     {% if campaign.status == "draft" %}
-                      / <a href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>
+                      / <a href="{% url 'mailing:campaign_edit' campaign.id %}">Resume draft</a>
+                    {% elif campaign.status == "scheduled" %}
+                      / <a href="{% url 'mailing:campaign_detail' campaign.id %}">Review schedule</a>
+                    {% else %}
+                      / <a href="{% url 'mailing:campaign_detail' campaign.id %}#campaign-stats">View results</a>
                     {% endif %}
                   </div>
                 </td>
@@ -52,13 +56,14 @@
                   <a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a>
                 </td>
                 <td class="nowrap" data-label="Send time">
-                  {{ row.timing_value|date:"Y-m-d H:i"|default:"—" }}
-                  <div class="helptext">{{ row.timing_label }}</div>
+                  {% if campaign.sent_at %}{{ campaign.sent_at|date:"Y-m-d H:i" }}{% elif campaign.status == "scheduled" %}{{ campaign.scheduled_at|date:"Y-m-d H:i" }} UTC{% elif campaign.status == "draft" or campaign.status == "cancelled" %}Not sent{% else %}In progress{% endif %}
                 </td>
                 <td class="nowrap" data-label="Recipients">{{ campaign.recipient_count }}</td>
                 <td class="nowrap" data-label="Delivery">
-                  {{ campaign.sent_count }} sent / {{ campaign.delivered_count }} delivered
+                  {% if campaign.status == "draft" %}<span class="muted">Review before sending</span>{% elif campaign.status == "scheduled" %}<span class="muted">Audience selected at send time</span>{% else %}
+                  {{ campaign.sent_count }} currently sent / {{ campaign.delivered_count }} delivery confirmations
                   <div class="helptext">{{ campaign.bounce_count }} bounces / {{ campaign.complaint_count }} complaints</div>
+                  {% endif %}
                 </td>
               </tr>
               {% endwith %}

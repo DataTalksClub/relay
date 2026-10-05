@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Service health · Relay{% endblock %}
+{% block content %}
+<div class="page-header"><div><h1>Service health</h1><p>Check workers and waiting work across the sandbox service.</p></div></div>{% include "jobs/_navigation.html" %}
+<section class="section"><h2>{{ health_label }}</h2><p>Observed {{ observed_at|date:"Y-m-d H:i:s T" }}. Refresh this page for a new observation. Unknown or unavailable monitoring does not confirm healthy processing.</p>{% if oldest_waiting %}<p>Oldest waiting job: <a href="{% url 'jobs:job_detail' oldest_waiting.id %}">{{ oldest_waiting.client.name }} / {{ oldest_waiting.task_type }}</a>, eligible {{ oldest_waiting.run_after|date:"Y-m-d H:i T" }}.</p>{% else %}<p>No Relay jobs waiting in the database.</p>{% endif %}</section>
+<div class="table-wrap triage-table"><table><thead><tr><th scope="col">Processing</th><th scope="col">Observed state</th><th scope="col">Waiting work</th><th scope="col">Details</th></tr></thead><tbody>{% for worker in workers %}<tr><td data-label="Processing">{{ worker.label }}</td><td data-label="Observed state">{{ worker.badge_label }}</td><td data-label="Waiting work">{{ worker.backlog_label }}: {% if worker.backlog_count != None %}{{ worker.backlog_count }}{% else %}Unavailable{% endif %}</td><td data-label="Details">{{ worker.detail }}</td></tr>{% endfor %}</tbody></table></div><p class="helptext">These observations do not restart workers or submit work. Contact the service operator when processing is stopped or monitoring is unavailable.</p>
+{% endblock %}

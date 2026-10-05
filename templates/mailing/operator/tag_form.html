@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}{% if mode == "create" %}Create tag{% else %}Edit tag{% endif %} | Datamailer{% endblock %}
-  {% block topbar_title %}Tag{% endblock %}
+{% block title %}{% if mode == "create" %}Create tag{% else %}Edit tag{% endif %} | Relay{% endblock %}
+{% block topbar_title %}Tag{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -67,7 +67,7 @@
     </section>
 
     <div class="form-actions">
-      <button type="submit">{% if mode == "create" %}Create tag{% else %}Save tag{% endif %}</button>
+      <button type="submit" class="button">{% if mode == "create" %}Create tag{% else %}Save tag{% endif %}</button>
       <a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">Cancel</a>
     </div>
   </form>

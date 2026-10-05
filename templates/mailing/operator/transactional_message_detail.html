@@ -1,14 +1,17 @@
 {% extends "base.html" %}
 
-{% block title %}Message {{ message.id }} | Datamailer{% endblock %}
-  {% block topbar_title %}Transactional message{% endblock %}
+{% block title %}Message {{ message.id }} | Relay{% endblock %}
+{% block topbar_title %}Transactional message{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
-      <h1>{{ message.email }}</h1>
-      <p>{{ message.client.name }} / {{ message.template.name }}</p>
-      <div class="helptext">Integration key: {{ message.template_key }}</div>
+      <p class="breadcrumbs">
+        <a href="{{ return_url }}">Email activity</a>
+        / Message {{ message.id }}
+      </p>
+      <h1>{{ message.subject|default:'(no subject)' }}</h1>
+      <p>To {{ message.email }} · {{ message.client.name }} · {{ message.template.name }}</p>
       <span class="badge {{ badge.tone }}">{{ badge.label }}</span>
     </div>
     <div class="actions">
@@ -22,16 +25,13 @@
       <h2 id="message-summary">Message Summary</h2>
     </div>
     <div class="meta-grid">
-      <div class="meta-item"><span class="meta-label">Message ID</span>{{ message.id }}</div>
-      <div class="meta-item"><span class="meta-label">From sender</span>{{ message.from_email_id|default:"—" }}</div>
-      <div class="meta-item"><span class="meta-label">From address</span>{{ message.from_email|default:"—" }}</div>
+      <div class="meta-item"><span class="meta-label">From sender</span>{{ message.from_email_id|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">From address</span>{{ message.from_email|default:"-" }}</div>
       <div class="meta-item"><span class="meta-label">Created</span>{{ message.created_at|date:"Y-m-d H:i" }}</div>
-      <div class="meta-item"><span class="meta-label">Sent</span>{{ message.sent_at|date:"Y-m-d H:i"|default:"—" }}</div>
-      <div class="meta-item"><span class="meta-label">Delivered</span>{{ message.delivered_at|date:"Y-m-d H:i"|default:"—" }}</div>
-      <div class="meta-item"><span class="meta-label">Opened</span>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</div>
-      <div class="meta-item"><span class="meta-label">Clicked</span>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</div>
-      <div class="meta-item"><span class="meta-label">SES message</span>{{ message.ses_message_id|default:"—" }}</div>
-      <div class="meta-item"><span class="meta-label">Idempotency</span>{{ message.idempotency_key|default:"—" }}</div>
+      <div class="meta-item"><span class="meta-label">Sent</span>{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Delivered</span>{{ message.delivered_at|date:"Y-m-d H:i"|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Opened</span>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Clicked</span>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
     </div>
     {% if message.last_error %}
       <div class="empty-state danger-state">
@@ -41,8 +41,51 @@
     {% endif %}
   </section>
 
+  <section class="detail-section panel" aria-labelledby="message-events">
+    <div class="section-header">
+      <h2 id="message-events">Delivery timeline</h2>
+    </div>
+    {% if event_rows %}
+      <div class="table-wrap triage-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Created</th>
+              <th>Context</th>
+              <th>Metadata</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in event_rows %}
+              <tr>
+                <td data-label="Event"><span class="badge neutral">{{ row.event.get_event_type_display }}</span></td>
+                <td data-label="Time" class="nowrap">{{ row.event.created_at|date:"Y-m-d H:i" }}</td>
+                <td data-label="Context">{{ row.context }}</td>
+                <td data-label="Details" class="truncate">{{ row.metadata_summary|default:"-" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>No events recorded.</strong>
+        <div class="muted">Delivery, bounce, complaint, open, and click events for this message will appear here.</div>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="detail-section panel" aria-labelledby="delivery-next-step"><h2 id="delivery-next-step">Next step</h2>
+{% if message.status == 'queued' %}<p>This email is waiting for processing. Check queue age and service health before submitting another copy.</p><a href="{% url 'jobs:service_health' %}">Check processing health</a>
+{% elif message.status == 'failed' %}<p>Review the error above, then check sender and template setup. Confirm that no message was accepted before submitting another request; repeated requests should reuse the same idempotency key.</p><a href="{% url 'mailing:client_detail' message.client_id %}">Review integration setup</a>
+{% elif message.status == 'bounced' or message.status == 'complained' or message.status == 'skipped' %}<p>Review the recipient's eligibility and sending policy. A complaint or hard bounce prevents future email. Changing a restriction does not resend this message.</p><a href="{% url 'mailing:contact_detail' message.contact.normalized_email %}">Review recipient eligibility</a>
+{% elif message.delivered_at %}<p>The receiving server accepted this message. Delivery does not confirm inbox placement or that the person read it.</p>
+{% else %}<p>Provider acceptance is recorded; a delivery event has not been recorded yet. Check the timeline before concluding that it reached the recipient.</p>{% endif %}
+</section>
+
   <section class="detail-section panel" aria-labelledby="message-content">
-    <div class="panel-header">
+    <div class="section-header">
       <h2 id="message-content">Rendered Content</h2>
     </div>
     <div class="template-preview-subject"><span class="meta-label">Subject</span>{{ message.subject|default:"—" }}</div>
@@ -51,8 +94,8 @@
       <pre><code>{{ message.text_body }}</code></pre>
     {% endif %}
     {% if message.html_body %}
-      <h3>HTML</h3>
-      <pre><code>{{ message.html_body }}</code></pre>
+      <h3>HTML email</h3>
+      <iframe class="email-preview-frame" title="Email message preview" sandbox="" referrerpolicy="no-referrer" srcdoc="{{ message.html_body|force_escape }}"></iframe>
     {% endif %}
     {% if not message.text_body and not message.html_body %}
       <div class="empty-state">
@@ -62,9 +105,13 @@
     {% endif %}
   </section>
 
-  <section class="detail-section panel" aria-labelledby="message-data">
-    <div class="panel-header">
-      <h2 id="message-data">Payload Data</h2>
+  <details class="detail-section secondary-section panel-diagnostics">
+    <summary><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>Integration data and provider diagnostics</summary>
+    <div class="meta-grid">
+      <div class="meta-item"><span class="meta-label">Message ID</span>{{ message.id }}</div>
+      <div class="meta-item"><span class="meta-label">Integration key</span>{{ message.template_key }}</div>
+      <div class="meta-item"><span class="meta-label">SES message</span>{{ message.ses_message_id|default:'-' }}</div>
+      <div class="meta-item"><span class="meta-label">Idempotency</span>{{ message.idempotency_key|default:'-' }}</div>
     </div>
     <div class="detail-grid">
       <div>
@@ -81,45 +128,11 @@
         {% endif %}
       </div>
     </div>
-  </section>
+  </details>
 
-  <section class="detail-section panel" aria-labelledby="message-events">
-    <div class="panel-header">
-      <h2 id="message-events">Events</h2>
-    </div>
-    {% if event_rows %}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Event</th>
-              <th>Created</th>
-              <th>Context</th>
-              <th>Metadata</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in event_rows %}
-              <tr>
-                <td><span class="badge neutral">{{ row.event.get_event_type_display }}</span></td>
-                <td class="nowrap">{{ row.event.created_at|date:"Y-m-d H:i" }}</td>
-                <td>{{ row.context }}</td>
-                <td class="truncate">{{ row.metadata_summary|default:"—" }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="empty-state">
-        <strong>No events recorded.</strong>
-        <div class="muted">Delivery, bounce, complaint, open, and click events for this message will appear here.</div>
-      </div>
-    {% endif %}
-  </section>
-
-  <section class="detail-section panel" aria-labelledby="cmp-callbacks">
-    <div class="panel-header">
+  <details class="detail-section secondary-section panel-diagnostics">
+    <summary><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>CMP callback delivery</summary>
+    <div class="section-header">
       <h2 id="cmp-callbacks">CMP Callbacks</h2>
     </div>
     {% if cmp_callback_rows %}
@@ -155,10 +168,11 @@
         <div class="muted">Callbacks for transactional skipped and failed events will appear here.</div>
       </div>
     {% endif %}
-  </section>
+  </details>
 
-  <section class="detail-section panel" aria-labelledby="client-callbacks">
-    <div class="panel-header">
+  <details class="detail-section secondary-section panel-diagnostics">
+    <summary><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>Client callback delivery</summary>
+    <div class="section-header">
       <h2 id="client-callbacks">Client Callbacks</h2>
     </div>
     {% if callback_rows %}
@@ -194,5 +208,5 @@
         <div class="muted">Callbacks for transactional skipped and failed events will appear here.</div>
       </div>
     {% endif %}
-  </section>
+  </details>
 {% endblock %}

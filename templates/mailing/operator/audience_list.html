@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}Audiences | Datamailer{% endblock %}
-  {% block topbar_title %}Audiences{% endblock %}
+{% block title %}Audiences | Relay{% endblock %}
+{% block topbar_title %}Audiences{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -11,17 +11,19 @@
     </div>
     <div class="actions">
       <a class="button" href="{% url 'mailing:audience_create' %}">Create audience</a>
-      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Contact explorer</a>
+      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Search contacts</a>
     </div>
   </div>
 
   {% if audiences.object_list %}
     <section class="section panel" aria-labelledby="audiences-table">
-      <div class="panel-header">
-        <h2 id="audiences-table">Audience health</h2>
-        <span class="muted">{{ audiences.paginator.count }} audience{{ audiences.paginator.count|pluralize }}</span>
+      <div class="section-header">
+        <div>
+          <h2 id="audiences-table">Audience Health</h2>
+          <p class="muted">Shared audience membership and history across clients. Open members to check campaign eligibility for {{ active_client.name }}.</p>
+        </div>
       </div>
-      <div class="table-wrap audience-table stack-table">
+      <div class="table-wrap audience-table triage-table">
         <table>
           <thead>
             <tr>
@@ -58,7 +60,7 @@
                       <span class="muted">No campaign or event activity</span>
                     {% endif %}
                   </td>
-                  <td class="nowrap" data-label="Action"><a class="button secondary" href="{% url 'mailing:audience_detail' audience.id %}">View detail</a></td>
+                  <td class="nowrap" data-label="Action"><a href="{% url 'mailing:audience_detail' audience.id %}">View members</a></td>
                 </tr>
               {% endwith %}
             {% endfor %}
