@@ -6,6 +6,8 @@ from email.message import Message
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 
+from mailing.calendar_mime import validate_calendar_alternative as validate_calendar_mime_alternative
+
 HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9-]{1,80}$")
 RESERVED_HEADERS = {"bcc", "cc", "content-type", "from", "reply-to", "subject", "to"}
 MAX_CUSTOM_HEADERS = 20
@@ -159,9 +161,43 @@ def parse_content_type(value):
     }
 
 
+def validate_calendar_alternative_option(value, message_parts, headers, errors, text_body="", html_body=""):
+    """Map the MIME-stage calendar ValueErrors onto the API error codes.
+
+    Request validation calls this before rendering with the default empty
+    bodies, which are always valid UTF-8, so those checks inside the MIME
+    validator pass vacuously there; the parsed message_parts and headers
+    carry the conflict and protected-header rules so the cross-field coupling
+    is enforced before any durable effect. Post-render revalidation passes
+    the actually rendered bodies so the same validator and error mapping
+    decide on the final artifact.
+    """
+    if value in (None, ""):
+        return None
+    if not isinstance(value, dict):
+        errors["calendar_alternative"] = "must_be_object"
+        return None
+    try:
+        return validate_calendar_mime_alternative(value, text_body, html_body, message_parts, headers)
+    except ValueError as exc:
+        if message_parts:
+            errors["calendar_alternative"] = "conflicts_with_message_parts"
+        elif "exceeds the character limit" in str(exc):
+            errors["calendar_alternative"] = "too_large"
+        else:
+            errors["calendar_alternative"] = "invalid"
+        return None
+
+
 def delivery_option_metadata(payload):
+    # calendar_alternative is owned by the validated top-level request field;
+    # a generic metadata key never carries a validated profile, so it is
+    # stripped before the authoritative projection below re-adds one.
     metadata = payload["metadata"]
-    for field in ("reply_to", "cc", "bcc", "headers", "message_parts"):
+    if "calendar_alternative" in metadata:
+        metadata = metadata.copy()
+        del metadata["calendar_alternative"]
+    for field in ("reply_to", "cc", "bcc", "headers", "message_parts", "calendar_alternative"):
         if payload.get(field):
             metadata = metadata | {field: payload[field]}
     return metadata
