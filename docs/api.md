@@ -649,6 +649,71 @@ POST /api/tasks/{task_id}/fail
 Every submission needs an `idempotency_key`. Repeating the same request returns
 the original task; reusing the key for different work returns `409 Conflict`.
 
+### Listing tasks
+
+```text
+GET /api/tasks
+GET /api/tasks?status=failed
+GET /api/tasks?task_type=webhook
+GET /api/tasks?limit=25&cursor=<next_cursor>
+```
+
+Newest first, and always scoped to the authenticated client — a filter narrows
+within a client's own work and never widens past it.
+
+| Parameter | Meaning |
+|---|---|
+| `status` | One of `queued`, `running`, `retrying`, `succeeded`, `failed`, `cancelled` |
+| `task_type` | One of `system.echo`, `email.send`, `webhook` |
+| `limit` | Page size, 1-100. Defaults to 100, which is the cap the list always had |
+| `cursor` | The `next_cursor` from the previous page |
+
+The response is `{"tasks": [...], "next_cursor": ...}`. `next_cursor` is null on
+the last page. A call with no query returns the same capped list of recent
+tasks it always did; the cursor is what makes the older ones reachable.
+
+Pagination is a cursor rather than an offset because the list is ordered by
+creation time and a busy client submits while it is being read — an offset
+silently skips or repeats a row when that happens.
+
+Anything unparseable is a `400` in the usual envelope:
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "fields": {
+      "limit": "must_be_between_1_and_100"
+    }
+  }
+}
+```
+
+### Schedules
+
+```text
+POST /api/schedules
+GET  /api/schedules
+GET  /api/schedules/{schedule_id}
+DELETE /api/schedules/{schedule_id}
+```
+
+`POST` creates or updates one schedule by `name`, and takes `cron`, `type`,
+`params`, `max_attempts`, `enabled`, and `timezone`. It returns the stored
+schedule with its resolved `next_run_at`, `201` when it created one and `200`
+when it updated one.
+
+Every schedule carries a `timezone`, defaulting to `UTC`. It is an IANA zone
+name — `Europe/Berlin`, `America/New_York` — not a numeric offset. A cron
+expression is wall-clock arithmetic in a place: `0 9 * * *` in
+`Europe/Berlin` is 08:00 UTC in winter and 07:00 UTC in summer, and a named
+zone is the only representation that keeps it that way. Anything that is not a
+real IANA name, including `+02:00` and `UTC+2`, is rejected with
+`timezone: unknown`.
+
+`DELETE` pauses a schedule: it stops future submissions but does not cancel
+queued or running work, and the record and its history stay readable.
+
 ### Webhook tasks
 
 `type: "webhook"` sends a signed HTTPS request to a registered client origin.

@@ -5,6 +5,8 @@ cross-project console depends on it and the two deploy independently.
 """
 
 import datetime
+import logging
+import os
 import uuid
 
 import pytest
@@ -12,6 +14,7 @@ from django.core.cache import cache
 from django.urls import reverse
 from django.utils import timezone
 
+from jobs.models import SchedulerHeartbeat
 from mailing.models import (
     Audience,
     Campaign,
@@ -22,6 +25,7 @@ from mailing.models import (
     Subscription,
     SubscriptionStatus,
 )
+from mailing.ops_views import BATCH_TASK_PATH
 from mailing.services.campaigns import queue_campaign
 from taskdeck.models import TaskRun, TaskRunStatus
 
@@ -258,3 +262,151 @@ def test_schedule_ignores_batches_for_a_different_template(client, settings):
     body = client.get(url(), headers={"authorization": "Bearer t"}).json()
 
     assert body["schedules"][0]["last_run"] is None
+
+
+def test_next_run_is_resolved_from_the_declared_cron(client, settings):
+    """A consumer must be able to answer "when is the next one due".
+
+    The value is the next occurrence after the payload is built, so it is
+    compared as a timestamp rather than a fixed string: a slow test run must
+    not pass a check that happens to agree with a stale expectation.
+    """
+    settings.TASKDECK_STATUS_TOKEN = "t"
+    settings.TASKDECK_SCHEDULES = SCHEDULE
+    cache.clear()
+
+    before = timezone.now()
+    body = client.get(url(), headers={"authorization": "Bearer t"}).json()
+    next_run = datetime.datetime.fromisoformat(body["schedules"][0]["next_run"])
+    if next_run.tzinfo is None:
+        next_run = next_run.replace(tzinfo=datetime.UTC)
+
+    assert before < next_run <= before + datetime.timedelta(days=1)
+    # "0 9 * * *" fires at 09:00, so the resolved occurrence carries that wall
+    # time rather than collapsing onto the moment the payload was built.
+    assert next_run.hour == 9
+    assert next_run.minute == 0
+
+
+def test_next_run_is_null_for_an_unparseable_cron(client, settings, caplog):
+    """One bad declaration must not 500 the whole status endpoint.
+
+    The failure is surfaced in the log with the expression attached, so the
+    operator can see which declared schedule is broken; the row reports null so
+    a consumer renders it as unknown rather than trusting a zero value.
+    """
+    settings.TASKDECK_STATUS_TOKEN = "t"
+    settings.TASKDECK_SCHEDULES = [{"name": "broken", "template_key": "broken", "cron": "not a cron"}]
+    cache.clear()
+
+    with caplog.at_level(logging.WARNING, logger="mailing.ops_views"):
+        response = client.get(url(), headers={"authorization": "Bearer t"})
+
+    assert response.status_code == 200
+    assert response.json()["schedules"][0]["next_run"] is None
+    assert "not a cron" in caplog.text
+
+
+def test_next_run_is_null_for_an_absent_cron(client, settings):
+    """A declared schedule with no expression has no next occurrence to report."""
+    settings.TASKDECK_STATUS_TOKEN = "t"
+    settings.TASKDECK_SCHEDULES = [{"name": "quiet", "template_key": "quiet"}]
+    cache.clear()
+
+    response = client.get(url(), headers={"authorization": "Bearer t"})
+
+    assert response.status_code == 200
+    assert response.json()["schedules"][0]["next_run"] is None
+
+
+def test_next_run_is_null_for_a_non_string_cron(client, settings, caplog):
+    """Settings values skip the API validator, so the endpoint must survive junk.
+
+    A mistyped declaration (an int where a string belongs) makes croniter raise
+    AttributeError rather than ValueError; either way the row reports null.
+    """
+    settings.TASKDECK_STATUS_TOKEN = "t"
+    settings.TASKDECK_SCHEDULES = [{"name": "mistyped", "template_key": "mistyped", "cron": 9}]
+    cache.clear()
+
+    with caplog.at_level(logging.WARNING, logger="mailing.ops_views"):
+        response = client.get(url(), headers={"authorization": "Bearer t"})
+
+    assert response.status_code == 200
+    assert response.json()["schedules"][0]["next_run"] is None
+    assert "9" in caplog.text
+
+
+def test_a_fresh_scheduler_tick_makes_the_worker_read_healthy(client, settings):
+    """A scheduler that ticks is the worker's liveness, not a running task's.
+
+    With no task heartbeats at all the payload used to have no ``last_seen``;
+    the scheduler's own pass is a stronger signal than nothing, so it is fused
+    into the same field rather than reported beside it.
+    """
+    settings.TASKDECK_STATUS_TOKEN = TOKEN
+    ticked = timezone.now()
+    SchedulerHeartbeat.objects.create(pid=os.getpid(), ticked_at=ticked)
+
+    payload = client.get(url(), headers={"authorization": f"Bearer {TOKEN}"}).json()
+
+    assert payload["worker"]["last_seen"] == ticked.isoformat()
+    assert payload["worker"]["scheduler_last_tick"] == ticked.isoformat()
+    assert payload["worker"]["healthy"] is True
+
+
+def test_a_stale_scheduler_tick_makes_the_worker_read_unhealthy(client, settings):
+    """The case the heartbeat exists for.
+
+    A loop that stopped is indistinguishable from a quiet period in every other
+    signal this payload carries, so staleness has to be a fault on its own.
+    """
+    settings.TASKDECK_STATUS_TOKEN = TOKEN
+    SchedulerHeartbeat.objects.create(
+        pid=os.getpid(), ticked_at=timezone.now() - datetime.timedelta(hours=1)
+    )
+
+    payload = client.get(url(), headers={"authorization": f"Bearer {TOKEN}"}).json()
+
+    assert payload["worker"]["healthy"] is False
+    assert payload["worker"]["scheduler_last_tick"] is not None
+
+
+def test_no_tick_at_all_leaves_a_task_only_worker_healthy(client, settings):
+    """A host with no scheduler row is not a host with a dead scheduler.
+
+    Judging it unhealthy would report a fault on every project that does not
+    run schedules at all.
+    """
+    settings.TASKDECK_STATUS_TOKEN = TOKEN
+
+    payload = client.get(url(), headers={"authorization": f"Bearer {TOKEN}"}).json()
+
+    assert payload["worker"]["scheduler_last_tick"] is None
+    assert payload["worker"]["healthy"] is True
+
+
+def test_an_old_task_heartbeat_alone_does_not_make_the_worker_read_unhealthy(client, settings):
+    """A quiet afternoon is not a sick worker.
+
+    A task only has to check in while it is running; a finished one from hours
+    ago is exactly what a healthy idle system looks like. Only the scheduler,
+    which must tick whether or not anything was due, is judged on staleness.
+    """
+    settings.TASKDECK_STATUS_TOKEN = TOKEN
+    TaskRun.objects.create(
+        result_id="quiet-run",
+        project="datamailer",
+        name="send_transactional_email_batch",
+        func=BATCH_TASK_PATH,
+        status=TaskRunStatus.SUCCESS,
+        message="deadline-reminder: 40 recipients",
+        correlation_id=uuid.uuid4(),
+        heartbeat_at=timezone.now() - datetime.timedelta(hours=6),
+        finished_at=timezone.now() - datetime.timedelta(hours=6),
+    )
+
+    payload = client.get(url(), headers={"authorization": f"Bearer {TOKEN}"}).json()
+
+    assert payload["worker"]["last_seen"] is not None
+    assert payload["worker"]["healthy"] is True

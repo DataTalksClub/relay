@@ -15,8 +15,11 @@ from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_GET
 
+from jobs.scheduling import next_occurrence
+from jobs.services import latest_heartbeat
 from mailing.models import Campaign, TransactionalMessage
 from mailing.services.worker_status import WORKER_DEFINITIONS, backlog_count
 from taskdeck.collector import collect_status
@@ -94,6 +97,27 @@ def _ingress_backlogs():
     return rows
 
 
+def _next_scheduled_run(expression, now):
+    """Resolve a declared schedule's next occurrence, or ``None``.
+
+    croniter is already a hard dependency of the worker, so parsing an
+    expression here costs nothing. What it must not do is raise: one malformed
+    declaration in settings would otherwise take the whole status endpoint
+    down and hide every schedule behind a 500. An unparseable expression reports
+    null and names itself in the log, where an operator can fix it.
+    """
+    if not expression:
+        return None
+    try:
+        return next_occurrence(expression, now).isoformat()
+    except Exception as exc:
+        # Broad on purpose: the value comes from settings, not the API
+        # validator, so it can be an int or a list as well as a bad string,
+        # and croniter answers those with AttributeError rather than ValueError.
+        logger.warning("taskdeck: declared schedule has an unusable cron %r: %s", expression, exc)
+        return None
+
+
 def _schedules():
     """Report each expected recurring send against what actually ran.
 
@@ -108,6 +132,7 @@ def _schedules():
     is the only writer of that string.
     """
     rows = []
+    now = timezone.now()
     for schedule in getattr(settings, "TASKDECK_SCHEDULES", []):
         template_key = schedule.get("template_key", "")
         runs = TaskRun.objects.filter(
@@ -128,11 +153,7 @@ def _schedules():
                     if last_success and last_success.finished_at
                     else None
                 ),
-                # Null rather than computed: working it out needs a cron parser,
-                # and a dependency for one cosmetic field is a poor trade in a
-                # mail service. `max_age_s` gives a consumer what it actually
-                # needs to flag an overdue schedule.
-                "next_run": None,
+                "next_run": _next_scheduled_run(schedule.get("cron", ""), now),
                 "max_age_s": schedule.get("max_age_s"),
                 "enabled": schedule.get("enabled", True),
             }
@@ -140,11 +161,24 @@ def _schedules():
     return rows
 
 
+def _scheduler_tick():
+    """The scheduler's latest heartbeat timestamp, or None before its first tick.
+
+    Read here rather than in the collector so the collector stays a package any
+    project can use: the heartbeat table is a Relay table, and a project with no
+    scheduler of its own simply passes None and is judged on its task
+    heartbeats alone.
+    """
+    heartbeat = latest_heartbeat()
+    return heartbeat.ticked_at if heartbeat else None
+
+
 def build_payload():
     payload = collect_status(
         mode="sidecar",
         entity_resolver=_entity_resolver,
         schedules=_schedules(),
+        scheduler_tick=_scheduler_tick(),
     )
     payload["ingress_backlogs"] = _ingress_backlogs()
     return payload

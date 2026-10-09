@@ -13,6 +13,7 @@ from django.views.decorators.http import require_POST
 
 from jobs.models import Job, JobStatus, Schedule
 from jobs.operator_actions import OperationConflict, change_schedule_state, retry_failed_job
+from jobs.services import heartbeat_state
 from mailing.models import Client
 from mailing.services.operator_ui import worker_health
 from mailing.services.worker_status import sandbox_worker_statuses
@@ -119,7 +120,10 @@ def schedule_detail(request, schedule_id):
     return render(request, "jobs/schedule_detail.html", {
         "schedule": schedule,
         "recent_jobs": schedule.jobs.order_by("-created_at")[:10],
-        "schedule_timezone": str(timezone.get_current_timezone()),
+        # The zone this schedule's cron is written against, not the project's.
+        # A schedule for a Berlin audience firing at 09:00 local is the whole
+        # point of the field, and showing UTC here would hide that.
+        "schedule_timezone": schedule.timezone,
         "return_url": _return_url(request, schedule, schedule=True),
     })
 
@@ -142,8 +146,11 @@ def schedule_action(request, schedule_id):
 def service_health(request):
     workers = sandbox_worker_statuses()
     label, tone = worker_health(workers)
+    heartbeat, heartbeat_stale = heartbeat_state()
     return render(request, "jobs/service_health.html", {
         "workers": workers, "health_label": label, "health_tone": tone,
         "observed_at": timezone.now(),
         "oldest_waiting": Job.objects.filter(status__in=[JobStatus.QUEUED, JobStatus.RETRYING]).order_by("run_after").first(),
+        "heartbeat": heartbeat,
+        "heartbeat_stale": heartbeat_stale,
     })

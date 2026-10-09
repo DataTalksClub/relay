@@ -94,13 +94,29 @@ def queue_snapshot():
     }
 
 
-def worker_snapshot(mode="sidecar", timeout_s=DEFAULT_HEARTBEAT_TIMEOUT_S):
-    """Derive liveness from task heartbeats rather than from the platform.
+def worker_snapshot(mode="sidecar", timeout_s=DEFAULT_HEARTBEAT_TIMEOUT_S, scheduler_tick=None):
+    """Derive liveness from task heartbeats plus the scheduler's own tick.
 
     A process that is up but wedged must read as unhealthy, which a
     platform-level liveness probe will not catch. The cost is that a genuinely
     idle worker with no work also looks quiet — so an idle queue is reported as
     healthy, and only a *running* task that stops checking in is a fault.
+
+    ``scheduler_tick`` is the scheduler's latest heartbeat, supplied by the
+    project that owns such a table. It goes into this one ``last_seen`` rather
+    than into a second key beside it, because a console that has to know which
+    liveness field to trust reads neither correctly. The two signals are fused
+    into the most recent timestamp, and ``scheduler_last_tick`` is reported
+    alongside it so a consumer can still tell *which* process is alive — a task
+    heartbeat from three hours ago and a tick from three seconds ago mean
+    different things.
+
+    Health is judged separately for each, and deliberately not from the fused
+    ``last_seen``. The scheduler has to tick on every pass whether or not
+    anything was due, so a stale tick is a fault on its own. A task only has to
+    check in while it is running, which ``stalled_runs`` already covers, so an
+    old task heartbeat from a quiet afternoon must not turn a healthy worker
+    into an unhealthy one.
     """
     now = timezone.now()
     last = (
@@ -109,19 +125,28 @@ def worker_snapshot(mode="sidecar", timeout_s=DEFAULT_HEARTBEAT_TIMEOUT_S):
         .values_list("heartbeat_at", flat=True)
         .first()
     )
+    if scheduler_tick is not None and (last is None or scheduler_tick > last):
+        last = scheduler_tick
     stuck = TaskRun.objects.filter(
         status=TaskRunStatus.RUNNING,
         heartbeat_at__lt=now - datetime.timedelta(seconds=timeout_s),
     ).count()
+    scheduler_stale = (
+        scheduler_tick is not None
+        and scheduler_tick < now - datetime.timedelta(seconds=timeout_s)
+    )
     return {
         "mode": mode,
         "last_seen": last.isoformat() if last else None,
-        "healthy": stuck == 0,
+        "healthy": stuck == 0 and not scheduler_stale,
         "stalled_runs": stuck,
+        "scheduler_last_tick": scheduler_tick.isoformat() if scheduler_tick else None,
     }
 
 
-def collect_status(*, mode="sidecar", recent_limit=20, entity_resolver=None, schedules=None):
+def collect_status(
+    *, mode="sidecar", recent_limit=20, entity_resolver=None, schedules=None, scheduler_tick=None
+):
     """Build the full contract payload."""
     now = timezone.now()
     day_ago = now - datetime.timedelta(hours=24)
@@ -133,7 +158,7 @@ def collect_status(*, mode="sidecar", recent_limit=20, entity_resolver=None, sch
         "project": _project(),
         "version": _app_version(),
         "generated_at": now.isoformat(),
-        "worker": worker_snapshot(mode=mode),
+        "worker": worker_snapshot(mode=mode, scheduler_tick=scheduler_tick),
         "queue": queue_snapshot(),
         "schedules": list(schedules or []),
         "recent_runs": [serialize_run(r, entity_resolver) for r in recent],

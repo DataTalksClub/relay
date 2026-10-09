@@ -78,6 +78,12 @@ API_DOC_PATHS = {
     "mailing:api_transient_recipient_list_transactional_send": (
         "/api/transient-recipient-lists/transactional-send"
     ),
+    "jobs:tasks": "/api/tasks",
+    "jobs:task_detail": "/api/tasks/{task_id}",
+    "jobs:task_complete": "/api/tasks/{task_id}/complete",
+    "jobs:task_fail": "/api/tasks/{task_id}/fail",
+    "jobs:schedules": "/api/schedules",
+    "jobs:schedule_detail": "/api/schedules/{schedule_id}",
     "mailing:api_transactional_template": "/api/transactional/templates/{template_key}",
     "mailing:api_transactional_send": "/api/transactional/send",
     "mailing:api_transactional_message_status": "/api/transactional/messages/{message_id}",
@@ -848,6 +854,20 @@ def endpoint_groups():
             ],
         },
         {
+            "name": "Tasks and Schedules",
+            "endpoints": [
+                ("POST", "/api/tasks", "Submit one background task."),
+                ("GET", "/api/tasks", "List a client's tasks with cursor pages and optional status/type filters."),
+                ("GET", "/api/tasks/{task_id}", "Get one task's status and result."),
+                ("POST", "/api/tasks/{task_id}/complete", "Resolve a leased task as succeeded."),
+                ("POST", "/api/tasks/{task_id}/fail", "Resolve a leased task as failed, optionally retryable."),
+                ("GET", "/api/schedules", "List a client's recurring schedules."),
+                ("POST", "/api/schedules", "Create or update one recurring schedule."),
+                ("GET", "/api/schedules/{schedule_id}", "Get one recurring schedule."),
+                ("DELETE", "/api/schedules/{schedule_id}", "Pause one recurring schedule."),
+            ],
+        },
+        {
             "name": "Public and Provider",
             "endpoints": [
                 ("GET", "/t/o/{tracking_token}.gif", "Open tracking pixel."),
@@ -951,8 +971,14 @@ def route_path_map():
             args=["ml-zoomcamp-2026:@e:@homework:homework-1"],
         ),
         API_DOC_PATHS["mailing:api_transient_recipient_list_transactional_send"]: reverse(
-            "mailing:api_transient_recipient_list_transactional_send",
+            "mailing:api_transient_recipient_list_transactional_send"
         ),
+        API_DOC_PATHS["jobs:tasks"]: reverse("jobs:tasks"),
+        API_DOC_PATHS["jobs:task_detail"]: reverse("jobs:task_detail", args=[TASK_ID]),
+        API_DOC_PATHS["jobs:task_complete"]: reverse("jobs:task_complete", args=[TASK_ID]),
+        API_DOC_PATHS["jobs:task_fail"]: reverse("jobs:task_fail", args=[TASK_ID]),
+        API_DOC_PATHS["jobs:schedules"]: reverse("jobs:schedules"),
+        API_DOC_PATHS["jobs:schedule_detail"]: reverse("jobs:schedule_detail", args=[TASK_ID]),
         API_DOC_PATHS["mailing:api_transactional_template"]: reverse(
             "mailing:api_transactional_template",
             args=["homework-submission-confirmation"],
@@ -1023,6 +1049,29 @@ SOURCE_OBJECT_KEY_PARAM = {
 TRACKING_PARAM = {"name": "tracking_token", "in": "path", "required": True, "schema": {"type": "string"}}
 UNSUBSCRIBE_PARAM = {"name": "unsubscribe_token", "in": "path", "required": True, "schema": {"type": "string"}}
 
+# Reversed with a concrete value so the documented path resolves. The task and
+# schedule identifiers are UUIDs; one sample stands in for all of them.
+TASK_ID = "6f1a7f9c-9f7e-4d3f-8b6e-2a5c1d0e7b34"
+TASK_ID_PARAM = {"name": "task_id", "in": "path", "required": True, "schema": {"type": "string", "format": "uuid"}}
+SCHEDULE_ID_PARAM = {
+    "name": "schedule_id",
+    "in": "path",
+    "required": True,
+    "schema": {"type": "string", "format": "uuid"},
+}
+
+TASK_QUERY_PARAMS = [
+    {"name": "status", "in": "query", "schema": {"$ref": "#/components/schemas/JobStatus"}},
+    {"name": "task_type", "in": "query", "schema": {"$ref": "#/components/schemas/JobType"}},
+    {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100}},
+    {
+        "name": "cursor",
+        "in": "query",
+        "schema": {"type": "string"},
+        "description": "next_cursor from the previous page. Opaque, and inclusive of nothing.",
+    },
+]
+
 SCOPE_QUERY_PARAMS = [
     {"name": "email", "in": "query", "required": True, "schema": {"type": "string", "format": "email"}},
     {"name": "audience", "in": "query", "required": True, "schema": {"type": "string"}},
@@ -1074,6 +1123,8 @@ OPENAPI_SPEC = {
         {"name": "State"},
         {"name": "Imports"},
         {"name": "Transactional"},
+        {"name": "Tasks"},
+        {"name": "Schedules"},
         {"name": "Public"},
         {"name": "Provider"},
     ],
@@ -1746,6 +1797,111 @@ OPENAPI_SPEC = {
                     "403": json_response("SNS signature rejected"),
                 },
             }
+        },
+        "/api/tasks": {
+            "post": {
+                "tags": ["Tasks"],
+                "summary": "Submit task",
+                "description": "Queues one background task. Every submission carries a client idempotency key: replaying the same key returns the original task, and reusing it for different work is a 409. Submissions participate in the transaction that caused them.",
+                "security": [{"BearerAuth": []}],
+                "requestBody": json_body("#/components/schemas/TaskSubmitRequest"),
+                "responses": bearer_responses(
+                    json_response("Task state", "#/components/schemas/Task"), accepted=True
+                ),
+            },
+            "get": {
+                "tags": ["Tasks"],
+                "summary": "List tasks",
+                "description": "Newest first, cursor-paged. With no query the response is the same capped list of the most recent tasks a client has always received; the cursor is what makes the rest reachable. Filters narrow within the authenticated client and never widen past it.",
+                "security": [{"BearerAuth": []}],
+                "parameters": TASK_QUERY_PARAMS,
+                "responses": bearer_responses(
+                    json_response("Task page", "#/components/schemas/TaskListResponse")
+                ),
+            },
+        },
+        "/api/tasks/{task_id}": {
+            "get": {
+                "tags": ["Tasks"],
+                "summary": "Get task",
+                "description": "Returns status, attempt count, the recorded HTTP response for webhook deliveries, and the plain-data result.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [TASK_ID_PARAM],
+                "responses": (
+                    bearer_responses(json_response("Task state", "#/components/schemas/Task"))
+                    | {"404": {"$ref": "#/components/responses/ValidationError"}}
+                ),
+            }
+        },
+        "/api/tasks/{task_id}/complete": {
+            "post": {
+                "tags": ["Tasks"],
+                "summary": "Complete leased task",
+                "description": "Resolves a task the receiver acknowledged with 202. Repeating the same resolution is an idempotent 200; a finished task answered the other way is a 409.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [TASK_ID_PARAM],
+                "requestBody": json_body("#/components/schemas/TaskCompleteRequest", required=False),
+                "responses": (
+                    bearer_responses(json_response("Task state", "#/components/schemas/Task"))
+                    | {"409": {"$ref": "#/components/responses/ValidationError"}}
+                ),
+            }
+        },
+        "/api/tasks/{task_id}/fail": {
+            "post": {
+                "tags": ["Tasks"],
+                "summary": "Fail leased task",
+                "description": "Resolves a leased task as failed. retryable=true asks Relay to redeliver while attempts remain, because the receiver has not yet run out of them.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [TASK_ID_PARAM],
+                "requestBody": json_body("#/components/schemas/TaskFailRequest", required=False),
+                "responses": (
+                    bearer_responses(json_response("Task state", "#/components/schemas/Task"))
+                    | {"409": {"$ref": "#/components/responses/ValidationError"}}
+                ),
+            }
+        },
+        "/api/schedules": {
+            "post": {
+                "tags": ["Schedules"],
+                "summary": "Upsert schedule",
+                "description": "Creates or updates one recurring schedule by name. The cron expression is evaluated in the schedule's own timezone, so a daily 09:00 firing keeps meaning 09:00 local across a daylight-saving change.",
+                "security": [{"BearerAuth": []}],
+                "requestBody": json_body("#/components/schemas/ScheduleUpsertRequest"),
+                "responses": bearer_responses(
+                    json_response("Schedule state", "#/components/schemas/Schedule")
+                ),
+            },
+            "get": {
+                "tags": ["Schedules"],
+                "summary": "List schedules",
+                "security": [{"BearerAuth": []}],
+                "responses": bearer_responses(
+                    json_response("Schedule list", "#/components/schemas/ScheduleListResponse")
+                ),
+            },
+        },
+        "/api/schedules/{schedule_id}": {
+            "get": {
+                "tags": ["Schedules"],
+                "summary": "Get schedule",
+                "security": [{"BearerAuth": []}],
+                "parameters": [SCHEDULE_ID_PARAM],
+                "responses": (
+                    bearer_responses(json_response("Schedule state", "#/components/schemas/Schedule"))
+                    | {"404": {"$ref": "#/components/responses/ValidationError"}}
+                ),
+            },
+            "delete": {
+                "tags": ["Schedules"],
+                "summary": "Pause schedule",
+                "description": "Pauses future submissions. Already queued or running work is not cancelled, and deleting is not deleting: the record stays so its history stays readable.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [SCHEDULE_ID_PARAM],
+                "responses": bearer_responses(
+                    json_response("Schedule state", "#/components/schemas/Schedule")
+                ),
+            },
         },
     },
     "components": {
@@ -2801,6 +2957,119 @@ OPENAPI_SPEC = {
                 "properties": {
                     "message": {"type": "object"},
                     "events": {"type": "array", "items": {"type": "object"}},
+                },
+            },
+            "JobStatus": {"type": "string", "enum": ["queued", "running", "retrying", "succeeded", "failed", "cancelled"]},
+            "JobType": {
+                "type": "string",
+                "enum": ["system.echo", "email.send", "webhook"],
+                "description": "Work Relay performs itself. A webhook task names an HTTPS endpoint of the client's own instead.",
+            },
+            "Task": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "format": "uuid"},
+                    "type": {"$ref": "#/components/schemas/JobType"},
+                    "idempotency_key": {"type": "string"},
+                    "correlation_id": {"type": "string", "format": "uuid"},
+                    "status": {"$ref": "#/components/schemas/JobStatus"},
+                    "attempt": {"type": "integer"},
+                    "max_attempts": {"type": "integer"},
+                    "run_after": {"type": "string", "format": "date-time"},
+                    "lease_expires_at": {"type": ["string", "null"], "format": "date-time"},
+                    "created_at": {"type": "string", "format": "date-time"},
+                    "started_at": {"type": ["string", "null"], "format": "date-time"},
+                    "finished_at": {"type": ["string", "null"], "format": "date-time"},
+                    "response_status": {"type": ["integer", "null"]},
+                    "response_body": {"type": "string"},
+                    "result": {"type": ["object", "null"]},
+                    "error": {"type": "string"},
+                    "schedule_id": {"type": ["string", "null"], "format": "uuid"},
+                },
+            },
+            "TaskListResponse": {
+                "type": "object",
+                "properties": {
+                    "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/Task"}},
+                    "next_cursor": {
+                        "type": ["string", "null"],
+                        "description": "Pass as cursor for the next page. Null on the last page.",
+                    },
+                },
+            },
+            "TaskSubmitRequest": {
+                "type": "object",
+                "required": ["type", "idempotency_key"],
+                "properties": {
+                    "type": {"$ref": "#/components/schemas/JobType"},
+                    "idempotency_key": {"type": "string", "maxLength": 255},
+                    "correlation_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Client-minted identifier that survives the API call, the execution, and the callback.",
+                    },
+                    "params": {"type": "object"},
+                    "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "url": {"type": "string", "format": "uri", "description": "Webhook task only."},
+                    "timeout_seconds": {"type": "number", "description": "Webhook task only. Ceiling 60."},
+                },
+            },
+            "TaskCompleteRequest": {
+                "type": "object",
+                "properties": {
+                    "result": {"type": "object", "description": "Plain data. A model instance is not storable."},
+                },
+            },
+            "TaskFailRequest": {
+                "type": "object",
+                "properties": {
+                    "error": {"type": "string"},
+                    "retryable": {
+                        "type": "boolean",
+                        "description": "Asks Relay to redeliver while attempts remain. Defaults to false, because a receiver that reports a failure has usually already handled the side effect.",
+                    },
+                },
+            },
+            "Schedule": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "format": "uuid"},
+                    "name": {"type": "string"},
+                    "cron": {"type": "string", "description": "Standard five-field cron expression."},
+                    "timezone": {
+                        "type": "string",
+                        "description": "IANA zone the cron is evaluated in. Offsets are rejected: they stop tracking daylight saving.",
+                    },
+                    "type": {"$ref": "#/components/schemas/JobType"},
+                    "task": {"type": "object"},
+                    "max_attempts": {"type": "integer"},
+                    "enabled": {"type": "boolean"},
+                    "next_run_at": {"type": "string", "format": "date-time"},
+                    "last_run_at": {"type": ["string", "null"], "format": "date-time"},
+                    "last_success_at": {"type": ["string", "null"], "format": "date-time"},
+                    "last_missed_at": {"type": ["string", "null"], "format": "date-time"},
+                    "last_job_id": {"type": ["string", "null"], "format": "uuid"},
+                },
+            },
+            "ScheduleListResponse": {
+                "type": "object",
+                "properties": {
+                    "schedules": {"type": "array", "items": {"$ref": "#/components/schemas/Schedule"}},
+                },
+            },
+            "ScheduleUpsertRequest": {
+                "type": "object",
+                "required": ["name", "cron", "type"],
+                "properties": {
+                    "name": {"type": "string", "maxLength": 120},
+                    "cron": {"type": "string"},
+                    "timezone": {"type": "string", "default": "UTC"},
+                    "type": {"$ref": "#/components/schemas/JobType"},
+                    "params": {"type": "object"},
+                    "url": {"type": "string", "format": "uri"},
+                    "timeout_seconds": {"type": "number"},
+                    "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "enabled": {"type": "boolean"},
                 },
             },
         },
