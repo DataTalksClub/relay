@@ -17,6 +17,16 @@ TERMINAL_JOB_STATUSES = frozenset(
     {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}
 )
 
+# Every schedule carries the zone its cron is written in. UTC is the default
+# because that is what the project runs in, and an existing schedule was
+# authored against it.
+DEFAULT_SCHEDULE_TIMEZONE = "UTC"
+
+# One scheduler process ticks the whole deployment, so its heartbeat is a single
+# row with a fixed key rather than one row per process: a wedged loop has to
+# show up as a stale timestamp, not as one more row in a table nobody reads.
+SCHEDULER_HEARTBEAT_ID = 1
+
 
 class Schedule(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -27,6 +37,12 @@ class Schedule(models.Model):
     )
     name = models.SlugField(max_length=120)
     cron = models.CharField(max_length=120)
+    # The zone the cron expression is written against. "0 9 * * *" means nine in
+    # the morning where the audience lives, not 09:00 UTC, and a schedule that
+    # drifts by an hour twice a year is a bug nobody reports. Stored as an IANA
+    # name rather than an offset because an offset does not track daylight
+    # saving, and validated at the API layer where cron already is.
+    timezone = models.CharField(max_length=64, default=DEFAULT_SCHEDULE_TIMEZONE)
     task_type = models.CharField(max_length=64)
     task = models.JSONField(default=dict)
     max_attempts = models.PositiveSmallIntegerField(default=5)
@@ -130,3 +146,37 @@ class Job(models.Model):
 
     def __str__(self):
         return f"{self.client.slug}/{self.task_type}/{self.id}"
+
+
+class SchedulerHeartbeat(models.Model):
+    """The scheduler's own liveness row, rewritten on every pass.
+
+    The scheduler is a bare ``while True`` loop. Nothing in the stack can tell
+    a quiet period from a loop that stopped looping: the container is up, the
+    worker is up, and nothing fires. A timestamp the loop writes on the way past
+    turns that into an observable difference, because a wedged loop stops
+    stamping while a healthy one cannot.
+
+    The counters are totals for the process named by ``pid``, so they reset when
+    a container restarts instead of quietly accumulating across images.
+    """
+
+    id = models.PositiveSmallIntegerField(
+        primary_key=True,
+        default=SCHEDULER_HEARTBEAT_ID,
+        editable=False,
+    )
+    pid = models.PositiveIntegerField()
+    ticked_at = models.DateTimeField()
+    schedules_fired = models.PositiveIntegerField(default=0)
+    expired_leases = models.PositiveIntegerField(default=0)
+    recovered_jobs = models.PositiveIntegerField(default=0)
+    campaigns_dispatched = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "relay_scheduler_heartbeat"
+        verbose_name = "scheduler heartbeat"
+        verbose_name_plural = "scheduler heartbeat"
+
+    def __str__(self):
+        return f"scheduler tick {self.ticked_at.isoformat()}"

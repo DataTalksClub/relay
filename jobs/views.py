@@ -15,6 +15,7 @@ from jobs.services import (
     retry_delay,
     serialize_job,
     submit_job,
+    task_page,
 )
 from mailing.services.api_errors import ApiValidationError
 from mailing.views import (
@@ -36,8 +37,16 @@ def tasks(request):
         return error_response
 
     if request.method == "GET":
-        jobs = Job.objects.filter(client=client).order_by("-created_at")[:100]
-        return JsonResponse({"tasks": [serialize_job(job) for job in jobs]})
+        try:
+            jobs, next_cursor = task_page(request.GET, client)
+        except ApiValidationError as exc:
+            return validation_error_response(exc)
+        return JsonResponse(
+            {
+                "tasks": [serialize_job(job) for job in jobs],
+                "next_cursor": next_cursor,
+            }
+        )
 
     try:
         job, created = submit_job(json_request_body(request), client)

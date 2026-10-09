@@ -1,5 +1,7 @@
+import datetime
 import hashlib
 import json
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -7,11 +9,13 @@ from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import F, Q
 from django.utils import timezone
 
 import taskdeck
-from jobs.models import Job, JobStatus
+from jobs.models import SCHEDULER_HEARTBEAT_ID, Job, JobStatus, SchedulerHeartbeat
 from mailing.services.api_errors import ApiValidationError
+from taskdeck.collector import DEFAULT_HEARTBEAT_TIMEOUT_S
 
 TASK_TYPE_ECHO = "system.echo"
 TASK_TYPE_EMAIL_SEND = "email.send"
@@ -232,6 +236,89 @@ def serialize_job(job):
     }
 
 
+TASK_PAGE_SIZE = 100
+
+
+def validate_task_limit(value):
+    """Same 1-100 range as the other client list endpoints.
+
+    The default is the cap the task list has always had, so a caller that sends
+    no query at all gets exactly what it got before.
+    """
+    if value in (None, ""):
+        return TASK_PAGE_SIZE
+    try:
+        limit = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ApiValidationError({"limit": "must_be_integer"}) from exc
+    if limit < 1 or limit > TASK_PAGE_SIZE:
+        raise ApiValidationError({"limit": "must_be_between_1_and_100"})
+    return limit
+
+
+def validate_task_status(value):
+    if value in (None, ""):
+        return None
+    if value not in JobStatus.values:
+        raise ApiValidationError({"status": "unknown"})
+    return value
+
+
+def validate_task_type(value):
+    if value in (None, ""):
+        return None
+    if value not in TASK_TYPES:
+        raise ApiValidationError({"task_type": "unknown"})
+    return value
+
+
+def encode_task_cursor(job):
+    """Position an opaque cursor at one job.
+
+    Jobs are keyed by UUID, so there is no ordered key to page on; the pair
+    (created_at, id) is what makes the order total and the page boundary stable
+    under a concurrent submission.
+    """
+    return f"{job.created_at.isoformat()}|{job.pk}"
+
+
+def decode_task_cursor(value):
+    if value in (None, ""):
+        return None
+    try:
+        raw, _, job_id = value.rpartition("|")
+        return datetime.datetime.fromisoformat(raw), uuid.UUID(job_id)
+    except (TypeError, ValueError) as exc:
+        raise ApiValidationError({"cursor": "invalid"}) from exc
+
+
+def task_page(data, client):
+    """One page of a client's tasks, newest first.
+
+    Cursor pagination rather than an offset: the list is ordered by creation
+    time, a busy client submits while a consumer pages, and an offset silently
+    skips or repeats a row when it does.
+    """
+    limit = validate_task_limit(data.get("limit"))
+    status = validate_task_status(data.get("status"))
+    task_type = validate_task_type(data.get("task_type"))
+    cursor = decode_task_cursor(data.get("cursor"))
+
+    queryset = Job.objects.filter(client=client)
+    if status:
+        queryset = queryset.filter(status=status)
+    if task_type:
+        queryset = queryset.filter(task_type=task_type)
+    if cursor is not None:
+        created_at, job_id = cursor
+        queryset = queryset.filter(
+            Q(created_at__lt=created_at) | (Q(created_at=created_at) & Q(id__lt=job_id))
+        )
+    items = list(queryset.order_by("-created_at", "-id")[: limit + 1])
+    next_cursor = encode_task_cursor(items[limit - 1]) if len(items) > limit else None
+    return items[:limit], next_cursor
+
+
 def retry_delay(attempt):
     """Backoff before the redelivery that follows ``attempt``."""
     return settings.RELAY_JOB_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
@@ -275,3 +362,64 @@ def fail_expired_leases(*, limit=100):
             run_after=now,
         )
     return failed
+
+
+def latest_heartbeat():
+    """The scheduler's most recent tick, or None when it has never ticked."""
+    return SchedulerHeartbeat.objects.order_by("-ticked_at").first()
+
+
+def heartbeat_state():
+    """The latest heartbeat plus whether it has gone stale.
+
+    Staleness is judged against the timeout the status contract already uses,
+    so a page that reads healthy and a console that reads unhealthy cannot both
+    be right about the same loop.
+    """
+    row = latest_heartbeat()
+    if row is None:
+        return None, None
+    stale = row.ticked_at < timezone.now() - timedelta(seconds=DEFAULT_HEARTBEAT_TIMEOUT_S)
+    return row, stale
+
+
+def record_scheduler_heartbeat(
+    *, schedules_fired=0, expired_leases=0, recovered_jobs=0, campaigns_dispatched=0
+):
+    """Stamp the heartbeat and add this pass's counters to the running totals.
+
+    Written in its own short transaction, deliberately outside the per-schedule
+    atomic block in ``run_due_schedules``: the tick has to survive a schedule
+    whose own transaction rolled back, and it must not hold a lock while the
+    next pass takes its ``select_for_update``. A single UPDATE is the whole cost,
+    once per pass, and it commits whether or not anything fired.
+    """
+    pid = os.getpid()
+    fresh = {
+        "pid": pid,
+        "ticked_at": timezone.now(),
+        "schedules_fired": schedules_fired,
+        "expired_leases": expired_leases,
+        "recovered_jobs": recovered_jobs,
+        "campaigns_dispatched": campaigns_dispatched,
+    }
+    if SchedulerHeartbeat.objects.filter(pk=SCHEDULER_HEARTBEAT_ID).first() is None:
+        # get_or_create rather than check-then-create: two schedulers starting
+        # at once (a rolling deploy overlaps them) must not race into a
+        # duplicate-key IntegrityError that takes the loop down.
+        SchedulerHeartbeat.objects.get_or_create(pk=SCHEDULER_HEARTBEAT_ID, defaults=fresh)
+        return
+    # A different pid means a new container: its totals start from this pass
+    # rather than inheriting numbers from a process that no longer exists.
+    if latest_heartbeat().pid != pid:
+        SchedulerHeartbeat.objects.update_or_create(
+            pk=SCHEDULER_HEARTBEAT_ID, defaults=fresh
+        )
+        return
+    SchedulerHeartbeat.objects.filter(pk=SCHEDULER_HEARTBEAT_ID).update(
+        ticked_at=timezone.now(),
+        schedules_fired=F("schedules_fired") + schedules_fired,
+        expired_leases=F("expired_leases") + expired_leases,
+        recovered_jobs=F("recovered_jobs") + recovered_jobs,
+        campaigns_dispatched=F("campaigns_dispatched") + campaigns_dispatched,
+    )

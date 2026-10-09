@@ -58,7 +58,9 @@ def change_schedule_state(schedule_id, action, *, client_id, revision, confirmed
             schedule.enabled = enabled
             if enabled:
                 try:
-                    schedule.next_run_at = next_occurrence(schedule.cron)
+                    schedule.next_run_at = next_occurrence(
+                        schedule.cron, timezone_name=schedule.timezone
+                    )
                 except (ValueError, OverflowError) as exc:
                     raise OperationConflict("This schedule has an invalid run policy. Correct its cron definition through the schedules API before resuming.") from exc
             schedule.save(update_fields=["enabled", "next_run_at", "updated_at"])
