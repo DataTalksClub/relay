@@ -23,6 +23,7 @@ fi
 # because the bundle's @font-face rules use ../fonts/ relative URLs.
 mkdir -p static/dakit/dist static/dakit/fonts
 cp "$DAKIT_DIR/dist/dakit.css" static/dakit/dist/dakit.css
+cp "$DAKIT_DIR/dist/dialogs.js" static/dakit/dist/dialogs.js
 cp "$DAKIT_DIR"/fonts/inter-var.woff2 \
    "$DAKIT_DIR"/fonts/ibm-plex-mono-400.woff2 \
    "$DAKIT_DIR"/fonts/ibm-plex-mono-500.woff2 \

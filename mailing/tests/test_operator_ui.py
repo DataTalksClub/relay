@@ -146,6 +146,7 @@ def test_base_template_loads_datamailer_static_css(client, operator):
 
     assert response.status_code == 200
     assert b'href="/static/dakit/dist/dakit.css"' in response.content
+    assert b'src="/static/dakit/dist/dialogs.js"' in response.content
     assert b'href="/static/mailing/css/app.css"' in response.content
     assert b"<style>" not in response.content
     assert b'class="brand-name">Relay</span>' in response.content
@@ -155,6 +156,7 @@ def test_base_template_loads_datamailer_static_css(client, operator):
     assert b'matchMedia("(max-width: 860px)")' in response.content
     assert b"dakit-theme" in response.content
     assert finders.find("dakit/dist/dakit.css") is not None
+    assert finders.find("dakit/dist/dialogs.js") is not None
     assert finders.find("mailing/css/app.css") is not None
     dakit_css = Path(finders.find("dakit/dist/dakit.css")).read_text()
     assert "--dk-text-primary" in dakit_css
