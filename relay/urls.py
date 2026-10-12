@@ -14,3 +14,6 @@ urlpatterns = [
     path("", include("jobs.urls")),
     path("", include("mailing.urls")),
 ]
+
+handler500 = "mailing.middleware.handle_server_error"
+
