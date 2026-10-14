@@ -1,10 +1,12 @@
 {% load static %}
 <div id="campaign-composer" data-campaign-composer tabindex="-1">
   {{ form.editor_mode }}{{ form.editor_blocks }}
-  <div class="actions" aria-label="Email editing mode">
-    <button type="button" class="secondary" data-editor-mode="blocks" aria-pressed="false">Visual composer</button>
-    <button type="button" class="secondary" data-editor-mode="source" aria-pressed="false">HTML or plain text</button>
+  {% with editor_mode=form.editor_mode.value %}
+  <div class="dk-tabs" role="radiogroup" aria-label="Email editing mode">
+    <button type="button" class="dk-tab" role="radio" data-editor-mode="blocks" aria-checked="{% if editor_mode == 'blocks' %}true{% else %}false{% endif %}" tabindex="{% if editor_mode == 'blocks' %}0{% else %}-1{% endif %}">Visual composer</button>
+    <button type="button" class="dk-tab" role="radio" data-editor-mode="source" aria-checked="{% if editor_mode == 'blocks' %}false{% else %}true{% endif %}" tabindex="{% if editor_mode == 'blocks' %}-1{% else %}0{% endif %}">HTML or plain text</button>
   </div>
+  {% endwith %}
   <p class="helptext">Write with content blocks or keep your existing HTML. Switching modes does not convert imported HTML; choose the version you want to save.</p>
   {% if form.editor_blocks.errors %}<div class="form-errors" role="alert">{{ form.editor_blocks.errors }}</div>{% endif %}
   <div data-composer-panel hidden>
@@ -20,9 +22,9 @@
     <p class="helptext" aria-live="polite" data-composer-announcement></p>
     <section class="section" aria-labelledby="composer-preview-heading">
       <h3 id="composer-preview-heading">Live message preview</h3>
-      <div class="actions">
-        <button type="button" class="secondary" data-composer-width="100%" aria-pressed="true">Desktop preview</button>
-        <button type="button" class="secondary" data-composer-width="375px" aria-pressed="false">Mobile preview</button>
+      <div class="dk-tabs dk-tabs--sm" role="radiogroup" aria-label="Preview width">
+        <button type="button" class="dk-tab" role="radio" data-composer-width="100%" aria-checked="true" tabindex="0">Desktop preview</button>
+        <button type="button" class="dk-tab" role="radio" data-composer-width="375px" aria-checked="false" tabindex="-1">Mobile preview</button>
       </div>
       <iframe class="email-preview-frame" title="Composer email preview" sandbox="" referrerpolicy="no-referrer" data-composer-preview></iframe>
     </section>

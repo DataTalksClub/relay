@@ -82,7 +82,10 @@
   function selectMode(value, dirty = true) {
     mode.value = value;
     panel.hidden = value !== 'blocks'; source.hidden = value === 'blocks';
-    root.querySelectorAll('[data-editor-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.editorMode === value)));
+    root.querySelectorAll('[data-editor-mode]').forEach(button => {
+      const chosen = button.dataset.editorMode === value;
+      button.setAttribute('aria-checked', String(chosen)); button.tabIndex = chosen ? 0 : -1;
+    });
     if (dirty) mode.dispatchEvent(new Event('input', {bubbles:true}));
   }
   root.querySelectorAll('[data-editor-mode]').forEach(button => button.addEventListener('click', () => selectMode(button.dataset.editorMode)));
@@ -93,7 +96,9 @@
   }));
   root.querySelectorAll('[data-composer-width]').forEach(button => button.addEventListener('click', () => {
     preview.style.width = button.dataset.composerWidth; preview.style.maxWidth = '100%';
-    root.querySelectorAll('[data-composer-width]').forEach(other => other.setAttribute('aria-pressed', String(other === button)));
+    root.querySelectorAll('[data-composer-width]').forEach(other => {
+      other.setAttribute('aria-checked', String(other === button)); other.tabIndex = other === button ? 0 : -1;
+    });
   }));
   // Initialize without firing a dirty-form event on page load.
   const initial = state.value;
