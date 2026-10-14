@@ -1,7 +1,9 @@
 <p class="muted">Shared service · all clients. Selecting a workspace does not change these records. Use the client filter to narrow the list.</p>
-<nav class="actions" aria-label="Service operations">
-  <a class="button secondary" href="{% url 'jobs:job_list' %}" {% if request.resolver_match.url_name == 'job_list' %}aria-current="page"{% endif %}>Jobs</a>
-  <a class="button secondary" href="{% url 'jobs:schedule_list' %}" {% if request.resolver_match.url_name == 'schedule_list' %}aria-current="page"{% endif %}>Schedules</a>
-  <a class="button secondary" href="{% url 'jobs:service_health' %}" {% if request.resolver_match.url_name == 'service_health' %}aria-current="page"{% endif %}>Service health</a>
-  <a class="button secondary" href="{% url 'jobs:dead_letter_list' %}" {% if request.resolver_match.url_name == 'dead_letter_list' %}aria-current="page"{% endif %}>Failed jobs</a>
+{% with current=request.resolver_match.url_name %}
+<nav class="dk-tabs" aria-label="Service operations">
+  <a class="dk-tab" href="{% url 'jobs:job_list' %}"{% if current == 'job_list' or current == 'job_detail' %} aria-current="page"{% endif %}>Jobs</a>
+  <a class="dk-tab" href="{% url 'jobs:schedule_list' %}"{% if current == 'schedule_list' or current == 'schedule_detail_ui' %} aria-current="page"{% endif %}>Schedules</a>
+  <a class="dk-tab" href="{% url 'jobs:service_health' %}"{% if current == 'service_health' %} aria-current="page"{% endif %}>Service health</a>
+  <a class="dk-tab" href="{% url 'jobs:dead_letter_list' %}"{% if current == 'dead_letter_list' %} aria-current="page"{% endif %}>Failed jobs</a>
 </nav>
+{% endwith %}
