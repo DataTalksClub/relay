@@ -20,7 +20,7 @@
   <p class="scope-note">Members and campaign eligibility for <strong>{{ active_client.name }}</strong>. This audience belongs to {{ audience.organization.name }}.</p>
   <div class="stats-grid" aria-label="Audience eligibility summary">{% for stat in eligibility_summary %}<div class="stat"><span class="stat-label"><span class="stat-dot {{ stat.tone }}"></span>{{ stat.label }}</span><a class="stat-value stat-link" href="{{ stat.url }}">{{ stat.value }}</a></div>{% endfor %}</div>
   <p class="helptext">Counts cover members with a subscription for {{ active_client.name }} in this audience, before search filters. Eligibility includes consent, verification, address validation, and global suppression. Campaign tags and category preferences can reduce the final send count.</p>
-  <nav class="local-nav" aria-label="Audience sections">{% for item in sections %}<a href="{{ item.url }}"{% if item.current %} aria-current="page"{% endif %}>{{ item.label }}</a>{% endfor %}</nav>
+  <nav class="dk-tabs" aria-label="Audience sections">{% for item in sections %}<a class="dk-tab" href="{{ item.url }}"{% if item.current %} aria-current="page"{% endif %}>{{ item.label }}</a>{% endfor %}</nav>
 
   {% if section == 'members' %}
   <section class="section panel" aria-labelledby="audience-members">
