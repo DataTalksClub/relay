@@ -476,12 +476,20 @@ def inbound_list(request):
     # an operator did not choose, and "no unread mail" is the honest thing to
     # say there where "no messages match" would be a lie about the mailbox.
     narrowed = bool(query or address_filter or request.GET.get("state"))
+    # The state the operator chose, as the links and the form spell it: ""
+    # for the default unread view, "all" for every state. `context["state"]`
+    # cannot say this, because "all" reaches it as "" and the default as
+    # "received".
+    state_choice = request.GET.get("state") or ""
+    if state_choice == DEFAULT_STATE:
+        state_choice = ""
     return render(
         request,
         "mailing/operator/inbound_list.html",
         {
             **context,
             "narrowed": narrowed,
+            "state_choice": state_choice,
             "addresses": list_addresses(),
             "blocked_senders": list_blocked_senders()[:25],
         },

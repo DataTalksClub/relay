@@ -95,6 +95,22 @@ def test_the_list_defaults_to_unread_and_read_mail_is_reachable(client, operator
     assert read.subject.encode() in read_page.content
 
 
+def test_the_state_links_mark_the_chosen_view_and_paging_keeps_it(client, operator, address):
+    for index in range(3):
+        received(message_id=f"<m{index}@example.com>", state=InboundMessageState.READ)
+    client.force_login(operator)
+
+    def current(response):
+        nav = response.content.decode().split('aria-label="Mailbox state"', 1)[1].split("</nav>", 1)[0]
+        return [part.rsplit(">", 1)[1] for part in nav.split("</a>")[:-1] if 'aria-current="page"' in part]
+
+    assert current(client.get(reverse("mailing:inbound_list"))) == ["Unread"]
+    assert current(client.get(reverse("mailing:inbound_list"), {"state": "read"})) == ["Read"]
+    everything = client.get(reverse("mailing:inbound_list"), {"state": "all", "per_page": 2})
+    assert current(everything) == ["Everything"]
+    assert b'href="?state=all&amp;address=&amp;q=&amp;page=2"' in everything.content
+
+
 def test_search_matches_the_sender_the_subject_and_the_body(client, operator, address):
     received()
     client.force_login(operator)
