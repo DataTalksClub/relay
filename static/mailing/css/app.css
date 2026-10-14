@@ -1934,7 +1934,13 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--dk-border-strong);
-  /* Focus is the one colored edge dakit allows: an outline in the focus-ring role. */
+}
+
+/* Focus is the one colored edge dakit allows: an outline in the focus-ring
+   role, and only on :focus-visible. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--dk-focus-ring);
   outline-offset: 0;
 }
@@ -3005,6 +3011,9 @@ pre {
 
 .unsubscribe-option:focus-within {
   border-color: var(--dk-border-strong);
+}
+
+.unsubscribe-option:has(:focus-visible) {
   outline: 2px solid var(--dk-focus-ring);
   outline-offset: 0;
 }
@@ -3069,6 +3078,9 @@ pre {
 
 .skip-link:focus {
   transform: translateY(0);
+}
+
+.skip-link:focus-visible {
   outline: 2px solid var(--dk-focus-ring);
 }
 
