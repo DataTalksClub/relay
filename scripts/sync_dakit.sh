@@ -24,6 +24,7 @@ fi
 mkdir -p static/dakit/dist static/dakit/fonts
 cp "$DAKIT_DIR/dist/dakit.css" static/dakit/dist/dakit.css
 cp "$DAKIT_DIR/dist/dialogs.js" static/dakit/dist/dialogs.js
+cp "$DAKIT_DIR/dist/tabs.js" static/dakit/dist/tabs.js
 # The border checker is vendored too; tests/test_dakit_borders.py runs it.
 cp "$DAKIT_DIR/scripts/check-borders.mjs" static/dakit/check-borders.mjs
 cp "$DAKIT_DIR"/fonts/inter-var.woff2 \
