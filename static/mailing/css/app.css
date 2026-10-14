@@ -1089,19 +1089,19 @@ a.stat-link:focus {
 
 .badge.success {
   color: var(--dk-success-text);
-  border-color: var(--dk-success-border);
+  border-color: var(--dk-border-default);
   background: var(--dk-success-bg);
 }
 
 .badge.warning {
   color: var(--dk-warning-text);
-  border-color: var(--dk-warning-border);
+  border-color: var(--dk-border-default);
   background: var(--dk-warning-bg);
 }
 
 .badge.danger {
   color: var(--dk-danger-text);
-  border-color: var(--dk-danger-border);
+  border-color: var(--dk-border-default);
   background: var(--dk-danger-bg);
 }
 
@@ -1763,14 +1763,14 @@ a.compact-row:hover {
 .message.success,
 .alert.success {
   color: var(--dk-success-text);
-  border-color: var(--dk-success-border);
+  border-color: var(--dk-border-default);
   background: var(--dk-success-bg);
 }
 
 .message.warning,
 .alert.warning {
   color: var(--dk-warning-text);
-  border-color: var(--dk-warning-border);
+  border-color: var(--dk-border-default);
   background: var(--dk-warning-bg);
 }
 
@@ -1778,7 +1778,7 @@ a.compact-row:hover {
 .alert.error,
 .alert.danger {
   color: var(--dk-danger-text);
-  border-color: var(--dk-danger-border);
+  border-color: var(--dk-border-default);
   background: var(--dk-danger-bg);
 }
 
@@ -1933,10 +1933,10 @@ input[type="radio"] {
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: var(--dk-accent-default);
-  outline: none;
-  /* The dataops focus treatment: a soft token-colored ring, not a border swap alone. */
-  box-shadow: 0 0 0 3px var(--dk-focus-ring);
+  border-color: var(--dk-border-strong);
+  /* Focus is the one colored edge dakit allows: an outline in the focus-ring role. */
+  outline: 2px solid var(--dk-focus-ring);
+  outline-offset: 0;
 }
 
 /* Buttons follow dakit's hierarchy: a bare <button> is a quiet secondary
@@ -1953,7 +1953,7 @@ button,
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
   color: var(--dk-text-on-accent);
-  border-color: var(--dk-accent-default);
+  border-color: transparent;
   background: var(--dk-accent-default);
   font-size: var(--dk-text-body);
   font-weight: var(--dk-weight-medium);
@@ -1967,7 +1967,7 @@ button,
 button.primary,
 .button.primary {
   color: var(--dk-text-on-accent);
-  border-color: var(--dk-accent-default);
+  border-color: transparent;
   background: var(--dk-accent-default);
 }
 
@@ -1982,13 +1982,13 @@ button.secondary:hover {
 
 .button {
   color: var(--dk-text-on-accent);
-  border-color: var(--dk-accent-default);
+  border-color: transparent;
   background: var(--dk-accent-default);
 }
 
 .button:hover {
   color: var(--dk-text-on-accent);
-  border-color: var(--dk-accent-hover);
+  border-color: transparent;
   background: var(--dk-accent-hover);
   text-decoration: none;
 }
@@ -2017,14 +2017,14 @@ button.secondary:hover {
 button.danger,
 .button.danger {
   color: var(--dk-danger-text);
-  border-color: var(--dk-danger-border);
+  border-color: var(--dk-border-default);
   background: var(--dk-bg-page);
 }
 
 button.danger:hover,
 .button.danger:hover {
   color: var(--dk-danger-text);
-  border-color: var(--dk-danger-hover);
+  border-color: var(--dk-border-strong);
   background: var(--dk-danger-bg);
 }
 
@@ -2255,7 +2255,7 @@ tr:last-child td {
   display: inline-block;
   min-width: max-content;
   padding: var(--dk-space-2);
-  border: 1px solid var(--dk-success-border);
+  border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-sm);
   color: var(--dk-text-primary);
   background: var(--dk-bg-page);
@@ -3004,8 +3004,9 @@ pre {
 }
 
 .unsubscribe-option:focus-within {
-  border-color: var(--dk-accent-default);
-  box-shadow: 0 0 0 3px var(--dk-accent-soft);
+  border-color: var(--dk-border-strong);
+  outline: 2px solid var(--dk-focus-ring);
+  outline-offset: 0;
 }
 
 .unsubscribe-option input {
@@ -3060,7 +3061,7 @@ pre {
   z-index: 100;
   transform: translateY(-160%);
   padding: 10px 16px;
-  border: 2px solid var(--dk-accent-default);
+  border: 1px solid var(--dk-border-strong);
   border-radius: var(--dk-radius-sm);
   background: var(--dk-bg-page);
   color: var(--dk-text-primary);
@@ -3068,6 +3069,7 @@ pre {
 
 .skip-link:focus {
   transform: translateY(0);
+  outline: 2px solid var(--dk-focus-ring);
 }
 
 .local-nav {
