@@ -1,6 +1,6 @@
-<div class="actions" role="group" aria-label="Preview width">
-  <button type="button" class="secondary" data-preview-width="100%" aria-pressed="true">Desktop preview</button>
-  <button type="button" class="secondary" data-preview-width="375px" aria-pressed="false">Mobile preview</button>
+<div class="dk-tabs dk-tabs--sm" role="radiogroup" aria-label="Preview width">
+  <button type="button" class="dk-tab" role="radio" data-preview-width="100%" aria-checked="true" tabindex="0">Desktop preview</button>
+  <button type="button" class="dk-tab" role="radio" data-preview-width="375px" aria-checked="false" tabindex="-1">Mobile preview</button>
 </div>
 <p class="helptext">Width simulation helps review layout. Email apps may render the same message differently.</p>
 <script>
@@ -12,7 +12,9 @@
         if (!frame) return;
         frame.style.width = button.dataset.previewWidth;
         frame.style.maxWidth = '100%';
-        controls.querySelectorAll('button').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+        controls.querySelectorAll('button').forEach(item => {
+          item.setAttribute('aria-checked', String(item === button)); item.tabIndex = item === button ? 0 : -1;
+        });
       });
     });
   })();
