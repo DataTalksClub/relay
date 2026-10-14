@@ -3084,48 +3084,6 @@ pre {
   outline: 2px solid var(--dk-focus-ring);
 }
 
-.local-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  width: fit-content;
-  max-width: 100%;
-  padding: 2px;
-  margin: 0 0 var(--dk-space-4);
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-md);
-  background: var(--dk-bg-muted);
-}
-
-/* Quiet tab row: selection is accent text over an accent-soft underline band
-   aligned with the container hairline — no boxed chips. */
-.local-nav a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 0 var(--dk-space-3);
-  border: 1px solid transparent;
-  border-radius: var(--dk-radius-sm);
-  color: var(--dk-text-primary);
-  font-size: var(--dk-text-md);
-  font-weight: var(--dk-weight-medium);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.local-nav a:hover {
-  background: var(--dk-bg-hover);
-  text-decoration: none;
-}
-
-/* The active segment is the raised surface tab, never a filled pill — the
-   inbox reference's "Actionable | New | Blocked" treatment. */
-.local-nav a[aria-current] {
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-surface);
-  font-weight: var(--dk-weight-semibold);
-}
-
 [id] {
   scroll-margin-top: var(--dk-space-4);
 }
