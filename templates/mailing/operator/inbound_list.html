@@ -14,25 +14,6 @@
     </div>
   </div>
 
-  <div class="stats-grid">
-    <div class="stat">
-      <span class="stat-label"><span class="stat-dot {% if counts.received %}danger{% endif %}"></span>Unread</span>
-      <span class="stat-value">{{ counts.received|default:0 }}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label"><span class="stat-dot"></span>Read</span>
-      <span class="stat-value">{{ counts.read|default:0 }}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label"><span class="stat-dot {% if counts.blocked %}warning{% endif %}"></span>Blocked</span>
-      <span class="stat-value">{{ counts.blocked|default:0 }}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label"><span class="stat-dot {% if sender_count %}warning{% endif %}"></span>Senders waiting</span>
-      <span class="stat-value">{{ sender_count|default:0 }}</span>
-    </div>
-  </div>
-
   <section class="section panel" aria-labelledby="mailbox-filters">
     <div class="panel-header">
       <h2 id="mailbox-filters">Filter mailbox</h2>

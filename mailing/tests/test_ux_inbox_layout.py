@@ -56,7 +56,7 @@ def test_inbox_subject_links_preserve_search_context():
     request.user = AnonymousUser()
     message = InboundMessage(pk=1, state="read", subject="Help needed", sender_address="learner@example.com")
     html = render_to_string(
-        "mailing/operator/inbound_list.html", {"rows": [message], "counts": {}, "total": 1}, request=request
+        "mailing/operator/inbound_list.html", {"rows": [message], "total": 1}, request=request
     )
     target = reverse("mailing:inbound_message_detail", args=[1])
     assert f'href="{target}?return=/inbound/%3Fstate%3Dall%26q%3Dlearner%26page%3D2">Help needed</a>' in html

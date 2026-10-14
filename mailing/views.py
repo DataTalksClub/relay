@@ -108,7 +108,6 @@ from mailing.services.contact_import_export import (
 from mailing.services.inbound_views import (
     BLOCK_ORIGIN_BUTTON,
     DEFAULT_STATE,
-    address_summary,
     block_sender,
     list_addresses,
     list_blocked_senders,
@@ -566,7 +565,7 @@ def inbound_address_list(request):
         request,
         "mailing/operator/inbound_address_list.html",
         {
-            **address_summary(),
+            "addresses": list_addresses(),
             "blocked_rules": list_blocked_senders(),
             "routes": sorted(settings.INBOUND_EMAIL_ROUTES),
         },

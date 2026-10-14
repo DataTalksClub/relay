@@ -76,17 +76,7 @@ def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page
         "state": state or "",
         "query": query,
         "address": address,
-        "counts": message_counts(),
-        "sender_count": queryset.exclude(sender_address="").values("sender_address").distinct().count(),
     }
-
-
-def message_counts():
-    counts = {InboundMessageState.RECEIVED: 0, InboundMessageState.READ: 0, InboundMessageState.BLOCKED: 0}
-    for state, total in InboundMessage.objects.values("state").annotate(total=Count("id")):
-        counts[state] = total
-    counts["all"] = sum(counts[key] for key in (InboundMessageState.RECEIVED, InboundMessageState.READ, InboundMessageState.BLOCKED))
-    return counts
 
 
 def unread_sender_count():
@@ -122,15 +112,6 @@ def list_addresses(*, include_inactive=True):
     if not include_inactive:
         queryset = queryset.filter(is_active=True)
     return queryset.order_by("domain", "local_part")
-
-
-def address_summary():
-    return {
-        "addresses": list_addresses(),
-        "active_count": InboundAddress.objects.filter(is_active=True).count(),
-        "retired_count": InboundAddress.objects.filter(is_active=False).count(),
-        "total_count": InboundAddress.objects.count(),
-    }
 
 
 def list_blocked_senders():
