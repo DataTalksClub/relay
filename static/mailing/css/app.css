@@ -774,12 +774,15 @@ p {
   font-weight: var(--dk-weight-medium);
 }
 
-a {
+/* Element defaults skip dakit segments: this CSS is unlayered, so a bare `a`
+   or `button` rule would beat .dk-tab in dakit's component layer. :where()
+   keeps these at element specificity. */
+a:where(:not(.dk-tab)) {
   color: var(--dk-text-link);
   text-decoration: none;
 }
 
-a:hover {
+a:where(:not(.dk-tab)):hover {
   color: var(--dk-text-link-hover);
   text-decoration: underline;
 }
@@ -793,8 +796,8 @@ a:hover {
   text-decoration: underline;
 }
 
-a:focus-visible,
-button:focus-visible,
+a:where(:not(.dk-tab)):focus-visible,
+button:where(:not(.dk-tab)):focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
@@ -1902,7 +1905,7 @@ label {
 input,
 select,
 textarea,
-button,
+button:where(:not(.dk-tab)),
 .button {
   display: inline-flex;
   align-items: center;
@@ -1948,7 +1951,7 @@ textarea:focus-visible {
 /* Buttons follow dakit's hierarchy: a bare <button> is a quiet secondary
    control; the filled primary is reserved for `.button` (one per view).
    Danger is a quiet outline, never a filled red block. */
-button,
+button:where(:not(.dk-tab)),
 .button {
   display: inline-flex;
   align-items: center;
@@ -1977,7 +1980,7 @@ button.primary,
   background: var(--dk-accent-default);
 }
 
-button:hover,
+button:where(:not(.dk-tab)):hover,
 .button.secondary:hover,
 button.secondary:hover {
   color: var(--dk-text-primary);
@@ -1999,7 +2002,7 @@ button.secondary:hover {
   text-decoration: none;
 }
 
-button:disabled,
+button:where(:not(.dk-tab)):disabled,
 .button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
@@ -3082,6 +3085,25 @@ pre {
 
 .skip-link:focus-visible {
   outline: 2px solid var(--dk-focus-ring);
+}
+
+/* Placement only for dakit segmented controls (.dk-tabs): page-level tracks
+   get flow spacing, and a track loose in a panel lines up with panel prose.
+   Their look is dakit's. */
+.app-main > .dk-tabs {
+  margin: var(--dk-space-4) 0;
+}
+
+.panel > .dk-tabs,
+.panel > .section > .dk-tabs {
+  margin: var(--dk-space-4) var(--dk-space-4) 0;
+}
+
+/* A filter bar that leads with a segmented control puts its field grid on
+   the next row, full width, instead of squeezing it beside the track. */
+.filter-bar > .filter-grid {
+  flex: 1 1 100%;
+  margin: 0;
 }
 
 [id] {
