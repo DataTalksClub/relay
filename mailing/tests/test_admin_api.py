@@ -313,7 +313,7 @@ def test_status_endpoints_use_operator_data(setup, monkeypatch):
     monkeypatch.setattr("mailing.services.worker_status.sandbox_worker_statuses", lambda: [])
     http = setup[0]
     response = http.get("/api/admin/dashboard")
-    assert response.status_code == 200 and "summary_stats" in response.json()
+    assert response.status_code == 200 and "attention_items" in response.json()
     assert http.get("/api/admin/workers").status_code == 200
 
 

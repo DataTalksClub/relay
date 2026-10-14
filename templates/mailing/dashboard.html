@@ -175,27 +175,13 @@
     <p><a href="{% url 'mailing:transactional_queue' %}">Review this client's waiting emails ({{ dashboard.transactional_backlog_count }})</a> · <a href="/jobs/dead-letters/">Review failed service jobs</a></p>
     <details class="secondary-section panel-diagnostics">
       <summary>Processing diagnostics</summary>
-    <div class="stats-grid">
-      {% for worker in dashboard.worker_statuses %}
-        <div class="stat">
-          <span class="stat-label"><span class="stat-dot {% if worker.backlog_count %}warning{% endif %}"></span>{{ worker.label }}</span>
-          {% if worker.key == "transactional" %}
-            <a class="stat-value" href="{% url 'mailing:transactional_queue' %}">{{ dashboard.transactional_backlog_count }}</a>
-          {% elif worker.backlog_count is None %}
-            <span class="stat-value">-</span>
-          {% else %}
-            <span class="stat-value">{{ worker.backlog_count }}</span>
-          {% endif %}
-          <span class="helptext">{{ worker.backlog_label }}</span>
-        </div>
-      {% endfor %}
-    </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Worker</th>
               <th>Status</th>
+              <th>Waiting</th>
               <th>Service</th>
               <th>Runtime</th>
             </tr>
@@ -207,6 +193,10 @@
                 <td>
                   <span class="badge {{ worker.badge_tone }}">{{ worker.badge_label }}</span>
                   <div class="helptext">{{ worker.detail }}</div>
+                </td>
+                <td>
+                  {% if worker.backlog_count is None %}<span class="muted">-</span>{% else %}<span class="dk-mono">{{ worker.backlog_count }}</span>{% endif %}
+                  <div class="helptext">{{ worker.backlog_label }}</div>
                 </td>
                 <td>
                   <div class="helptext">{{ worker.service_name }}</div>
@@ -225,24 +215,6 @@
     </details>
   </section>
 
-  <details class="secondary-section panel-diagnostics">
-    <summary>Operational Summary</summary>
-    <div class="section-header">
-      <div>
-        <h2>Client inventory</h2>
-        <p class="muted">Subscription totals describe consent, not effective eligibility.</p>
-      </div>
-    </div>
-    <div class="stats-grid">
-      {% for stat in dashboard.summary_stats %}
-        <div class="stat">
-          <a class="stat-value" href="{{ stat.href }}">{{ stat.value }}</a>
-          <span class="stat-label"><span class="stat-dot {{ stat.tone }}"></span>{{ stat.label }}</span>
-          {% if stat.rate %}<span class="helptext">{{ stat.rate }}</span>{% endif %}
-        </div>
-      {% endfor %}
-    </div>
-  </details>
 
 
   <section class="section panel" aria-labelledby="quick-links">

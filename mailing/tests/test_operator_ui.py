@@ -284,8 +284,7 @@ def test_dashboard_renders_operational_summary_links_and_seeded_style_data(
     assert "Processing diagnostics" in html
     assert html.index("Processing diagnostics") < html.index("relay-db-worker.service")
     assert "Recent Campaign Activity" in html
-    assert "Deliverability attention" in html
-    assert "Client inventory" in html
+    assert "Client inventory" not in html
     assert "Weekly update" in html
     assert f'href="{reverse("mailing:campaign_detail", args=[campaign.id])}"' in html
     assert "Bounce" in html
@@ -2334,12 +2333,12 @@ def test_dashboard_transactional_backlog_links_and_is_client_scoped(client, oper
     select_active_client(client, client_record)
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
-    assert f'<a class="stat-value" href="{queue_url}">2</a>' in html
+    assert f'<a href="{queue_url}">Review this client\'s waiting emails (2)</a>' in html
 
     select_active_client(client, other_client)
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
-    assert f'<a class="stat-value" href="{queue_url}">3</a>' in html
+    assert f'<a href="{queue_url}">Review this client\'s waiting emails (3)</a>' in html
 
 
 def test_dashboard_backlog_count_stays_global_in_worker_status(client_record, other_client):

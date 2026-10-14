@@ -16,12 +16,10 @@ from mailing.models import (
     CampaignRecipientStatus,
     CampaignStatus,
     Client,
-    ClientApiKey,
     Contact,
     ContactTag,
     EmailEvent,
     EmailEventType,
-    EmailTemplate,
     EmailValidationStatus,
     Subscription,
     SubscriptionStatus,
@@ -296,14 +294,12 @@ class DashboardClient:
 
 @dataclass(frozen=True)
 class DashboardContext:
-    summary_stats: list[Stat]
     recent_campaigns: list[DashboardCampaign]
     attention_items: list[DashboardAttentionItem]
     worker_statuses: list[WorkerStatus]
     worker_health_label: str
     worker_health_tone: str
     worker_waiting_count: int
-    integration_stats: list[Stat]
     integration_clients: list[DashboardClient]
     transactional_backlog_count: int
 
@@ -323,42 +319,10 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
     worker_health_label, worker_health_tone = worker_health(worker_statuses)
     worker_waiting_count = sum(worker.backlog_count or 0 for worker in worker_statuses)
     campaign_scope = Campaign.objects.all()
-    subscription_scope = Subscription.objects.all()
-    template_scope = EmailTemplate.objects.all()
     client_scope = Client.objects.all()
-    audience_scope = Audience.objects.all()
-    scoped_contacts = Contact.objects.all()
     if client is not None:
         campaign_scope = campaign_scope.filter(client=client)
-        subscription_scope = subscription_scope.filter(client=client)
-        template_scope = template_scope.filter(client=client)
         client_scope = client_scope.filter(pk=client.pk)
-        audience_scope = audience_scope.filter(organization=client.organization)
-        scoped_contacts = scoped_contacts.filter(
-            Q(subscriptions__client=client)
-            | Q(campaign_recipients__campaign__client=client)
-            | Q(transactional_messages__client=client)
-            | Q(email_events__client=client)
-        ).distinct()
-
-    active_campaigns = campaign_scope.filter(
-        status__in=[
-            CampaignStatus.SCHEDULED,
-            CampaignStatus.QUEUED,
-            CampaignStatus.SNAPSHOTTING,
-            CampaignStatus.SENDING,
-        ]
-    ).count()
-    draft_campaigns = campaign_scope.filter(status=CampaignStatus.DRAFT).count()
-    subscribed_contacts = (
-        subscription_scope.filter(status=SubscriptionStatus.SUBSCRIBED).values("contact_id").distinct().count()
-    )
-    suppressed_contacts = suppressed_contact_queryset(client).count()
-    hard_bounces = scoped_contacts.filter(hard_bounced_at__isnull=False).count()
-    complaints = scoped_contacts.filter(complained_at__isnull=False).count()
-    active_clients = client_scope.filter(is_active=True).count()
-    active_api_keys = ClientApiKey.objects.filter(client__in=client_scope, revoked_at__isnull=True).count()
-    active_templates = template_scope.filter(is_transactional=True, is_active=True).count()
 
     transactional_backlog_scope = TransactionalMessage.objects.filter(status=TransactionalMessageStatus.QUEUED)
     if client is not None:
@@ -380,43 +344,12 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
     ]
 
     return DashboardContext(
-        summary_stats=[
-            Stat(
-                "campaigns",
-                "Campaigns",
-                campaign_scope.count(),
-                f"{active_campaigns} active / {draft_campaigns} drafts",
-                href="/campaigns/",
-            ),
-            Stat(
-                "contacts",
-                "Contacts",
-                scoped_contacts.count(),
-                f"{subscribed_contacts} subscribed / {audience_scope.count()} audiences",
-                    href="/contacts/",
-            ),
-            Stat(
-                "deliverability",
-                "Deliverability attention",
-                suppressed_contacts,
-                f"{hard_bounces} bounces / {complaints} complaints",
-                tone="danger" if suppressed_contacts else "",
-                href="/contacts/",
-            ),
-            Stat("api_access", "API access", active_clients, f"{active_api_keys} active keys", href="/clients/"),
-            Stat("templates", "Transactional templates", active_templates, "active templates", href="/templates/"),
-        ],
         recent_campaigns=recent_campaigns,
         attention_items=dashboard_attention_items(client),
         worker_statuses=worker_statuses,
         worker_health_label=worker_health_label,
         worker_health_tone=worker_health_tone,
         worker_waiting_count=worker_waiting_count,
-        integration_stats=[
-            Stat("clients", "Active clients", active_clients, f"{client_scope.count()} total"),
-            Stat("api_keys", "Active API keys", active_api_keys),
-            Stat("templates", "Active templates", active_templates),
-        ],
         integration_clients=integration_clients,
         transactional_backlog_count=transactional_backlog_count,
     )
@@ -428,23 +361,6 @@ def worker_health(workers: list[WorkerStatus]) -> tuple[str, str]:
     if not workers or any(worker.alive is None for worker in workers):
         return "Processing health unavailable", "neutral"
     return "Healthy", "success"
-
-
-def suppressed_contact_queryset(client: Client | None = None):
-    queryset = Contact.objects.filter(
-        Q(global_unsubscribed_at__isnull=False)
-        | Q(hard_bounced_at__isnull=False)
-        | Q(complained_at__isnull=False)
-        | Q(subscriptions__status=SubscriptionStatus.UNSUBSCRIBED)
-    ).distinct()
-    if client is not None:
-        queryset = queryset.filter(
-            Q(subscriptions__client=client)
-            | Q(campaign_recipients__campaign__client=client)
-            | Q(transactional_messages__client=client)
-            | Q(email_events__client=client)
-        ).distinct()
-    return queryset
 
 
 def dashboard_attention_items(client: Client | None = None) -> list[DashboardAttentionItem]:
