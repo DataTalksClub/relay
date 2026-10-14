@@ -202,6 +202,24 @@ else
   if ! grep -q '^RELAY_TRANSFER_TOKEN=.' "$runtime_env"; then
     set_runtime_value RELAY_TRANSFER_TOKEN "$(openssl rand -hex 32)"
   fi
+  # runtime.env is written once, but RDS rotates the master password behind
+  # the database-url secret. Refresh it on every deploy so a redeploy picks up
+  # a rotated credential. Not set_runtime_value: its sed breaks on & or | in
+  # the URL.
+  database_url="$(secret_from_secrets_manager RELAY_DATABASE_URL_SECRET_ARN)"
+  if [[ -z "$database_url" ]]; then
+    echo "RELAY_DATABASE_URL_SECRET_ARN resolved to an empty value" >&2
+    exit 1
+  fi
+  runtime_tmp="$(mktemp "$(dirname "$runtime_env")/.runtime.XXXXXX")"
+  DATABASE_URL="$database_url" awk '
+    /^DATABASE_URL=/ { if (!done) print "DATABASE_URL=" ENVIRON["DATABASE_URL"]; done = 1; next }
+    { print }
+    END { if (!done) print "DATABASE_URL=" ENVIRON["DATABASE_URL"] }
+  ' "$runtime_env" >"$runtime_tmp"
+  chmod 0600 "$runtime_tmp"
+  mv "$runtime_tmp" "$runtime_env"
+  unset database_url runtime_tmp
 fi
 
 grep -q '^RELAY_EMAIL_SEND_ROLE_ARN=' "$infra_env" || {
