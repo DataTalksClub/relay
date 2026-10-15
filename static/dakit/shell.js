@@ -1,4 +1,4 @@
-/* dakit 0.2.0 9a4a2a8 */
+/* dakit 0.2.0 70faf9e */
 // Dakit app shell behaviour — the contract is docs/shell.md.
 //
 // Load once per page, at the end of <body> (no defer, so the persisted
@@ -376,23 +376,48 @@
     }, 0);
   });
 
+  // A press inside the open popover. Pressing its non-focusable parts (text, a
+  // row's padding) drops focus to <body> without the person leaving it.
+  let pressedInside = false;
+  document.addEventListener("pointerdown", (event) => {
+    pressedInside = !!open && open.popover.contains(event.target);
+  }, true);
+  document.addEventListener("keydown", () => { pressedInside = false; }, true);
+
   // Non-modal: tabbing out closes without trapping. relatedTarget is null when
   // focus leaves the document (Tab past the last element into browser chrome)
   // or goes to something unfocusable, so that case is settled a task later
   // from where focus actually is. A window blur keeps activeElement inside the
   // popover, so switching apps does not close it.
+  //
+  // Focus can also be dropped inside the popover rather than moved out of it:
+  // the focused control went busy (disabled), was hidden, or was re-rendered
+  // away, or a press landed on the popover's own background. The document
+  // keeps focus and it falls to <body>. That is not the person leaving, so the
+  // popover stays open and focus is caught on its container, where the app
+  // can hand it on (to the re-rendered control, an error) and the keyboard
+  // still works. Tab into browser chrome leaves the departed control intact,
+  // so it still closes.
   document.addEventListener("focusout", (event) => {
     if (!open || !open.popover.contains(event.target)) return;
     const { popover } = open;
+    const left = event.target;
     const next = event.relatedTarget;
     if (next) {
       if (!ownsFocus(popover, next)) closePopovers({ restoreFocus: false });
       return;
     }
     setTimeout(() => {
-      if (open && open.popover === popover && !ownsFocus(popover, document.activeElement)) {
-        closePopovers({ restoreFocus: false });
+      if (!open || open.popover !== popover) return;
+      const now = document.activeElement;
+      if (ownsFocus(popover, now)) return;
+      const dropped = !left.isConnected || left.disabled || !visible(left) || pressedInside;
+      if (dropped && document.hasFocus() && (!now || now === document.body)) {
+        if (!popover.hasAttribute("tabindex")) popover.tabIndex = -1;
+        popover.focus({ preventScroll: true });
+        return;
       }
+      closePopovers({ restoreFocus: false });
     }, 0);
   });
 
