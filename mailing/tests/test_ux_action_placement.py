@@ -133,7 +133,7 @@ def assert_page_create(parsed, title, label, href):
 def test_base_arms_the_create_shortcut(client, operator, client_record):
     client.force_login(operator)
     html = client.get(reverse("mailing:campaign_list")).content.decode()
-    assert "dakit/dist/collection.js" in html
+    assert "dakit/collection.js" in html
     assert "dakitCollection.installShortcut(document)" in html
 
 

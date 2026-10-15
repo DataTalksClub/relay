@@ -2,7 +2,8 @@
 
 Relay's UI belongs to the **dataops design family**. The sources of truth are
 the vendored dakit bundle (`static/dakit/`, synced from `../dakit` via
-`scripts/sync_dakit.sh`), the family spec (`../dakit/docs/family.md`), and the
+`make sync-dakit`, which runs dakit's `scripts/sync.mjs` and records
+`static/dakit/dakit.lock.json`), the family spec (`../dakit/docs/family.md`), and the
 canonical implementation (`../dataops`, see `frontend/DESIGN_SYSTEM.md`).
 When this file and a template disagree, the template changes; when dakit and
 this file disagree, dakit wins.
