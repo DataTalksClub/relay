@@ -346,3 +346,26 @@ def test_phone_client_switcher_takes_over_from_the_drawer(browser, live_server, 
         page.keyboard.press("Enter")
     assert page.locator(".dk-brand__scope").text_content() == "Second Client"
     assert errors == []
+
+
+def test_inbox_search_placeholder_is_never_cut(browser, live_server, operator, mailbox):
+    for viewport, list_width in ((DESKTOP, None), (DESKTOP, 240), (PHONE, None)):
+        page, _ = open_page(browser, live_server, operator, "/inbound/", viewport=viewport, phone=viewport is PHONE)
+        if list_width:
+            page.evaluate("w => window.dakitSplit.setWidth(document.querySelector('.dk-split'), w)", list_width)
+        fits = page.evaluate(
+            """() => {
+              const input = document.getElementById('q');
+              const probe = document.createElement('span');
+              const style = getComputedStyle(input);
+              probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${style.font}`;
+              probe.textContent = input.placeholder;
+              document.body.append(probe);
+              const room = input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+              const need = probe.getBoundingClientRect().width;
+              probe.remove();
+              return need <= room;
+            }"""
+        )
+        assert fits, (viewport, list_width)
+        page.context.close()

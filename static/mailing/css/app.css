@@ -2406,6 +2406,12 @@ pre {
   min-width: 0;
 }
 
+/* Search takes the whole tools row, so its placeholder is never cut, from
+   the 240px resize minimum to a phone. */
+.inbox-filter .dk-input {
+  flex-basis: 100%;
+}
+
 .inbox-row__sender {
   flex: 1 1 auto;
   min-width: 0;

@@ -26,7 +26,7 @@
         </nav>
         <form method="get" class="inbox-filter" role="search" aria-label="Filter mailbox">
           <input type="hidden" name="state" value="{{ state_choice }}">
-          <input class="dk-input" id="q" name="q" type="search" value="{{ query }}" placeholder="Subject, sender, body" aria-label="Search mail">
+          <input class="dk-input" id="q" name="q" type="search" value="{{ query }}" placeholder="Search mail" aria-label="Search mail by subject, sender or body">
           <select class="dk-select" id="address" name="address" aria-label="Receiving address">
             <option value="">All addresses</option>
             {% for row in addresses %}
