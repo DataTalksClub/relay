@@ -14,7 +14,7 @@ from django.contrib import admin
 from django.contrib.auth import get_user_model, login, logout
 from django.http import HttpResponse, HttpResponseRedirect
 from django.template.loader import render_to_string
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
 
 def configured():
@@ -179,8 +179,10 @@ def auth_error(_request):
     return _security_headers(response)
 
 
-@require_GET
+@require_POST
 def end(request):
+    """Sign out. POST only, behind Django's CSRF check: a GET (a link, an
+    image, a cross-site navigation) must never end the session."""
     logout(request)
     if not configured() or not settings.AUTH_LOGOUT_URL:
         return HttpResponseRedirect("/admin/login/")

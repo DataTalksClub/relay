@@ -138,7 +138,13 @@
       <header class="dk-auth-page__bar">
         <a class="dk-auth-page__brand" href="/">Relay</a>
         {% if user.is_authenticated %}
-          <p class="dk-auth-page__identity" role="status">{{ user.email|default:user.get_username }} · <a href="{% url 'oidc-logout' %}">Sign out</a></p>
+          <div class="relay-identity">
+            <p class="dk-auth-page__identity" role="status">{{ user.email|default:user.get_username }}</p>
+            <form method="post" action="{% url 'oidc-logout' %}">
+              {% csrf_token %}
+              <button class="dk-button dk-button--secondary dk-button--sm" type="submit">Sign out</button>
+            </form>
+          </div>
         {% endif %}
       </header>
       <main class="dk-auth-page__main" id="main-content" tabindex="-1">
@@ -179,10 +185,14 @@
         </button>
         <div class="dk-menu__meta"><span>{% if operator_meta.version %}v{{ operator_meta.version }}{% endif %}</span><span>{{ operator_meta.region }}</span></div>
         <hr class="dk-menu__sep">
-        <a class="dk-menu__item dk-menu__item--danger" href="{% url 'oidc-logout' %}">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9"/></svg>
-          <span>Sign out</span>
-        </a>
+        {# Signing out changes state, so it is a CSRF-protected POST (dakit shell.md §6). #}
+        <form method="post" action="{% url 'oidc-logout' %}">
+          {% csrf_token %}
+          <button class="dk-menu__item dk-menu__item--danger" type="submit">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9"/></svg>
+            <span>Sign out</span>
+          </button>
+        </form>
       </div>
       <div id="dk-live" class="dk-visually-hidden" aria-live="polite"></div>
     {% endif %}

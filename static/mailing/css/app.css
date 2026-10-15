@@ -2534,3 +2534,15 @@ pre {
 .audience-health-counts {
   max-width: var(--dk-size-measure);
 }
+
+/* Signed-in, non-staff bar: the identity line and its Sign out form. */
+.relay-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-3);
+  min-width: 0;
+}
+
+.relay-identity .dk-auth-page__identity {
+  margin: 0;
+}

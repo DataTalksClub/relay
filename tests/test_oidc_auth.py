@@ -107,3 +107,39 @@ def test_admin_login_redirects_to_shared_auth_when_configured(client, settings):
     response = client.get("/admin/login/")
     assert response.status_code == 302
     assert response["Location"] == "/auth/login?return_to=/admin/"
+
+
+@pytest.fixture
+def signed_in():
+    from django.test import Client  # noqa: PLC0415
+
+    user = get_user_model().objects.create_user("signout", "signout@example.com", "x", is_staff=True)
+    browser = Client(enforce_csrf_checks=True)
+    browser.force_login(user)
+    return browser
+
+
+@pytest.mark.django_db
+def test_logout_get_never_ends_the_session(signed_in):
+    response = signed_in.get("/auth/logout", HTTP_ORIGIN="https://evil.example")
+    assert response.status_code == 405
+    assert "_auth_user_id" in signed_in.session
+
+
+@pytest.mark.django_db
+def test_logout_post_without_csrf_token_is_refused(signed_in):
+    response = signed_in.post("/auth/logout")
+    assert response.status_code == 403
+    assert "_auth_user_id" in signed_in.session
+
+
+@pytest.mark.django_db
+def test_logout_post_with_csrf_token_signs_out_and_hands_off(signed_in, settings):
+    for key, value in AUTH_SETTINGS.items():
+        setattr(settings, key, value)
+    page = signed_in.get("/")
+    token = page.cookies["csrftoken"].value if "csrftoken" in page.cookies else signed_in.cookies["csrftoken"].value
+    response = signed_in.post("/auth/logout", {"csrfmiddlewaretoken": token})
+    assert response.status_code == 302
+    assert response["Location"].startswith("https://auth.example.test/logout?")
+    assert "_auth_user_id" not in signed_in.session

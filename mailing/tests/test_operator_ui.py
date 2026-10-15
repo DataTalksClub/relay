@@ -226,7 +226,10 @@ def test_operator_account_menu_owns_identity_theme_and_sign_out(client, operator
     assert 'role="switch" aria-checked="false" data-dk-theme-toggle' in menu
     assert html.count("data-dk-theme-toggle") == 1
     assert 'class="dk-menu__meta"><span>v' in menu
-    assert 'class="dk-menu__item dk-menu__item--danger" href="/auth/logout"' in menu
+    assert '<form method="post" action="/auth/logout">' in menu
+    assert 'name="csrfmiddlewaretoken"' in menu[menu.index('action="/auth/logout"') :]
+    assert '<button class="dk-menu__item dk-menu__item--danger" type="submit">' in menu
+    assert 'href="/auth/logout"' not in html
     assert menu.index("dk-menu__identity") < menu.index("data-dk-theme-toggle") < menu.index("dk-menu__meta") < menu.index("Sign out")
     assert "Signed in as" not in html
     assert "Close account menu" not in html
