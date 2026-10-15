@@ -390,3 +390,18 @@ def test_contact_eligibility_badges_stay_inside_their_cell(browser, live_server,
     assert any(len(label) > 30 for _, label in overflow), "seed has a long validation reason"
     assert all(right <= 0.5 for right, _ in overflow), overflow
     assert errors == []
+
+
+def test_phone_client_cards_give_the_name_the_card_width(browser, live_server, operator):
+    organization = Organization.objects.create(name="AI Shipping Labs", slug="ai-shipping-labs")
+    Client.objects.create(organization=organization, name="AI Shipping Labs Platform", slug="asl-platform")
+    page, errors = open_page(browser, live_server, operator, "/clients/", viewport=PHONE, phone=True)
+    widths = page.evaluate(
+        """() => { const cell = document.querySelector('.client-table .integration-cell');
+                   return [cell.getBoundingClientRect().width, cell.closest('tr').clientWidth,
+                           cell.querySelector('strong').getClientRects().length]; }"""
+    )
+    cell, card, lines = widths
+    assert cell >= card * 0.8, widths
+    assert lines == 1, widths
+    assert errors == []

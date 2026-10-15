@@ -2012,6 +2012,19 @@ pre {
     font-family: var(--dk-font-sans);
   }
 
+  /* Desktop column widths (.client-table .integration-cell: 24%) must not
+     survive into the card: every line takes the card's full width. */
+  .table-wrap.stack-table td {
+    width: auto;
+    max-width: none;
+  }
+
+  /* Data cells stay mono inside the sans card. */
+  .stack-table td.data-num,
+  .stack-table td.data-time {
+    font-family: var(--dk-font-mono);
+  }
+
   /* The first column is the record title: ink, semibold, no label. */
   .stack-table td:first-child {
     font-weight: var(--dk-weight-semibold);
