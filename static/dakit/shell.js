@@ -1,4 +1,4 @@
-/* dakit 0.2.0 ab738d2 */
+/* dakit 0.2.0 c607e9d */
 // Dakit app shell behaviour — the contract is docs/shell.md.
 //
 // Load once per page, at the end of <body> (no defer, so the persisted
@@ -67,7 +67,7 @@
     }
   }
 
-  function toggleDrawer(shell, open = shell.dataset.drawer !== "open") {
+  function toggleDrawer(shell, open = shell.dataset.drawer !== "open", { restoreFocus = true } = {}) {
     const sidebar = shell.querySelector(".dk-sidebar");
     const scrim = shell.querySelector(".dk-scrim");
     const toggles = shell.querySelectorAll("[data-dk-drawer-toggle]");
@@ -104,7 +104,7 @@
       toggles.forEach((t) => t.setAttribute("aria-expanded", "false"));
       const back = drawerReturn && drawerReturn.isConnected && visible(drawerReturn) ? drawerReturn : toggles[0];
       drawerReturn = null;
-      if (back) back.focus();
+      if (restoreFocus && back) back.focus();
     }
     return open;
   }
@@ -145,9 +145,20 @@
     if (!popover) return;
     closePopovers({ restoreFocus: false });
     hideTooltip();
+    let returnTo = trigger || triggersFor(id)[0];
+    // A trigger inside the open mobile drawer (the brand switcher): the drawer
+    // is modal and popovers are its siblings, so the popover would sit
+    // outside the dialog that traps focus. The drawer hands over instead: it
+    // closes without moving focus, the popover opens as the sheet under the
+    // bar, and closing it returns focus to the drawer's menu button.
+    const shell = returnTo && returnTo.closest(".dk-shell");
+    if (shell && shell.dataset.drawer === "open" && returnTo.closest(".dk-sidebar")) {
+      toggleDrawer(shell, false, { restoreFocus: false });
+      returnTo = shell.querySelector("[data-dk-drawer-toggle]") || returnTo;
+    }
     popover.hidden = false;
     triggersFor(id).forEach((t) => t.setAttribute("aria-expanded", "true"));
-    open = { popover, trigger: trigger || triggersFor(id)[0] };
+    open = { popover, trigger: returnTo };
     const autofocus = popover.querySelector("[data-dk-autofocus]");
     if (autofocus) { autofocus.focus(); return; }
     if (!keyboard && popover.matches(".dk-menu")) {

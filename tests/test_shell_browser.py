@@ -294,3 +294,55 @@ def test_phone_browser_back_and_forward_move_focus_with_the_pane(browser, live_s
     page.wait_for_function("document.activeElement && document.activeElement.id === 'message-title'")
     assert page.locator("#message-title").text_content() == subject
     assert errors == []
+
+
+def test_phone_client_switcher_takes_over_from_the_drawer(browser, live_server, operator, clients):
+    """The switcher's trigger sits in the modal drawer; opening it closes the
+    drawer and shows the switcher as the sheet under the bar, so focus never
+    sits outside the dialog that owns it (dakit shell.md §10-11)."""
+    page, errors = open_page(browser, live_server, operator, "/", viewport=PHONE, phone=True)
+    sidebar_has_focus = "document.getElementById('dk-sidebar').contains(document.activeElement)"
+
+    def open_drawer_and_focus_brand():
+        page.locator("[data-dk-drawer-toggle]").focus()
+        page.keyboard.press("Enter")
+        page.wait_for_function(sidebar_has_focus)
+        page.wait_for_timeout(50)
+        page.locator("button.dk-brand").focus()
+        page.wait_for_function("document.activeElement.matches('button.dk-brand')")
+
+    # Pointer
+    page.locator("[data-dk-drawer-toggle]").click()
+    page.wait_for_function(sidebar_has_focus)
+    page.locator("button.dk-brand").click()
+    menu = page.locator("#dk-brand-menu")
+    assert menu.is_visible()
+    assert page.locator(".dk-shell").get_attribute("data-drawer") is None
+    assert page.evaluate("document.querySelector('.dk-main').inert") is False
+    assert page.locator("#dk-sidebar").get_attribute("aria-modal") is None
+    assert page.evaluate("document.getElementById('dk-brand-menu').contains(document.activeElement)")
+    assert menu.bounding_box()["y"] >= 48
+    page.keyboard.press("Escape")
+    assert menu.is_hidden()
+    assert active(page) == "Open navigation"
+
+    # Keyboard, then Tab and Shift+Tab out: it closes and focus stays out of the closed drawer.
+    for key in ("Tab", "Shift+Tab"):
+        open_drawer_and_focus_brand()
+        page.keyboard.press("Enter")
+        assert menu.is_visible()
+        assert active(page) == "DTC Courses"
+        page.keyboard.press(key)
+        page.wait_for_function("document.getElementById('dk-brand-menu').hidden")
+        assert not page.evaluate(sidebar_has_focus)
+        assert page.evaluate("document.querySelector('.dk-main').inert") is False
+
+    # Keyboard selection with typeahead switches the client.
+    open_drawer_and_focus_brand()
+    page.keyboard.press("Enter")
+    page.keyboard.press("s")
+    assert active(page) == "Second Client"
+    with page.expect_navigation():
+        page.keyboard.press("Enter")
+    assert page.locator(".dk-brand__scope").text_content() == "Second Client"
+    assert errors == []

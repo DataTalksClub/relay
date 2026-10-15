@@ -1,4 +1,4 @@
-/* dakit 0.2.0 ab738d2 */
+/* dakit 0.2.0 c607e9d */
 /* dakit segmented control (docs/segmented.md): keyboard for the two
    single-choice roles a .dk-tabs track can carry.
 
