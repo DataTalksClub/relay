@@ -42,360 +42,10 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* --- shared shell pieces: icons, brand mark, canvas toolbar -------------- */
-
+/* Inline 24-grid icons in content (disclosure chevrons). The shell's icons
+   are dakit's (dk-nav-item__icon, dk-icon-button). */
 .icon {
   flex: none;
-}
-
-.icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  min-height: 0;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--dk-radius-md);
-  background: transparent;
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-md);
-}
-
-.icon-button:hover {
-  color: var(--dk-text-primary);
-  border-color: transparent;
-  background: var(--dk-bg-hover);
-  text-decoration: none;
-}
-
-/* Canvas toolbar: the family shell has no top bar on desktop — the sidebar
-   footer carries the global controls. For operator shells the toolbar is the
-   mobile top bar only (menu + page title); standalone views keep it. */
-.has-sidebar .app-toolbar {
-  display: none;
-}
-
-.app-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: var(--dk-space-2);
-  min-height: 64px;
-  padding: 0 var(--dk-space-6);
-  border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-surface);
-}
-
-.topbar-title {
-  display: none;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dk-text-heading);
-  font-size: 17px;
-  font-weight: var(--dk-weight-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--dk-space-1);
-  margin-left: auto;
-}
-
-.toolbar-actions .icon-button .icon {
-  width: 18px;
-  height: 18px;
-}
-
-.toolbar-actions .icon-button {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  color: var(--dk-text-muted);
-}
-
-/* Theme toggle shows one glyph per theme; the boot script pins data-theme
-   before first paint, so the swap is pure CSS. */
-.theme-icon-sun {
-  display: none;
-}
-
-:root[data-theme="dark"] .theme-icon-moon {
-  display: none;
-}
-
-:root[data-theme="dark"] .theme-icon-sun {
-  display: block;
-}
-
-/* Account control: avatar chip + name + chevron opening the family
-   account popover (identity, appearance, sign-out). */
-.account-menu {
-  position: relative;
-}
-
-.account-menu summary {
-  list-style: none;
-}
-
-.account-menu summary::-webkit-details-marker {
-  display: none;
-}
-
-.account-menu[open] .account-button {
-  background: var(--dk-bg-hover);
-}
-
-.account-button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--dk-space-2);
-  min-height: var(--dk-size-control-md);
-  padding: 0 var(--dk-space-2) 0 var(--dk-space-1);
-  border: 0;
-  border-radius: var(--dk-radius-md);
-  background: transparent;
-  color: var(--dk-text-primary);
-  font-size: 13px;
-  font-weight: var(--dk-weight-semibold);
-  cursor: pointer;
-}
-
-.account-button .icon {
-  color: var(--dk-text-muted);
-}
-
-.account-button:hover {
-  background: var(--dk-bg-hover);
-}
-
-.account-avatar {
-  display: inline-grid;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: var(--dk-radius-full);
-  background: var(--dk-accent-default);
-  color: var(--dk-text-on-accent);
-  font-size: 11px;
-  font-weight: var(--dk-weight-bold);
-}
-
-.account-button-name {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
-  display: grid;
-  align-content: start;
-  width: min(380px, calc(100vw - var(--dk-space-7)));
-  overflow: auto;
-  max-height: calc(100vh - 80px);
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-lg);
-  background: var(--dk-bg-surface);
-  box-shadow: var(--dk-shadow-overlay);
-}
-
-.account-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--dk-space-3);
-  min-height: 54px;
-  padding: var(--dk-space-2) var(--dk-space-2) var(--dk-space-2) var(--dk-space-4);
-  border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-muted);
-}
-
-.account-panel-header strong {
-  color: var(--dk-text-heading);
-  font-size: var(--dk-text-lg);
-}
-
-.account-identity {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--dk-space-3);
-  padding: 14px var(--dk-space-4);
-  border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-surface);
-}
-
-.account-avatar-large {
-  width: 40px;
-  height: 40px;
-  font-size: 14px;
-}
-
-.account-identity-copy {
-  display: grid;
-  min-width: 0;
-}
-
-.account-identity-copy small,
-.account-identity-copy > span {
-  overflow: hidden;
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-identity-copy strong {
-  overflow: hidden;
-  color: var(--dk-text-heading);
-  font-size: var(--dk-text-body);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-section-label {
-  margin: 0;
-  padding: var(--dk-space-2) var(--dk-space-4);
-  border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-muted);
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
-  font-weight: var(--dk-weight-semibold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.account-item {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
-  justify-content: stretch;
-  gap: 10px;
-  width: 100%;
-  min-height: 54px;
-  padding: 10px var(--dk-space-4);
-  border: 0;
-  border-bottom: 1px solid var(--dk-border-default);
-  border-radius: 0;
-  background: var(--dk-bg-surface);
-  color: var(--dk-text-primary);
-  font: inherit;
-  white-space: normal;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.account-item:hover {
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-hover);
-  color: var(--dk-text-primary);
-  text-decoration: none;
-}
-
-.account-item:last-child {
-  border-bottom: 0;
-}
-
-.account-item > span:nth-child(2) {
-  display: grid;
-  gap: 2px;
-}
-
-.account-item strong {
-  color: var(--dk-text-heading);
-  font-size: var(--dk-text-body);
-}
-
-.account-item small {
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
-  font-weight: var(--dk-weight-regular);
-}
-
-.account-item-icon {
-  display: grid;
-  place-items: center;
-  color: var(--dk-text-muted);
-}
-
-.account-theme-label {
-  color: var(--dk-text-heading);
-  font-weight: var(--dk-weight-semibold);
-}
-
-.account-toggle-track {
-  display: flex;
-  width: 36px;
-  height: 20px;
-  align-items: center;
-  border-radius: var(--dk-radius-full);
-  background: var(--dk-border-strong);
-  padding: 2px;
-  transition: background 140ms ease;
-}
-
-.account-toggle-track span {
-  width: 16px;
-  height: 16px;
-  border-radius: var(--dk-radius-full);
-  background: var(--dk-text-on-deep);
-  transition: transform 140ms ease;
-}
-
-.account-theme-toggle[aria-pressed="true"] .account-toggle-track {
-  background: var(--dk-accent-default);
-}
-
-.account-theme-toggle[aria-pressed="true"] .account-toggle-track span {
-  transform: translateX(16px);
-}
-
-.account-sign-out,
-.account-sign-out:hover,
-.account-sign-out strong,
-.account-sign-out:hover strong,
-.account-sign-out .account-item-icon,
-.account-sign-out:hover .account-item-icon {
-  color: var(--dk-danger-text);
-}
-
-.account-sign-out:hover {
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-hover);
-}
-
-.client-switcher {
-  display: grid;
-  gap: var(--dk-space-1);
-}
-
-.client-switcher label {
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-xs);
-  font-weight: var(--dk-weight-semibold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.client-switcher select[multiple] {
-  height: auto;
-  min-height: var(--dk-size-control-md);
-  /* Native multi-selects size to their options; the 34px control height
-     slices the second option in half. */
-  padding: 6px 10px;
 }
 
 select[multiple] option {
@@ -410,328 +60,15 @@ select {
   padding: 0 calc(2 * var(--dk-space-3) + 10px) 0 var(--dk-space-2);
 }
 
-main,
-.app-main {
-  max-width: var(--dk-size-content-max);
-  padding: var(--dk-space-7) var(--dk-space-6) 64px;
-}
-
-/* --- the family shell: 268px sidebar + canvas ----------------------------
-   Same geometry as dataops: the sidebar sits on the page background, carries
-   the product mark and icon-plus-text rows; global actions live in a slim
-   toolbar above the canvas only. Selection signal is the filled row only. */
-
-.app-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 100vh;
-  background: var(--dk-bg-page);
-}
-
-.app-shell.has-sidebar {
-  grid-template-columns: var(--dk-size-sidebar) minmax(0, 1fr);
-}
-
-.app-shell.has-sidebar.sidebar-collapsed {
-  grid-template-columns: 56px minmax(0, 1fr);
-}
-
-.app-sidebar {
-  position: sticky;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--dk-space-4);
-  height: 100vh;
-  padding: var(--dk-space-4) var(--dk-space-3);
-  overflow-y: auto;
-  border-right: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-muted);
-}
-
-.sidebar-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--dk-space-1);
-  min-height: 40px;
-}
-
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--dk-space-2);
-  min-width: 0;
-  color: var(--dk-text-heading);
-  text-decoration: none;
-}
-
-.brand:hover {
-  text-decoration: none;
-}
-
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--dk-radius-md);
-  background: var(--dk-accent-default);
-  color: var(--dk-text-on-accent);
-  font-size: 16px;
-  font-weight: var(--dk-weight-bold);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.brand-name {
-  font-weight: var(--dk-weight-medium);
-  overflow: hidden;
-  color: var(--dk-text-heading);
-  font-size: 16px;
-  font-weight: var(--dk-weight-semibold);
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.brand-subtitle {
-  overflow: hidden;
-  margin-top: 2px;
-  color: var(--dk-text-muted);
-  font-size: 12px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The workspace collapse control is a 36px bordered square, the family's
-   sidebar-header button. */
-.sidebar-toggle {
-  border: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-surface);
-  flex: none;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  color: var(--dk-text-muted);
-}
-
-/* The drawer close control shows only while the mobile drawer is open. */
-.sidebar-drawer-close {
-  display: none;
-}
-
-@media (max-width: 860px) {
-  html.js .has-sidebar.sidebar-open .sidebar-drawer-close {
-    display: inline-flex;
-  }
-
-  html.js .has-sidebar.sidebar-open .sidebar-toggle {
-    display: none;
-  }
-}
-
-/* The drawer open control lives in the toolbar on phones. */
-.sidebar-menu-toggle {
-  display: none;
-}
-
-.sidebar-context {
-  padding-top: var(--dk-space-2);
-}
-
-.sidebar-client-action {
-  width: 100%;
-}
-
-.sidebar-nav {
-  display: grid;
-  gap: var(--dk-space-5);
-  align-content: start;
-  flex: 1;
-}
-
-.sidebar-nav-group {
-  display: grid;
-  gap: 2px;
-}
-
-.sidebar-nav-label,
-.sidebar-context {
-  padding-left: var(--dk-space-3);
-  padding-right: var(--dk-space-3);
-}
-
-.sidebar-nav-label {
-  margin: 0 0 var(--dk-space-1);
-  padding-left: var(--dk-space-3);
-  color: var(--dk-text-muted);
-  font-size: 12px;
-  font-weight: var(--dk-weight-semibold);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-/* Family nav row: 36px icon+text row, radius-md, medium weight; the filled
-   row is the whole selection signal. */
-.sidebar-nav a {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 36px;
-  padding: 6px 10px;
-  border-radius: var(--dk-radius-md);
-  color: var(--dk-text-primary);
-  font-size: var(--dk-text-body);
-  font-weight: var(--dk-weight-medium);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.sidebar-nav a .icon {
-  color: var(--dk-text-primary);
-  color: var(--dk-text-muted);
-}
-
-.sidebar-nav a span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-nav a .icon {
-  flex: none;
-  color: var(--dk-text-muted);
-}
-
-.sidebar-nav a[aria-current="page"] .icon,
-.sidebar-nav a:hover .icon {
-  color: inherit;
-}
-
-.sidebar-nav a:hover {
-  background: var(--dk-bg-hover);
-  text-decoration: none;
-}
-
-.sidebar-nav a[aria-current="page"] {
-  background: var(--dk-accent-soft);
-  color: var(--dk-accent-default);
-  font-weight: var(--dk-weight-semibold);
-}
-
-.sidebar-nav a[aria-current="page"] .icon {
-  color: var(--dk-accent-default);
-}
-
-/* Collapsed rail: icon-only rows, restore control stays visible. */
-.sidebar-collapsed .app-sidebar {
-  padding: var(--dk-space-2);
-}
-
-.sidebar-collapsed .sidebar-head {
-  justify-content: center;
-}
-
-/* Sidebar footer: the shell's only global strip — account trigger on the
-   collapsed rail too (avatar only, panel anchored above it). */
-.sidebar-foot {
-  margin-top: auto;
-  border-top: 1px solid var(--dk-border-default);
-  padding-top: var(--dk-space-3);
-}
-
-.sidebar-collapsed .sidebar-foot {
-  padding-top: var(--dk-space-2);
-}
-
-.sidebar-foot .account-menu {
-  position: relative;
-  display: block;
-}
-
-.sidebar-foot .account-button {
-  width: 100%;
-  justify-content: flex-start;
-  padding: var(--dk-space-1) var(--dk-space-2);
-}
-
-.sidebar-foot .account-button-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-
-.sidebar-foot .account-panel {
-  top: auto;
-  bottom: calc(100% + 6px);
-  left: 0;
-  right: auto;
-}
-
-.sidebar-collapsed .account-button-name,
-.sidebar-collapsed .account-button > .icon {
-  display: none;
-}
-
-.sidebar-collapsed .account-button {
-  justify-content: center;
-  padding: 0;
-}
-
-.sidebar-collapsed .brand-text,
-.sidebar-collapsed .sidebar-context,
-.sidebar-collapsed .sidebar-nav-label,
-.sidebar-collapsed .sidebar-nav a span {
-  display: none;
-}
-
-.sidebar-collapsed .sidebar-nav a {
-  justify-content: center;
-  padding: 0;
-}
-
-.sidebar-toggle-closed {
-  display: none;
-}
-
-.sidebar-collapsed .sidebar-toggle-open {
-  display: none;
-}
-
-.sidebar-collapsed .sidebar-toggle-closed {
-  display: block;
-}
-
-.sidebar-scrim {
-  display: none;
-}
-
-.app-main {
-  width: 100%;
-  max-width: var(--dk-size-content-max);
-  margin: 0 auto;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
+/* Operator page titles are dakit's page-header size (shell.md §8): 22px
+   at every width; --dk-text-page is for single-purpose views only. */
 h1 {
   margin: 0 0 var(--dk-space-2);
   color: var(--dk-text-heading);
-  font-size: var(--dk-text-page);
+  font-size: var(--dk-text-xl);
   font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
+  line-height: var(--dk-leading-tight);
+  letter-spacing: -0.01em;
 }
 
 h2 {
@@ -774,15 +111,16 @@ p {
   font-weight: var(--dk-weight-medium);
 }
 
-/* Element defaults skip dakit segments: this CSS is unlayered, so a bare `a`
-   or `button` rule would beat .dk-tab and .dk-button in dakit's component layer. :where()
+/* Element defaults skip every dakit-classed control: this CSS is unlayered,
+   so a bare `a` or `button` rule would beat .dk-tab, .dk-button and the
+   shell's nav items, menus and icon buttons in dakit's layers. :where()
    keeps these at element specificity. */
-a:where(:not(.dk-tab, .dk-button)) {
+a:where(:not([class*="dk-"])) {
   color: var(--dk-text-link);
   text-decoration: none;
 }
 
-a:where(:not(.dk-tab, .dk-button)):hover {
+a:where(:not([class*="dk-"])):hover {
   color: var(--dk-text-link-hover);
   text-decoration: underline;
 }
@@ -796,8 +134,8 @@ a:where(:not(.dk-tab, .dk-button)):hover {
   text-decoration: underline;
 }
 
-a:where(:not(.dk-tab, .dk-button)):focus-visible,
-button:where(:not(.dk-tab)):focus-visible,
+a:where(:not([class*="dk-"])):focus-visible,
+button:where(:not([class*="dk-"])):focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
@@ -995,7 +333,7 @@ summary:focus-visible,
 .stat-value {
   display: block;
   font-family: var(--dk-font-mono);
-  font-size: 22px;
+  font-size: var(--dk-text-xl);
   font-weight: var(--dk-weight-medium);
   line-height: 1.2;
 }
@@ -1910,7 +1248,7 @@ label {
 input,
 select,
 textarea,
-button:where(:not(.dk-tab)),
+button:where(:not([class*="dk-"])),
 .button {
   display: inline-flex;
   align-items: center;
@@ -1956,7 +1294,7 @@ textarea:focus-visible {
 /* Buttons follow dakit's hierarchy: a bare <button> is a quiet secondary
    control; the filled primary is reserved for `.button` (one per view).
    Danger is a quiet outline, never a filled red block. */
-button:where(:not(.dk-tab)),
+button:where(:not([class*="dk-"])),
 .button {
   display: inline-flex;
   align-items: center;
@@ -1985,7 +1323,7 @@ button.primary,
   background: var(--dk-accent-default);
 }
 
-button:where(:not(.dk-tab)):hover,
+button:where(:not([class*="dk-"])):hover,
 .button.secondary:hover,
 button.secondary:hover {
   color: var(--dk-text-primary);
@@ -2007,7 +1345,7 @@ button.secondary:hover {
   text-decoration: none;
 }
 
-button:where(:not(.dk-tab)):disabled,
+button:where(:not([class*="dk-"])):disabled,
 .button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
@@ -2513,168 +1851,7 @@ pre {
   color: var(--dk-danger-text);
 }
 
-@media (max-width: 860px) {
-  .app-shell,
-  .app-shell.has-sidebar,
-  .app-shell.has-sidebar.sidebar-collapsed {
-    display: block;
-    min-height: 0;
-  }
-
-  /* The toolbar returns as the 64px top bar: menu control and page title —
-     the family's mobile top bar; account lives in the drawer footer. */
-  .has-sidebar .app-toolbar {
-    display: flex;
-  }
-
-  .app-toolbar {
-    min-height: 64px;
-    padding: 0 var(--dk-space-3);
-  }
-
-  .topbar-title {
-    display: block;
-    flex: 1;
-  }
-
-  .sidebar-menu-toggle {
-    display: inline-flex;
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    border: 1px solid var(--dk-border-default);
-    border-radius: var(--dk-radius-md);
-    background: var(--dk-bg-surface);
-  }
-
-  .toolbar-actions .icon-button .icon {
-  width: 18px;
-  height: 18px;
-}
-
-.toolbar-actions .icon-button {
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    border: 1px solid var(--dk-border-default);
-    border-radius: var(--dk-radius-md);
-    background: var(--dk-bg-surface);
-  }
-
-  .toolbar-actions {
-    flex: none;
-  }
-
-  /* Standalone toolbars collapse their account control to the bare avatar;
-     the operator drawer's footer row keeps its label at the touch scale. */
-  .toolbar-actions .account-button {
-    min-width: var(--dk-size-touch);
-    min-height: var(--dk-size-touch);
-    justify-content: center;
-    padding: 0;
-  }
-
-  .toolbar-actions .account-button-name,
-  .toolbar-actions .account-button > .icon {
-    display: none;
-  }
-
-  .sidebar-foot .account-button {
-    min-height: var(--dk-size-touch);
-  }
-
-  /* The drawer scrolls; pin the account row to its bottom edge so the
-     trigger never falls below the fold. */
-  .sidebar-foot {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    margin-top: auto;
-    padding: var(--dk-space-3) 0 0;
-    background: var(--dk-bg-muted);
-  }
-
-  .account-panel {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    width: 100%;
-    max-height: none;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .account-panel-header {
-    display: grid;
-    grid-template-columns: var(--dk-size-touch) minmax(0, 1fr) var(--dk-size-touch);
-    min-height: 64px;
-    padding: 0 var(--dk-space-2);
-  }
-
-  .account-panel-header strong {
-    grid-column: 2;
-    grid-row: 1;
-    text-align: center;
-  }
-
-  .account-panel-close {
-    grid-column: 1;
-    grid-row: 1;
-    width: var(--dk-size-touch);
-    min-width: var(--dk-size-touch);
-    height: var(--dk-size-touch);
-  }
-
-  .sidebar-toggle {
-    display: none;
-  }
-
-  .app-sidebar {
-    position: static;
-    height: auto;
-    max-height: none;
-    overflow: visible;
-    border-right: 0;
-    border-bottom: 1px solid var(--dk-border-default);
-  }
-
-  /* With JS the navigation opens as a modal drawer instead of stacking. */
-  html.js .has-sidebar .app-sidebar {
-    display: none;
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 40;
-    width: min(300px, 85vw);
-    height: 100vh;
-    border-right: 1px solid var(--dk-border-default);
-    box-shadow: var(--dk-shadow-overlay);
-  }
-
-  html.js .has-sidebar.sidebar-open .app-sidebar {
-    display: flex;
-  }
-
-  html.js .sidebar-scrim {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    border: 0;
-    padding: 0;
-    background: var(--dk-bg-backdrop);
-  }
-
-  html.js .app-shell.sidebar-open > .sidebar-scrim {
-    display: block;
-  }
-
-  .sidebar-nav a {
-    min-height: 40px;
-    height: auto;
-  }
-
+@media (max-width: 820px) {
   .table-wrap {
     scrollbar-width: thin;
     /* A right-edge fade hints that narrow viewports scroll sideways. */
@@ -2690,14 +1867,6 @@ pre {
     box-shadow: inset -14px 0 14px -16px var(--dk-border-strong);
   }
 
-  .app-main {
-    max-width: none;
-    margin: 0;
-    border: 0;
-    border-radius: 0;
-    padding: var(--dk-space-5) var(--dk-space-4) var(--dk-space-7);
-  }
-
   .api-docs-layout,
   .api-example {
     grid-template-columns: 1fr;
@@ -2709,20 +1878,6 @@ pre {
 }
 
 @media (max-width: 640px) {
-  main,
-  .app-main {
-    padding: var(--dk-space-5) 14px;
-  }
-
-  .app-toolbar {
-    padding-right: 14px;
-    padding-left: 14px;
-  }
-
-  h1 {
-    font-size: 22px;
-  }
-
   .page-header,
   .section-header {
     display: grid;
@@ -3071,31 +2226,10 @@ pre {
   border: 0;
 }
 
-.skip-link {
-  position: fixed;
-  top: 8px;
-  left: 8px;
-  z-index: 100;
-  transform: translateY(-160%);
-  padding: 10px 16px;
-  border: 1px solid var(--dk-border-strong);
-  border-radius: var(--dk-radius-sm);
-  background: var(--dk-bg-page);
-  color: var(--dk-text-primary);
-}
-
-.skip-link:focus {
-  transform: translateY(0);
-}
-
-.skip-link:focus-visible {
-  outline: 2px solid var(--dk-focus-ring);
-}
-
 /* Placement only for dakit segmented controls (.dk-tabs): page-level tracks
    get flow spacing, and a track loose in a panel lines up with panel prose.
    Their look is dakit's. */
-.app-main > .dk-tabs {
+.dk-main__inner > .dk-tabs {
   margin: var(--dk-space-4) 0;
 }
 
@@ -3131,7 +2265,7 @@ pre {
   white-space: normal;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 820px) {
   .triage-table {
     overflow: visible;
     box-shadow: none;
@@ -3254,3 +2388,16 @@ pre {
 .campaign-draft-summary { position: sticky; top: 0; z-index: 2; padding: 12px 16px; background: var(--dk-bg-page); border: 1px solid var(--dk-border-default); }
 .filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--dk-border-default); border-radius: var(--dk-radius-sm); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Page blocks sit in dakit's .dk-main__inner flex column, whose gap is the
+   section rhythm; top-level blocks drop their page-flow margins so the two
+   don't add up. */
+.dk-main__inner > * {
+  margin-block: 0;
+}
+
+/* Client switcher in the brand row: the wordmark keeps its width and the
+   active client name takes the ellipsis. */
+.dk-brand__name {
+  flex: none;
+}

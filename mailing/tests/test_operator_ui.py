@@ -139,32 +139,43 @@ def create_transactional_message(contact, client, *, status=TransactionalMessage
     )
 
 
-def test_base_template_loads_datamailer_static_css(client, operator):
+def test_base_template_loads_dakit_shell_assets(client, operator):
     client.force_login(operator)
 
     response = client.get(reverse("mailing:dashboard"))
 
     assert response.status_code == 200
-    assert b'href="/static/dakit/dakit.css"' in response.content
-    assert b'src="/static/dakit/dialogs.js"' in response.content
-    assert b'href="/static/mailing/css/app.css"' in response.content
-    assert b"<style>" not in response.content
-    assert b'class="brand-name">Relay</span>' in response.content
-    assert b'data-theme-toggle' in response.content
-    assert b'data-sidebar-toggle aria-expanded="true"' in response.content
-    assert b'data-sidebar-menu-toggle aria-expanded="false"' in response.content
-    assert b'matchMedia("(max-width: 860px)")' in response.content
-    assert b"dakit-theme" in response.content
+    html = response.content.decode()
+    for asset in (
+        'href="/static/dakit/dakit.css"',
+        'src="/static/dakit/dialogs.js"',
+        'src="/static/dakit/shell.js"',
+        'src="/static/dakit/split.js"',
+        'href="/static/mailing/css/app.css"',
+        'src="/static/mailing/js/theme-boot.js"',
+        'src="/static/mailing/js/operator.js"',
+    ):
+        assert asset in html
+    assert "<style>" not in html
+    # dakit app shell (docs/shell.md), not the retired app-local sidebar.
+    assert 'class="dk-shell" data-app="relay"' in html
+    assert 'class="dk-brand__name">Relay</span>' in html
+    assert "data-dk-sidebar-toggle" in html
+    assert 'data-dk-drawer-toggle aria-controls="dk-sidebar"' in html
+    assert 'class="dk-skip-link" href="#main-content"' in html
+    for retired in ("app-sidebar", "app-toolbar", "account-panel", "sidebar-scrim", "datamailer.sidebar.collapsed"):
+        assert retired not in html
+    # Relay has no actionable notification feed, so the shell has no bell.
+    assert "dk-notif-trigger" not in html
     assert finders.find("dakit/dakit.css") is not None
-    assert finders.find("dakit/dialogs.js") is not None
-    assert finders.find("mailing/css/app.css") is not None
+    assert finders.find("dakit/shell.js") is not None
     dakit_css = Path(finders.find("dakit/dakit.css")).read_text()
     assert "--dk-text-primary" in dakit_css
     css = Path(finders.find("mailing/css/app.css")).read_text()
     assert ".client-table,\n  .campaign-table,\n  .audience-table,\n  .audience-member-table" in css
     assert "scrollbar-width: thin" in css
-    assert ".app-shell.has-sidebar.sidebar-collapsed" in css
-    assert "html.js .has-sidebar.sidebar-open .app-sidebar" in css
+    for retired in (".app-shell", ".app-sidebar", ".sidebar-nav", ".account-panel", "max-width: 860px"):
+        assert retired not in css
 
 
 def test_chrome_icons_use_family_24grid_geometry(client, operator):
@@ -189,48 +200,58 @@ def test_chrome_icons_use_family_24grid_geometry(client, operator):
     assert b'stroke-width="1.5"' not in content
 
 
-def test_operator_account_chrome_owns_identity_appearance_and_sign_out(client, operator):
-    """Sidebar-footer Account popover is the only identity/theme/sign-out control.
+def test_operator_account_menu_owns_identity_theme_and_sign_out(client, operator):
+    """One account row at the sidebar foot opens the dakit account disclosure.
 
-    dakit family.md §Account chrome: avatar + name + chevron trigger in the
-    sidebar footer, popover titled Account with Identity, Appearance (labeled
-    track switch), Sign out. The operator shell has no desktop top bar.
+    dakit shell.md §5.4/§6: avatar + name + chevron trigger; the menu holds
+    identity, the only theme switch, the version meta and Sign out, with no
+    header or close button and no destinations.
     """
     client.force_login(operator)
 
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
-    css = Path(finders.find("mailing/css/app.css")).read_text()
 
     assert response.status_code == 200
-    assert 'aria-label="Account"' in html
-    assert 'class="account-button-name">operator</span>' in html
-    assert 'id="account-menu-title">Account</strong>' in html
-    assert "Signed in as" in html
-    assert "operator@example.com" in html
-    assert 'class="account-section-label">Appearance</p>' in html
-    assert 'data-theme-label>Dark mode</span>' in html
-    assert 'class="account-toggle-track"' in html
-    assert "<strong>Sign out</strong>" in html
-    assert 'href="/auth/logout"' in html
-    assert "Log out" not in html
-    assert 'class="icon-button theme-toggle"' not in html
-    assert html.index("account-panel") < html.index("data-theme-toggle")
-    assert html.index("data-theme-toggle") < html.index("account-sign-out")
-    foot_html = html[html.index("sidebar-foot") : html.index("app-column")]
-    assert 'class="account-button-name">operator</span>' in foot_html
-    assert "data-theme-toggle" in foot_html
-    assert "Sign out" in foot_html
-    assert html.index("app-sidebar") < html.index("sidebar-foot") < html.index("app-column")
-    toolbar_html = html[html.index("app-toolbar") : html.index("<main")]
-    assert "data-account-menu" not in toolbar_html
-    assert ".has-sidebar .app-toolbar" in css
-    assert "display: none" in css.split(".has-sidebar .app-toolbar {", 1)[1].split("}", 1)[0]
-    assert ".account-panel" in css
-    assert "var(--dk-radius-lg)" in css
-    assert "var(--dk-shadow-overlay)" in css
-    assert ".account-toggle-track" in css
-    assert ".account-theme-toggle[aria-pressed=" in css
+    foot = html[html.index('class="dk-sidebar__foot"') : html.index("</aside>")]
+    assert 'aria-label="Account, operator"' in foot
+    assert 'aria-controls="dk-account-menu"' in foot
+    assert 'class="dk-account-trigger__name">operator</span>' in foot
+    menu = html[html.index('id="dk-account-menu"') : html.index('id="dk-live"')]
+    # The popover is a sibling of the sidebar so nav overflow never clips it.
+    assert html.index("</aside>") < html.index('id="dk-account-menu"')
+    assert 'class="dk-menu__name">operator</span>' in menu
+    assert 'class="dk-menu__email">operator@example.com</span>' in menu
+    assert 'role="switch" aria-checked="false" data-dk-theme-toggle' in menu
+    assert html.count("data-dk-theme-toggle") == 1
+    assert 'class="dk-menu__meta"><span>v' in menu
+    assert 'class="dk-menu__item dk-menu__item--danger" href="/auth/logout"' in menu
+    assert menu.index("dk-menu__identity") < menu.index("data-dk-theme-toggle") < menu.index("dk-menu__meta") < menu.index("Sign out")
+    assert "Signed in as" not in html
+    assert "Close account menu" not in html
+    assert "<a class=\"dk-nav-item" not in menu
+
+
+def test_brand_row_switches_the_active_client(client, operator, client_record):
+    """The client context is the brand-row switcher (shell.md §5.1), a menu of
+    menuitemradio rows posting to client_select."""
+    other = Client.objects.create(organization=client_record.organization, name="Second Client", slug="second-client")
+    client.force_login(operator)
+    select_active_client(client, client_record)
+
+    html = client.get(reverse("mailing:dashboard")).content.decode()
+
+    head = html[html.index('class="dk-sidebar__head"') : html.index('class="dk-sidebar__nav"')]
+    assert 'class="dk-brand" type="button" data-dk-popover-trigger="dk-brand-menu" aria-haspopup="menu"' in head
+    assert f'class="dk-brand__scope">{client_record.name}</span>' in head
+    menu = html[html.index('id="dk-brand-menu"') : html.index("</form>", html.index('id="dk-brand-menu"'))]
+    assert 'role="menu"' in menu
+    assert f'action="{reverse("mailing:client_select")}"' in menu
+    assert f'value="{client_record.id}" role="menuitemradio" aria-checked="true"' in menu
+    assert f'value="{other.id}" role="menuitemradio" aria-checked="false"' in menu
+    assert "data-client-switcher" in menu
+    assert "<select" not in head
+    assert "Active client" not in html
 
 
 def test_sidebar_links_transactional_queue(client, operator, client_record):
