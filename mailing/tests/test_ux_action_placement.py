@@ -157,3 +157,23 @@ def test_campaign_list_empty_state_repeats_the_create_as_secondary(client, opera
     assert "No campaigns yet." in parsed.html
     assert "Create the first campaign" in parsed.html
     assert "dk-button--secondary dk-button--sm dk-collection-create" in parsed.html
+
+
+def test_client_list_create_follows_the_clients_title(client, operator, client_record):
+    client.force_login(operator)
+
+    parsed = regions(client.get(reverse("mailing:client_list")))
+
+    assert header_texts(parsed) == []
+    assert_page_create(parsed, "All clients", "Create client", reverse("mailing:client_create"))
+    assert '<span class="dk-collection-header__meta">1 integration</span>' in parsed.html
+
+
+def test_client_list_empty_state_repeats_the_create_as_secondary(client, operator):
+    client.force_login(operator)
+
+    parsed = regions(client.get(reverse("mailing:client_list")))
+
+    assert_page_create(parsed, "All clients", "Create client", reverse("mailing:client_create"))
+    assert "No clients found." in parsed.html
+    assert "Create the first client" in parsed.html

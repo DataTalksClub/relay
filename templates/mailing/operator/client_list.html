@@ -9,14 +9,11 @@
       <h1>Clients</h1>
       <p>External integrations, their operational state, and API-key health.</p>
     </div>
-    <a class="button" href="{% url 'mailing:client_create' %}">Create client</a>
   </div>
-  {% if clients.object_list %}
-    <section class="section panel" aria-labelledby="clients-table">
-      <div class="panel-header">
-        <h2 id="clients-table">All clients</h2>
-        <span class="muted">{{ clients.paginator.count }} integration{{ clients.paginator.count|pluralize }}</span>
-      </div>
+  {% url 'mailing:client_create' as client_create_url %}
+  <section class="section panel" aria-labelledby="clients-table">
+    {% include "_collection_header.html" with title="All clients" title_id="clients-table" extra_class="panel-header" create_url=client_create_url create_label="Create client" count=clients.paginator.count count_noun="integration" only %}
+    {% if clients.object_list %}
       <div class="table-wrap client-table stack-table">
       <table>
         <thead>
@@ -83,12 +80,12 @@
       </table>
     </div>
     {% include "mailing/operator/_pagination.html" with page_obj=clients querystring=pagination_querystring %}
-    </section>
-  {% else %}
-    <div class="empty-state">
-      <span class="badge neutral">EMPTY</span>
-      <p><strong>No clients found.</strong> Create a client before issuing named API keys for an integration.</p>
-      <a class="button secondary" href="{% url 'mailing:client_create' %}">Create client</a>
-    </div>
-  {% endif %}
+    {% else %}
+      <div class="empty-state">
+        <span class="badge neutral">EMPTY</span>
+        <p><strong>No clients found.</strong> Create a client before issuing named API keys for an integration.</p>
+        {% include "_collection_create.html" with create_url=client_create_url create_label="Create the first client" create_variant="secondary" no_shortcut=True only %}
+      </div>
+    {% endif %}
+  </section>
 {% endblock %}
