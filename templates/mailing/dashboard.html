@@ -83,13 +83,8 @@
   {% endif %}
 
     <section class="section panel" aria-labelledby="deliverability-attention">
-      <div class="section-header">
-        <div>
-          <h2 id="deliverability-attention">Deliverability Attention</h2>
-          <p class="muted">Recent failures, bounces, and complaints in this client. Open a contact to investigate.</p>
-        </div>
-        <a class="button secondary" href="{% url 'mailing:contact_search' %}">Review contacts</a>
-      </div>
+      {% url 'mailing:contact_search' as contact_search_url %}
+      {% include "_collection_header.html" with title="Deliverability Attention" title_id="deliverability-attention" extra_class="panel-header" trail_url=contact_search_url trail_label="Review contacts" description="Recent failures, bounces, and complaints in this client. Open a contact to investigate." only %}
       {% if dashboard.attention_items %}
         <div class="compact-list">
           {% for item in dashboard.attention_items %}
