@@ -56,8 +56,6 @@ select:where(:not([class*="dk-"])) {
   width: 100%;
   height: var(--dk-size-control-md);
   font-size: var(--dk-text-md);
-  /* Right padding keeps the label clear of dakit's chevron (base layer). */
-  padding: 0 calc(2 * var(--dk-space-3) + 10px) 0 var(--dk-space-2);
 }
 
 /* Operator page titles are dakit's page-header size (shell.md §8): 22px
@@ -408,7 +406,8 @@ a.stat-link:focus {
   align-items: center;
   gap: var(--dk-space-1);
   padding: 1px var(--dk-space-2);
-  border: 1px solid var(--dk-border-default);
+  /* Fill only, like .dk-badge: no perimeter in any tone. */
+  border: 1px solid transparent;
   border-radius: var(--dk-radius-sm);
   color: var(--dk-text-muted);
   background: var(--dk-bg-muted);
@@ -430,25 +429,21 @@ a.stat-link:focus {
 
 .badge.success {
   color: var(--dk-success-text);
-  border-color: var(--dk-border-default);
   background: var(--dk-success-bg);
 }
 
 .badge.warning {
   color: var(--dk-warning-text);
-  border-color: var(--dk-border-default);
   background: var(--dk-warning-bg);
 }
 
 .badge.danger {
   color: var(--dk-danger-text);
-  border-color: var(--dk-border-default);
   background: var(--dk-danger-bg);
 }
 
 .badge.neutral {
   color: var(--dk-text-muted);
-  border-color: var(--dk-border-default);
   background: var(--dk-bg-muted);
 }
 
@@ -1261,8 +1256,16 @@ button:where(:not([class*="dk-"])),
   padding: 5px 10px;
   font-family: var(--dk-font-sans);
   font-size: var(--dk-text-body);
-  background: var(--dk-bg-page);
+  /* background-color, not the shorthand: the kit's base layer draws the
+     select chevron as a background-image. */
+  background-color: var(--dk-bg-page);
   color: var(--dk-text-primary);
+}
+
+/* The kit's base layer gives selects room for that chevron; take it back
+   from the shared control padding above. */
+select:where(:not([class*="dk-"])) {
+  padding-right: revert-layer;
 }
 
 input:where(:not([class*="dk-"]))::placeholder,
