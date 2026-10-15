@@ -20,8 +20,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
+browser = [
     "playwright>=1.63.0",
+]
+dev = [
     "pytest>=8.4.0",
     "pytest-django>=4.12.0",
     "ruff>=0.11.0",

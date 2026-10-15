@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-10-08T08:38:32.197540391Z"
+exclude-newer = "2026-10-08T08:40:30.232903778Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -593,8 +593,10 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-dev = [
+browser = [
     { name = "playwright" },
+]
+dev = [
     { name = "pytest" },
     { name = "pytest-django" },
     { name = "ruff" },
@@ -618,8 +620,8 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+browser = [{ name = "playwright", specifier = ">=1.63.0" }]
 dev = [
-    { name = "playwright", specifier = ">=1.63.0" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-django", specifier = ">=4.12.0" },
     { name = "ruff", specifier = ">=0.11.0" },
