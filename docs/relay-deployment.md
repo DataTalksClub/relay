@@ -7,8 +7,10 @@ Relay runs at `https://relay.dtcdev.click` in AWS sandbox account
 ## Release checks
 
 The GitHub Actions workflow deploys a commit only after lint, migrations,
-Django checks and the full test suite pass. It sends one SSM command to EC2
-instance `i-03b7cd5de0a10a889`.
+Django checks and the full test suite pass. It finds the EC2 host by its
+`Name=relay-sandbox-web` tag, checks that the instance is running and its SSM
+agent is Online, then sends it one SSM command. Set the repository variable
+`RELAY_SANDBOX_INSTANCE_ID` only to pin a specific instance.
 
 The host builds one image and starts these containers:
 
@@ -31,9 +33,11 @@ worker therefore fails the release.
 Use Systems Manager instead of SSH:
 
 ```bash
-aws ssm start-session \
+instance_id=$(aws ec2 describe-instances \
   --region eu-west-1 \
-  --target i-03b7cd5de0a10a889
+  --filters Name=tag:Name,Values=relay-sandbox-web Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].InstanceId' --output text)
+aws ssm start-session --region eu-west-1 --target "$instance_id"
 ```
 
 List the running release:
