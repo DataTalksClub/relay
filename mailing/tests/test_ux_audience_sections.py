@@ -241,10 +241,10 @@ def test_members_has_an_eligibility_filter_not_a_stat_strip(client, audience_sco
     assert html.count("matching member") == 1
     tabs = html[html.index('aria-label="Marketing eligibility"') : html.index("</nav>", html.index('aria-label="Marketing eligibility"'))]
     assert '>All members</a>' in tabs and 'aria-current="page">All members' in tabs
-    assert "Eligible for marketing" in tabs and "Excluded from marketing" in tabs
+    assert ">Eligible</a>" in tabs and ">Excluded</a>" in tabs
 
     excluded = client.get(url, {"eligibility": "excluded"}).content.decode()
-    assert 'aria-current="page">Excluded from marketing' in excluded
+    assert 'aria-current="page">Excluded</a>' in excluded
     assert '<span class="data-num">1</span> matching member' in excluded
     # Other sections carry no eligibility strip either.
     assert "stats-grid" not in client.get(url, {"section": "health"}).content.decode()

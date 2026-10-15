@@ -252,8 +252,8 @@ def audience_page_context(request, audience, active_client):
     chosen = request.GET.get("eligibility")
     for key, title in [
         ("total", "All members"),
-        ("eligible", "Eligible for marketing"),
-        ("excluded", "Excluded from marketing"),
+        ("eligible", "Eligible"),
+        ("excluded", "Excluded"),
     ]:
         params = request.GET.copy()
         for field in [*FILTER_KEYS.values(), "page", "event_type", "eligibility", "inactive_since"]:
