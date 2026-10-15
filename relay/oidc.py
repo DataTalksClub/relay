@@ -13,6 +13,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth import get_user_model, login, logout
 from django.http import HttpResponse, HttpResponseRedirect
+from django.template.loader import render_to_string
 from django.views.decorators.http import require_GET
 
 
@@ -168,13 +169,12 @@ def callback(request):
 
 @require_GET
 def auth_error(_request):
-    response = HttpResponse(
-        """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign-in error · Datamailer</title><style>body{margin:0;font:16px system-ui;background:#f5f7fa;color:#172033}main{max-width:32rem;margin:10vh auto;padding:2rem;background:white;border:1px solid #dce2ea;border-radius:.75rem;box-shadow:0 8px 28px #17203314}a{color:#1769aa;font-weight:600}</style></head><body><main><h1>Sign-in error</h1><p>Authentication could not be completed. No account changes were made.</p><p><a href="/auth/login?return_to=/admin/">Try again</a></p></main></body></html>""",
-        status=403,
-        content_type="text/html; charset=utf-8",
-    )
+    response = HttpResponse(render_to_string("auth_error.html"), status=403, content_type="text/html; charset=utf-8")
+    # Only the page's own static assets: the dakit bundle, its fonts and the
+    # theme boot script.
     response["Content-Security-Policy"] = (
-        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+        "default-src 'none'; style-src 'self'; font-src 'self'; script-src 'self'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     )
     return _security_headers(response)
 

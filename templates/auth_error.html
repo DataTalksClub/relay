@@ -1,0 +1,29 @@
+{% load static %}<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign-in error · Relay</title>
+    <script src="{% static 'mailing/js/theme-boot.js' %}"></script>
+    <link rel="stylesheet" href="{% static 'dakit/dakit.css' %}">
+  </head>
+  <body>
+    {# dakit auth page (docs/device-login.md §2): wordmark bar + one card, both themes from the tokens. #}
+    <div class="dk-auth-page">
+      <header class="dk-auth-page__bar">
+        <a class="dk-auth-page__brand" href="/">Relay</a>
+      </header>
+      <main class="dk-auth-page__main">
+        <section class="dk-auth-card" aria-labelledby="auth-error-title">
+          <div class="dk-auth-card__head" role="alert">
+            <h1 class="dk-auth-card__title" id="auth-error-title">Sign-in error</h1>
+            <p class="dk-auth-card__lede">Authentication could not be completed. No account changes were made.</p>
+          </div>
+          <div class="dk-auth-card__actions">
+            <a class="dk-button dk-button--primary dk-button--lg" href="/auth/login?return_to=/">Try again</a>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

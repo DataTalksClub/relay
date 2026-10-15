@@ -87,7 +87,14 @@ def test_oidc_error_page_is_clean_and_hardened(client):
     response = client.get("/auth/error?code=not-rendered&state=not-rendered")
     assert response.status_code == 403
     assert b"not-rendered" not in response.content
-    assert b"Datamailer" in response.content
+    assert b"Sign-in error" in response.content
+    # Kit auth page: styled by the vendored dakit bundle in both themes, no
+    # inline light-only colours.
+    assert b'class="dk-auth-page"' in response.content
+    assert b"/static/dakit/dakit.css" in response.content
+    assert b"/static/mailing/js/theme-boot.js" in response.content
+    assert b"<style" not in response.content
+    assert b"#f5f7fa" not in response.content
     assert response["Cache-Control"] == "no-store"
     assert response["Referrer-Policy"] == "no-referrer"
     assert response["X-Content-Type-Options"] == "nosniff"
