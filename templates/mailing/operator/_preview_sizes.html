@@ -1,0 +1,19 @@
+<div class="actions" role="group" aria-label="Preview width">
+  <button type="button" class="secondary" data-preview-width="100%" aria-pressed="true">Desktop preview</button>
+  <button type="button" class="secondary" data-preview-width="375px" aria-pressed="false">Mobile preview</button>
+</div>
+<p class="helptext">Width simulation helps review layout. Email apps may render the same message differently.</p>
+<script>
+  (() => {
+    const controls = document.currentScript.previousElementSibling.previousElementSibling;
+    controls.querySelectorAll('[data-preview-width]').forEach(button => {
+      button.addEventListener('click', () => {
+        const frame = controls.parentElement.querySelector('.email-preview-frame');
+        if (!frame) return;
+        frame.style.width = button.dataset.previewWidth;
+        frame.style.maxWidth = '100%';
+        controls.querySelectorAll('button').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+      });
+    });
+  })();
+</script>

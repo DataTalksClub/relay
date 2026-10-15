@@ -1,38 +1,25 @@
 {% extends "base.html" %}
 
-{% block title %}Inbound | Relay{% endblock %}
+{% block title %}Inbox | Relay{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
-      <h1>Inbound mail</h1>
-      <p>Mail received for Relay-owned addresses. Not tied to a client: a receiving address belongs to the service.</p>
+      <h1>Inbox</h1>
+      <p>Shared service inbox for all Relay receiving addresses, across all clients.</p>
     </div>
     <div class="actions">
-      <a class="button secondary" href="{% url 'mailing:inbound_address_list' %}">Addresses</a>
+      <a class="button secondary" href="{% url 'mailing:inbound_address_list' %}">Receiving addresses</a>
     </div>
   </div>
 
-  <div class="stats-grid">
-    <div class="section">
-      <div class="muted">Unread</div>
-      <div class="stat-value">{{ counts.received|default:0 }}</div>
-    </div>
-    <div class="section">
-      <div class="muted">Read</div>
-      <div class="stat-value">{{ counts.read|default:0 }}</div>
-    </div>
-    <div class="section">
-      <div class="muted">Blocked</div>
-      <div class="stat-value">{{ counts.blocked|default:0 }}</div>
-    </div>
-    <div class="section">
-      <div class="muted">Senders waiting</div>
-      <div class="stat-value">{{ sender_count|default:0 }}</div>
-    </div>
+  <div class="badge-row inbox-counts" aria-label="Mailbox counts">
+    <span class="badge neutral">{{ counts.received|default:0 }} unread</span>
+    <span class="badge neutral">{{ counts.read|default:0 }} read</span>
+    <span class="badge neutral">{{ counts.blocked|default:0 }} blocked</span>
   </div>
 
-  <section class="section" aria-labelledby="mailbox-filters">
+  <section class="section" aria-label="Inbox filters">
     <form method="get" class="filter-bar">
       <div class="filter-grid">
         <div class="form-field">
@@ -41,7 +28,7 @@
             <option value="" {% if not state %}selected{% endif %}>Unread</option>
             <option value="read" {% if state == "read" %}selected{% endif %}>Read</option>
             <option value="blocked" {% if state == "blocked" %}selected{% endif %}>Blocked senders</option>
-            <option value="all" {% if state == "all" %}selected{% endif %}>Everything</option>
+            <option value="all" {% if state == "all" %}selected{% endif %}>All mail</option>
           </select>
         </div>
         <div class="form-field">
@@ -60,7 +47,7 @@
           <input id="q" name="q" type="search" value="{{ query }}" placeholder="Subject, sender, body">
         </div>
         <div class="form-field">
-          <label>&nbsp;</label>
+
           <button class="button" type="submit">Filter</button>
         </div>
       </div>
@@ -75,7 +62,7 @@
           <p class="muted"><strong>{{ total }}</strong> message{{ total|pluralize }}.</p>
         </div>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap triage-table">
         <table>
           <thead>
             <tr>
@@ -89,20 +76,21 @@
           <tbody>
             {% for row in rows %}
               <tr>
-                <td>
-                  <a href="{% url 'mailing:inbound_message_detail' row.id %}">{{ row.sender_address|default:row.from_header|default:"Unknown sender" }}</a>
+                <td data-label="From">
+                  <a href="{% url 'mailing:inbound_message_detail' row.id %}?return={{ request.get_full_path|urlencode }}">{{ row.sender_address|default:row.from_header|default:"Unknown sender" }}</a>
                   {% if row.sender_domain %}
                     <div class="helptext">{{ row.sender_domain }}</div>
                   {% endif %}
                 </td>
-                <td class="truncate">{{ row.subject|default:"(no subject)" }}</td>
-                <td class="nowrap">{{ row.recipient_address|default:"-" }}</td>
-                <td class="nowrap">{{ row.created_at|date:"Y-m-d H:i" }}</td>
-                <td class="nowrap">
+                <td class="truncate" data-label="Subject"><a href="{% url 'mailing:inbound_message_detail' row.id %}?return={{ request.get_full_path|urlencode }}">{{ row.subject|default:"(no subject)" }}</a></td>
+                <td class="nowrap" data-label="To">{{ row.recipient_address|default:"-" }}</td>
+                <td class="nowrap" data-label="Received">{{ row.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="nowrap" data-label="Message status">
+                  <span class="badge neutral">{{ row.get_state_display }}</span>
                   {% if row.is_spam %}
-                    <span class="badge danger">SES: spam</span>
+                    <span class="badge danger">Suspected spam</span>
                   {% elif row.spam_verdict %}
-                    <span class="badge neutral">SES: {{ row.spam_verdict }}</span>
+                    <span class="badge neutral">Spam check: {{ row.spam_verdict }}</span>
                   {% elif row.attachment_count %}
                     <span class="badge neutral">{{ row.attachment_count }} attachment{{ row.attachment_count|pluralize }}</span>
                   {% else %}
@@ -117,11 +105,11 @@
       {% if pages > 1 %}
         <nav class="pagination" aria-label="Pagination">
           {% if has_previous %}
-            <a class="button secondary" href="?state={{ state }}&amp;address={{ address }}&amp;q={{ query }}&amp;page={{ previous_page }}">Previous</a>
+            <a class="button secondary" href="?state={{ state|urlencode }}&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}&amp;page={{ previous_page }}">Previous</a>
           {% endif %}
           <span class="muted">Page {{ page }} of {{ pages }}</span>
           {% if has_next %}
-            <a class="button secondary" href="?state={{ state }}&amp;address={{ address }}&amp;q={{ query }}&amp;page={{ next_page }}">Next</a>
+            <a class="button secondary" href="?state={{ state|urlencode }}&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}&amp;page={{ next_page }}">Next</a>
           {% endif %}
         </nav>
       {% endif %}
@@ -130,10 +118,11 @@
     <div class="empty-state">
       {% if narrowed %}
         <strong>No messages match this filter.</strong>
-        <p>Nothing here is a statement about whether mail arrived; only about this filter.</p>
+        <p>Try another sender, subject, receiving address, or message state.</p>
+        <a href="{% url 'mailing:inbound_list' %}?state=all">View all mail</a>
       {% else %}
         <strong>No unread mail.</strong>
-        <p>Mail received for a Relay address will appear here. Until a receiving domain points at Relay, nothing arrives.</p>
+        <p>New mail received for an active Relay address appears here. <a href="{% url 'mailing:inbound_list' %}?state=all">View all mail</a> or <a href="{% url 'mailing:inbound_address_list' %}">manage receiving addresses</a>.</p>
       {% endif %}
     </div>
   {% endif %}
@@ -146,7 +135,7 @@
           <p class="muted">Discarded at ingest, so they never reach the mailbox. Managed on the addresses page.</p>
         </div>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap triage-table">
         <table>
           <thead>
             <tr>
@@ -159,10 +148,10 @@
           <tbody>
             {% for rule in blocked_senders %}
               <tr>
-                <td>{{ rule.get_scope_display }}</td>
-                <td>{{ rule.value }}</td>
-                <td class="truncate">{{ rule.reason|default:"-" }}</td>
-                <td class="nowrap">{{ rule.created_at|date:"Y-m-d" }}</td>
+                <td data-label="Scope">{{ rule.get_scope_display }}</td>
+                <td data-label="Blocked sender">{{ rule.value }}</td>
+                <td class="truncate" data-label="Reason">{{ rule.reason|default:"-" }}</td>
+                <td class="nowrap" data-label="Blocked">{{ rule.created_at|date:"Y-m-d" }}</td>
               </tr>
             {% endfor %}
           </tbody>

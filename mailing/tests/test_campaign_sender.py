@@ -35,6 +35,7 @@ def campaign_setup():
         audience=audience,
         client=client,
         subject="Weekly update",
+        status="queued",
         html_body='<p>Hello <a href="https://example.com/post?a=1&b=2">read</a> <a href="mailto:a@example.com">mail</a></p>',
         text_body="Hello in text",
     )
@@ -383,3 +384,15 @@ class _text_body_matcher:
 
     def __eq__(self, other):
         return all(part in other for part in self.expected_parts)
+
+
+
+def test_full_document_tracking_and_unsubscribe_stay_inside_body():
+    document = '<!doctype html><html><head><title>Email</title></head><BODY><p>Hello</p></BODY></html>'
+    rendered = build_campaign_html_body(document, "tracking", "unsubscribe")
+    lowered = rendered.lower()
+    body_end = lowered.rindex("</body>")
+    assert rendered.index("Unsubscribe or manage preferences") < body_end
+    assert rendered.index('width="1" height="1"') < body_end
+    assert lowered.endswith("</body></html>")
+    assert lowered.count("</body>") == 1

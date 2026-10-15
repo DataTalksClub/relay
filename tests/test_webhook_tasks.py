@@ -576,7 +576,21 @@ def test_webhook_dead_letter_list_shows_failed_tasks_with_retry(
     response = staff_client.get("/jobs/dead-letters/")
     assert response.status_code == 200
     assert str(job.pk) in response.content.decode()
-    assert f"/jobs/dead-letters/{job.pk}/retry/" in response.content.decode()
+    assert f'/jobs/{job.pk}/' in response.content.decode()
+    assert "Review and retry" in response.content.decode()
+
+    review = staff_client.get(f"/jobs/{job.pk}/")
+    assert review.status_code == 200
+    html = review.content.decode()
+    assert str(job.pk) in html
+    assert job.client.name in html
+    assert "Failed" in html
+    assert f'/jobs/{job.pk}/retry/' in html
+    assert 'name="confirmed" value="yes" required' in html
+    assert 'name="record_client_id"' in html
+    assert 'name="revision"' in html
+    job.refresh_from_db()
+    assert job.status == JobStatus.FAILED
 
 
 def test_webhook_dead_letter_retry_requeues_the_task(

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.utils.text import slugify
@@ -110,6 +111,28 @@ class ClientApiKey(TimeStampedModel):
 
     def __str__(self):
         return f"{self.client.slug} / {self.name}"
+
+
+class AdminApiKey(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="relay_admin_api_keys")
+    name = models.CharField(max_length=120)
+    public_id = models.CharField(max_length=32, unique=True)
+    key_hash = models.CharField(max_length=255)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "admin_api_keys"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "name"], condition=Q(revoked_at__isnull=True), name="unique_active_admin_key_name"
+            ),
+        ]
+
+    @property
+    def display_prefix(self):
+        return f"relay_admin_{self.public_id}"
 
 
 class EmailValidationStatus(models.TextChoices):
@@ -415,6 +438,7 @@ class RecipientListImportJob(TimeStampedModel):
 
 class CampaignStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
+    SCHEDULED = "scheduled", "Scheduled"
     QUEUED = "queued", "Queued"
     SNAPSHOTTING = "snapshotting", "Snapshotting"
     SENDING = "sending", "Sending"
@@ -488,6 +512,19 @@ class Campaign(TimeStampedModel):
 
     def __str__(self):
         return self.subject
+
+
+class CampaignDispatch(TimeStampedModel):
+    """Durable dispatch intent for a due scheduled campaign."""
+    campaign = models.OneToOneField(Campaign, on_delete=models.CASCADE, related_name="scheduled_dispatch")
+    payloads = models.JSONField(default=list)
+    correlation_id = models.UUIDField()
+    enqueued_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "campaign_dispatches"
+        indexes = [models.Index(fields=["enqueued_at"], name="campaign_dispatch_pending_idx")]
 
 
 class CampaignRecipientStatus(models.TextChoices):

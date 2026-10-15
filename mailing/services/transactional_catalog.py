@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from django.db.models import Count, Q
+from django.template import TemplateSyntaxError
 
 from mailing.models import EmailTemplate, TransactionalMessage, TransactionalMessageStatus
 from mailing.services.api import ApiValidationError
@@ -133,11 +134,19 @@ def recent_message_rows(messages):
 def catalog_context(template):
     requirements = normalize_required_context(template.required_context)
     example_context = template.example_context if isinstance(template.example_context, dict) else {}
+    preview_error = ""
+    try:
+        full_preview = render_preview(template, example_context, max_chars=None)
+    except (TemplateSyntaxError, ValueError, TypeError):
+        full_preview = {}
+        preview_error = "This template could not be rendered. Check its source and example values."
     return {
         "template": template,
         "requirements": requirements,
         "example_context": example_context,
-        "preview": render_preview(template, example_context),
+        "preview": {key: truncate(value, 1200) for key, value in full_preview.items()},
+        "full_preview": full_preview,
+        "preview_error": preview_error,
     }
 
 
@@ -147,7 +156,8 @@ def render_preview(template, example_context, *, max_chars=1200):
         "text_body": render_template_string(template.text_body, example_context),
         "html_body": render_template_string(template.html_body, example_context),
     }
-    return {key: truncate(value, max_chars) for key, value in preview.items() if value}
+    return {key: truncate(value, max_chars) if max_chars is not None else value
+            for key, value in preview.items() if value}
 
 
 def truncate(value, max_chars):

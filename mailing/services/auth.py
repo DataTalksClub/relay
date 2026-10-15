@@ -70,6 +70,8 @@ def authenticate_bearer_token(authorization_header):
         return AuthResult(client=None, error="invalid_authorization")
 
     raw_api_key = token.strip()
+    if raw_api_key.startswith("relay_admin_"):
+        return AuthResult(client=None, error="invalid_api_key")
     public_id = public_id_from_raw_key(raw_api_key)
     api_keys = ClientApiKey.objects.select_related("client", "client__organization").filter(revoked_at__isnull=True)
     if public_id:

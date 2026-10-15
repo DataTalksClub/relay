@@ -1,13 +1,16 @@
 {% csrf_token %}
+{% if form.errors %}
+<div class="form-errors" role="alert" tabindex="-1"><strong>Check these fields:</strong><ul>{% for field in form %}{% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a></li>{% endfor %}{% endfor %}</ul></div>
+{% endif %}
 {% if form.non_field_errors %}
   <div class="form-errors">{{ form.non_field_errors }}</div>
 {% endif %}
 <div class="form-grid">
   {% for field in form %}
     <div class="form-field{% if field.field.widget.input_type == 'textarea' %} full{% endif %}">
-      {{ field.label_tag }}
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
       {{ field }}
-      {% if field.help_text %}<div class="helptext">{{ field.help_text }}</div>{% endif %}
+      {% if field.help_text %}<div class="helptext" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</div>{% endif %}
       {% if field.errors %}<div class="field-errors">{{ field.errors }}</div>{% endif %}
     </div>
   {% endfor %}

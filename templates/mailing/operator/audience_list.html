@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Audiences | Datamailer{% endblock %}
+{% block title %}Audiences | Relay{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -10,7 +10,7 @@
     </div>
     <div class="actions">
       <a class="button" href="{% url 'mailing:audience_create' %}">Create audience</a>
-      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Contact explorer</a>
+      <a class="button secondary" href="{% url 'mailing:contact_search' %}">Search contacts</a>
     </div>
   </div>
 
@@ -19,10 +19,10 @@
       <div class="section-header">
         <div>
           <h2 id="audiences-table">Audience Health</h2>
-          <p class="muted">Membership, sendable contacts, inactive discovery, and the latest audience activity.</p>
+          <p class="muted">Shared audience membership and history across clients. Open members to check campaign eligibility for {{ active_client.name }}.</p>
         </div>
       </div>
-      <div class="table-wrap audience-table">
+      <div class="table-wrap audience-table triage-table">
         <table>
           <thead>
             <tr>
@@ -37,15 +37,15 @@
             {% for row in audience_rows %}
               {% with audience=row.audience %}
                 <tr>
-                  <td class="truncate">
+                  <td class="truncate" data-label="Audience">
                     <a href="{% url 'mailing:audience_detail' audience.id %}">{{ audience.name }}</a>
                     <div class="helptext">{{ audience.organization.name }} / {{ audience.slug }}</div>
                   </td>
-                  <td class="nowrap">
+                  <td class="nowrap" data-label="Membership">
                     {{ row.member_count }} members
                     <div class="helptext">{{ row.subscribed_count }} subscribed / {{ audience.subscription_count }} subscriptions</div>
                   </td>
-                  <td class="nowrap">
+                  <td class="nowrap" data-label="Inactive / suppressed">
                     <span class="badge neutral">{{ row.inactive_count }} inactive</span>
                     {% if row.suppressed_count %}
                       <span class="badge danger">{{ row.suppressed_count }} suppressed</span>
@@ -53,7 +53,7 @@
                       <span class="badge success">No suppression</span>
                     {% endif %}
                   </td>
-                  <td class="truncate">
+                  <td class="truncate" data-label="Recent activity">
                     {% if row.recent_campaign %}
                       <a href="{% url 'mailing:campaign_detail' row.recent_campaign.id %}">{{ row.recent_campaign.subject }}</a>
                       <div class="helptext">{{ row.recent_campaign.get_status_display }} / {{ row.recent_campaign.updated_at|date:"Y-m-d H:i" }}</div>
@@ -64,7 +64,7 @@
                       <span class="muted">No campaign or event activity</span>
                     {% endif %}
                   </td>
-                  <td class="nowrap"><a href="{% url 'mailing:audience_detail' audience.id %}">View detail</a></td>
+                  <td class="nowrap" data-label="Action"><a href="{% url 'mailing:audience_detail' audience.id %}">View members</a></td>
                 </tr>
               {% endwith %}
             {% endfor %}

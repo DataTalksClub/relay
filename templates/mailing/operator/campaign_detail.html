@@ -1,115 +1,67 @@
 {% extends "base.html" %}
-
 {% block title %}{{ campaign.subject|default:"Untitled draft" }} | Relay{% endblock %}
-
 {% block content %}
-  <nav class="breadcrumbs" aria-label="Breadcrumb">
-    <a href="{% url 'mailing:campaign_list' %}">Campaigns</a>
-    <span>/</span>
-    <span>{{ campaign.subject|default:"Untitled draft" }}</span>
-  </nav>
-
+  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{% url 'mailing:campaign_list' %}">Campaigns</a><span>/</span><span>{{ campaign.subject|default:"Untitled draft" }}</span></nav>
   <div class="page-header">
-    <div>
-      <h1>{{ campaign.subject|default:"Untitled draft" }}</h1>
-      <p>{{ campaign.client.name }} / {{ campaign.audience.name }}</p>
-      <div class="badge-row">
-        <span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>
-        {% if campaign.sent_at %}
-          <span class="badge success">Sent {{ campaign.sent_at|date:"Y-m-d H:i" }}</span>
-        {% elif campaign.status == "draft" %}
-          <span class="badge neutral">Not sent</span>
-        {% endif %}
-      </div>
+    <div><h1>{{ campaign.subject|default:"Untitled draft" }}</h1><p>{{ campaign.client.name }} / {{ campaign.audience.name }}</p>
+      <div class="badge-row"><span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>{% if campaign.sent_at %}<span class="badge success">Sent {{ campaign.sent_at|date:"Y-m-d H:i" }}</span>{% endif %}</div>
     </div>
-    <div class="actions">
-      <a class="button secondary" href="{% url 'mailing:campaign_list' %}">All campaigns</a>
-      {% if can_edit %}
-        <a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>
-      {% endif %}
-      {% if can_queue %}
-        <a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Review and send</a>
-      {% endif %}
-    </div>
+    <div class="actions"><a class="button secondary" href="{% url 'mailing:campaign_list' %}">All campaigns</a>{% if can_edit %}<a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>{% endif %}{% if can_queue %}<a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Review and send</a>{% endif %}</div>
   </div>
-
   {% if campaign.status == "queued" or campaign.status == "sending" or campaign.status == "snapshotting" %}<p role="status">Sending is in progress. Follow waiting recipients and results below; provider acceptance does not confirm delivery.</p>{% elif campaign.status == "cancelled" %}<p>Campaign cancelled. It will not send further pending recipients.</p>{% elif campaign.status == "failed" %}<p class="form-errors">Sending needs attention. Inspect failed recipients below before taking any recovery action.</p>{% endif %}
-  <nav class="actions" aria-label="Campaign stages">
-    {% if can_edit %}<a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a>{% endif %}
-    {% if can_edit %}<a class="button secondary" href="#draft-readiness">3. Review</a>{% endif %}
-    {% if campaign.status != "draft" %}<a class="button secondary" href="#campaign-stats">Results</a><a class="button secondary" href="#campaign-recipients">Recipients</a>{% endif %}
+  <nav class="local-nav" aria-label="Campaign stages">
+    {% if can_edit %}<a href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a><a href="#draft-readiness">3. Review</a>{% elif campaign.status == "scheduled" %}<a href="#campaign-scheduled-heading">Schedule</a><a href="#recipient-estimate">Current audience estimate</a>{% else %}<a href="#campaign-stats">Results</a><a href="#campaign-recipients">Recipients</a>{% endif %}
   </nav>
   {% if campaign.status == "draft" %}
     <section class="section" aria-labelledby="draft-readiness">
       <div class="section-header"><div><h2 id="draft-readiness">3. Review before sending</h2><p>Check the audience and message below. Nothing is sent until you confirm.</p></div></div>
-      {% if send_issues %}
-        <div class="form-errors"><strong>This draft needs attention:</strong><ul>{% for issue in send_issues %}<li>{{ issue }}</li>{% endfor %}</ul></div>
-        <a class="button" href="{% url 'mailing:campaign_edit' campaign.id %}">Complete draft</a>
-      {% else %}
-        <p><strong>{{ estimate.recipient_count }} eligible recipient{{ estimate.recipient_count|pluralize }}</strong> in {{ campaign.audience.name }} for {{ campaign.client.name }}. {{ estimate.skipped_count }} excluded by sending policy; {{ estimate.tag_filtered_count }} excluded by tags.</p>
-      {% endif %}
-      <div class="meta-grid">
-        <div class="meta-item"><span class="meta-label">Subject</span>{{ campaign.subject|default:"Not added yet" }}</div>
-        <div class="meta-item"><span class="meta-label">From</span>{{ campaign_sender }}</div>
-        <div class="meta-item"><span class="meta-label">When</span>Send now after confirmation. Automatic scheduling is unavailable.</div>
-      </div>
+      {% if send_issues %}<div class="form-errors"><strong>This draft needs attention:</strong><ul>{% for issue in send_issues %}<li>{{ issue }}</li>{% endfor %}</ul></div><a class="button" href="{% url 'mailing:campaign_edit' campaign.id %}">Complete draft</a>{% else %}<p><strong>{{ estimate.recipient_count }} eligible recipient{{ estimate.recipient_count|pluralize }}</strong> in {{ campaign.audience.name }} for {{ campaign.client.name }}. {{ estimate.skipped_count }} excluded by sending policy; {{ estimate.tag_filtered_count }} excluded by tags.</p>{% endif %}
+      <div class="meta-grid"><div class="meta-item"><span class="meta-label">Subject</span>{{ campaign.subject|default:"Not added yet" }}</div><div class="meta-item"><span class="meta-label">From</span>{{ campaign_sender }}</div><div class="meta-item"><span class="meta-label">When</span>{% if campaign.scheduled_at %}{{ scheduled_label }} — confirm below to schedule.{% else %}Send now after confirmation.{% endif %}</div></div>
     </section>
+  {% else %}
+    {% if campaign.status == "scheduled" %}
+      <section class="section" aria-labelledby="campaign-scheduled-heading">
+        <h2 id="campaign-scheduled-heading">Scheduled for {{ scheduled_label }}</h2>
+        <p>Recipients will be selected at dispatch time using the current subscriptions, consent, suppression, and tags. The estimate below can change. No email has been sent.</p>
+        <p>Delivery starts after this time when the scheduler and sending workers process the campaign. You can cancel before sending starts.</p>
+      </section>
+    {% endif %}
+    {% if scheduling_error %}<p class="form-errors" role="alert">{{ scheduling_error }}</p>{% endif %}
+    <details class="secondary-section"><summary>View campaign message and test preview</summary>
   {% endif %}
-
-  {% if campaign.status != "draft" %}<details class="secondary-section"><summary>View campaign message and test preview</summary>{% endif %}
   <section class="section" aria-labelledby="campaign-message-preview">
     <div class="section-header"><div><h2 id="campaign-message-preview">Message preview</h2><p>Rendered email with tracking and unsubscribe links. Preview links use sample tokens. Check email-client compatibility separately.</p></div></div>
-    {% if preview_error %}<div class="form-errors">{{ preview_error }}</div>
-    {% elif rendered_preview %}
+    {% if preview_error %}<div class="form-errors">{{ preview_error }}</div>{% elif rendered_preview %}
       {% if campaign.preview_text %}<p><strong>Inbox preview:</strong> {{ campaign.preview_text }}</p>{% endif %}
       {% if campaign.html_body %}{% include "mailing/operator/_preview_sizes.html" %}<iframe class="email-preview-frame" title="Campaign email preview" sandbox="" referrerpolicy="no-referrer" srcdoc="{{ rendered_preview.html_body|force_escape }}"></iframe>{% endif %}
       {% if campaign.text_body %}<details class="inline-details"{% if not campaign.html_body %} open{% endif %}><summary>Plain-text email</summary><pre>{{ rendered_preview.text_body|force_escape }}</pre></details>{% endif %}
       {% if not campaign.html_body and not campaign.text_body %}<p class="empty-state">No message content yet. Complete the draft to see a preview.</p>{% endif %}
     {% else %}<p class="empty-state">No message content yet.</p>{% endif %}
   </section>
-
   {% if not send_issues %}
-    <details class="section" id="campaign-test-send">
-      <summary>Send a test email</summary>
+    <details class="section" id="campaign-test-send"><summary>Send a test email</summary>
       <p>This sends real email to 1–25 explicit test addresses only. It does not queue the audience, change recipient counts, or record campaign results. Sandbox delivery requires verified recipients.</p>
-      <form method="post" action="{% url 'mailing:campaign_test_send' campaign.id %}">
-        {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
-        <label for="test-emails">Test email addresses</label>
-        <textarea id="test-emails" name="test_emails" rows="3" required placeholder="you@example.com" aria-describedby="test-emails-help"></textarea>
+      <form method="post" action="{% url 'mailing:campaign_test_send' campaign.id %}">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+        <label for="test-emails">Test email addresses</label><textarea id="test-emails" name="test_emails" rows="3" required placeholder="you@example.com" aria-describedby="test-emails-help"></textarea>
         <p id="test-emails-help" class="helptext">Use addresses you control, separated by commas or new lines. Preview tracking links use sample tokens and do not update campaign statistics.</p>
-        <label><input type="checkbox" name="confirm_test" value="1" required> I confirm these are test addresses and want to send a real email.</label>
-        <button type="submit">Send test email</button>
+        <label><input type="checkbox" name="confirm_test" value="1" required> I confirm these are test addresses and want to send a real email.</label><button type="submit">Send test email</button>
       </form>
     </details>
   {% endif %}
+  {% if campaign.status != "draft" %}</details>{% endif %}
   {% if confirm_queue and estimate and not send_issues %}
-    <section class="section" aria-labelledby="queue-confirmation">
-      <div class="section-header"><div><h2 id="queue-confirmation">Send this campaign now?</h2><p>{{ estimate.recipient_count }} recipient{{ estimate.recipient_count|pluralize }} will be queued for sending. Eligibility is checked again when you confirm. Queue acceptance does not mean delivery.</p></div></div>
-      <form class="toolbar" method="post" action="{% url 'mailing:campaign_queue' campaign.id %}">
-        {% csrf_token %}
-        <input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
-        <input type="hidden" name="confirm" value="1">
-        <input type="hidden" name="reviewed_recipient_count" value="{{ estimate.recipient_count }}">
-        <button type="submit">Send to {{ estimate.recipient_count }} recipient{{ estimate.recipient_count|pluralize }} now</button>
-        <a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Return to editing</a>
-        <a class="button secondary" href="{% url 'mailing:campaign_detail' campaign.id %}">Cancel</a>
+    <section class="section" aria-labelledby="queue-confirmation"><div class="section-header"><div><h2 id="queue-confirmation">{% if campaign.scheduled_at %}Schedule this campaign?{% else %}Send this campaign now?{% endif %}</h2><p>{% if campaign.scheduled_at %}Dispatch after {{ scheduled_label }}. Currently {{ estimate.recipient_count }} eligible recipient{{ estimate.recipient_count|pluralize }}; the final audience is selected at dispatch time.{% else %}{{ estimate.recipient_count }} recipient{{ estimate.recipient_count|pluralize }} will be queued for sending. Eligibility is checked again when you confirm. Queue acceptance does not mean delivery.{% endif %}</p></div></div>
+      <form class="toolbar" method="post" action="{% url 'mailing:campaign_queue' campaign.id %}">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="confirm" value="1"><input type="hidden" name="reviewed_recipient_count" value="{{ estimate.recipient_count }}"><input type="hidden" name="review_revision" value="{{ campaign.updated_at.isoformat }}">
+        <button type="submit">{% if campaign.scheduled_at %}Schedule for {{ scheduled_label }}{% else %}Send to {{ estimate.recipient_count }} recipient{{ estimate.recipient_count|pluralize }} now{% endif %}</button><a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Return to editing</a><a class="button secondary" href="{% url 'mailing:campaign_detail' campaign.id %}">Cancel</a>
       </form>
     </section>
   {% endif %}
-
-  {% if campaign.status != "draft" %}</details>{% endif %}
-  {% if campaign.status == "draft" or campaign.status == "queued" %}
-    <details class="secondary-section">
-      <summary>Cancel campaign</summary>
-      <p>Cancellation is available for drafts or queued campaigns before sending starts. Sent messages cannot be recalled. Cancellation cannot be undone.</p>
-      <form method="post" action="{% url 'mailing:campaign_cancel' campaign.id %}">
-        {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
-        <label><input type="checkbox" name="confirm_cancel" value="1" required> Cancel this campaign and stop its pending recipients.</label>
-        <button type="submit" class="secondary">Confirm cancellation</button>
-      </form>
+  {% if campaign.status == "draft" or campaign.status == "queued" or campaign.status == "scheduled" %}
+    <details class="secondary-section"><summary>Cancel campaign</summary><p>Cancellation is available for drafts, scheduled campaigns, or queued campaigns before sending starts. Sent messages cannot be recalled. Cancellation cannot be undone.</p>
+      <form method="post" action="{% url 'mailing:campaign_cancel' campaign.id %}">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><label><input type="checkbox" name="confirm_cancel" value="1" required> Cancel this campaign and stop its pending recipients.</label><button type="submit" class="secondary">Confirm cancellation</button></form>
     </details>
   {% endif %}
-  {% if campaign.status != "draft" %}
+  {% if campaign.status != "draft" and campaign.status != "scheduled" %}
   <section class="section" aria-labelledby="campaign-summary">
     <div class="section-header">
       <div>
@@ -127,8 +79,7 @@
   </section>
 
   {% endif %}
-
-  {% if campaign.status != "draft" %}
+  {% if campaign.status != "draft" and campaign.status != "scheduled" %}
     <section class="section" aria-labelledby="campaign-stats">
       <div class="section-header">
         <div>
@@ -142,8 +93,7 @@
           <div class="stats-grid">
             {% for stat in stat_groups.delivery %}
               <div class="stat">
-                <span class="stat-label">{{ stat.label }}</span>
-                {% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
+                <span class="stat-label">{{ stat.label }}</span>{% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
                 <span class="stat-value">{{ stat.value }}</span>
                 {% if stat.rate %}<span class="muted">{{ stat.rate }}</span>{% endif %}
               </div>
@@ -155,8 +105,7 @@
           <div class="stats-grid">
             {% for stat in stat_groups.engagement %}
               <div class="stat">
-                <span class="stat-label">{{ stat.label }}</span>
-                {% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
+                <span class="stat-label">{{ stat.label }}</span>{% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
                 <span class="stat-value">{{ stat.value }}</span>
                 {% if stat.rate %}<span class="muted">{{ stat.rate }}</span>{% endif %}
               </div>
@@ -181,8 +130,7 @@
       <div class="stats-grid">
         {% for stat in stat_groups.progress %}
           <div class="stat">
-            <span class="stat-label">{{ stat.label }}</span>
-                {% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
+            <span class="stat-label">{{ stat.label }}</span>{% if stat.key == "sent" %}<a href="?filter=sent#campaign-recipients">View current sent recipients</a>{% elif stat.key == "delivered" %}<a href="?filter=delivered#campaign-recipients">View confirmed delivery</a>{% elif stat.key == "bounces" %}<a href="?filter=bounced#campaign-recipients">View bounced recipients</a>{% elif stat.key == "complaints" %}<a href="?filter=complained#campaign-recipients">View complaints</a>{% elif stat.key == "failures" %}<a href="?filter=failed#campaign-recipients">View failed recipients</a>{% elif stat.key == "unique_opens" %}<a href="?filter=opened#campaign-recipients">View tracked opens</a>{% elif stat.key == "unique_clicks" %}<a href="?filter=clicked#campaign-recipients">View tracked clicks</a>{% elif stat.key == "unsubscribes" %}<a href="?filter=unsubscribed#campaign-recipients">View unsubscribes</a>{% elif stat.key == "queued" %}<a href="?filter=pending#campaign-recipients">View waiting recipients</a>{% endif %}
             <span class="stat-value">{{ stat.value }}</span>
             {% if stat.rate %}<span class="muted">{{ stat.rate }}</span>{% endif %}
           </div>
@@ -286,7 +234,7 @@
     </section>
   {% endif %}
 
-  {% if campaign.status != "draft" %}
+  {% if campaign.status != "draft" and campaign.status != "scheduled" %}
   <section class="section" aria-labelledby="campaign-recipients">
     <div class="section-header">
       <div>
@@ -376,7 +324,7 @@
       {% include "mailing/operator/_pagination.html" with page_obj=recipients querystring=pagination_querystring %}
     {% else %}
       <div class="empty-state">
-        {% if active_filter %}
+        {% if active_filter or recipient_query %}
           No recipients match this filter.
         {% else %}
           No recipients have been selected for this campaign yet.

@@ -4,11 +4,12 @@ from django.core.management.base import BaseCommand
 
 from jobs.scheduling import run_due_schedules
 from jobs.services import fail_expired_leases, recover_unenqueued_jobs
+from mailing.services.campaigns import dispatch_due_campaigns
 
 
 class Command(BaseCommand):
     help = (
-        "Run due Relay schedules, fail expired ack-lease tasks, and recover queued "
+        "Dispatch due campaigns and Relay schedules, fail expired ack-lease tasks, and recover queued "
         "jobs that were not enqueued."
     )
 
@@ -21,9 +22,10 @@ class Command(BaseCommand):
             expired = fail_expired_leases()
             recovered = recover_unenqueued_jobs()
             fired = run_due_schedules()
-            if expired or recovered or fired:
+            campaigns = dispatch_due_campaigns()
+            if expired or recovered or fired or campaigns:
                 self.stdout.write(
-                    f"leases_expired={expired} recovered={recovered} schedules_fired={len(fired)}"
+                    f"leases_expired={expired} recovered={recovered} schedules_fired={len(fired)} campaigns_dispatched={len(campaigns)}"
                 )
             if options["once"]:
                 return

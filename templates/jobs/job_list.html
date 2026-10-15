@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Jobs · Relay{% endblock %}
+{% block content %}
+<div class="page-header"><div><h1>Jobs</h1><p>Find waiting work, investigate failures, and see which client is affected.</p></div></div>
+{% include "jobs/_navigation.html" %}
+<section class="section" aria-labelledby="job-summary"><h2 id="job-summary">Current workload</h2>
+<p>Queued: <strong>{{ counts.queued|default:0 }}</strong> · Running: <strong>{{ counts.running|default:0 }}</strong> · Retrying: <strong>{{ counts.retrying|default:0 }}</strong> · Failed: <strong>{{ counts.failed|default:0 }}</strong></p>
+<p>{% if oldest %}Oldest waiting job: <a href="{% url 'jobs:job_detail' oldest.id %}">{{ oldest.client.name }} / {{ oldest.task_type }}</a>. Waiting since {{ oldest.created_at|date:"Y-m-d H:i T" }} ({{ oldest.created_at|timesince }} ago); eligible to run {{ oldest.run_after|date:"Y-m-d H:i T" }}.{% else %}No jobs waiting.{% endif %}</p>
+<p class="helptext">Database snapshot {{ observed_at|date:"Y-m-d H:i:s T" }}. Waiting work alone does not confirm worker health. <a href="{% url 'jobs:service_health' %}">Check processing health</a>.</p></section>
+<form method="get" class="section"><div class="form-grid">
+<div><label for="jobs-client">Client</label><select name="client" id="jobs-client"><option value="">All clients</option>{% for item in clients %}<option value="{{ item.id }}" {% if client_filter == item.id|stringformat:"s" %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></div>
+<div><label for="jobs-status">State</label><select name="status" id="jobs-status"><option value="">All states</option>{% for value,label in statuses %}<option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+<div><label for="jobs-search">Task, error, or request key</label><input id="jobs-search" name="q" value="{{ query }}"></div></div><button type="submit">Filter jobs</button></form>
+{% if invalid_client_filter %}<p class="message error" role="alert">That client filter is invalid. Select an existing client or clear the filter.</p>{% endif %}
+{% if page.object_list %}<div class="table-wrap triage-table"><table><thead><tr><th scope="col">Job</th><th scope="col">Client</th><th scope="col">State</th><th scope="col">Next attempt / finished</th><th scope="col">Attempts</th><th scope="col">Error</th></tr></thead><tbody>
+{% for job in page.object_list %}<tr><td data-label="Job"><a href="{% url 'jobs:job_detail' job.id %}?return={{ list_return_url|urlencode }}">{{ job.task_type }}</a><div class="helptext">{{ job.created_at|date:"Y-m-d H:i T" }}</div></td><td data-label="Client">{{ job.client.name }}</td><td data-label="State">{{ job.get_status_display }}</td><td data-label="Timing">{% if job.is_terminal %}{{ job.finished_at|date:"Y-m-d H:i T"|default:"—" }}{% else %}{{ job.run_after|date:"Y-m-d H:i T" }}{% endif %}</td><td data-label="Attempts">{{ job.attempt }}/{{ job.max_attempts }}</td><td data-label="Error">{{ job.error|truncatechars:150|default:"—" }}</td></tr>{% endfor %}</tbody></table></div>
+{% include "mailing/operator/_pagination.html" with page_obj=page querystring=pagination_querystring %}
+{% else %}<div class="empty-state"><strong>No jobs match these filters.</strong><p>Jobs are submitted through the task API or an enabled schedule.</p><a href="{% url 'jobs:job_list' %}">Clear filters</a></div>{% endif %}
+{% endblock %}

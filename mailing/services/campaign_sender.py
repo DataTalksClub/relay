@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from html import escape
 from html.parser import HTMLParser
@@ -121,6 +122,9 @@ def send_campaign_batch(payload, *, ses_client=None):
 
 @transaction.atomic
 def _send_campaign_recipient(campaign_id, recipient_id, ses):
+    # Cancellation and dispatch share this lock; cancellation cannot race an
+    # in-flight provider call and claim no message was sent.
+    campaign = Campaign.objects.select_for_update().get(pk=campaign_id)
     recipient = (
         CampaignRecipient.objects.select_for_update()
         .select_related("campaign", "campaign__client", "campaign__audience", "contact")
@@ -140,6 +144,14 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
         _create_campaign_event(recipient, EmailEventType.SKIPPED, metadata={"reason": "campaign_cancelled"})
         return "skipped"
 
+    if campaign.status == CampaignStatus.SCHEDULED or (campaign.scheduled_at and campaign.scheduled_at > timezone.now()):
+        raise RetryableCampaignSendError("Campaign send time has not arrived.")
+    if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SNAPSHOTTING}:
+        raise CampaignSenderError("Campaign has not been released for sending.")
+
+    if campaign.status in {CampaignStatus.QUEUED, CampaignStatus.FAILED}:
+        campaign.status = CampaignStatus.SENDING
+        campaign.save(update_fields=["status", "updated_at"])
     tokens = _send_tokens_for_pending_recipient(recipient)
 
     html_body = build_campaign_html_body(recipient.campaign.html_body, tokens.tracking_token, tokens.unsubscribe_token)
@@ -175,6 +187,11 @@ def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
     pixel = f'<img src="{escape(open_pixel_url(tracking_token), quote=True)}" width="1" height="1" alt="" />'
     unsubscribe_href = escape(unsubscribe_url(unsubscribe_token), quote=True)
     footer = f'<p><a href="{unsubscribe_href}">Unsubscribe or manage preferences</a></p>'
+    additions = f"\n{footer}\n{pixel}\n"
+    closing_body = list(re.finditer(r"</body\s*>", body, flags=re.IGNORECASE))
+    if closing_body:
+        insert_at = closing_body[-1].start()
+        return f"{body[:insert_at]}{additions}{body[insert_at:]}"
     return f"{body}\n{footer}\n{pixel}"
 
 
@@ -203,20 +220,21 @@ def is_retryable_send_error(exc):
     return False
 
 
+@transaction.atomic
 def refresh_campaign_send_counts(campaign_id):
-    sent_count = CampaignRecipient.objects.filter(campaign_id=campaign_id, status=CampaignRecipientStatus.SENT).count()
-    failed_count = CampaignRecipient.objects.filter(
-        campaign_id=campaign_id,
-        status=CampaignRecipientStatus.FAILED,
-    ).count()
+    campaign = Campaign.objects.select_for_update().get(pk=campaign_id)
+    recipients = CampaignRecipient.objects.filter(campaign_id=campaign_id)
+    sent_count = recipients.filter(status=CampaignRecipientStatus.SENT).count()
+    failed_count = recipients.filter(status=CampaignRecipientStatus.FAILED).count()
+    pending_exists = recipients.filter(status=CampaignRecipientStatus.PENDING).exists()
     updates = {"sent_count": sent_count, "updated_at": timezone.now()}
-    if sent_count:
-        pending_exists = CampaignRecipient.objects.filter(
-            campaign_id=campaign_id,
-            status=CampaignRecipientStatus.PENDING,
-        ).exists()
+    if campaign.status in {CampaignStatus.QUEUED, CampaignStatus.SENDING, CampaignStatus.FAILED}:
         if not pending_exists:
-            updates["sent_at"] = timezone.now()
+            updates["status"] = CampaignStatus.FAILED if failed_count else CampaignStatus.SENT
+            if sent_count:
+                updates["sent_at"] = campaign.sent_at or timezone.now()
+        elif sent_count:
+            updates["status"] = CampaignStatus.SENDING
     Campaign.objects.filter(pk=campaign_id).update(**updates)
     return {"sent_count": sent_count, "failed_count": failed_count}
 

@@ -1,0 +1,444 @@
+{
+  "method": "Local seeded demo data, Chromium, 1440x900 and 390x900; no participant timing data",
+  "pages": [
+    {
+      "name": "dashboard",
+      "path": "/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 1664,
+      "stats": 13,
+      "overflowTables": [
+        {
+          "width": 1068,
+          "content": 1068,
+          "overflow": false
+        },
+        {
+          "width": 528,
+          "content": 760,
+          "overflow": true
+        }
+      ]
+    },
+    {
+      "name": "campaigns",
+      "path": "/campaigns/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 900,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1092,
+          "overflow": true
+        }
+      ]
+    },
+    {
+      "name": "campaign-new",
+      "path": "/campaigns/new/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 1994,
+      "stats": 0,
+      "overflowTables": []
+    },
+    {
+      "name": "campaign-draft",
+      "path": "/campaigns/1/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 1453,
+      "stats": 4,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "campaign-sent",
+      "path": "/campaigns/4/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 3396,
+      "stats": 12,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1077,
+          "overflow": true
+        }
+      ]
+    },
+    {
+      "name": "audiences",
+      "path": "/audiences/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 900,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "audience",
+      "path": "/audiences/1/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 4719,
+      "stats": 12,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        },
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "contacts",
+      "path": "/contacts/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 1642,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "contact-results",
+      "path": "/contacts/?q=example.com",
+      "status": 200,
+      "viewport": 1440,
+      "height": 1642,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "contact",
+      "path": "/contacts/alex.verified@example.com/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 2327,
+      "stats": 6,
+      "overflowTables": [
+        {
+          "width": 1068,
+          "content": 1068,
+          "overflow": false
+        },
+        {
+          "width": 1068,
+          "content": 1068,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "queue",
+      "path": "/transactional/queue/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 900,
+      "stats": 0,
+      "overflowTables": []
+    },
+    {
+      "name": "client",
+      "path": "/clients/1/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 2737,
+      "stats": 3,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "client-edit",
+      "path": "/clients/1/edit/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 1546,
+      "stats": 0,
+      "overflowTables": []
+    },
+    {
+      "name": "inbound",
+      "path": "/inbound/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 900,
+      "stats": 0,
+      "overflowTables": []
+    },
+    {
+      "name": "api-docs",
+      "path": "/api-docs/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 25707,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 818,
+          "content": 818,
+          "overflow": false
+        },
+        {
+          "width": 818,
+          "content": 818,
+          "overflow": false
+        },
+        {
+          "width": 818,
+          "content": 818,
+          "overflow": false
+        },
+        {
+          "width": 818,
+          "content": 818,
+          "overflow": false
+        },
+        {
+          "width": 818,
+          "content": 818,
+          "overflow": false
+        },
+        {
+          "width": 818,
+          "content": 818,
+          "overflow": false
+        },
+        {
+          "width": 818,
+          "content": 818,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "dashboard",
+      "path": "/",
+      "status": 200,
+      "viewport": 390,
+      "height": 3022,
+      "stats": 13,
+      "overflowTables": [
+        {
+          "width": 358,
+          "content": 760,
+          "overflow": true
+        },
+        {
+          "width": 360,
+          "content": 760,
+          "overflow": true
+        }
+      ]
+    },
+    {
+      "name": "campaigns",
+      "path": "/campaigns/",
+      "status": 200,
+      "viewport": 390,
+      "height": 900,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 360,
+          "content": 826,
+          "overflow": true
+        }
+      ]
+    },
+    {
+      "name": "campaign-new",
+      "path": "/campaigns/new/",
+      "status": 200,
+      "viewport": 390,
+      "height": 2430,
+      "stats": 0,
+      "overflowTables": []
+    },
+    {
+      "name": "audience",
+      "path": "/audiences/1/",
+      "status": 200,
+      "viewport": 390,
+      "height": 5883,
+      "stats": 12,
+      "overflowTables": [
+        {
+          "width": 360,
+          "content": 760,
+          "overflow": true
+        },
+        {
+          "width": 360,
+          "content": 760,
+          "overflow": true
+        }
+      ]
+    },
+    {
+      "name": "contact-results",
+      "path": "/contacts/?q=example.com",
+      "status": 200,
+      "viewport": 390,
+      "height": 2008,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 360,
+          "content": 760,
+          "overflow": true
+        }
+      ]
+    },
+    {
+      "name": "inbound",
+      "path": "/inbound/",
+      "status": 200,
+      "viewport": 390,
+      "height": 985,
+      "stats": 0,
+      "overflowTables": []
+    },
+    {
+      "name": "switch-client-from-detail"
+    },
+    {
+      "name": "templates",
+      "path": "/templates/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 900,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1089,
+          "overflow": true
+        }
+      ]
+    },
+    {
+      "name": "template",
+      "path": "/templates/1/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 1484,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        },
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        }
+      ]
+    },
+    {
+      "name": "message",
+      "path": "/transactional/messages/1/",
+      "status": 200,
+      "viewport": 1440,
+      "height": 1595,
+      "stats": 0,
+      "overflowTables": [
+        {
+          "width": 1070,
+          "content": 1070,
+          "overflow": false
+        }
+      ]
+    }
+  ],
+  "focused_checks": [
+    {
+      "route": "/contacts/alex.verified@example.com/",
+      "status": 200,
+      "data": {
+        "duplicateIds": [
+          "id_audience"
+        ],
+        "unlabelled": [
+          "audience"
+        ],
+        "body": "Contacts\n/\nalex.verified@example.com\nalex.verified@example.com\nVerified\nValidation: Valid email\nSubscribed\nManage contact\nSend Eligibility\n\nCan Datamailer email this contact, and why?\n\nCan send marketing\neligible in at least one subscription scope\nCa"
+      }
+    },
+    {
+      "route": "/audiences/1/?client=2",
+      "status": 200,
+      "data": {
+        "duplicateIds": [],
+        "unlabelled": [],
+        "selectedClient": "1",
+        "selectedClientDisabled": false,
+        "body": "Audiences\n/\nDataTalksClub Newsletter\nDataTalksClub Newsletter\n\nDataTalksClub / datatalks-club\n\n12 members\n10 subscribed\n5 inactive\n1 hard bounced\n1 complained\nOpen in explorer\nCreate tag\nEdit audience\nSummary\n\nMembership health, sendability signals, "
+      }
+    },
+    {
+      "route": "/jobs/dead-letters/",
+      "status": 200,
+      "data": {
+        "duplicateIds": [],
+        "unlabelled": [],
+        "body": "Dead-letter tasks\n\nTasks that finished as `failed` after exhausting their attempts (or that a client failed, or whose lease expired). Retrying resets attempts and re-enqueues the task.\n\nDashboard\nNo dead-letter tasks.\n\nTasks that fail after all attem"
+      }
+    },
+    {
+      "name": "client-switch",
+      "status": 404
+    },
+    {
+      "name": "preview",
+      "iframeCount": 0,
+      "html": "<code><p>Hello Alex, confirm your email: <a href=\"https://client.example/verify/placeholder\">Verify email</a>.</p></code>"
+    },
+    {
+      "name": "320-reflow",
+      "data": {
+        "viewport": 320,
+        "pageWidth": 320,
+        "tableWidth": 760
+      }
+    }
+  ]
+}

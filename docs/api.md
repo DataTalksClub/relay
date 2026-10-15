@@ -6,6 +6,10 @@ The in-app staff API docs at `/api-docs/` are the primary runnable reference. Th
 
 ## Authentication
 
+Relay management uses a separate [admin API](admin-api.md) under `/api/admin/`
+with dedicated admin keys. It includes operator actions and client-scoped
+import/export; the credentials are separate from the client API described here.
+
 All client API endpoints under `/api/...` require Bearer authentication:
 
 ```text
@@ -1201,3 +1205,13 @@ python manage.py process_mailchimp_syncs --batch-size 25
 
 Operators can inspect recent sync status, attempt counts, next retry time, and
 the last error from the client detail page and Django admin.
+
+## Scheduled campaigns
+
+Campaign `scheduled_at` accepts a future timestamp with an explicit UTC offset.
+Saving content remains a draft operation; queueing confirms the schedule and
+returns `scheduled: true`. The campaign then remains `scheduled` until Relay's
+existing scheduler dispatches it. Recipients are selected at dispatch time,
+using the current membership and sending policy. Cancellation is available
+before sending begins. See [campaign scheduling](campaign-scheduling.md) for
+timezone, worker, recovery, and confirmation behavior.

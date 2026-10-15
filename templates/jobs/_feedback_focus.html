@@ -1,0 +1,15 @@
+<style>
+  .ops-details > summary:focus-visible {
+    outline: 3px solid var(--dk-focus-ring);
+    outline-offset: 2px;
+  }
+</style>
+<script>
+  (() => {
+    const error = document.querySelector('#main-content .message.error');
+    if (error) {
+      error.setAttribute('tabindex', '-1');
+      error.focus();
+    }
+  })();
+</script>

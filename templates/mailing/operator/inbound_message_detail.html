@@ -4,7 +4,7 @@
 
 {% block content %}
   <nav class="breadcrumbs" aria-label="Breadcrumb">
-    <a href="{% url 'mailing:inbound_list' %}">Inbound mail</a>
+    <a href="{{ return_url }}">Back to inbox</a>
   </nav>
 
   <div class="page-header">
@@ -18,11 +18,96 @@
     </div>
     <div class="actions">
       <span class="badge {{ badge.tone }}">{{ badge.label }}</span>
+      {% if message.state == "read" or message.state == "received" %}
+        <form method="post">
+          {% csrf_token %}
+          {% if message.state == "read" %}
+            <input type="hidden" name="action" value="mark_unread">
+            <button class="button secondary" type="submit">Mark unread</button>
+          {% else %}
+            <input type="hidden" name="action" value="mark_read">
+            <button class="button secondary" type="submit">Mark read</button>
+          {% endif %}
+        </form>
+      {% endif %}
     </div>
   </div>
 
-  <div class="detail-grid">
-    <section class="section" aria-labelledby="summary-heading">
+  <section class="section" aria-labelledby="body-heading">
+    <div class="section-header">
+      <div><h2 id="body-heading">Message</h2></div>
+    </div>
+    {% if message.state == "blocked" %}
+      <div class="message warning">
+        This message was blocked and its body was not kept. Block rules discard future matching mail.
+      </div>
+    {% elif body %}
+      <pre class="inbound-body">{{ body }}</pre>
+    {% elif message.has_body %}
+      <div class="message warning">
+        The body is stored in object storage and could not be read right now.
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <strong>No text body.</strong>
+        <p>This email has no plain-text version available. Storage details are below.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="section" aria-labelledby="actions-heading">
+    <div class="section-header">
+      <div><h2 id="actions-heading">Manage this sender</h2></div>
+    </div>
+    <p class="helptext">
+      Rules apply across the shared service, to every receiving address. Blocking discards future matching mail. Existing stored messages remain, and no reply is sent to the sender.
+    </p>
+    <div class="actions">
+      {% if message.state == "blocked" %}
+        <form method="post" class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="unblock">
+          <button class="button secondary" type="submit">Remove this block rule</button>
+        </form>
+      {% elif message.sender_address %}
+        <form method="post" class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="mark_as_spam">
+          <input type="hidden" name="scope" value="address">
+          <button class="button danger" type="submit">Block sender {{ message.sender_address }}</button>
+        </form>
+        {% if message.sender_domain %}
+          <details class="sender-domain-action">
+            <summary>Block every sender at {{ message.sender_domain }}</summary>
+            <form method="post" class="inline-form">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="mark_as_spam">
+              <input type="hidden" name="scope" value="domain">
+              <p>All future mail from any address at <strong>{{ message.sender_domain }}</strong> will be discarded for every Relay receiving address. Discarded mail cannot be recovered from this inbox.</p>
+              <label class="confirmation-choice" for="confirm-domain-block">
+                <input id="confirm-domain-block" type="checkbox" required>
+                I want to block every sender at {{ message.sender_domain }}.
+              </label>
+              <button class="button danger" type="submit">Confirm domain block</button>
+            </form>
+          </details>
+        {% endif %}
+      {% else %}
+        <p class="muted">This message has no parsable sender address, so there is nothing to block.</p>
+      {% endif %}
+    </div>
+    {% if blocked_rule %}
+      <div class="message warning">
+        Blocked by the rule <strong>{{ blocked_rule.value }}</strong>
+        ({{ blocked_rule.get_scope_display|lower }}), created {{ blocked_rule.created_at|date:"Y-m-d H:i" }}.
+        {% if blocked_rule.scope == "domain" %}Removing this rule permits mail from every sender at this domain, unless another rule blocks them.{% else %}Removing this rule permits this sender, unless another rule blocks them.{% endif %}
+      </div>
+    {% endif %}
+  </section>
+
+
+    <details class="detail-section secondary-section">
+      <summary>Message headers and attachment information</summary>
       <div class="section-header">
         <div><h2 id="summary-heading">Summary</h2></div>
       </div>
@@ -36,9 +121,10 @@
         <div><div class="muted">Attachments</div><div>{{ message.attachment_count }}</div></div>
         <div><div class="muted">Message-ID</div><div class="truncate">{{ message.message_id|default:"-" }}</div></div>
       </div>
-    </section>
+    </details>
 
-    <section class="section" aria-labelledby="signal-heading">
+    <details class="detail-section secondary-section">
+      <summary>Authentication and spam checks</summary>
       <div class="section-header">
         <div><h2 id="signal-heading">Authentication and spam signals</h2></div>
       </div>
@@ -50,77 +136,9 @@
         <div><div class="muted">DMARC</div><div>{{ message.dmarc_verdict|default:"-" }}</div></div>
       </div>
       <p class="helptext">
-        A verdict is the sending domain's own claim, not a judgement. SES reporting
-        spam means SES thinks so; it does not mean the message is.
+        These are checks reported by the receiving mail service. Failed authentication or a spam warning is a signal to investigate; it does not by itself establish whether the sender or message is trustworthy.
       </p>
-    </section>
-  </div>
-
-  <section class="section" aria-labelledby="body-heading">
-    <div class="section-header">
-      <div><h2 id="body-heading">Body</h2></div>
-    </div>
-    {% if message.state == "blocked" %}
-      <div class="message warning">
-        This sender is blocked, so the body was not kept. That is the point of
-        blocking: future mail is discarded rather than filed.
-      </div>
-    {% elif body %}
-      <pre>{{ body }}</pre>
-    {% elif message.has_body %}
-      <div class="message warning">
-        The body is stored in object storage and could not be read right now.
-      </div>
-    {% else %}
-      <div class="empty-state">
-        <strong>No text body.</strong>
-        <p>This message had no <code>text/plain</code> part. The raw MIME is retained in object storage.</p>
-      </div>
-    {% endif %}
-  </section>
-
-  <section class="section" aria-labelledby="actions-heading">
-    <div class="section-header">
-      <div><h2 id="actions-heading">Manage this sender</h2></div>
-    </div>
-    <p class="helptext">
-      Blocking stops future mail from this sender at ingest. It does not delete
-      what is already stored, and it does not send anything back to the sender.
-    </p>
-    <div class="actions">
-      {% if message.state == "blocked" %}
-        <form method="post" class="inline-form">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="unblock">
-          <button class="button secondary" type="submit">Unblock this sender</button>
-        </form>
-      {% elif message.sender_address %}
-        <form method="post" class="inline-form">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="mark_as_spam">
-          <input type="hidden" name="scope" value="address">
-          <button class="button danger" type="submit">Mark as spam: block {{ message.sender_address }}</button>
-        </form>
-        {% if message.sender_domain %}
-          <form method="post" class="inline-form">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="mark_as_spam">
-            <input type="hidden" name="scope" value="domain">
-            <button class="button danger" type="submit">Block the whole domain {{ message.sender_domain }}</button>
-          </form>
-        {% endif %}
-      {% else %}
-        <p class="muted">This message has no parsable sender address, so there is nothing to block.</p>
-      {% endif %}
-    </div>
-    {% if blocked_rule %}
-      <div class="message warning">
-        Blocked by the rule <strong>{{ blocked_rule.value }}</strong>
-        ({{ blocked_rule.get_scope_display|lower }}), created {{ blocked_rule.created_at|date:"Y-m-d H:i" }}.
-      </div>
-    {% endif %}
-  </section>
-
+    </details>
   <details class="detail-section secondary-section">
     <summary>Storage locations</summary>
     <div class="meta-grid">

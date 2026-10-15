@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Contact Explorer | Datamailer{% endblock %}
+{% block title %}Contacts | Relay{% endblock %}
 
 {% block content %}
   <div class="page-header">
     <div>
-      <h1>Contact Explorer</h1>
-      <p>Find reachable contacts, suppressed records, subscription gaps, and inactive audiences.</p>
+      <h1>Contacts</h1>
+      <p>Find a person, check campaign eligibility, and investigate recent email activity for {{ active_client.name }}.</p>
     </div>
   </div>
 
@@ -152,7 +152,7 @@
       <div class="active-filter-row" aria-label="Applied filters">
         <span class="meta-label">Applied filters</span>
         {% for filter in active_filters %}
-          <span class="badge neutral">{{ filter.label }}: {{ filter.value }}</span>
+          {% if filter.remove_url %}<a class="badge neutral filter-chip" href="{{ filter.remove_url }}" aria-label="Remove {{ filter.label }} filter: {{ filter.value }}">{{ filter.label }}: {{ filter.value }} ×</a>{% else %}<span class="badge neutral">{{ filter.label }}: {{ filter.value }}</span>{% endif %}
         {% endfor %}
       </div>
     {% endif %}
@@ -178,12 +178,12 @@
 
     {% if contacts is not None %}
       {% if contact_rows %}
-        <div class="table-wrap contact-explorer-table">
+        <div class="table-wrap contact-explorer-table triage-table">
           <table>
             <thead>
               <tr>
                 <th class="email-cell" scope="col">Email</th>
-                <th scope="col">Status</th>
+                <th scope="col">Campaign eligibility</th>
                 <th scope="col">Last activity</th>
                 <th scope="col">Recent issue</th>
               </tr>
@@ -191,27 +191,25 @@
             <tbody>
               {% for row in contact_rows %}
                 <tr>
-                  <td class="email-cell">
-                    <a class="data-truncate" href="{% url 'mailing:contact_detail' row.contact.normalized_email %}">{{ row.contact.email }}</a>
+                  <td class="email-cell" data-label="Contact">
+                    <a class="data-truncate" href="{% url 'mailing:contact_detail' row.contact.normalized_email %}?return={{ request.get_full_path|urlencode }}">{{ row.contact.email }}</a>
                     <span class="muted data-truncate">{{ row.subscription_summary }}</span>
                     {% if row.tag_summary != "-" %}<span class="helptext data-truncate">{{ row.tag_summary }}</span>{% endif %}
                   </td>
-                  <td>
+                  <td data-label="Campaign eligibility">
                     <div class="badge-row">
-                      <span class="badge {{ row.subscription_badge.tone }}">{{ row.subscription_badge.label }}</span>
-                      <span class="badge {{ row.validation_badge.tone }}">{{ row.validation_badge.label }}</span>
+                      <span class="badge {{ row.primary_status_badge.tone }}">{{ row.primary_status_badge.label }}</span>
                     </div>
-                    {% if row.contact.email_validation_reason %}
-                      <span class="muted data-truncate">{{ row.contact.email_validation_reason }}</span>
-                    {% endif %}
+                    {% if row.contact.email_validation_reason %}<span class="helptext">{{ row.contact.email_validation_reason }}</span>{% endif %}
+                    <span class="helptext">Subscription: {{ row.subscription_badge.label }}</span>
                   </td>
-                  <td>
+                  <td data-label="Last activity">
                     <div class="metric-stack">
                       <span>Sent {{ row.last_sent_at|date:"Y-m-d H:i"|default:"never" }}</span>
                       <span>Opened {{ row.last_opened_at|date:"Y-m-d H:i"|default:"never" }} / Clicked {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"never" }}</span>
                     </div>
                   </td>
-                  <td><span class="data-truncate">{{ row.recent_issue|default:"-" }}</span></td>
+                  <td data-label="Recent issue"><span class="data-truncate">{{ row.recent_issue|default:"-" }}</span></td>
                 </tr>
               {% endfor %}
             </tbody>

@@ -1,0 +1,32 @@
+{% load static %}
+<div id="campaign-composer" data-campaign-composer tabindex="-1">
+  {{ form.editor_mode }}{{ form.editor_blocks }}
+  <div class="actions" aria-label="Email editing mode">
+    <button type="button" class="secondary" data-editor-mode="blocks" aria-pressed="false">Visual composer</button>
+    <button type="button" class="secondary" data-editor-mode="source" aria-pressed="false">HTML or plain text</button>
+  </div>
+  <p class="helptext">Write with content blocks or keep your existing HTML. Switching modes does not convert imported HTML; choose the version you want to save.</p>
+  {% if form.editor_blocks.errors %}<div class="form-errors" role="alert">{{ form.editor_blocks.errors }}</div>{% endif %}
+  <div data-composer-panel hidden>
+    <div data-composer-blocks></div>
+    <p class="empty-state" data-composer-empty>Start with a heading or paragraph. You can save an empty draft.</p>
+    <div class="actions" aria-label="Add content block">
+      <button type="button" class="secondary" data-add-block="heading">Add heading</button>
+      <button type="button" class="secondary" data-add-block="paragraph">Add paragraph</button>
+      <button type="button" class="secondary" data-add-block="button">Add button link</button>
+      <button type="button" class="secondary" data-add-block="divider">Add divider</button>
+    </div>
+    <p class="helptext">The plain-text version is generated automatically. Review tracking and unsubscribe links on the saved draft.</p>
+    <p class="helptext" aria-live="polite" data-composer-announcement></p>
+    <section class="section" aria-labelledby="composer-preview-heading">
+      <h3 id="composer-preview-heading">Live message preview</h3>
+      <div class="actions">
+        <button type="button" class="secondary" data-composer-width="100%" aria-pressed="true">Desktop preview</button>
+        <button type="button" class="secondary" data-composer-width="375px" aria-pressed="false">Mobile preview</button>
+      </div>
+      <iframe class="email-preview-frame" title="Composer email preview" sandbox="" referrerpolicy="no-referrer" data-composer-preview></iframe>
+    </section>
+  </div>
+  <noscript><input type="hidden" name="editor_mode" value="source"><p>Visual editing requires JavaScript. Use the HTML and plain-text fields below to save your message.</p></noscript>
+</div>
+<script defer src="{% static 'mailing/js/campaign-composer.js' %}"></script>

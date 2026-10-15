@@ -100,16 +100,16 @@ nav .brand,
   min-height: 30px;
   padding: 3px 10px;
   color: var(--dk-text-muted);
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-page);
+  border-color: transparent;
+  background: transparent;
   font-size: var(--dk-text-sm);
-  font-weight: 500;
+  font-weight: var(--dk-weight-medium);
 }
 
 .theme-toggle:hover {
   color: var(--dk-text-primary);
-  border-color: var(--dk-border-strong);
-  background: var(--dk-bg-muted);
+  border-color: transparent;
+  background: var(--dk-bg-hover);
 }
 
 .app-nav a[aria-current="page"] {
@@ -257,15 +257,27 @@ main,
 }
 
 .sidebar-nav a {
-  display: block;
-  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
   padding: 6px 10px;
   border: 0;
-  border-radius: var(--dk-radius-sm);
+  border-radius: var(--dk-radius-md);
   color: var(--dk-text-primary);
   font-size: 14px;
   font-weight: 500;
   text-decoration: none;
+}
+
+.sidebar-nav a .icon {
+  flex: none;
+  color: var(--dk-text-muted);
+}
+
+.sidebar-nav a[aria-current="page"] .icon,
+.sidebar-nav a:hover .icon {
+  color: inherit;
 }
 
 .sidebar-nav a:hover {
@@ -434,10 +446,27 @@ textarea:focus-visible,
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
-/* Summary counts read as data: quiet bordered cells with mono values.
-   Cells keep their own hairline borders so wrapped rows stay clean. */
+/* Summary counts render as one compact segmented strip: a single bordered
+   container whose cells share hairline dividers (the family recipe), never a
+   row of equal boxes. Flex + a trailing filler cell keeps wrapped rows
+   divided and never shows the container background through empty tracks. */
+.meta-grid,
 .stats-grid {
-  gap: var(--dk-space-3);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-border-default);
+  overflow: hidden;
+}
+
+.meta-grid::after,
+.stats-grid::after {
+  content: "";
+  flex: 1 1 12rem;
+  align-self: stretch;
+  background: var(--dk-bg-surface);
 }
 
 .meta-item,
@@ -447,6 +476,16 @@ textarea:focus-visible,
   border-radius: var(--dk-radius-md);
   padding: var(--dk-space-3);
   background: var(--dk-bg-page);
+}
+
+.meta-grid .meta-item,
+.stats-grid .stat,
+.meta-grid > *,
+.stats-grid > * {
+  flex: 1 1 150px;
+  border: 0;
+  border-radius: 0;
+  background: var(--dk-bg-surface);
 }
 
 .stat-value {
@@ -485,19 +524,32 @@ a.stat-link:focus {
   overflow-wrap: anywhere;
 }
 
+/* Status chips follow dakit's .dk-badge recipe: radius-sm, 11px, triplet
+   colors, dot-friendly gap. No pills. */
 .badge {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
-  padding: 0 var(--dk-space-2);
+  gap: var(--dk-space-1);
+  min-height: 18px;
+  padding: 1px var(--dk-space-2);
   border: 1px solid var(--dk-border-default);
-  border-radius: 999px;
+  border-radius: var(--dk-radius-sm);
   color: var(--dk-text-muted);
   background: var(--dk-bg-muted);
   font-family: var(--dk-font-sans);
-  font-size: var(--dk-text-sm);
-  font-weight: 500;
+  font-size: var(--dk-text-xs);
+  font-weight: var(--dk-weight-medium);
   white-space: nowrap;
+}
+
+.badge .dot,
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
 }
 
 .badge.success {
@@ -614,10 +666,31 @@ a.stat-link:focus {
   border-color: var(--dk-border-default);
 }
 
+/* Side-by-side summary/manage panels are cells of one bordered container,
+   divided by hairlines — not a row of separate boxes. */
 .manage-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: var(--dk-space-3);
+  gap: 1px;
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-border-default);
+  overflow: hidden;
+  margin: var(--dk-space-4) 0;
+}
+
+.manage-form-grid > .summary-panel {
+  border: 0;
+  border-radius: 0;
+  background: var(--dk-bg-surface);
+}
+
+.summary-panel,
+.compact-row {
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  padding: var(--dk-space-3);
+  background: var(--dk-bg-page);
 }
 
 .manage-form h3 {
@@ -672,10 +745,14 @@ a.compact-row:hover {
 }
 
 .inline-details summary {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-2);
   color: var(--dk-text-link);
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
+  list-style: none;
 }
 
 .inline-details[open] summary {
@@ -751,28 +828,63 @@ a.compact-row:hover {
   grid-template-columns: minmax(240px, 2fr) repeat(2, minmax(180px, 1fr));
 }
 
-.advanced-panel,
-.secondary-section {
+/* Disclosed secondary sections stay quiet dividers in the page flow — only
+   the filter panel is a box. A stack of bordered disclosure boxes is banned. */
+.advanced-panel {
+  margin-top: var(--dk-space-4);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
   background: var(--dk-bg-page);
 }
 
-.advanced-panel {
-  margin-top: var(--dk-space-4);
-}
-
 .advanced-panel summary,
 .secondary-section summary {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-2);
   padding: var(--dk-space-3);
   color: var(--dk-text-primary);
   cursor: pointer;
   font-weight: 600;
+  list-style: none;
+}
+
+.advanced-panel summary::-webkit-details-marker,
+.secondary-section summary::-webkit-details-marker,
+.inline-details summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Family chevron (24-grid path) as a masked icon so server-rendered
+   <details> markup gains the shared icon language without new markup. */
+.advanced-panel summary::before,
+.secondary-section summary::before,
+.inline-details summary::before {
+  content: "";
+  display: inline-block;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background-color: var(--dk-text-muted);
+  mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>') center / contain no-repeat;
+  transform: rotate(90deg);
+  transition: transform 120ms ease;
+}
+
+.advanced-panel[open] summary::before,
+.secondary-section[open] summary::before,
+.inline-details[open] summary::before {
+  transform: rotate(0deg);
 }
 
 .advanced-panel summary:hover,
 .secondary-section summary:hover {
   color: var(--dk-text-heading);
+}
+
+.advanced-panel summary:hover::before,
+.secondary-section summary:hover::before {
+  background-color: var(--dk-text-heading);
 }
 
 /* The card's padding-top is the header's top spacing; the page-flow margins
@@ -950,9 +1062,7 @@ label {
 
 input,
 select,
-textarea,
-button,
-.button {
+textarea {
   min-height: var(--dk-size-control-md);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-sm);
@@ -979,27 +1089,47 @@ select:focus,
 textarea:focus {
   border-color: var(--dk-accent-default);
   outline: none;
-  box-shadow: 0 0 0 3px var(--dk-accent-soft);
+  box-shadow: 0 0 0 3px var(--dk-focus-ring);
 }
 
+/* Buttons follow dakit's hierarchy: a bare <button> is a quiet secondary
+   control; the filled primary is reserved for `.button` (one per view).
+   Danger is a quiet outline, never a filled red block. */
 button,
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: var(--dk-size-control-md);
-  padding: 5px 12px;
+  gap: var(--dk-space-2);
+  height: var(--dk-size-control-md);
+  padding: 0 var(--dk-space-4);
+  border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  color: var(--dk-text-on-accent);
-  border-color: var(--dk-accent-default);
-  background: var(--dk-accent-default);
-  font-size: var(--dk-text-body);
-  font-weight: 600;
+  color: var(--dk-text-primary);
+  background: var(--dk-bg-muted);
+  font-family: var(--dk-font-sans);
+  font-size: var(--dk-text-md);
+  font-weight: var(--dk-weight-medium);
+  white-space: nowrap;
   cursor: pointer;
   text-decoration: none;
 }
 
 button:hover,
+.button.secondary:hover,
+button.secondary:hover {
+  color: var(--dk-text-primary);
+  border-color: var(--dk-border-control-hover);
+  background: var(--dk-bg-hover);
+  text-decoration: none;
+}
+
+.button {
+  color: var(--dk-text-on-accent);
+  border-color: var(--dk-accent-default);
+  background: var(--dk-accent-default);
+}
+
 .button:hover {
   color: var(--dk-text-on-accent);
   border-color: var(--dk-accent-hover);
@@ -1010,7 +1140,7 @@ button:hover,
 button:disabled,
 .button[aria-disabled="true"] {
   cursor: not-allowed;
-  opacity: 0.65;
+  opacity: 0.55;
 }
 
 .button.secondary,
@@ -1020,24 +1150,18 @@ button.secondary {
   background: var(--dk-bg-muted);
 }
 
-.button.secondary:hover,
-button.secondary:hover {
-  color: var(--dk-text-primary);
-  border-color: var(--dk-border-strong);
-  background: var(--dk-bg-hover);
-}
-
 button.danger,
 .button.danger {
-  color: var(--dk-text-on-accent);
-  border-color: var(--dk-danger-text);
-  background: var(--dk-danger-text);
+  color: var(--dk-danger-text);
+  border-color: var(--dk-danger-border);
+  background: transparent;
 }
 
 button.danger:hover,
 .button.danger:hover {
-  border-color: var(--dk-danger-hover);
-  background: var(--dk-danger-hover);
+  color: var(--dk-danger-text);
+  border-color: var(--dk-danger-border);
+  background: var(--dk-danger-bg);
 }
 
 .table-wrap {
@@ -1311,18 +1435,31 @@ tr:last-child td {
   font-size: 13px;
 }
 
+/* Activity renders as one bordered list with hairline-divided rows; the
+   status is carried by the badge, not by a left rail. */
 .timeline {
   display: grid;
-  gap: var(--dk-space-2);
+  gap: 0;
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-bg-page);
+  overflow: hidden;
 }
 
 .timeline-item,
 .audit-row {
-  border: 1px solid var(--dk-border-default);
-  border-left: 3px solid var(--dk-border-strong);
-  border-radius: var(--dk-radius-sm);
+  display: grid;
+  gap: var(--dk-space-1);
+  border: 0;
+  border-bottom: 1px solid var(--dk-border-default);
+  border-radius: 0;
   padding: var(--dk-space-2) var(--dk-space-3);
   background: var(--dk-bg-page);
+}
+
+.timeline-item:last-child,
+.audit-row:last-child {
+  border-bottom: 0;
 }
 
 pre,
@@ -1905,30 +2042,36 @@ pre {
 .local-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--dk-space-2);
-  padding: 0 0 var(--dk-space-3);
+  gap: var(--dk-space-4);
+  padding: 0;
   margin-bottom: var(--dk-space-4);
   border-bottom: 1px solid var(--dk-border-default);
 }
 
+/* Quiet tab row: selection is accent text over an accent-soft underline band
+   aligned with the container hairline — no boxed chips. */
 .local-nav a {
   display: inline-flex;
   align-items: center;
   min-height: 36px;
-  padding: var(--dk-space-1) var(--dk-space-3);
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-sm);
-  color: var(--dk-text-primary);
-  background: var(--dk-bg-page);
+  margin-bottom: -1px;
+  padding: 0 var(--dk-space-1);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--dk-text-muted);
+  background: transparent;
+  font-weight: var(--dk-weight-medium);
 }
 
 .local-nav a:hover {
-  background: var(--dk-bg-hover);
+  color: var(--dk-text-primary);
+  background: transparent;
 }
 
 :where(button, .button, a, summary):focus-visible {
-  outline: 2px solid var(--dk-accent-default);
-  outline-offset: 3px;
+  outline: 3px solid var(--dk-focus-ring);
+  outline-offset: 2px;
 }
 
 [id] {
@@ -2045,7 +2188,7 @@ pre {
   height: 420px;
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  background: #fff;
+  background: var(--dk-bg-surface);
 }
 
 .header-client-context {
@@ -2100,4 +2243,96 @@ pre {
   .header-client-context {
     display: none;
   }
+}
+
+/* --- Family conformance (round 9) -------------------------------------
+   Closes the named findings in docs/audits/2026-10-03-family-r9-attack.md.
+   Roles only: no app-local hex, radii, shadows, or control sizes. */
+
+/* A6/F5: explicit primary alias so templates can state intent. */
+.button.primary {
+  color: var(--dk-text-on-accent);
+  border-color: var(--dk-accent-default);
+  background: var(--dk-accent-default);
+}
+
+.button.primary:hover {
+  border-color: var(--dk-accent-hover);
+  background: var(--dk-accent-hover);
+}
+
+/* F11: local section nav selection signal (quiet tab row). */
+.local-nav a[aria-current="page"] {
+  border-bottom-color: var(--dk-accent-default);
+  color: var(--dk-text-link);
+  font-weight: 600;
+}
+
+/* F6: family form footer row - primary first, then Cancel, above a top
+   border (mirrors dakit's .dk-form-actions for app-local markup). */
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dk-space-3);
+  justify-content: flex-start;
+  margin-top: var(--dk-space-4);
+  padding-top: var(--dk-space-4);
+  border-top: 1px solid var(--dk-border-default);
+}
+
+/* F1: shared icon geometry - inline SVGs from the family 24-grid set.
+   Stroke properties live here so use-instances inherit the family drawing
+   style (20px, stroke 1.8, round caps, no fills). */
+.icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: currentcolor;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+button .icon,
+.button .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* A8: strips collapse to one column on narrow screens. */
+@media (max-width: 640px) {
+
+  .meta-grid,
+  .stats-grid,
+  .detail-grid,
+  .manage-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Keep the draft context and frequent filter actions accessible. */
+.campaign-draft-summary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: var(--dk-space-3) 0;
+  background: var(--dk-bg-page);
+  flex-wrap: wrap;
+}
+.filter-chip {
+  min-height: 24px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.local-nav a[aria-current="page"] {
+  border-color: var(--dk-accent-default);
+  background: var(--dk-bg-subtle);
+  font-weight: 600;
+}
+@media (max-width: 860px) {
+  .campaign-draft-summary { position: static; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }

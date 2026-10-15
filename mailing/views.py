@@ -688,7 +688,7 @@ def campaign_detail(request, campaign_id):
         {"recipient": recipient, "badge": Badge(recipient.get_status_display(), delivery_tone(recipient.status))}
         for recipient in recipients.object_list
     ]
-    estimate = estimate_campaign_recipients(campaign) if campaign.status == CampaignStatus.DRAFT else None
+    estimate = estimate_campaign_recipients(campaign) if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SCHEDULED} else None
     preview_rows = [
         {"row": row, "tone": "success" if row.status == CampaignRecipientStatus.PENDING else "warning"}
         for row in (estimate.preview_rows if estimate else [])
@@ -704,10 +704,13 @@ def campaign_detail(request, campaign_id):
         preview_error = "The message could not be previewed. Review the content before sending."
     events = campaign_recent_events(campaign)[:10]
     event_rows = [{"event": event, "metadata_summary": metadata_summary(event.metadata)} for event in events]
+    from mailing.campaign_ui_views import campaign_timing_context  # noqa: PLC0415 - URL imports operator actions
+
     return render(
         request,
         "mailing/operator/campaign_detail.html",
         {
+            **campaign_timing_context(campaign),
             "campaign": campaign,
             "recipient_query": recipient_query,
             "active_client": active_client,
@@ -748,11 +751,13 @@ def campaign_queue(request, campaign_id):
         messages.warning(request, "The recipient count changed. Review the updated recipients before sending.")
         return redirect(f"{reverse('mailing:campaign_detail', args=[campaign.id])}?confirm_send=1")
     try:
-        result = queue_campaign(campaign)
+        result = queue_campaign(campaign, expected_revision=request.POST.get("review_revision"), reject_past_schedule=True)
     except CampaignNotReady as exc:
         messages.error(request, str(exc))
         return redirect("mailing:campaign_detail", campaign_id=campaign.id)
-    if result.queued:
+    if result.scheduled:
+        messages.success(request, "Campaign scheduled. Eligible recipients will be selected at dispatch time; no email was sent.")
+    elif result.queued:
         messages.success(
             request,
             f"Campaign queued with {result.recipient_count} recipients, {result.skipped_count} skipped, "

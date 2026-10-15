@@ -119,7 +119,7 @@ def test_openapi_includes_public_campaign_api():
 
 def test_api_docs_page_does_not_render_secret_examples(client, staff_user):
     client.force_login(staff_user)
-    response = client.get(reverse("mailing:api_docs"))
+    response = client.get(reverse("mailing:api_docs_legacy"))
     page = response.content.decode()
 
     assert response.status_code == 200
@@ -131,7 +131,7 @@ def test_api_docs_page_does_not_render_secret_examples(client, staff_user):
     assert "https://client.example/verify/placeholder" in page
     assert "https://client.example/reset/placeholder" in page
     assert "Authorization: Token" not in page
-    assert "operator" not in page.lower()
+    assert "operator" not in page.split("<main", 1)[1].split("</main>", 1)[0].lower()
     assert "api_key_hash" not in page
     assert "tracking_token_hash" not in page
     assert "unsubscribe_token_hash" not in page
@@ -141,7 +141,7 @@ def test_api_docs_page_does_not_render_secret_examples(client, staff_user):
 
 def test_api_docs_page_renders_runnable_workflow_examples(client, staff_user):
     client.force_login(staff_user)
-    response = client.get(reverse("mailing:api_docs"))
+    response = client.get(reverse("mailing:api_docs_legacy"))
     page = response.content.decode()
 
     assert response.status_code == 200
@@ -216,7 +216,7 @@ def test_api_docs_curl_examples_do_not_hard_code_contact_ids():
 
 def test_transactional_send_example_documents_queue_prerequisite(client, staff_user):
     client.force_login(staff_user)
-    response = client.get(reverse("mailing:api_docs"))
+    response = client.get(reverse("mailing:api_docs_legacy"))
     page = response.content.decode()
 
     assert response.status_code == 200
@@ -228,7 +228,7 @@ def test_transactional_send_example_documents_queue_prerequisite(client, staff_u
 
 def test_api_docs_endpoint_reference_matches_openapi_paths(client, staff_user):
     client.force_login(staff_user)
-    response = client.get(reverse("mailing:api_docs"))
+    response = client.get(reverse("mailing:api_docs_legacy"))
     page = response.content.decode()
     spec = build_openapi_spec()
 

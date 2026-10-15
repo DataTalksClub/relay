@@ -4,7 +4,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}Datamailer{% endblock %}</title>
+    <title>{% block title %}Relay{% endblock %}</title>
     <script>
       (function () {
         try {
@@ -29,13 +29,16 @@
     <link rel="stylesheet" href="{% static 'mailing/css/app.css' %}">
   </head>
   <body>
+    {% include "_icons.html" %}
+    <a class="skip-link" href="#main-content">Skip to content</a>
     <header class="app-header">
       <nav class="app-nav" aria-label="Main">
-        <a class="brand" href="{% url 'mailing:dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>Datamailer</a>
+        <a class="brand" href="{% url 'mailing:dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>Relay</a>
+        {% if operator_active_client %}<span class="header-client-context">{{ operator_active_client.name }}</span>{% endif %}
         <div class="top-nav-actions">
           <a href="{% url 'mailing:client_list' %}" {% if request.resolver_match.url_name == "client_list" or request.resolver_match.url_name == "client_create" or request.resolver_match.url_name == "client_detail" or request.resolver_match.url_name == "client_edit" %}aria-current="page"{% endif %}>Clients</a>
           <a href="{% url 'mailing:api_docs' %}" {% if request.resolver_match.url_name == "api_docs" or request.resolver_match.url_name == "api_docs_json" %}aria-current="page"{% endif %}>API Docs</a>
-          <a href="/admin/">Admin</a>
+          <a href="{% url 'mailing:admin_api_keys' %}" {% if request.resolver_match.url_name == "admin_api_keys" %}aria-current="page"{% endif %}>Admin</a>
           <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
             <span data-theme-toggle-label>Dark</span>
           </button>
@@ -49,8 +52,9 @@
             <div class="sidebar-titlebar">
               <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-expanded="true" aria-controls="client-sidebar" aria-label="Toggle client navigation">
                 <span class="sidebar-toggle-open">Hide</span>
-                <span class="sidebar-toggle-closed">Open</span>
+                <span class="sidebar-toggle-closed">Menu</span>
               </button>
+              {% if operator_active_client %}<span class="sidebar-current-client">{{ operator_active_client.name }}</span>{% endif %}
             </div>
             <div class="sidebar-context">
               {% if operator_clients %}
@@ -58,7 +62,7 @@
                   {% csrf_token %}
                   <input type="hidden" name="next" value="{{ request.get_full_path }}">
                   <label for="operator-client">Active client</label>
-                  <select id="operator-client" name="client_id" onchange="this.form.submit()">
+                  <select id="operator-client" name="client_id" data-client-switcher>
                     <option value="">Select client</option>
                     {% for client in operator_clients %}
                       <option value="{{ client.id }}"{% if operator_active_client and operator_active_client.id == client.id %} selected{% endif %}>{{ client.name }}</option>
@@ -70,51 +74,64 @@
                 <a class="button secondary sidebar-client-action" href="{% url 'mailing:client_create' %}">Create client</a>
               {% endif %}
             </div>
-            <nav class="sidebar-nav" aria-label="Client">
+            <nav class="sidebar-nav" aria-label="Workspace">
               <div class="sidebar-nav-group">
-                <span class="sidebar-nav-label">Operate</span>
+                <span class="sidebar-nav-label">Daily work</span>
                 <a href="{% url 'mailing:dashboard' %}" {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>
-                  Dashboard
+                  <svg class="icon" aria-hidden="true"><use href="#i-activity"/></svg>
+                  Overview
                 </a>
                 <a href="{% url 'mailing:campaign_list' %}" {% if request.resolver_match.url_name == "campaign_list" or request.resolver_match.url_name == "campaign_create" or request.resolver_match.url_name == "campaign_detail" or request.resolver_match.url_name == "campaign_edit" %}aria-current="page"{% endif %}>
+                  <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
                   Campaigns
                 </a>
-                <a href="{% url 'mailing:transactional_queue' %}" {% if request.resolver_match.url_name == "transactional_queue" %}aria-current="page"{% endif %}>
-                  Transactional queue
-                </a>
                 <a href="{% url 'mailing:contact_search' %}" {% if request.resolver_match.url_name == "contact_search" or request.resolver_match.url_name == "contact_detail" %}aria-current="page"{% endif %}>
+                  <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>
                   Contacts
                 </a>
-                <a href="{% url 'mailing:inbound_list' %}" {% if request.resolver_match.url_name == "inbound_list" or request.resolver_match.url_name == "inbound_message_detail" %}aria-current="page"{% endif %}>
-                  Inbound mail
+                <a href="{% url 'mailing:audience_list' %}" {% if request.resolver_match.url_name == "audience_list" or request.resolver_match.url_name == "audience_create" or request.resolver_match.url_name == "audience_detail" or request.resolver_match.url_name == "audience_edit" or request.resolver_match.url_name == "tag_create" or request.resolver_match.url_name == "tag_detail" or request.resolver_match.url_name == "tag_edit" %}aria-current="page"{% endif %}>
+                  <svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg>
+                  Audiences
+                </a>
+                <a href="{% url 'mailing:template_catalog' %}" {% if request.resolver_match.url_name == "template_catalog" or request.resolver_match.url_name == "template_detail" %}aria-current="page"{% endif %}>
+                  <svg class="icon" aria-hidden="true"><use href="#i-doc"/></svg>
+                  Templates
+                </a>
+                <a href="{% url 'mailing:email_activity' %}" {% if request.resolver_match.url_name == "email_activity" or request.resolver_match.url_name == "transactional_queue" or request.resolver_match.url_name == "transactional_message_detail" %}aria-current="page"{% endif %}>
+                  <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>
+                  Email activity
                 </a>
               </div>
               <div class="sidebar-nav-group">
-                <span class="sidebar-nav-label">Configure</span>
-                <a href="{% url 'mailing:audience_list' %}" {% if request.resolver_match.url_name == "audience_list" or request.resolver_match.url_name == "audience_create" or request.resolver_match.url_name == "audience_detail" or request.resolver_match.url_name == "audience_edit" or request.resolver_match.url_name == "tag_create" or request.resolver_match.url_name == "tag_detail" or request.resolver_match.url_name == "tag_edit" %}aria-current="page"{% endif %}>
-                  Audiences
-                </a>
-                <a href="{% url 'mailing:template_catalog' %}" {% if request.resolver_match.url_name == "template_catalog" or request.resolver_match.url_name == "template_detail" or request.resolver_match.url_name == "transactional_message_detail" %}aria-current="page"{% endif %}>
-                  Templates
-                </a>
-                <a href="{% url 'mailing:inbound_address_list' %}" {% if request.resolver_match.url_name == "inbound_address_list" or request.resolver_match.url_name == "inbound_address_create" %}aria-current="page"{% endif %}>
-                  Receiving addresses
-                </a>
+                <span class="sidebar-nav-label">Integration settings</span>
                 {% if operator_active_client %}
                   <a href="{% url 'mailing:client_detail' operator_active_client.id %}" {% if request.resolver_match.url_name == "client_detail" %}aria-current="page"{% endif %}>
+                    <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
                     Settings
                   </a>
+                  <a href="{% url 'mailing:client_detail' operator_active_client.id %}#senders"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Senders</a>
+                  <a href="{% url 'mailing:client_detail' operator_active_client.id %}#api-keys"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>API keys</a>
+                  <a href="{% url 'mailing:client_detail' operator_active_client.id %}#integrations"><svg class="icon" aria-hidden="true"><use href="#i-external-link"/></svg>Connected services</a>
                 {% endif %}
+              </div>
+              <div class="sidebar-nav-group">
+                <span class="sidebar-nav-label">Shared service</span>
+                <a href="{% url 'jobs:job_list' %}" {% if request.resolver_match.url_name == 'job_list' or request.resolver_match.url_name == 'job_detail' %}aria-current="page"{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Jobs</a>
+                <a href="{% url 'jobs:schedule_list' %}" {% if request.resolver_match.url_name == 'schedule_list' or request.resolver_match.url_name == 'schedule_detail_ui' %}aria-current="page"{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>Schedules</a>
+                <a href="{% url 'jobs:service_health' %}" {% if request.resolver_match.url_name == 'service_health' %}aria-current="page"{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Service health</a>
+                <a href="{% url 'mailing:inbound_list' %}" {% if request.resolver_match.url_name == "inbound_list" or request.resolver_match.url_name == "inbound_message_detail" %}aria-current="page"{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-inbox"/></svg>Inbox</a>
+                <a href="{% url 'mailing:inbound_address_list' %}" {% if request.resolver_match.url_name == "inbound_address_list" or request.resolver_match.url_name == "inbound_address_create" %}aria-current="page"{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-mail"/></svg>Receiving addresses</a>
+                <a href="{% url 'jobs:dead_letter_list' %}" {% if request.resolver_match.url_name == "dead_letter_list" %}aria-current="page"{% endif %}><svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"/></svg>Failed jobs</a>
               </div>
             </nav>
           </div>
         </aside>
       {% endif %}
-      <main class="app-main">
+      <main class="app-main" id="main-content" tabindex="-1" data-active-client="{{ operator_active_client.id|default:'' }}">
         {% if messages %}
           <ul class="messages">
             {% for message in messages %}
-              <li class="message {{ message.tags }}">{{ message }}</li>
+              <li class="message {{ message.tags }}" role="{% if message.tags == 'error' %}alert{% else %}status{% endif %}">{{ message }}</li>
             {% endfor %}
           </ul>
         {% endif %}
@@ -123,14 +140,65 @@
     </div>
     <script>
       (function () {
+        const forms = [...document.querySelectorAll('main form[method="post"]')];
+        const dirty = new Set();
+        forms.forEach(function (form) {
+          form.addEventListener('input', () => dirty.add(form));
+          form.addEventListener('change', () => dirty.add(form));
+          form.addEventListener('submit', () => dirty.delete(form));
+        });
+        const switcher = document.querySelector('[data-client-switcher]');
+        if (switcher) {
+          let previous = switcher.value;
+          switcher.addEventListener('change', function () {
+            if (dirty.size && !window.confirm('You have unsaved changes. Switch clients and discard them?')) {
+              switcher.value = previous;
+              return;
+            }
+            dirty.clear();
+            previous = switcher.value;
+            switcher.form.submit();
+          });
+        }
+        window.addEventListener('beforeunload', function (event) {
+          if (dirty.size) { event.preventDefault(); event.returnValue = ''; }
+        });
+        // Connect custom help/error containers to controls across the forms.
+        document.querySelectorAll('.form-field').forEach(function (field) {
+          const control = field.querySelector('input:not([type="hidden"]),select,textarea');
+          if (!control || !control.id) return;
+          const ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter(id => id && document.getElementById(id));
+          field.querySelectorAll('.helptext,.field-errors').forEach(function (description, index) {
+            if (!description.id) description.id = control.id + '-description-' + index;
+            if (!ids.includes(description.id)) ids.push(description.id);
+            if (description.classList.contains('field-errors')) control.setAttribute('aria-invalid', 'true');
+          });
+          if (ids.length) control.setAttribute('aria-describedby', ids.join(' '));
+        });
+        const errors = document.querySelector('main .form-errors');
+        if (errors) { errors.setAttribute('tabindex', '-1'); errors.setAttribute('role', 'alert'); errors.focus(); }
+      })();
+      (function () {
+        const main = document.querySelector("[data-active-client]");
+        if (!main || !main.dataset.activeClient) return;
+        main.querySelectorAll('form[method="post"]').forEach(function (form) {
+          if (form.querySelector('[name="operator_client_id"]')) return;
+          const context = document.createElement("input");
+          context.type = "hidden";
+          context.name = "operator_client_id";
+          context.value = main.dataset.activeClient;
+          form.appendChild(context);
+        });
+      })();
+      (function () {
         const shell = document.querySelector("[data-sidebar-shell]");
         const toggle = document.querySelector("[data-sidebar-toggle]");
         if (!shell || !toggle) return;
-        const key = "datamailer.sidebar.collapsed";
         const mobileQuery = window.matchMedia("(max-width: 860px)");
+        const key = () => "relay.sidebar.collapsed." + (mobileQuery.matches ? "mobile" : "desktop");
         const storedPreference = () => {
           try {
-            return localStorage.getItem(key);
+            return localStorage.getItem(key()) || (!mobileQuery.matches ? localStorage.getItem("datamailer.sidebar.collapsed") : null);
           } catch (error) {
             return null;
           }
@@ -138,10 +206,18 @@
         const setCollapsed = (collapsed, persist = true) => {
           shell.classList.toggle("sidebar-collapsed", collapsed);
           toggle.setAttribute("aria-expanded", String(!collapsed));
-          if (persist) localStorage.setItem(key, collapsed ? "1" : "0");
+          if (persist) {
+            try { localStorage.setItem(key(), collapsed ? "1" : "0"); } catch (error) { /* Navigation still works. */ }
+          }
         };
         const stored = storedPreference();
         setCollapsed(stored === null ? mobileQuery.matches : stored === "1", false);
+        mobileQuery.addEventListener("change", function () {
+          const preference = storedPreference();
+          const collapsed = preference === null ? mobileQuery.matches : preference === "1";
+          if (collapsed && document.querySelector('[data-sidebar]').contains(document.activeElement)) toggle.focus();
+          setCollapsed(collapsed, false);
+        });
         toggle.addEventListener("click", function () {
           setCollapsed(!shell.classList.contains("sidebar-collapsed"));
         });
