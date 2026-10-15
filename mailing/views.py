@@ -1,6 +1,6 @@
 import json
 from datetime import timedelta
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from django.conf import settings
 from django.contrib import messages
@@ -445,12 +445,16 @@ def transactional_message_detail(request, message_id):
 @staff_member_required
 @require_GET
 def inbound_list(request):
-    """The receiving mailbox.
+    """The receiving mailbox: a dakit list–detail split.
 
     Not client-scoped and deliberately so: a receiving address belongs to the
     Relay service, not to the tenant selected in the console, and scoping this
     to a client would hide mail that arrived for a different one. The address
     filter is how an operator narrows it.
+
+    The open message lives in the URL (`?message=<id>`) next to the list's
+    own filters, so a selection can be shared, reloaded and reached with
+    Back/Forward.
     """
     state = request.GET.get("state")
     if state == "all":
@@ -482,81 +486,96 @@ def inbound_list(request):
     state_choice = request.GET.get("state") or ""
     if state_choice == DEFAULT_STATE:
         state_choice = ""
+    list_url = inbox_list_url(request)
+    selected = None
+    selected_id = request.GET.get("message", "")
+    if selected_id.isdigit():
+        selected = get_object_or_404(InboundMessage, pk=int(selected_id))
+        # The list was read before opening marks the message read, so its
+        # row keeps its place in the unread view; show the new state on it.
+        selected_context = inbound_message_context(selected, list_url)
+        for row in context["rows"]:
+            if row.pk == selected.pk:
+                row.state = selected.state
+    else:
+        selected_context = {}
     return render(
         request,
         "mailing/operator/inbound_list.html",
         {
             **context,
+            **selected_context,
             "narrowed": narrowed,
             "state_choice": state_choice,
             "addresses": list_addresses(),
-            "blocked_senders": list_blocked_senders()[:25],
+            "list_url": list_url,
+            "selected": selected,
         },
     )
 
 
-@staff_member_required
-def inbound_message_detail(request, message_id):
-    message = get_object_or_404(InboundMessage, pk=message_id)
-    if request.method == "POST":
-        action = request.POST.get("action", "")
-        if action == "mark_read":
-            mark_read(message)
-            messages.success(request, "Message marked as read.")
-        elif action == "mark_unread":
-            if message.state == "read":
-                message.state = "received"
-                message.save(update_fields=["state", "updated_at"])
-                messages.success(request, "Message marked as unread.")
-            return redirect(inbox_return_url(request))
-        elif action == BLOCK_ORIGIN_BUTTON:
-            scope = request.POST.get("scope", "address")
-            blocked, created = block_sender(
-                message=message,
-                scope=scope,
-                value=message.sender_address if scope == "address" else message.sender_domain,
-                origin=BLOCK_ORIGIN_BUTTON,
-                actor=request.user,
-            )
-            if blocked is None:
-                messages.error(request, "That message has no sender address to block.")
-            elif created:
-                verb = "domain" if scope == "domain" else "sender"
-                messages.success(request, f"Blocked {verb} {blocked.value}. Future mail is discarded.")
-                if message.state == "received":
-                    message.state = "read"
-                    message.blocked_rule = blocked
-                    message.save(update_fields=["state", "blocked_rule", "updated_at"])
-            else:
-                messages.info(request, f"{blocked.value} was already blocked.")
-        elif action == "unblock":
-            if message.blocked_rule_id:
-                unblock_sender(message.blocked_rule)
-                messages.success(request, "Sender unblocked.")
-        return redirect("mailing:inbound_message_detail", message_id=message.pk)
-
+def inbound_message_context(message, list_url):
+    """The detail pane for one inbound message; opening it marks it read."""
     body = ""
     if message.has_body and message.state != "blocked":
         from mailing.services.inbound_email import load_body_text  # noqa: PLC0415 - avoids an import cycle
 
         body = load_body_text(message)
-    if request.method == "GET" and message.state == "received":
+    if message.state == "received":
         mark_read(message)
+    return {
+        "message": message,
+        "body": body,
+        "return_url": list_url,
+        "badge": Badge(
+            message.get_state_display(),
+            {"blocked": "danger", "read": "neutral"}.get(message.state, "warning"),
+        ),
+        "blocked_rule": message.blocked_rule,
+    }
 
-    return render(
-        request,
-        "mailing/operator/inbound_message_detail.html",
-        {
-            "message": message,
-            "body": body,
-            "return_url": inbox_return_url(request),
-            "badge": Badge(
-                message.get_state_display(),
-                {"blocked": "danger", "read": "neutral"}.get(message.state, "warning"),
-            ),
-            "blocked_rule": message.blocked_rule,
-        },
-    )
+
+@staff_member_required
+def inbound_message_detail(request, message_id):
+    """POST target for a message's actions; a GET opens it in the mailbox split."""
+    message = get_object_or_404(InboundMessage, pk=message_id)
+    if request.method != "POST":
+        return redirect(inbox_message_url(inbox_return_url(request), message.pk))
+    action = request.POST.get("action", "")
+    if action == "mark_read":
+        mark_read(message)
+        messages.success(request, "Message marked as read.")
+    elif action == "mark_unread":
+        if message.state == "read":
+            message.state = "received"
+            message.save(update_fields=["state", "updated_at"])
+            messages.success(request, "Message marked as unread.")
+        return redirect(inbox_return_url(request))
+    elif action == BLOCK_ORIGIN_BUTTON:
+        scope = request.POST.get("scope", "address")
+        blocked, created = block_sender(
+            message=message,
+            scope=scope,
+            value=message.sender_address if scope == "address" else message.sender_domain,
+            origin=BLOCK_ORIGIN_BUTTON,
+            actor=request.user,
+        )
+        if blocked is None:
+            messages.error(request, "That message has no sender address to block.")
+        elif created:
+            verb = "domain" if scope == "domain" else "sender"
+            messages.success(request, f"Blocked {verb} {blocked.value}. Future mail is discarded.")
+            if message.state == "received":
+                message.state = "read"
+                message.blocked_rule = blocked
+                message.save(update_fields=["state", "blocked_rule", "updated_at"])
+        else:
+            messages.info(request, f"{blocked.value} was already blocked.")
+    elif action == "unblock":
+        if message.blocked_rule_id:
+            unblock_sender(message.blocked_rule)
+            messages.success(request, "Sender unblocked.")
+    return redirect(inbox_message_url(inbox_return_url(request), message.pk))
 
 
 @staff_member_required
@@ -912,12 +931,26 @@ def email_activity_return_url(request):
 
 
 def inbox_return_url(request):
+    """The mailbox list (its filters, without an open message) a message
+    action returns to, taken from `?return=`."""
     candidate = request.GET.get("return", "")
     if candidate and url_has_allowed_host_and_scheme(candidate, allowed_hosts={request.get_host()}):
         parsed = urlsplit(candidate)
         if parsed.path == reverse("mailing:inbound_list"):
-            return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+            query = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "message"]
+            return parsed.path + (f"?{urlencode(query)}" if query else "")
     return reverse("mailing:inbound_list")
+
+
+def inbox_list_url(request):
+    """This mailbox view's own URL without the open message."""
+    query = [(key, value) for key, value in request.GET.items() if key != "message"]
+    return reverse("mailing:inbound_list") + (f"?{urlencode(query)}" if query else "")
+
+
+def inbox_message_url(list_url, message_id):
+    separator = "&" if "?" in list_url else "?"
+    return f"{list_url}{separator}message={message_id}"
 
 
 @staff_member_required

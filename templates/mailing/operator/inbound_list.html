@@ -1,157 +1,98 @@
 {% extends "base.html" %}
 
-{% block title %}Inbox | Relay{% endblock %}
-{% block topbar_title %}Inbound mail{% endblock %}
+{% block title %}{% if selected %}{{ selected.subject|default:"(no subject)" }} | {% endif %}Inbox | Relay{% endblock %}
 
 {% block content %}
-  <div class="page-header">
+  <header class="page-header">
     <div>
       <h1>Inbox</h1>
       <p>Shared service inbox for all Relay receiving addresses, across all clients.</p>
     </div>
-    <div class="actions">
-      <a class="button secondary" href="{% url 'mailing:inbound_address_list' %}">Receiving addresses</a>
-    </div>
-  </div>
+  </header>
 
-  <section class="section panel" aria-labelledby="mailbox-filters">
-    <div class="panel-header">
-      <h2 id="mailbox-filters">Filter mailbox</h2>
-    </div>
-    <form method="get" class="filter-bar">
-      <nav class="dk-tabs" aria-label="Mailbox state">
-        <a class="dk-tab" href="?state=&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}" {% if not state_choice %}aria-current="page"{% endif %}>Unread</a>
-        <a class="dk-tab" href="?state=read&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}" {% if state_choice == "read" %}aria-current="page"{% endif %}>Read</a>
-        <a class="dk-tab" href="?state=blocked&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}" {% if state_choice == "blocked" %}aria-current="page"{% endif %}>Blocked senders</a>
-        <a class="dk-tab" href="?state=all&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}" {% if state_choice == "all" %}aria-current="page"{% endif %}>Everything</a>
-      </nav>
-      <input type="hidden" name="state" value="{{ state_choice }}">
-      <div class="filter-grid">
-        <div class="form-field">
-          <label for="address">Address</label>
-          <select id="address" name="address">
+  {# dakit list–detail (docs/list-detail.md): the open message is ?message=<id> in the URL. #}
+  <div class="dk-split inbox-split" data-dk-split="relay-inbox" data-inbox-split data-view="{% if selected %}detail{% else %}list{% endif %}">
+    <section class="dk-split__list" aria-labelledby="mailbox-title">
+      <header class="dk-split__head">
+        <h2 class="dk-split__title" id="mailbox-title">Messages</h2>
+        <span class="dk-split__count">{{ total|default:0 }}</span>
+      </header>
+      <div class="dk-split__tools">
+        <nav class="dk-tabs dk-tabs--sm" aria-label="Mailbox state">
+          <a class="dk-tab" href="?state=&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}"{% if not state_choice %} aria-current="page"{% endif %}>Unread</a>
+          <a class="dk-tab" href="?state=read&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}"{% if state_choice == "read" %} aria-current="page"{% endif %}>Read</a>
+          <a class="dk-tab" href="?state=blocked&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}"{% if state_choice == "blocked" %} aria-current="page"{% endif %}>Blocked</a>
+          <a class="dk-tab" href="?state=all&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}"{% if state_choice == "all" %} aria-current="page"{% endif %}>Everything</a>
+        </nav>
+        <form method="get" class="inbox-filter" role="search" aria-label="Filter mailbox">
+          <input type="hidden" name="state" value="{{ state_choice }}">
+          <input class="dk-input" id="q" name="q" type="search" value="{{ query }}" placeholder="Subject, sender, body" aria-label="Search mail">
+          <select class="dk-select" id="address" name="address" aria-label="Receiving address">
             <option value="">All addresses</option>
             {% for row in addresses %}
-              <option value="{{ row.address }}" {% if address == row.address %}selected{% endif %}>
-                {{ row.address }}{% if not row.is_active %} (retired){% endif %}
-              </option>
+              <option value="{{ row.address }}"{% if address == row.address %} selected{% endif %}>{{ row.address }}{% if not row.is_active %} (retired){% endif %}</option>
             {% endfor %}
           </select>
-        </div>
-        <div class="form-field">
-          <label for="q">Search</label>
-          <input id="q" name="q" type="search" value="{{ query }}" placeholder="Subject, sender, body">
-        </div>
-        <div class="form-field">
-          <label>&nbsp;</label>
-          <button class="button secondary" type="submit">Filter</button>
-        </div>
+          <button class="dk-button dk-button--secondary" type="submit">Filter</button>
+        </form>
       </div>
-    </form>
-  </section>
-
-  {% if rows %}
-    <section class="section panel" aria-labelledby="mailbox-table">
-      <div class="panel-header">
-        <h2 id="mailbox-table">Messages</h2>
-        <span class="muted">{{ total }} message{{ total|pluralize }}</span>
-      </div>
-      <div class="table-wrap triage-table">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">From</th>
-              <th scope="col">Subject</th>
-              <th scope="col">To</th>
-              <th scope="col">Received</th>
-              <th scope="col">Signal</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div class="dk-split__scroll">
+        {% if rows %}
+          <ul class="dk-split__items" aria-label="Messages">
             {% for row in rows %}
-              <tr>
-                <td data-label="From">
-                  <a href="{% url 'mailing:inbound_message_detail' row.id %}?return={{ request.get_full_path|urlencode }}">{{ row.sender_address|default:row.from_header|default:"Unknown sender" }}</a>
-                  {% if row.sender_domain %}
-                    <div class="helptext">{{ row.sender_domain }}</div>
+              <li data-message-id="{{ row.pk }}">
+                <a class="dk-split__item" href="{{ list_url }}{% if '?' in list_url %}&amp;{% else %}?{% endif %}message={{ row.pk }}"{% if selected and selected.pk == row.pk %} aria-current="true"{% endif %}>
+                  <span class="dk-split__name">{{ row.subject|default:"(no subject)" }}</span>
+                  <span class="dk-split__meta">
+                    <span class="inbox-row__sender">{{ row.sender_address|default:row.from_header|default:"Unknown sender" }}</span>
+                    <span class="dk-mono inbox-row__time">{{ row.created_at|date:"M j H:i" }}</span>
+                  </span>
+                  {% if row.state != state or row.is_spam or row.attachment_count %}
+                    <span class="dk-split__meta">
+                      {% if row.state != state %}<span class="dk-badge{% if row.state == 'received' %} dk-badge--warning{% elif row.state == 'blocked' %} dk-badge--danger{% endif %}">{{ row.get_state_display }}</span>{% endif %}
+                      {% if row.is_spam %}<span class="dk-badge dk-badge--danger">Suspected spam</span>{% endif %}
+                      {% if row.attachment_count %}<span class="dk-badge">{{ row.attachment_count }} attachment{{ row.attachment_count|pluralize }}</span>{% endif %}
+                    </span>
                   {% endif %}
-                </td>
-                <td class="truncate" data-label="Subject"><a href="{% url 'mailing:inbound_message_detail' row.id %}?return={{ request.get_full_path|urlencode }}">{{ row.subject|default:"(no subject)" }}</a></td>
-                <td class="nowrap" data-label="To">{{ row.recipient_address|default:"-" }}</td>
-                <td class="nowrap" data-label="Received">{{ row.created_at|date:"Y-m-d H:i" }}</td>
-                <td class="nowrap" data-label="Message status">
-                  <span class="badge neutral">{{ row.get_state_display }}</span>
-                  {% if row.is_spam %}
-                    <span class="badge danger">Suspected spam</span>
-                  {% elif row.spam_verdict %}
-                    <span class="badge neutral">Spam check: {{ row.spam_verdict }}</span>
-                  {% elif row.attachment_count %}
-                    <span class="badge neutral">{{ row.attachment_count }} attachment{{ row.attachment_count|pluralize }}</span>
-                  {% else %}
-                    <span class="muted">—</span>
-                  {% endif %}
-                </td>
-              </tr>
+                </a>
+              </li>
             {% endfor %}
-          </tbody>
-        </table>
+          </ul>
+        {% else %}
+          <div class="dk-empty dk-empty--compact">
+            {% if narrowed %}
+              <p class="dk-empty__title">No messages match this filter.</p>
+              <p class="dk-empty__desc">Try another sender, subject, receiving address, or message state.</p>
+              <div class="dk-empty__actions"><a class="dk-button dk-button--secondary dk-button--sm" href="{% url 'mailing:inbound_list' %}?state=all">View all mail</a></div>
+            {% else %}
+              <p class="dk-empty__title">No unread mail.</p>
+              <p class="dk-empty__desc">New mail received for an active Relay address appears here.</p>
+              <div class="dk-empty__actions"><a class="dk-button dk-button--secondary dk-button--sm" href="{% url 'mailing:inbound_list' %}?state=all">View all mail</a></div>
+            {% endif %}
+          </div>
+        {% endif %}
       </div>
       {% if pages > 1 %}
-        <nav class="pagination" aria-label="Pagination">
-          {% if has_previous %}
-            <a class="button secondary" href="?state={{ state_choice|urlencode }}&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}&amp;page={{ previous_page }}">Previous</a>
-          {% endif %}
-          <span class="muted">Page {{ page }} of {{ pages }}</span>
-          {% if has_next %}
-            <a class="button secondary" href="?state={{ state_choice|urlencode }}&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}&amp;page={{ next_page }}">Next</a>
-          {% endif %}
+        <nav class="dk-split__foot inbox-pages" aria-label="Pagination">
+          {% if has_previous %}<a class="dk-button dk-button--secondary dk-button--sm" href="?state={{ state_choice|urlencode }}&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}&amp;page={{ previous_page }}">Previous</a>{% endif %}
+          <span class="dk-mono inbox-pages__label">Page {{ page }} of {{ pages }}</span>
+          {% if has_next %}<a class="dk-button dk-button--secondary dk-button--sm" href="?state={{ state_choice|urlencode }}&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}&amp;page={{ next_page }}">Next</a>{% endif %}
         </nav>
       {% endif %}
+      <div class="dk-split__handle"></div>
     </section>
-  {% else %}
-    <div class="empty-state">
-      <span class="badge neutral">EMPTY</span>
-      {% if narrowed %}
-        <strong>No messages match this filter.</strong>
-        <p>Try another sender, subject, receiving address, or message state.</p>
-        <a href="{% url 'mailing:inbound_list' %}?state=all">View all mail</a>
-      {% else %}
-        <strong>No unread mail.</strong>
-        <p>New mail received for an active Relay address appears here. <a href="{% url 'mailing:inbound_list' %}?state=all">View all mail</a> or <a href="{% url 'mailing:inbound_address_list' %}">manage receiving addresses</a>.</p>
-      {% endif %}
-    </div>
-  {% endif %}
 
-  {% if blocked_senders %}
-    <section class="section panel" aria-labelledby="blocked-heading">
-      <div class="panel-header">
-        <div>
-          <h2 id="blocked-heading">Blocked senders</h2>
-          <p class="muted">Discarded at ingest, so they never reach the mailbox. Managed on the addresses page.</p>
+    <section class="dk-split__detail" aria-label="Selected message" data-inbox-detail>
+      {% if selected %}
+        {% include "mailing/operator/_inbound_message.html" %}
+      {% else %}
+        <div class="dk-split__empty">
+          <div class="dk-empty">
+            <p class="dk-empty__title">Select a message</p>
+            <p class="dk-empty__desc">Choose mail from the list to read it and manage its sender. Receiving addresses and blocked senders are managed on <a href="{% url 'mailing:inbound_address_list' %}">Receiving addresses</a>.</p>
+          </div>
         </div>
-      </div>
-      <div class="table-wrap triage-table">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Scope</th>
-              <th scope="col">Value</th>
-              <th scope="col">Reason</th>
-              <th scope="col">Blocked</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for rule in blocked_senders %}
-              <tr>
-                <td data-label="Scope">{{ rule.get_scope_display }}</td>
-                <td data-label="Blocked sender">{{ rule.value }}</td>
-                <td class="truncate" data-label="Reason">{{ rule.reason|default:"-" }}</td>
-                <td class="nowrap" data-label="Blocked">{{ rule.created_at|date:"Y-m-d" }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      {% endif %}
     </section>
-  {% endif %}
+  </div>
 {% endblock %}

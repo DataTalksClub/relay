@@ -1,0 +1,138 @@
+{% comment %}
+The open message in the mailbox split's detail pane (inbound_list.html).
+Actions post to inbound_message_detail, which returns to this list view.
+{% endcomment %}
+{% url 'mailing:inbound_message_detail' message.pk as message_action %}
+<header class="dk-split__head">
+  <a class="dk-split__back" href="{{ return_url }}" aria-label="Back to Messages">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Messages
+  </a>
+  <h2 class="dk-split__title" id="message-title" tabindex="-1">{{ message.subject|default:"(no subject)" }}</h2>
+  <span class="dk-badge{% if badge.tone != 'neutral' %} dk-badge--{{ badge.tone }}{% endif %}">{{ badge.label }}</span>
+  {% if message.state == "read" or message.state == "received" %}
+    <form method="post" action="{{ message_action }}?return={{ return_url|urlencode }}">
+      {% csrf_token %}
+      {% if message.state == "read" %}
+        <input type="hidden" name="action" value="mark_unread">
+        <button class="dk-button dk-button--secondary dk-button--sm" type="submit">Mark unread</button>
+      {% else %}
+        <input type="hidden" name="action" value="mark_read">
+        <button class="dk-button dk-button--secondary dk-button--sm" type="submit">Mark read</button>
+      {% endif %}
+    </form>
+  {% endif %}
+</header>
+<div class="dk-split__scroll inbox-message">
+  <p class="inbox-message__route">
+    From <strong>{{ message.sender_address|default:message.from_header|default:"unknown sender" }}</strong>
+    to {{ message.recipient_address|default:"an unknown address" }}
+    &middot; received <span class="dk-mono">{{ message.created_at|date:"Y-m-d H:i" }}</span>
+  </p>
+
+  <section class="inbox-section" aria-labelledby="body-heading">
+    <h3 class="dk-visually-hidden" id="body-heading">Message</h3>
+    {% if message.state == "blocked" %}
+      <div class="dk-callout dk-callout--warning" role="status"><div class="dk-callout__body">This message was blocked and its body was not kept. Block rules discard future matching mail.</div></div>
+    {% elif body %}
+      <pre class="inbound-body">{{ body }}</pre>
+    {% elif message.has_body %}
+      <div class="dk-callout dk-callout--warning" role="status"><div class="dk-callout__body">The body is stored in object storage and could not be read right now.</div></div>
+    {% else %}
+      <div class="dk-callout" role="status"><div class="dk-callout__body"><strong>No text body.</strong> This email has no plain-text version available. Storage details are below.</div></div>
+    {% endif %}
+  </section>
+
+  <section class="inbox-section" aria-labelledby="actions-heading">
+    <h3 class="inbox-section__title" id="actions-heading">Manage this sender</h3>
+    <p class="inbox-section__note">
+      Rules apply across the shared service, to every receiving address. Blocking discards future matching mail. Existing stored messages remain, and no reply is sent to the sender.
+    </p>
+    {% if message.state == "blocked" %}
+      <form method="post" action="{{ message_action }}?return={{ return_url|urlencode }}" class="inline-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="unblock">
+        <button class="dk-button dk-button--secondary" type="submit">Remove this block rule</button>
+      </form>
+    {% elif message.sender_address %}
+      <form method="post" action="{{ message_action }}?return={{ return_url|urlencode }}" class="inline-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="mark_as_spam">
+        <input type="hidden" name="scope" value="address">
+        <button class="dk-button dk-button--danger" type="submit">Block sender {{ message.sender_address }}</button>
+      </form>
+      {% if message.sender_domain %}
+        <details class="inbox-disclosure sender-domain-action">
+          <summary><svg class="inbox-disclosure__chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>Block every sender at {{ message.sender_domain }}</summary>
+          <form method="post" action="{{ message_action }}?return={{ return_url|urlencode }}" class="inbox-disclosure__body">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="mark_as_spam">
+            <input type="hidden" name="scope" value="domain">
+            <p>All future mail from any address at <strong>{{ message.sender_domain }}</strong> will be discarded for every Relay receiving address. Discarded mail cannot be recovered from this inbox.</p>
+            <label class="confirmation-choice" for="confirm-domain-block">
+              <input id="confirm-domain-block" type="checkbox" required>
+              I want to block every sender at {{ message.sender_domain }}.
+            </label>
+            <button class="dk-button dk-button--danger" type="submit">Confirm domain block</button>
+          </form>
+        </details>
+      {% endif %}
+    {% else %}
+      <p class="muted">This message has no parsable sender address, so there is nothing to block.</p>
+    {% endif %}
+    {% if blocked_rule %}
+      <div class="dk-callout dk-callout--warning" role="status"><div class="dk-callout__body">
+        Blocked by the rule <strong>{{ blocked_rule.value }}</strong>
+        ({{ blocked_rule.get_scope_display|lower }}), created <span class="dk-mono">{{ blocked_rule.created_at|date:"Y-m-d H:i" }}</span>.
+        {% if blocked_rule.scope == "domain" %}Removing this rule permits mail from every sender at this domain, unless another rule blocks them.{% else %}Removing this rule permits this sender, unless another rule blocks them.{% endif %}
+      </div></div>
+    {% endif %}
+  </section>
+
+  <details class="inbox-disclosure">
+    <summary><svg class="inbox-disclosure__chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>Message headers and attachment information</summary>
+    <dl class="dk-dl inbox-disclosure__body">
+      <dt>From</dt><dd>{{ message.from_header|default:"—" }}</dd>
+      <dt>Sender address</dt><dd>{{ message.sender_address|default:"—" }}</dd>
+      <dt>To</dt><dd>{{ message.to_header|default:"—" }}</dd>
+      <dt>Cc</dt><dd>{{ message.cc_header|default:"—" }}</dd>
+      <dt>Claimed sent</dt><dd class="dk-mono">{{ message.sent_at|date:"Y-m-d H:i"|default:"—" }}</dd>
+      <dt>Size</dt><dd class="dk-mono">{{ message.size_bytes }} bytes</dd>
+      <dt>Attachments</dt><dd class="dk-mono">{{ message.attachment_count }}</dd>
+      <dt>Message-ID</dt><dd class="dk-mono">{{ message.message_id|default:"—" }}</dd>
+    </dl>
+  </details>
+
+  <details class="inbox-disclosure">
+    <summary><svg class="inbox-disclosure__chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>Authentication and spam checks</summary>
+    <div class="inbox-disclosure__body">
+      <dl class="dk-dl">
+        <dt>SES spam</dt><dd class="dk-mono">{{ message.spam_verdict|default:"—" }}</dd>
+        <dt>SES virus</dt><dd class="dk-mono">{{ message.virus_verdict|default:"—" }}</dd>
+        <dt>SPF</dt><dd class="dk-mono">{{ message.spf_verdict|default:"—" }}</dd>
+        <dt>DKIM</dt><dd class="dk-mono">{{ message.dkim_verdict|default:"—" }}</dd>
+        <dt>DMARC</dt><dd class="dk-mono">{{ message.dmarc_verdict|default:"—" }}</dd>
+      </dl>
+      <p class="inbox-section__note">
+        These are checks reported by the receiving mail service. Failed authentication or a spam warning is a signal to investigate; it does not by itself establish whether the sender or message is trustworthy.
+      </p>
+    </div>
+  </details>
+
+  <details class="inbox-disclosure">
+    <summary><svg class="inbox-disclosure__chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>Storage locations</summary>
+    <div class="inbox-disclosure__body">
+      <dl class="dk-dl">
+        <dt>Raw MIME bucket</dt><dd class="dk-mono">{{ message.raw_bucket|default:"—" }}</dd>
+        <dt>Raw MIME key</dt><dd class="dk-mono">{{ message.raw_key|default:"—" }}</dd>
+        <dt>Text body key</dt><dd class="dk-mono">{{ message.body_text_key|default:"—" }}</dd>
+        <dt>HTML body key</dt><dd class="dk-mono">{{ message.body_html_key|default:"—" }}</dd>
+      </dl>
+      <p class="inbox-section__note">
+        The raw message and both body parts live in object storage, not the
+        database. Headers are indexed because the console lists and searches on
+        them; bodies are read one at a time, by an operator who has decided to
+        open one.
+      </p>
+    </div>
+  </details>
+</div>

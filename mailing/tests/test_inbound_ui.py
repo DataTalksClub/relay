@@ -148,7 +148,7 @@ def test_opening_a_message_marks_it_read(client, operator, address):
     message = received()
     client.force_login(operator)
 
-    client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
+    client.get(reverse("mailing:inbound_message_detail", args=[message.pk]), follow=True)
     message.refresh_from_db()
 
     assert message.state == InboundMessageState.READ
@@ -222,7 +222,7 @@ def test_a_blocked_message_offers_unblocking(client, operator, address):
     message = received(state=InboundMessageState.BLOCKED, blocked_rule=rule)
     client.force_login(operator)
 
-    response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
+    response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]), follow=True)
 
     assert b"Remove this block rule" in response.content
     assert b"will keep future mail" not in response.content
@@ -237,7 +237,7 @@ def test_a_blocked_message_explains_that_its_body_was_not_kept(client, operator,
     )
     client.force_login(operator)
 
-    response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
+    response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]), follow=True)
 
     assert b"its body was not kept" in response.content
     # A blocked message must not render a body even if one is somehow present.
@@ -401,3 +401,62 @@ def test_the_nav_reaches_the_mailbox_and_the_addresses(client, operator, address
 
     assert reverse("mailing:inbound_list") in html
     assert reverse("mailing:inbound_address_list") in html
+
+
+def test_a_message_opens_in_the_mailbox_split_with_its_id_in_the_url(client, operator, address):
+    """dakit list–detail: the open message is ?message=<id> on the list URL,
+    so the list keeps its filters and the selection is linkable."""
+    message = received()
+    other = received(subject="Second thread", message_id="<two@example.com>")
+    client.force_login(operator)
+
+    response = client.get(reverse("mailing:inbound_list"), {"state": "all", "message": message.pk})
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert response.context["selected"] == message
+    assert 'class="dk-split inbox-split"' in html
+    assert 'data-view="detail"' in html
+    selected = f'href="/inbound/?state=all&amp;message={message.pk}" aria-current="true"'
+    assert selected in html
+    assert f'href="/inbound/?state=all&amp;message={other.pk}">' in html
+    # Back (phones) returns to the same filtered list without the message.
+    assert 'class="dk-split__back" href="/inbound/?state=all" aria-label="Back to Messages"' in html
+    # Actions post to the message and return to this list view.
+    target = reverse("mailing:inbound_message_detail", args=[message.pk])
+    assert f'action="{target}?return=/inbound/%3Fstate%3Dall"' in html
+
+
+def test_the_mailbox_without_a_selection_says_what_to_do(client, operator, address):
+    received()
+    client.force_login(operator)
+
+    html = client.get(reverse("mailing:inbound_list")).content.decode()
+
+    assert 'data-view="list"' in html
+    assert "aria-current=\"true\"" not in html
+    assert "Select a message" in html
+
+
+def test_the_old_message_url_opens_it_in_the_split(client, operator, address):
+    message = received()
+    client.force_login(operator)
+
+    response = client.get(
+        reverse("mailing:inbound_message_detail", args=[message.pk]) + "?return=/inbound/%3Fstate%3Dread"
+    )
+
+    assert response.status_code == 302
+    assert response["Location"] == f"/inbound/?state=read&message={message.pk}"
+
+
+def test_a_message_action_returns_to_the_message_in_its_list(client, operator, address):
+    message = received()
+    client.force_login(operator)
+
+    response = client.post(
+        reverse("mailing:inbound_message_detail", args=[message.pk]) + "?return=/inbound/%3Fstate%3Dall",
+        {"action": "mark_read"},
+    )
+
+    assert response["Location"] == f"/inbound/?state=all&message={message.pk}"

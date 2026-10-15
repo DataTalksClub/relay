@@ -2349,26 +2349,17 @@ pre {
   background: #fff;
 }
 
-.inbox-counts {
-  margin-bottom: var(--dk-space-4);
-}
-
+/* Mail body: prose in the sans face, wrapped, on its own bordered sheet. */
 .inbound-body {
+  margin: 0;
+  padding: var(--dk-space-4);
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-bg-surface);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--dk-font-sans);
   font-size: var(--dk-text-body);
-  background: var(--dk-bg-page);
-}
-
-.sender-domain-action {
-  width: 100%;
-  max-width: 640px;
-  text-align: left;
-}
-
-.sender-domain-action form {
-  margin-top: var(--dk-space-3);
 }
 
 .confirmation-choice {
@@ -2400,4 +2391,142 @@ pre {
    active client name takes the ellipsis. */
 .dk-brand__name {
   flex: none;
+}
+
+/* Mailbox split (inbound_list.html): a wider list for subject + sender rows,
+   the pane's own filters in its tools band. */
+.inbox-split {
+  --dk-split-list: 400px;
+}
+
+.inbox-split .dk-split__tools > .dk-tabs {
+  flex: 1 1 100%;
+}
+
+.inbox-filter {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: var(--dk-space-2);
+  min-width: 0;
+}
+
+.inbox-filter .dk-input,
+.inbox-filter .dk-select {
+  flex: 1 1 140px;
+  width: auto;
+  min-width: 0;
+}
+
+.inbox-row__sender {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-row__time,
+.inbox-pages__label {
+  font-variant-numeric: tabular-nums;
+}
+
+.inbox-pages__label {
+  margin-inline: auto;
+}
+
+.inbox-message > :first-child {
+  margin-top: 0;
+}
+
+/* Pane titles are headings: relay's element margins must not reach them. */
+.dk-split__title {
+  margin: 0;
+}
+
+.inbox-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dk-gap-section);
+}
+
+.inbox-message__route {
+  margin: 0;
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-md);
+  overflow-wrap: anywhere;
+}
+
+.inbox-message__route strong {
+  color: var(--dk-text-primary);
+  font-weight: var(--dk-weight-semibold);
+}
+
+.inbox-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dk-space-3);
+}
+
+.inbox-section > .dk-callout {
+  align-self: stretch;
+}
+
+.inbox-section__title {
+  margin: 0;
+  font-size: var(--dk-text-lg);
+}
+
+.inbox-section__note {
+  margin: 0;
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-sm);
+}
+
+/* Secondary facts fold away behind one neutral hairline row each. */
+.inbox-disclosure {
+  align-self: stretch;
+  border-top: 1px solid var(--dk-border-default);
+}
+
+.inbox-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-2);
+  min-height: var(--dk-size-control-md);
+  padding-block: var(--dk-space-2);
+  color: var(--dk-text-heading);
+  font-size: var(--dk-text-md);
+  font-weight: var(--dk-weight-semibold);
+  list-style: none;
+  cursor: pointer;
+}
+
+.inbox-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.inbox-disclosure__chev {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--dk-text-muted);
+}
+
+.inbox-disclosure[open] .inbox-disclosure__chev {
+  transform: rotate(90deg);
+}
+
+.inbox-disclosure__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dk-space-3);
+  margin: 0;
+  padding: 0 0 var(--dk-space-4);
+}
+
+.inbox-disclosure__body p {
+  margin: 0;
 }

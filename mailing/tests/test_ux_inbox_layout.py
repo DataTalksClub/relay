@@ -30,7 +30,7 @@ def test_inbox_detail_prioritizes_body_and_requires_domain_confirmation():
         pk=1, state="read", subject="Help needed", sender_address="learner@example.com", sender_domain="example.com"
     )
     html = render_to_string(
-        "mailing/operator/inbound_message_detail.html",
+        "mailing/operator/_inbound_message.html",
         {
             "message": message,
             "body": "Please help with my account.",
@@ -40,7 +40,7 @@ def test_inbox_detail_prioritizes_body_and_requires_domain_confirmation():
         request=request,
     )
     assert html.index("Please help with my account.") < html.index("Authentication and spam checks")
-    assert 'href="/inbound/?state=all&amp;q=learner"' in html
+    assert 'class="dk-split__back" href="/inbound/?state=all&amp;q=learner"' in html
     assert 'value="mark_unread"' in html
     assert "every receiving address" in html
     domain_form = html[re.search(r'<details class="[^"]*sender-domain-action[^"]*">', html).start() :]
@@ -51,17 +51,18 @@ def test_inbox_detail_prioritizes_body_and_requires_domain_confirmation():
     assert "required" in confirmation
 
 
-def test_inbox_subject_links_preserve_search_context():
+def test_inbox_rows_link_to_the_message_inside_the_same_list_view():
     request = RequestFactory().get("/inbound/?state=all&q=learner&page=2")
     request.user = AnonymousUser()
     message = InboundMessage(pk=1, state="read", subject="Help needed", sender_address="learner@example.com")
     html = render_to_string(
-        "mailing/operator/inbound_list.html", {"rows": [message], "total": 1}, request=request
+        "mailing/operator/inbound_list.html",
+        {"rows": [message], "total": 1, "list_url": "/inbound/?state=all&q=learner&page=2"},
+        request=request,
     )
-    target = reverse("mailing:inbound_message_detail", args=[1])
-    assert f'href="{target}?return=/inbound/%3Fstate%3Dall%26q%3Dlearner%26page%3D2">Help needed</a>' in html
-    assert 'class="table-wrap triage-table"' in html
-    assert 'data-label="Message status"' in html
+    assert 'href="/inbound/?state=all&amp;q=learner&amp;page=2&amp;message=1">' in html
+    assert '<span class="dk-split__name">Help needed</span>' in html
+    assert 'class="dk-split__items"' in html
 
 
 @pytest.mark.django_db
@@ -100,7 +101,7 @@ def test_blocked_message_never_fetches_stored_body_even_with_pointer(client):
     )
     assert message.has_body
     with patch("mailing.services.inbound_email.load_body_text") as load_body:
-        response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
+        response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]), follow=True)
     assert response.status_code == 200
     load_body.assert_not_called()
     assert response.context["body"] == ""
