@@ -2319,7 +2319,7 @@ def test_transactional_queue_empty_state(client, operator, client_record, other_
 
     assert response.status_code == 200
     assert b"No queued transactional messages." in response.content
-    assert b"There is 1 queued message under other clients" in response.content
+    assert b"There is 1 queued message under other clients" in data_text(response.content)
 
 
 def test_transactional_queue_total_matches_scoped_count(client, operator, client_record, other_client):
@@ -2487,3 +2487,21 @@ def test_recipient_review_has_one_count_and_no_stat_tiles(client, operator, audi
     assert "tags exclude" in data_text(review) and "sending policy skips" in data_text(review)
     # The eligible count is stated once outside the send confirmation.
     assert data_text(html).count("2 eligible recipients") == 1
+
+
+def test_zero_and_range_quantities_read_as_data(client, operator, client_record):
+    """Quantities are mono in every branch: a contact page range and an
+    address with no messages yet (zero is still a count)."""
+    from mailing.models import InboundAddress  # noqa: PLC0415
+
+    client.force_login(operator)
+    select_active_client(client, client_record)
+    InboundAddress.objects.create(local_part="hello", domain="relay.example")
+
+    addresses = client.get(reverse("mailing:inbound_address_list")).content.decode()
+    assert '<span class="muted data-num">0</span>' in addresses
+
+    audience = Audience.objects.create(organization=client_record.organization, name="Range", slug="range")
+    create_subscribed_contact("range@example.com", audience, client_record)
+    contacts = client.get(reverse("mailing:contact_search")).content.decode()
+    assert 'Showing <span class="data-num">1–1</span> of <span class="data-num">1</span> contacts' in contacts

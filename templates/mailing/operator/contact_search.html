@@ -165,7 +165,7 @@
       {% if contacts is not None %}
         <span class="muted">
           {% if contact_rows %}
-            Showing {{ contacts.start_index }}-{{ contacts.end_index }} of <span class="data-num">{{ contacts.paginator.count }}</span> contacts
+            Showing <span class="data-num">{{ contacts.start_index }}–{{ contacts.end_index }}</span> of <span class="data-num">{{ contacts.paginator.count }}</span> contacts
           {% else %}
             No contacts match the current filters
           {% endif %}
