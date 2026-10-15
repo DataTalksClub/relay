@@ -2552,3 +2552,17 @@ pre {
 .relay-identity .dk-auth-page__identity {
   margin: 0;
 }
+
+/* Eligibility badges carry explanatory reasons ("Cannot send — invalid email
+   validation: missing email DNS"): they wrap inside their cell instead of
+   painting over the activity column. */
+.contact-explorer-table .badge-row {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.contact-explorer-table .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

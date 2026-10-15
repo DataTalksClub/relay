@@ -369,3 +369,24 @@ def test_inbox_search_placeholder_is_never_cut(browser, live_server, operator, m
         )
         assert fits, (viewport, list_width)
         page.context.close()
+
+
+def test_contact_eligibility_badges_stay_inside_their_cell(browser, live_server, operator):
+    from django.core.management import call_command  # noqa: PLC0415
+
+    call_command("seed_demo_data", verbosity=0)
+    newsletter = Client.objects.get(slug="dtc-newsletter")
+    page, errors = open_page(browser, live_server, operator, "/")
+    with page.expect_navigation():
+        page.locator(f'#dk-brand-menu button[value="{newsletter.pk}"]').evaluate("b => b.closest('form').requestSubmit(b)")
+    page.goto(live_server.url + "/contacts/")
+    overflow = page.evaluate(
+        """() => [...document.querySelectorAll('.contact-explorer-table tbody tr')].map((tr) => {
+          const badge = tr.cells[1].querySelector('.badge').getBoundingClientRect();
+          return [badge.right - tr.cells[1].getBoundingClientRect().right, tr.cells[1].querySelector('.badge').textContent.trim()];
+        })"""
+    )
+    assert overflow
+    assert any(len(label) > 30 for _, label in overflow), "seed has a long validation reason"
+    assert all(right <= 0.5 for right, _ in overflow), overflow
+    assert errors == []
