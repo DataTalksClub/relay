@@ -1,7 +1,6 @@
 """dakit CI gates: the vendored kit matches its lock, and relay's styles pass
 the kit's border, colour and scale checkers (dakit docs/adoption.md)."""
 
-import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,7 +9,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 KIT = ROOT / "static/dakit"
-SCALE_BASELINE = ROOT / "tests/dakit-scale-baseline.json"
 # campaign-composer.js builds the email document itself: its inline styles go
 # to recipients' mail clients, which have no CSS variables, so literal colours
 # and px sizes are correct there. Borders are still checked everywhere.
@@ -45,12 +43,6 @@ def test_colours_come_from_dakit_roles():
 
 
 def test_spacing_and_type_stay_on_the_dakit_scales():
-    """New off-grid values fail; the baseline holds existing debt and may only shrink."""
-    code, output = run(KIT / "check-scale.mjs", "--baseline", SCALE_BASELINE, *app_style_paths())
+    """No baseline: every px space is on the 4px grid and every size a type step."""
+    code, output = run(KIT / "check-scale.mjs", *app_style_paths())
     assert code == 0, output
-
-
-def test_scale_baseline_is_relative_and_bounded():
-    baseline = json.loads(SCALE_BASELINE.read_text())
-    assert baseline, "an empty baseline means the file can be deleted"
-    assert all(not Path(key).is_absolute() for key in baseline)
