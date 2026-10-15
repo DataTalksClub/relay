@@ -12,7 +12,6 @@
     </div>
     <div class="actions">
       <a class="button secondary" href="{% url 'mailing:contact_search' %}?audience={{ audience.id }}">Search contacts</a>
-      <a class="button secondary" href="{% url 'mailing:tag_create' audience.id %}">Create tag</a>
       <a class="button secondary" href="{% url 'mailing:audience_edit' audience.id %}">Edit audience</a>
     </div>
   </div>
@@ -210,13 +209,8 @@
 
   {% elif section == 'segments' %}
   <section class="section panel" id="audience-segments">
-
-    <div class="section-header">
-      <div>
-        <h2 id="audience-segmentation">Segmentation</h2>
-        <p class="muted">Member counts by tags, address validation, campaign outcomes, and skip reasons for {{ active_client.name }}. A member may appear in several historical outcomes.</p>
-      </div>
-    </div>
+    {% url 'mailing:tag_create' audience.id as tag_create_url %}
+    {% include "_collection_header.html" with title="Segmentation" title_id="audience-segmentation" extra_class="panel-header" create_url=tag_create_url create_label="Create tag" description="Member counts by tags, address validation, campaign outcomes, and skip reasons for "|add:active_client.name|add:". A member may appear in several historical outcomes." only %}
     <div class="meta-grid">
       <div class="meta-item">
         <span class="meta-label">Validation</span>

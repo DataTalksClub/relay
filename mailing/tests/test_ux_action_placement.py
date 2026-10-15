@@ -33,6 +33,7 @@ def audience(organization):
 def client_record(organization):
     return Client.objects.create(organization=organization, name="DTC Courses", slug="dtc-courses")
 
+
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 
 
@@ -137,7 +138,9 @@ def test_base_arms_the_create_shortcut(client, operator, client_record):
 
 
 def test_campaign_list_create_follows_the_campaigns_title(client, operator, client_record, audience):
-    Campaign.objects.create(audience=audience, client=client_record, subject="Weekly update", status="sent", sent_at=timezone.now())
+    Campaign.objects.create(
+        audience=audience, client=client_record, subject="Weekly update", status="sent", sent_at=timezone.now()
+    )
     client.force_login(operator)
 
     parsed = regions(client.get(reverse("mailing:campaign_list")))
@@ -249,3 +252,17 @@ def test_dashboard_without_a_client_creates_clients_on_the_clients_collection(cl
     assert "Select a client" in parsed.html
     assert header_texts(parsed) == []
     assert_page_create(parsed, "Clients", "Create client", reverse("mailing:client_create"))
+
+
+def test_audience_detail_create_tag_follows_the_segmentation_title(client, operator, client_record, audience):
+    client.force_login(operator)
+    url = reverse("mailing:audience_detail", args=[audience.id])
+
+    members = regions(client.get(url))
+    segments = regions(client.get(url + "?section=segments"))
+
+    for parsed in (members, segments):
+        assert "Create tag" not in header_texts(parsed)
+        assert header_texts(parsed) == ["Search contacts", "Edit audience"]
+    assert_page_create(segments, "Segmentation", "Create tag", reverse("mailing:tag_create", args=[audience.id]))
+    assert "skip reasons for DTC Courses. A member may appear" in segments.html
