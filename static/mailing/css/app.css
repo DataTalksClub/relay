@@ -1294,9 +1294,10 @@ textarea:where(:not([class*="dk-"])):focus-visible {
   outline-offset: 0;
 }
 
-/* Buttons follow dakit's hierarchy: a bare <button> is a quiet secondary
-   control; the filled primary is reserved for `.button` (one per view).
-   Danger is a quiet outline, never a filled red block. */
+/* Buttons follow dakit's hierarchy. A bare <button> is the quiet secondary
+   control, so an unmarked button never decides a view's emphasis. The
+   filled accent is opt-in: `.primary` on a button, or a `.button` link
+   (one per view). Danger is a quiet outline, never a filled red block. */
 button:where(:not([class*="dk-"])),
 .button {
   display: inline-flex;
@@ -1307,23 +1308,12 @@ button:where(:not([class*="dk-"])),
   padding: 0 var(--dk-space-4);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  color: var(--dk-text-on-accent);
-  border-color: transparent;
-  background: var(--dk-accent-default);
+  color: var(--dk-text-primary);
+  background: var(--dk-bg-surface);
   font-size: var(--dk-text-body);
   font-weight: var(--dk-weight-medium);
   cursor: pointer;
   text-decoration: none;
-}
-
-/* Explicit aliases so templates can name the role instead of relying on
-   the bare-element default: .primary is the filled accent (one per view),
-   .secondary the quiet control, .danger the outlined destructive one. */
-button.primary,
-.button.primary {
-  color: var(--dk-text-on-accent);
-  border-color: transparent;
-  background: var(--dk-accent-default);
 }
 
 button:where(:not([class*="dk-"])):hover,
@@ -1335,12 +1325,15 @@ button.secondary:hover {
   text-decoration: none;
 }
 
+/* The opt-in primary: a .primary button or a .button link. */
+button.primary,
 .button {
   color: var(--dk-text-on-accent);
   border-color: transparent;
   background: var(--dk-accent-default);
 }
 
+button.primary:hover,
 .button:hover {
   color: var(--dk-text-on-accent);
   border-color: transparent;

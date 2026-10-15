@@ -2430,3 +2430,29 @@ def test_campaign_detail_offers_assume_sent_only_for_failed_recipients(client, o
 
     assert f"/campaigns/{campaign.id}/recipients/{failed.id}/assume-sent/" in unfiltered_html
     assert f"/campaigns/{campaign.id}/recipients/{sent.id}/assume-sent/" not in unfiltered_html
+
+
+def test_a_bare_button_is_quiet_and_the_primary_is_opt_in():
+    """dakit hierarchy: an unmarked <button> is secondary; the filled accent
+    needs .primary (or a .button link). The comment matches the rules."""
+    import re as _re  # noqa: PLC0415
+
+    css = Path(finders.find("mailing/css/app.css")).read_text()
+    section = css.split("Buttons follow dakit's hierarchy", 1)[1]
+    base = section.split('button:where(:not([class*="dk-"])),\n.button {', 1)[1].split("}", 1)[0]
+    assert "background: var(--dk-bg-surface)" in base
+    assert "--dk-accent-default" not in base
+    primary = css.split("button.primary,\n.button {", 1)[1].split("}", 1)[0]
+    assert "background: var(--dk-accent-default)" in primary
+    assert "button.primary:hover" in css
+    templates = Path(__file__).resolve().parents[2] / "templates"
+    bare_submits = [
+        (path.name, match)
+        for path in templates.rglob("*.html")
+        for match in _re.findall(r"<button type=\"submit\">([^<{]+)", path.read_text())
+    ]
+    # Bare submits are filters and secondary actions only; each form's commit is explicit.
+    assert all(
+        label.split()[0] in {"Filter", "Apply", "Search", "Update", "Pause", "Use", "Review", "Send"}
+        for _, label in bare_submits
+    ), bare_submits

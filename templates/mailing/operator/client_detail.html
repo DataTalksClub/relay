@@ -168,7 +168,7 @@
           <label for="mailchimp-mappings-{{ editor.audience.id }}">{{ editor.audience.name }} <span class="muted">({{ editor.audience.slug }}) — <span class="data-num">{{ editor.count }}</span> mapping{{ editor.count|pluralize }}</span></label>
           <textarea id="mailchimp-mappings-{{ editor.audience.id }}" name="mappings" rows="4" placeholder="ai-dev-tools-zoomcamp-2026:@registered = ai-dev-tools-zoomcamp-2026">{{ editor.mappings_text }}</textarea>
           <div class="action-row">
-            <button type="submit">Save mappings for {{ editor.audience.slug }}</button>
+            <button class="primary" type="submit">Save mappings for {{ editor.audience.slug }}</button>
           </div>
         </form>
       {% empty %}
