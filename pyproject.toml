@@ -21,6 +21,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "playwright>=1.63.0",
     "pytest>=8.4.0",
     "pytest-django>=4.12.0",
     "ruff>=0.11.0",
@@ -33,6 +34,7 @@ python_files = ["test_*.py", "*_test.py", "tests.py"]
 testpaths = ["jobs/tests", "mailing/tests", "tests"]
 markers = [
     "aws_local: requires LocalStack or another local AWS-compatible endpoint",
+    "browser: drives headless Chromium through Playwright against the live server",
 ]
 
 [tool.ruff]
