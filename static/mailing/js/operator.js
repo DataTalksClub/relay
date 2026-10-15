@@ -76,43 +76,60 @@
   // Mailbox list–detail (dakit docs/list-detail.md). Rows and Back are links,
   // so everything works without JS; with it, picking a row swaps only the
   // detail pane and pushes the URL, so the list keeps its scroll position
-  // and focus, and Back on a phone returns to the row it came from.
+  // and focus. Every route change (pick, Back link, browser Back/Forward)
+  // goes through render(), which invalidates any request still in flight, so
+  // the visible pane always matches the URL.
   const inbox = document.querySelector("[data-inbox-split]");
   if (inbox && window.fetch && window.DOMParser && window.history.pushState) {
     const detail = inbox.querySelector("[data-inbox-detail]");
+    const emptyTemplate = document.querySelector("template[data-inbox-empty]");
+    const listTitle = emptyTemplate ? emptyTemplate.dataset.listTitle : document.title;
+    const phone = window.matchMedia("(max-width: 820px)");
     let lastOpened = new URL(location.href).searchParams.get("message");
+    let generation = 0;
     let pending = null;
 
+    const selectedIn = (url) => new URL(url, location.href).searchParams.get("message");
     const rowFor = (id) => inbox.querySelector(`.dk-split__list li[data-message-id="${CSS.escape(String(id))}"]`);
     const markCurrent = (id) => {
       inbox.querySelectorAll(".dk-split__item[aria-current]").forEach((item) => item.removeAttribute("aria-current"));
       const row = id && rowFor(id);
       if (row) row.querySelector(".dk-split__item").setAttribute("aria-current", "true");
     };
+    // No selection: the detail says what to do, and on a phone the list
+    // returns with focus on the row the person came from.
     const showList = (focus) => {
       markCurrent(null);
+      if (emptyTemplate) detail.replaceChildren(emptyTemplate.content.cloneNode(true));
+      document.title = listTitle;
       inbox.setAttribute("data-view", "list");
       const row = lastOpened && rowFor(lastOpened);
       const item = row && row.querySelector(".dk-split__item");
       if (item) {
         item.scrollIntoView({ block: "nearest" });
-        if (focus) item.focus({ preventScroll: true });
+        if (focus && phone.matches) item.focus({ preventScroll: true });
       }
     };
     const render = async (url, focus) => {
-      const id = new URL(url, location.href).searchParams.get("message");
-      if (!id) { showList(focus); return; }
+      const mine = ++generation;
       if (pending) pending.abort();
-      pending = new AbortController();
+      pending = null;
+      const id = selectedIn(url);
+      if (!id) { showList(focus); return; }
+      const controller = new AbortController();
+      pending = controller;
       let doc;
       try {
-        const response = await fetch(url, { signal: pending.signal, credentials: "same-origin" });
+        const response = await fetch(url, { signal: controller.signal, credentials: "same-origin" });
         if (!response.ok) throw new Error(String(response.status));
         doc = new DOMParser().parseFromString(await response.text(), "text/html");
       } catch (error) {
-        if (error.name !== "AbortError") location.assign(url);
+        if (error.name !== "AbortError" && mine === generation) location.assign(url);
         return;
       }
+      // A newer route won while this one loaded: drop the late response.
+      if (mine !== generation || selectedIn(location.href) !== id) return;
+      pending = null;
       const fresh = doc.querySelector("[data-inbox-detail]");
       if (!fresh) { location.assign(url); return; }
       detail.innerHTML = fresh.innerHTML;
@@ -139,8 +156,11 @@
       history.pushState(null, "", link.href);
       render(link.href, true);
     });
+    // Browser Back/Forward changes the visible pane on a phone, so focus
+    // follows it there (detail title, or the origin row); on desktop both
+    // panes stay visible and focus stays where it is.
     window.addEventListener("popstate", function () {
-      render(location.href, false);
+      render(location.href, phone.matches);
     });
   }
 })();

@@ -221,3 +221,76 @@ def test_desktop_mailbox_pick_swaps_the_detail_and_back_restores_it(browser, liv
     page.wait_for_function("t => document.querySelector('#message-title').textContent === t", arg=first_subject)
     assert page.locator('.dk-split__item[aria-current="true"] .dk-split__name').text_content() == first_subject
     assert errors == []
+
+
+def test_desktop_history_back_to_no_selection_empties_the_detail(browser, live_server, operator, mailbox):
+    page, errors = open_page(browser, live_server, operator, "/inbound/?state=all")
+    page.locator(".dk-split__item").nth(3).click()
+    page.wait_for_selector("#message-title")
+
+    page.go_back()
+    page.wait_for_function("!location.search.includes('message=')")
+    page.wait_for_selector("[data-inbox-detail] .dk-empty")
+    assert page.locator('.dk-split__item[aria-current="true"]').count() == 0
+    assert page.locator("#message-title").count() == 0
+    assert "Mark unread" not in page.locator("[data-inbox-detail]").text_content()
+    assert page.title() == "Inbox | Relay"
+    assert errors == []
+
+
+def delay_message_fetches(page, ms):
+    page.evaluate(
+        """ms => {
+          const original = window.fetch;
+          window.fetch = (...args) => new Promise((resolve, reject) =>
+            setTimeout(() => original(...args).then(resolve, reject), ms));
+        }""",
+        ms,
+    )
+
+
+def test_phone_back_before_a_slow_message_arrives_keeps_the_list(browser, live_server, operator, mailbox):
+    for theme in ("light", "dark"):
+        page, errors = open_page(browser, live_server, operator, "/inbound/?state=all", viewport=PHONE, phone=True)
+        page.evaluate("t => { document.documentElement.dataset.theme = t; }", theme)
+        delay_message_fetches(page, 700)
+        row = page.locator(".dk-split__item").nth(5)
+        subject = row.locator(".dk-split__name").text_content()
+        row.click()
+        page.go_back()
+        page.wait_for_timeout(1200)  # well past the delayed response
+
+        split = page.locator("[data-inbox-split]")
+        assert "message=" not in page.url
+        assert split.get_attribute("data-view") == "list"
+        assert page.locator("#message-title").count() == 0
+        assert page.locator("[data-inbox-detail] .dk-empty").count() == 1
+        assert page.evaluate("document.activeElement.querySelector('.dk-split__name')?.textContent") == subject
+        assert errors == []
+        page.context.close()
+
+
+def test_phone_browser_back_and_forward_move_focus_with_the_pane(browser, live_server, operator, mailbox):
+    page, errors = open_page(browser, live_server, operator, "/inbound/?state=all", viewport=PHONE, phone=True)
+    scroller = page.locator(".dk-split__list .dk-split__scroll")
+    row = page.locator(".dk-split__item").nth(20)
+    row.scroll_into_view_if_needed()
+    position = scroller.evaluate("el => el.scrollTop")
+    assert position > 0
+    subject = row.locator(".dk-split__name").text_content()
+    row.click()
+    page.wait_for_selector("#message-title")
+
+    page.go_back()
+    page.wait_for_function("document.querySelector('[data-inbox-split]').dataset.view === 'list'")
+    assert scroller.evaluate("el => el.scrollTop") == position
+    assert page.evaluate("document.activeElement.querySelector('.dk-split__name')?.textContent") == subject
+    focused = page.evaluate("document.activeElement.getBoundingClientRect().toJSON()")
+    box = scroller.bounding_box()
+    assert box["y"] <= focused["y"] and focused["bottom"] <= box["y"] + box["height"]
+
+    page.go_forward()
+    page.wait_for_function("document.querySelector('[data-inbox-split]').dataset.view === 'detail'")
+    page.wait_for_function("document.activeElement && document.activeElement.id === 'message-title'")
+    assert page.locator("#message-title").text_content() == subject
+    assert errors == []

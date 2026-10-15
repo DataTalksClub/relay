@@ -86,13 +86,10 @@
       {% if selected %}
         {% include "mailing/operator/_inbound_message.html" %}
       {% else %}
-        <div class="dk-split__empty">
-          <div class="dk-empty">
-            <p class="dk-empty__title">Select a message</p>
-            <p class="dk-empty__desc">Choose mail from the list to read it and manage its sender. Receiving addresses and blocked senders are managed on <a href="{% url 'mailing:inbound_address_list' %}">Receiving addresses</a>.</p>
-          </div>
-        </div>
+        {% include "mailing/operator/_inbound_empty.html" %}
       {% endif %}
     </section>
   </div>
+  {# The honest empty detail, restored by operator.js when history leaves a message. #}
+  <template data-inbox-empty data-list-title="Inbox | Relay">{% include "mailing/operator/_inbound_empty.html" %}</template>
 {% endblock %}
