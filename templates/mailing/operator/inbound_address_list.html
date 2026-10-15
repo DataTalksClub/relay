@@ -14,21 +14,12 @@
     </div>
     <div class="actions">
       <a class="button secondary" href="{% url 'mailing:inbound_list' %}">Inbound mail</a>
-      <a class="button" href="{% url 'mailing:inbound_address_create' %}">New address</a>
     </div>
   </div>
 
+  {% url 'mailing:inbound_address_create' as address_create_url %}
   <section class="section panel" aria-labelledby="addresses-table">
-    <div class="panel-header">
-      <div>
-        <h2 id="addresses-table">Addresses</h2>
-        <p class="muted">
-          A retired address stops receiving but keeps its mail. Messages are
-          discarded, not rerouted, when they arrive for an address that does not
-          exist.
-        </p>
-      </div>
-    </div>
+    {% include "_collection_header.html" with title="Addresses" title_id="addresses-table" extra_class="panel-header" create_url=address_create_url create_label="New address" count=addresses|length count_noun="address" count_plural="es" description="A retired address stops receiving but keeps its mail. Messages are discarded, not rerouted, when they arrive for an address that does not exist." only %}
     {% if addresses %}
       <div class="table-wrap">
         <table>
@@ -83,6 +74,7 @@
             Currently configured there: {{ routes|join:", " }}.
           {% endif %}
         </p>
+        {% include "_collection_create.html" with create_url=address_create_url create_label="Add the first address" create_variant="secondary" no_shortcut=True only %}
       </div>
     {% endif %}
   </section>

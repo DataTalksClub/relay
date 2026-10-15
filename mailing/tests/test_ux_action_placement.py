@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 
-from mailing.models import Audience, Campaign, Client, Organization
+from mailing.models import Audience, Campaign, Client, InboundAddress, Organization
 
 pytestmark = pytest.mark.django_db
 
@@ -199,3 +199,25 @@ def test_audience_list_empty_state_repeats_the_create_as_secondary(client, opera
     assert_page_create(parsed, "Audience Health", "Create audience", reverse("mailing:audience_create"))
     assert "No audiences yet." in parsed.html
     assert "Create the first audience" in parsed.html
+
+
+def test_receiving_addresses_create_follows_the_addresses_title(client, operator):
+    InboundAddress.objects.create(local_part="support", domain="example.com")
+    InboundAddress.objects.create(local_part="sales", domain="example.com")
+    client.force_login(operator)
+
+    parsed = regions(client.get(reverse("mailing:inbound_address_list")))
+
+    assert header_texts(parsed) == ["Inbound mail"]
+    assert_page_create(parsed, "Addresses", "New address", reverse("mailing:inbound_address_create"))
+    assert '<span class="dk-collection-header__meta">2 addresses</span>' in parsed.html
+
+
+def test_receiving_addresses_empty_state_repeats_the_create_as_secondary(client, operator):
+    client.force_login(operator)
+
+    parsed = regions(client.get(reverse("mailing:inbound_address_list")))
+
+    assert_page_create(parsed, "Addresses", "New address", reverse("mailing:inbound_address_create"))
+    assert "No addresses yet." in parsed.html
+    assert "Add the first address" in parsed.html
