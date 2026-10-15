@@ -105,7 +105,7 @@
               <div class="compact-row-meta">
                 {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
                 <span class="muted">{{ item.detail }}</span>
-                {% if item.occurred_at %}<span class="helptext">{{ item.occurred_at|date:"M j, Y H:i" }}</span>{% endif %}
+                {% if item.occurred_at %}<span class="helptext"><span class="data-time">{{ item.occurred_at|date:"M j, Y H:i" }}</span></span>{% endif %}
               </div>
             </div>
           {% endfor %}

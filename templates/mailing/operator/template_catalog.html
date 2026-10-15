@@ -68,7 +68,7 @@
                   <span>Sent {{ row.template.sent_count }} / Skipped {{ row.template.skipped_count }} / Failed {{ row.template.failed_count }}</span>
                 </div>
               </td>
-              <td class="nowrap">{{ row.template.updated_at|date:"Y-m-d H:i" }}</td>
+              <td class="nowrap"><span class="data-time">{{ row.template.updated_at|date:"Y-m-d H:i" }}</span></td>
             </tr>
           {% endfor %}
         </tbody>

@@ -1,3 +1,4 @@
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -914,8 +915,10 @@ def test_operator_contact_explorer_badges_suppressed_unverified_and_no_activity_
     assert "Marked invalid" in html
     assert "Unverified" in html
     assert "manual block" in html
-    assert "Sent never" in html
-    assert "Opened never / Clicked never" in html
+    # Dates sit in mono .data-time spans; compare the visible text.
+    text = re.sub(r"<[^>]+>", "", html)
+    assert "Sent never" in text
+    assert "Opened never / Clicked never" in text
     assert "datatalks-club/dtc-courses: unsubscribed" in html
 
 

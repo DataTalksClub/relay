@@ -108,7 +108,7 @@
                 <td>{{ rule.get_scope_display }}</td>
                 <td class="nowrap">{{ rule.value }}</td>
                 <td class="truncate">{{ rule.reason|default:"—" }}</td>
-                <td class="nowrap">{{ rule.blocked_message_count }}</td>
+                <td class="data-num nowrap">{{ rule.blocked_message_count }}</td>
                 <td>
                   <form method="post" action="{% url 'mailing:blocked_sender_delete' rule.id %}">
                     {% csrf_token %}

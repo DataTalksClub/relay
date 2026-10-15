@@ -57,8 +57,8 @@
             <div class="compact-row-meta">
               <span>{{ row.message.email }}</span>
               <span class="muted">{{ row.source }}</span>
-              <span class="helptext">Latest activity {{ row.activity_at|date:'M j, Y H:i' }} UTC</span>
-              {% if row.message.delivered_at %}<span class="helptext">Delivered {{ row.message.delivered_at|date:'M j, Y H:i' }} UTC</span>{% endif %}
+              <span class="helptext">Latest activity <span class="data-time">{{ row.activity_at|date:'M j, Y H:i' }}</span> UTC</span>
+              {% if row.message.delivered_at %}<span class="helptext">Delivered <span class="data-time">{{ row.message.delivered_at|date:'M j, Y H:i' }}</span> UTC</span>{% endif %}
               {% if row.issue %}<span>{{ row.issue|truncatechars:140 }}</span>{% endif %}
             </div>
           </article>

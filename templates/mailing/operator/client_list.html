@@ -56,12 +56,12 @@
               </td>
               <td class="nowrap" data-label="Last used">
                 {% if client.latest_key_used_at %}
-                  {{ client.latest_key_used_at|date:"Y-m-d H:i" }}
+                  <span class="data-time">{{ client.latest_key_used_at|date:"Y-m-d H:i" }}</span>
                 {% else %}
                   <span class="muted">Never</span>
                 {% endif %}
               </td>
-              <td class="nowrap" data-label="Updated">{{ client.updated_at|date:"Y-m-d H:i" }}</td>
+              <td class="nowrap" data-label="Updated"><span class="data-time">{{ client.updated_at|date:"Y-m-d H:i" }}</span></td>
               <td data-label="Action">
                 {% if operator_active_client and operator_active_client.id == client.id %}
                   <a class="button secondary" href="{% url 'mailing:client_detail' client.id %}">View keys</a>

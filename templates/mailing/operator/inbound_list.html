@@ -45,7 +45,7 @@
                   <span class="dk-split__name">{{ row.subject|default:"(no subject)" }}</span>
                   <span class="dk-split__meta">
                     <span class="inbox-row__sender">{{ row.sender_address|default:row.from_header|default:"Unknown sender" }}</span>
-                    <span class="dk-mono inbox-row__time">{{ row.created_at|date:"M j H:i" }}</span>
+                    <span class="data-time inbox-row__time">{{ row.created_at|date:"M j H:i" }}</span>
                   </span>
                   {% if row.state != state or row.is_spam or row.attachment_count %}
                     <span class="dk-split__meta">

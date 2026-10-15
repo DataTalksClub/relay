@@ -204,8 +204,8 @@
                   </td>
                   <td data-label="Last activity">
                     <div class="metric-stack">
-                      <span>Sent {{ row.last_sent_at|date:"Y-m-d H:i"|default:"never" }}</span>
-                      <span>Opened {{ row.last_opened_at|date:"Y-m-d H:i"|default:"never" }} / Clicked {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"never" }}</span>
+                      <span>Sent <span class="data-time">{{ row.last_sent_at|date:"Y-m-d H:i"|default:"never" }}</span></span>
+                      <span>Opened <span class="data-time">{{ row.last_opened_at|date:"Y-m-d H:i"|default:"never" }}</span> / Clicked <span class="data-time">{{ row.last_clicked_at|date:"Y-m-d H:i"|default:"never" }}</span></span>
                     </div>
                   </td>
                   <td data-label="Recent issue"><span class="data-truncate">{{ row.recent_issue|default:"-" }}</span></td>

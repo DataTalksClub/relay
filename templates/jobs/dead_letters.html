@@ -43,9 +43,9 @@
                   {% if job.idempotency_key %}<div class="helptext">{{ job.idempotency_key }}</div>{% endif %}
                 </td>
                 <td data-label="Client">{{ job.client.slug }}</td>
-                <td data-label="Attempts" class="nowrap">{{ job.attempt }}/{{ job.max_attempts }}</td>
+                <td data-label="Attempts" class="data-num nowrap">{{ job.attempt }}/{{ job.max_attempts }}</td>
                 <td data-label="Response" class="nowrap">{% if job.response_status %}HTTP {{ job.response_status }}{% else %}-{% endif %}</td>
-                <td data-label="Failed" class="nowrap">{{ job.finished_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                <td data-label="Failed" class="nowrap"><span class="data-time">{{ job.finished_at|date:"Y-m-d H:i"|default:"-" }}</span></td>
                 <td data-label="Error" class="truncate">{{ job.error|default:"-" }}</td>
                 <td data-label="Action">
                   <a class="button secondary" href="{% url 'jobs:job_detail' job.id %}?return={{ request.get_full_path|urlencode }}">Review and retry</a>

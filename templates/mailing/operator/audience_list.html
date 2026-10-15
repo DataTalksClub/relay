@@ -47,10 +47,10 @@
                   <td class="truncate" data-label="Recent activity">
                     {% if row.recent_campaign %}
                       <a href="{% url 'mailing:campaign_detail' row.recent_campaign.id %}">{{ row.recent_campaign.subject }}</a>
-                      <div class="helptext">{{ row.recent_campaign.get_status_display }} / {{ row.recent_campaign.updated_at|date:"Y-m-d H:i" }}</div>
+                      <div class="helptext">{{ row.recent_campaign.get_status_display }} / <span class="data-time">{{ row.recent_campaign.updated_at|date:"Y-m-d H:i" }}</span></div>
                     {% elif row.recent_event %}
                       {{ row.recent_event.get_event_type_display }}
-                      <div class="helptext">{{ row.recent_event.created_at|date:"Y-m-d H:i" }}</div>
+                      <div class="helptext"><span class="data-time">{{ row.recent_event.created_at|date:"Y-m-d H:i" }}</span></div>
                     {% else %}
                       <span class="muted">No campaign or event activity</span>
                     {% endif %}

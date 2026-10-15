@@ -5,7 +5,7 @@
   <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{% url 'mailing:campaign_list' %}">Campaigns</a><span>/</span><span>{{ campaign.subject|default:"Untitled draft" }}</span></nav>
   <div class="page-header">
     <div><h1>{{ campaign.subject|default:"Untitled draft" }}</h1><p>{{ campaign.client.name }} / {{ campaign.audience.name }}</p>
-      <div class="badge-row"><span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>{% if campaign.sent_at %}<span class="muted">Sent {{ campaign.sent_at|date:"Y-m-d H:i" }}</span>{% endif %}</div>
+      <div class="badge-row"><span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>{% if campaign.sent_at %}<span class="muted">Sent <span class="data-time">{{ campaign.sent_at|date:"Y-m-d H:i" }}</span></span>{% endif %}</div>
     </div>
     <div class="actions"><a class="button secondary" href="{% url 'mailing:campaign_list' %}">All campaigns</a>{% if can_edit %}<a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>{% endif %}{% if can_queue and not confirm_queue and not send_issues %}<a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Review and send</a>{% endif %}</div>
   </div>
@@ -74,7 +74,7 @@
       <div class="meta-item"><span class="meta-label">Status</span><span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span></div>
       <div class="meta-item"><span class="meta-label">Client</span>{{ campaign.client.name }}</div>
       <div class="meta-item"><span class="meta-label">Audience</span><a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a></div>
-      <div class="meta-item"><span class="meta-label">Sent</span>{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Sent</span><span class="data-time">{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
       <div class="meta-item"><span class="meta-label">Recipients selected</span>{{ campaign.recipient_count }}</div>
     </div>
   </section>
@@ -149,10 +149,10 @@
           <span class="stat-label">Duration</span>
           <span class="stat-value">{{ send_progress.duration_label|default:"—" }}</span>
           {% if send_progress.started_at %}
-            <span class="muted">Started {{ send_progress.started_at|date:"Y-m-d H:i:s" }}</span>
+            <span class="muted">Started <span class="data-time">{{ send_progress.started_at|date:"Y-m-d H:i:s" }}</span></span>
           {% endif %}
           {% if send_progress.ended_at %}
-            <span class="muted">Ended {{ send_progress.ended_at|date:"Y-m-d H:i:s" }}</span>
+            <span class="muted">Ended <span class="data-time">{{ send_progress.ended_at|date:"Y-m-d H:i:s" }}</span></span>
           {% endif %}
         </div>
       </div>
@@ -210,7 +210,7 @@
               {% for reason, count in estimate.skip_reason_labels.items %}
                 <tr>
                   <td>{{ reason }}</td>
-                  <td>{{ count }}</td>
+                  <td class="data-num">{{ count }}</td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -292,15 +292,15 @@
                 </td>
                 <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
                 <td data-label="Delivery">
-                  <div class="nowrap">Sent: {{ row.recipient.sent_at|date:"Y-m-d H:i"|default:"—" }}</div>
-                  <div class="nowrap">Delivered: {{ row.recipient.delivered_at|date:"Y-m-d H:i"|default:"—" }}</div>
+                  <div class="nowrap">Sent: <span class="data-time">{{ row.recipient.sent_at|date:"Y-m-d H:i"|default:"—" }}</span></div>
+                  <div class="nowrap">Delivered: <span class="data-time">{{ row.recipient.delivered_at|date:"Y-m-d H:i"|default:"—" }}</span></div>
                   {% if row.recipient.skip_reason %}
                     <div class="helptext">Skipped: {{ row.recipient.get_skip_reason_display }}</div>
                   {% endif %}
                 </td>
                 <td data-label="Engagement">
-                  <div class="nowrap">Opened: {{ row.recipient.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</div>
-                  <div class="nowrap">Clicked: {{ row.recipient.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</div>
+                  <div class="nowrap">Opened: <span class="data-time">{{ row.recipient.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</span></div>
+                  <div class="nowrap">Clicked: <span class="data-time">{{ row.recipient.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</span></div>
                   <div class="helptext">{{ row.recipient.open_count }} opens / {{ row.recipient.click_count }} clicks</div>
                 </td>
                 <td class="provider-cell" data-label="Provider data">
@@ -358,7 +358,7 @@
           {% with event=row.event %}
             <article class="timeline-item">
               <strong>{{ event.get_event_type_display }}</strong>
-              <span class="muted">{{ event.created_at|date:"Y-m-d H:i:s" }}</span>
+              <span class="muted"><span class="data-time">{{ event.created_at|date:"Y-m-d H:i:s" }}</span></span>
               {% if event.contact %}
                 <div class="truncate"><a href="{% url 'mailing:contact_detail' event.contact.normalized_email %}">{{ event.contact.email }}</a></div>
               {% endif %}

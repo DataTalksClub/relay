@@ -2518,3 +2518,15 @@ pre {
 .inbox-disclosure__body p {
   margin: 0;
 }
+
+/* Data reads as data (dakit principles): dates, times and quantities are
+   mono with tabular figures, and a date never breaks across lines. */
+.data-time,
+.data-num {
+  font-family: var(--dk-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-time {
+  white-space: nowrap;
+}

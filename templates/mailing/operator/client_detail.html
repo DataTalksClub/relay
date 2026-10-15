@@ -90,9 +90,9 @@
                     <span class="badge success">Active</span>
                   {% endif %}
                 </td>
-                <td data-label="Created">{{ api_key.created_at|date:"Y-m-d H:i" }}</td>
-                <td data-label="Last used">{% if api_key.last_used_at %}{{ api_key.last_used_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">Never</span>{% endif %}</td>
-                <td data-label="Revoked">{% if api_key.revoked_at %}{{ api_key.revoked_at|date:"Y-m-d H:i" }}{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td data-label="Created"><span class="data-time">{{ api_key.created_at|date:"Y-m-d H:i" }}</span></td>
+                <td data-label="Last used">{% if api_key.last_used_at %}<span class="data-time">{{ api_key.last_used_at|date:"Y-m-d H:i" }}</span>{% else %}<span class="muted">Never</span>{% endif %}</td>
+                <td data-label="Revoked">{% if api_key.revoked_at %}<span class="data-time">{{ api_key.revoked_at|date:"Y-m-d H:i" }}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
                 <td data-label="Action">
                   {% if not api_key.revoked_at %}
                     <form method="post" action="{% url 'mailing:client_api_key_revoke' client.id api_key.id %}">
@@ -205,8 +205,8 @@
                   <td><code>{{ sync.list_key }}</code></td>
                   <td><code>{{ sync.tag }}</code></td>
                   <td><span class="badge neutral">{{ sync.get_status_display }}</span></td>
-                  <td>{{ sync.attempt_count }}/{{ sync.max_attempts }}</td>
-                  <td>{{ sync.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</td>
+                  <td class="data-num">{{ sync.attempt_count }}/{{ sync.max_attempts }}</td>
+                  <td><span class="data-time">{{ sync.next_attempt_at|date:"Y-m-d H:i"|default:"-" }}</span></td>
                   <td class="truncate">{{ sync.last_error|default:"-" }}</td>
                 </tr>
               {% endfor %}
@@ -255,9 +255,9 @@
                   {% endif %}
                 </td>
                 <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
-                <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="data-num">{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
+                <td><span class="data-time">{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td class="truncate">{{ callback.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}
@@ -306,9 +306,9 @@
                   {% endif %}
                 </td>
                 <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
-                <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="data-num">{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
+                <td><span class="data-time">{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td class="truncate">{{ callback.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}

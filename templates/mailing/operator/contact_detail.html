@@ -66,7 +66,7 @@
           <article class="timeline-item">
             <div class="activity-row-header">
               <span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span>
-              <span class="muted nowrap">{{ row.occurred_at|date:"Y-m-d H:i:s"|default:"No timestamp" }}</span>
+              <span class="muted nowrap"><span class="data-time">{{ row.occurred_at|date:"Y-m-d H:i:s"|default:"No timestamp" }}</span></span>
             </div>
             <strong>
               {% if row.href %}
@@ -191,7 +191,7 @@
         <div class="stat">
           <span class="stat-label">{{ metric.label }}</span>
           {% if metric.value %}
-            <span class="metric-value">{{ metric.value|date:"Y-m-d H:i" }}</span>
+            <span class="metric-value"><span class="data-time">{{ metric.value|date:"Y-m-d H:i" }}</span></span>
           {% else %}
             <span class="badge neutral">No data</span>
           {% endif %}
@@ -259,10 +259,10 @@
                   <div class="muted">{{ recipient.campaign.client.name }} / {{ recipient.campaign.audience.name }}</div>
                 </td>
                 <td><span class="badge">{{ recipient.get_status_display }}</span></td>
-                <td>{{ recipient.sent_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ recipient.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ recipient.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ recipient.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td><span class="data-time">{{ recipient.sent_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ recipient.delivered_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ recipient.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ recipient.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td>{{ recipient.get_skip_reason_display|default:"—" }}</td>
                 <td class="truncate">{{ recipient.ses_message_id|default:"—" }}</td>
                 <td class="nowrap">{{ recipient.open_count }} opens / {{ recipient.click_count }} clicks</td>
@@ -311,11 +311,11 @@
                 <td>{{ message.client.name }}</td>
                 <td><span class="badge">{{ message.get_status_display }}</span></td>
                 <td class="truncate">{{ message.subject }}</td>
-                <td>{{ message.created_at|date:"Y-m-d H:i" }}</td>
-                <td>{{ message.sent_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ message.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td><span class="data-time">{{ message.created_at|date:"Y-m-d H:i" }}</span></td>
+                <td><span class="data-time">{{ message.sent_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ message.delivered_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ message.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td class="nowrap">{{ message.open_count }} opens / {{ message.click_count }} clicks</td>
                 <td class="truncate">{{ message.ses_message_id|default:"—" }}</td>
                 <td class="truncate">{{ row.metadata_summary|default:"—" }}</td>
@@ -340,7 +340,7 @@
         {% for row in event_rows %}
           <article class="timeline-item">
             <strong>{{ row.event.get_event_type_display }}</strong>
-            <span class="muted">{{ row.event.created_at|date:"Y-m-d H:i:s" }}</span>
+            <span class="muted"><span class="data-time">{{ row.event.created_at|date:"Y-m-d H:i:s" }}</span></span>
             <div>{{ row.context }}</div>
             {% if row.event.client or row.event.audience %}
               <div class="muted">{{ row.event.client.name|default:"—" }} / {{ row.event.audience.name|default:"—" }}</div>

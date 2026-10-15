@@ -43,7 +43,7 @@
                   <div class="muted">Integration key: {{ row.message.template_key }}</div>
                 </td>
                 <td class="truncate">{{ row.message.subject|default:"—" }}</td>
-                <td class="nowrap">{{ row.message.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="nowrap"><span class="data-time">{{ row.message.created_at|date:"Y-m-d H:i" }}</span></td>
                 <td class="nowrap">{{ row.message.created_at|timesince }}</td>
                 <td><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
               </tr>

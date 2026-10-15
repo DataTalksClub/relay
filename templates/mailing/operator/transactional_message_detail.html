@@ -27,11 +27,11 @@
     <div class="meta-grid">
       <div class="meta-item"><span class="meta-label">From sender</span>{{ message.from_email_id|default:"-" }}</div>
       <div class="meta-item"><span class="meta-label">From address</span>{{ message.from_email|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">Created</span>{{ message.created_at|date:"Y-m-d H:i" }}</div>
-      <div class="meta-item"><span class="meta-label">Sent</span>{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">Delivered</span>{{ message.delivered_at|date:"Y-m-d H:i"|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">Opened</span>{{ message.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
-      <div class="meta-item"><span class="meta-label">Clicked</span>{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
+      <div class="meta-item"><span class="meta-label">Created</span><span class="data-time">{{ message.created_at|date:"Y-m-d H:i" }}</span></div>
+      <div class="meta-item"><span class="meta-label">Sent</span><span class="data-time">{{ message.sent_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
+      <div class="meta-item"><span class="meta-label">Delivered</span><span class="data-time">{{ message.delivered_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
+      <div class="meta-item"><span class="meta-label">Opened</span><span class="data-time">{{ message.first_opened_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
+      <div class="meta-item"><span class="meta-label">Clicked</span><span class="data-time">{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
     </div>
     {% if message.last_error %}
       <div class="empty-state danger-state">
@@ -60,7 +60,7 @@
             {% for row in event_rows %}
               <tr>
                 <td data-label="Event"><span class="badge neutral">{{ row.event.get_event_type_display }}</span></td>
-                <td data-label="Time" class="nowrap">{{ row.event.created_at|date:"Y-m-d H:i" }}</td>
+                <td data-label="Time" class="nowrap"><span class="data-time">{{ row.event.created_at|date:"Y-m-d H:i" }}</span></td>
                 <td data-label="Context">{{ row.context }}</td>
                 <td data-label="Details" class="truncate">{{ row.metadata_summary|default:"-" }}</td>
               </tr>
@@ -153,9 +153,9 @@
               <tr>
                 <td><code>{{ callback.event_type }}</code></td>
                 <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
-                <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="data-num">{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
+                <td><span class="data-time">{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td class="truncate">{{ callback.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}
@@ -193,9 +193,9 @@
               <tr>
                 <td><code>{{ callback.event_type }}</code></td>
                 <td><span class="badge neutral">{{ callback.get_status_display }}</span></td>
-                <td>{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
-                <td>{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</td>
+                <td class="data-num">{{ callback.attempt_count }}/{{ callback.max_attempts }}</td>
+                <td><span class="data-time">{{ callback.next_attempt_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
+                <td><span class="data-time">{{ callback.delivered_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td class="truncate">{{ callback.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}

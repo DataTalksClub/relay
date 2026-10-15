@@ -191,9 +191,9 @@
                   <span class="helptext">Subscription: {{ row.subscription_badge.label }}</span>
                 </td>
                 <td data-label="Activity">
-                  <div class="nowrap">Sent: {{ row.last_sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Opened: {{ row.last_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Clicked: {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  <div class="nowrap">Sent: <span class="data-time">{{ row.last_sent_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
+                  <div class="nowrap">Opened: <span class="data-time">{{ row.last_opened_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
+                  <div class="nowrap">Clicked: <span class="data-time">{{ row.last_clicked_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
                 </td>
                 <td data-label="Recent issue"><span class="data-truncate" title="{{ row.recent_issue|default:'-' }}">{{ row.recent_issue|default:"-" }}</span></td>
               </tr>
@@ -271,14 +271,14 @@
               <tr>
                 <td data-label="Campaign" class="truncate">
                   <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject }}</a>
-                  <div class="helptext">{{ campaign.updated_at|date:"Y-m-d H:i" }}</div>
+                  <div class="helptext"><span class="data-time">{{ campaign.updated_at|date:"Y-m-d H:i" }}</span></div>
                 </td>
                 <td data-label="Client">{{ campaign.client.name }}</td>
                 <td data-label="Status"><span class="badge">{{ campaign.get_status_display }}</span></td>
-                <td data-label="Sent">{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td data-label="Recipients">{{ campaign.recipient_count }}</td>
-                <td data-label="Opens">{{ campaign.unique_open_count }} / {{ campaign.open_count }}</td>
-                <td data-label="Clicks">{{ campaign.unique_click_count }} / {{ campaign.click_count }}</td>
+                <td data-label="Sent"><span class="data-time">{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</span></td>
+                <td data-label="Recipients" class="data-num">{{ campaign.recipient_count }}</td>
+                <td data-label="Opens" class="data-num">{{ campaign.unique_open_count }} / {{ campaign.open_count }}</td>
+                <td data-label="Clicks" class="data-num">{{ campaign.unique_click_count }} / {{ campaign.click_count }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -316,7 +316,7 @@
         {% for row in event_rows %}
           <article class="timeline-item">
             <span class="badge {% if row.event.event_type == "delivered" or row.event.event_type == "sent" %}success{% elif row.event.event_type == "bounce" or row.event.event_type == "complaint" or row.event.event_type == "failed" %}danger{% elif row.event.event_type == "unsubscribe" %}warning{% endif %}">{{ row.event.get_event_type_display }}</span>
-            <span class="muted">{{ row.event.created_at|date:"Y-m-d H:i:s" }}</span>
+            <span class="muted"><span class="data-time">{{ row.event.created_at|date:"Y-m-d H:i:s" }}</span></span>
             <div>{{ row.context }}</div>
             {% if row.event.contact %}
               <div><a href="{% url 'mailing:contact_detail' row.event.contact.normalized_email %}">{{ row.event.contact.email }}</a></div>

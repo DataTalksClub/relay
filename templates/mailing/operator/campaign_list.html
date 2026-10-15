@@ -53,9 +53,9 @@
                   <a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a>
                 </td>
                 <td class="nowrap" data-label="Send time">
-                  {% if campaign.sent_at %}{{ campaign.sent_at|date:"Y-m-d H:i" }}{% elif campaign.status == "scheduled" %}{{ campaign.scheduled_at|date:"Y-m-d H:i" }} UTC{% elif campaign.status == "draft" or campaign.status == "cancelled" %}Not sent{% else %}In progress{% endif %}
+                  {% if campaign.sent_at %}<span class="data-time">{{ campaign.sent_at|date:"Y-m-d H:i" }}</span>{% elif campaign.status == "scheduled" %}<span class="data-time">{{ campaign.scheduled_at|date:"Y-m-d H:i" }}</span> UTC{% elif campaign.status == "draft" or campaign.status == "cancelled" %}Not sent{% else %}In progress{% endif %}
                 </td>
-                <td class="nowrap" data-label="Recipients">{{ campaign.recipient_count }}</td>
+                <td class="data-num nowrap" data-label="Recipients">{{ campaign.recipient_count }}</td>
                 <td class="nowrap" data-label="Delivery">
                   {% if campaign.status == "draft" %}<span class="muted">Review before sending</span>{% elif campaign.status == "scheduled" %}<span class="muted">Audience selected at send time</span>{% else %}
                   {{ campaign.sent_count }} currently sent / {{ campaign.delivered_count }} delivery confirmations
