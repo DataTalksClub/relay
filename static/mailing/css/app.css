@@ -1264,6 +1264,11 @@ a.stat-link:focus {
   font-size: var(--dk-text-sm);
 }
 
+/* A collection header's description takes its own line under the title row. */
+.collection-header-note {
+  flex-basis: 100%;
+}
+
 /* Panel header actions are small quiet controls, the family's band buttons. */
 .panel-header .button,
 .panel-header button {

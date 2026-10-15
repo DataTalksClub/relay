@@ -18,6 +18,7 @@ secondary actions trail.
   count_plural   plural suffix when it is not "s" (e.g. "es")
   trail_url      one secondary link in the trail (e.g. "View campaigns")
   trail_label    its text
+  description    one muted line under the title row
 {% endcomment %}
 <header class="dk-collection-header{% if extra_class %} {{ extra_class }}{% endif %}">
   <div class="dk-collection-header__lead">
@@ -30,4 +31,5 @@ secondary actions trail.
       {% if trail_url %}<a class="dk-button dk-button--secondary dk-button--sm" href="{{ trail_url }}">{{ trail_label }}</a>{% endif %}
     </div>
   {% endif %}
+  {% if description %}<p class="muted collection-header-note">{{ description }}</p>{% endif %}
 </header>

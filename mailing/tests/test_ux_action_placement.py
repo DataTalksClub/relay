@@ -177,3 +177,25 @@ def test_client_list_empty_state_repeats_the_create_as_secondary(client, operato
     assert_page_create(parsed, "All clients", "Create client", reverse("mailing:client_create"))
     assert "No clients found." in parsed.html
     assert "Create the first client" in parsed.html
+
+
+def test_audience_list_create_follows_the_audiences_title(client, operator, client_record, audience):
+    client.force_login(operator)
+
+    parsed = regions(client.get(reverse("mailing:audience_list")))
+
+    assert header_texts(parsed) == ["Search contacts"]
+    assert_page_create(parsed, "Audience Health", "Create audience", reverse("mailing:audience_create"))
+    assert '<span class="dk-collection-header__meta">1 audience</span>' in parsed.html
+    assert "Open members to check campaign eligibility for DTC Courses." in parsed.html
+
+
+def test_audience_list_empty_state_repeats_the_create_as_secondary(client, operator, client_record):
+    client.force_login(operator)
+
+    parsed = regions(client.get(reverse("mailing:audience_list")))
+
+    assert "Create audience" not in header_texts(parsed)
+    assert_page_create(parsed, "Audience Health", "Create audience", reverse("mailing:audience_create"))
+    assert "No audiences yet." in parsed.html
+    assert "Create the first audience" in parsed.html
