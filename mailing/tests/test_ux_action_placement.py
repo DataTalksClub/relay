@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 
+from mailing.context_processors import ACTIVE_CLIENT_SESSION_KEY
 from mailing.models import Audience, Campaign, Client, InboundAddress, Organization
 
 pytestmark = pytest.mark.django_db
@@ -221,3 +222,30 @@ def test_receiving_addresses_empty_state_repeats_the_create_as_secondary(client,
     assert_page_create(parsed, "Addresses", "New address", reverse("mailing:inbound_address_create"))
     assert "No addresses yet." in parsed.html
     assert "Add the first address" in parsed.html
+
+
+def test_dashboard_create_campaign_follows_recent_campaign_activity(client, operator, client_record):
+    client.force_login(operator)
+    session = client.session
+    session[ACTIVE_CLIENT_SESSION_KEY] = client_record.id
+    session.save()
+
+    parsed = regions(client.get(reverse("mailing:dashboard")))
+
+    assert header_texts(parsed) == ["Find a contact"]
+    assert_page_create(parsed, "Recent Campaign Activity", "Create campaign", reverse("mailing:campaign_create"))
+    trail = [action["text"] for action in collection(parsed, "Recent Campaign Activity")["actions"][1:]]
+    assert trail == ["View campaigns"]
+    assert "Create the first campaign" in parsed.html
+
+
+def test_dashboard_without_a_client_creates_clients_on_the_clients_collection(client, operator, organization):
+    Client.objects.create(organization=organization, name="DTC Courses", slug="dtc-courses")
+    Client.objects.create(organization=organization, name="Newsletter", slug="newsletter")
+    client.force_login(operator)
+
+    parsed = regions(client.get(reverse("mailing:dashboard")))
+
+    assert "Select a client" in parsed.html
+    assert header_texts(parsed) == []
+    assert_page_create(parsed, "Clients", "Create client", reverse("mailing:client_create"))
