@@ -17,8 +17,6 @@
   </div>
 
   <p class="scope-note">Members and campaign eligibility for <strong>{{ active_client.name }}</strong>. This audience belongs to {{ audience.organization.name }}.</p>
-  <div class="stats-grid" aria-label="Audience eligibility summary">{% for stat in eligibility_summary %}<div class="stat"><span class="stat-label"><span class="stat-dot {{ stat.tone }}"></span>{{ stat.label }}</span><a class="stat-value stat-link" href="{{ stat.url }}">{{ stat.value }}</a></div>{% endfor %}</div>
-  <p class="helptext">Counts cover members with a subscription for {{ active_client.name }} in this audience, before search filters. Eligibility includes consent, verification, address validation, and global suppression. Campaign tags and category preferences can reduce the final send count.</p>
   <nav class="dk-tabs" aria-label="Audience sections">{% for item in sections %}<a class="dk-tab" href="{{ item.url }}"{% if item.current %} aria-current="page"{% endif %}>{{ item.label }}</a>{% endfor %}</nav>
 
   {% if section == 'members' %}
@@ -29,7 +27,10 @@
         <p class="muted">Find a member and see whether they can receive a campaign from {{ active_client.name }}.</p>
       </div>
     </div>
-    <p>{{ members.paginator.count }} matching member{{ members.paginator.count|pluralize }}.</p>
+    {# Eligibility is a filter on this list, not a stat strip; the list's one count is below it. #}
+    <nav class="dk-tabs dk-tabs--sm audience-eligibility" aria-label="Marketing eligibility">{% for choice in eligibility_summary %}<a class="dk-tab" href="{{ choice.url }}"{% if choice.current %} aria-current="page"{% endif %}>{{ choice.label }}</a>{% endfor %}</nav>
+    <p class="helptext">Members with a subscription for {{ active_client.name }} in this audience. Eligibility includes consent, verification, address validation, and global suppression; campaign tags and category preferences can reduce the final send count.</p>
+    <p class="audience-member-count"><span class="data-num">{{ members.paginator.count }}</span> matching member{{ members.paginator.count|pluralize }}</p>
     {% if filter_chips %}<div class="badge-row" aria-label="Applied filters">{% for chip in filter_chips %}<a class="badge neutral" href="{{ chip.url }}" aria-label="Remove {{ chip.label }}: {{ chip.value }}">{{ chip.label }}: {{ chip.value }} ×</a>{% endfor %}</div>{% endif %}
     <form class="contact-explorer-form audience-member-form" method="get"><input type="hidden" name="section" value="members">{% if eligibility == 'eligible' or eligibility == 'excluded' %}<input type="hidden" name="eligibility" value="{{ eligibility }}">{% endif %}
       <div class="section-header">
@@ -351,18 +352,13 @@
         <p class="muted">Subscription and validation counts are separate from campaign eligibility. Counts below cover members and campaign history for {{ active_client.name }} in this audience. Inactive means previously sent a campaign with no recorded campaign open or click; it does not prove the person ignored the message. Verified and unverified counts refer to contact-level verification; audience or client subscription verification can still make a member eligible.</p>
       </div>
     </div>
-    <div class="stats-grid">
+    {# A report of counts, each linking to its members: a definition list, not KPI tiles. #}
+    <dl class="dk-dl dk-dl--divided audience-health-counts">
       {% for stat in summary %}
-        <div class="stat">
-          <span class="stat-label"><span class="stat-dot {{ stat.tone }}"></span>{{ stat.label }}</span>
-          {% if stat.href %}
-            <a class="stat-value stat-link" href="{{ stat.href }}">{{ stat.value }}</a>
-          {% else %}
-            <span class="stat-value">{{ stat.value }}</span>
-          {% endif %}
-        </div>
+        <dt>{{ stat.label }}</dt>
+        <dd>{% if stat.href %}<a class="data-num" href="{{ stat.href }}">{{ stat.value }}</a>{% else %}<span class="data-num">{{ stat.value }}</span>{% endif %}</dd>
       {% endfor %}
-    </div>
+    </dl>
   </section>
 
   <details class="detail-section secondary-section panel-diagnostics"><summary><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>Audit</summary>{% include "mailing/operator/_audit.html" with audit_rows=audit_rows %}</details>

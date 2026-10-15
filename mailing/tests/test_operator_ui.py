@@ -1512,7 +1512,7 @@ def test_audience_detail_renders_clickable_and_deferred_summary_stats(client, op
         "?section=members&amp;suppression=hard_bounced",
         "?section=members&amp;suppression=complained",
     ):
-        assert f'class="stat-value stat-link" href="{href}"' in html
+        assert f'<a class="data-num" href="{href}">' in html
     # Deferred stats are present as labels but never rendered as links.
     assert "Inactive" in html
     assert "Opened" in html

@@ -226,3 +226,25 @@ def test_segment_outcome_counts_match_linked_members_after_repeated_sends(client
     assert outcome["count"] == 1
     linked = client.get(reverse("mailing:audience_detail", args=[audience.id]) + outcome["url"])
     assert linked.context["members"].paginator.count == outcome["count"]
+
+
+def test_members_has_an_eligibility_filter_not_a_stat_strip(client, audience_scope):
+    """Working screen (dakit shell.md §2.9): no KPI strip, one membership count."""
+    audience, integration = audience_scope
+    add_member(audience, integration, "eligible@example.com", verified_at=timezone.now(), email_validation_status="valid")
+    add_member(audience, integration, "excluded@example.com", verified_at=timezone.now(), hard_bounced_at=timezone.now())
+    url = reverse("mailing:audience_detail", args=[audience.id])
+
+    html = client.get(url).content.decode()
+    assert "stats-grid" not in html
+    assert "stat-value" not in html
+    assert html.count("matching member") == 1
+    tabs = html[html.index('aria-label="Marketing eligibility"') : html.index("</nav>", html.index('aria-label="Marketing eligibility"'))]
+    assert '>All members</a>' in tabs and 'aria-current="page">All members' in tabs
+    assert "Eligible for marketing" in tabs and "Excluded from marketing" in tabs
+
+    excluded = client.get(url, {"eligibility": "excluded"}).content.decode()
+    assert 'aria-current="page">Excluded from marketing' in excluded
+    assert '<span class="data-num">1</span> matching member' in excluded
+    # Other sections carry no eligibility strip either.
+    assert "stats-grid" not in client.get(url, {"section": "health"}).content.decode()

@@ -2530,3 +2530,7 @@ pre {
 .data-time {
   white-space: nowrap;
 }
+
+.audience-health-counts {
+  max-width: var(--dk-size-measure);
+}

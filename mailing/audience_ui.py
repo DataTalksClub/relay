@@ -249,8 +249,9 @@ def audience_page_context(request, audience, active_client):
     base = reverse("mailing:audience_detail", args=[audience.id])
     counts, eligible_ids, excluded_ids = eligibility_summary(audience, active_client)
     count_links = []
+    chosen = request.GET.get("eligibility")
     for key, title in [
-        ("total", "Total members"),
+        ("total", "All members"),
         ("eligible", "Eligible for marketing"),
         ("excluded", "Excluded from marketing"),
     ]:
@@ -260,7 +261,10 @@ def audience_page_context(request, audience, active_client):
         params["section"] = "members"
         if key != "total":
             params["eligibility"] = key
-        count_links.append({"label": title, "value": counts[key], "url": base + "?" + params.urlencode()})
+        current = section == "members" and (chosen == key or (key == "total" and chosen not in {"eligible", "excluded"}))
+        count_links.append(
+            {"label": title, "value": counts[key], "url": base + "?" + params.urlencode(), "current": current}
+        )
     params = request.GET.copy()
     params.pop("page", None)
     params["section"] = section
