@@ -2572,3 +2572,17 @@ pre {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* Campaign recipient review: the narrowing as one sentence, then the tag
+   policy, inside the panel band's inset. */
+.recipient-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dk-space-3);
+  padding: var(--dk-space-4);
+}
+
+.recipient-review__narrowing {
+  margin: 0;
+  color: var(--dk-text-primary);
+}

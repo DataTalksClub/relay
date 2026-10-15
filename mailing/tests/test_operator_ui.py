@@ -2456,3 +2456,34 @@ def test_a_bare_button_is_quiet_and_the_primary_is_opt_in():
         label.split()[0] in {"Filter", "Apply", "Search", "Update", "Pause", "Use", "Review", "Send"}
         for _, label in bare_submits
     ), bare_submits
+
+
+@pytest.mark.parametrize("status", ["draft", "scheduled"])
+def test_recipient_review_has_one_count_and_no_stat_tiles(client, operator, audience, client_record, status):
+    """Draft and scheduled campaigns are working screens (dakit shell.md §2.9):
+    the recipient review states one eligible count and how the audience
+    narrows to it, with no KPI tiles or status dots."""
+    client.force_login(operator)
+    campaign = Campaign.objects.create(
+        audience=audience,
+        client=client_record,
+        subject="Review",
+        html_body="<p>Hello</p>",
+        text_body="Hello",
+        status=status,
+        scheduled_at=timezone.now() + timedelta(days=1) if status == "scheduled" else None,
+    )
+    create_subscribed_contact("person@example.com", audience, client_record)
+    create_subscribed_contact("second@example.com", audience, client_record)
+
+    html = client.get(reverse("mailing:campaign_detail", args=[campaign.id])).content.decode()
+    review = html[html.index('id="recipient-estimate"') :]
+    review = review[: review.index("</section>")]
+
+    assert "stats-grid" not in review
+    assert "stat-dot" not in review
+    assert "stat-value" not in review
+    assert '<span class="data-num">2</span> eligible recipients' in review
+    assert "tags exclude" in data_text(review) and "sending policy skips" in data_text(review)
+    # The eligible count is stated once outside the send confirmation.
+    assert data_text(html).count("2 eligible recipients") == 1
