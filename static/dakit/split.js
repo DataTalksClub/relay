@@ -1,4 +1,4 @@
-/* dakit 0.2.0 c607e9d */
+/* dakit 0.2.0 9a4a2a8 */
 /* dakit list–detail split (docs/list-detail.md): keyboard movement in the
    list, focus that follows the visible pane, and the optional resize grip.
    Classic script with an idempotent global guard, like shell.js. Listeners

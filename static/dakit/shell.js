@@ -1,4 +1,4 @@
-/* dakit 0.2.0 c607e9d */
+/* dakit 0.2.0 9a4a2a8 */
 // Dakit app shell behaviour — the contract is docs/shell.md.
 //
 // Load once per page, at the end of <body> (no defer, so the persisted
@@ -82,17 +82,18 @@
       if (scrim) scrim.hidden = false;
       outside.forEach((el) => { el.inert = true; });
       toggles.forEach((t) => t.setAttribute("aria-expanded", "true"));
-      // The drawer's visibility flips through a transition (the slide, or the
-      // reduced-motion 0.01ms one from base.css), so on this frame it's still
-      // hidden and can't take focus. Focus as soon as the target is visible.
+      // The open drawer is visible at once (shell.css transitions only its
+      // transform on open), so focus moves in this task. Should an app style
+      // still delay visibility, retry until the target is visible, bounded by
+      // time rather than frame count: a busy page can run many frames before
+      // a transition starts, and the modal drawer must never keep focus on body.
       const target = sidebar && (sidebar.querySelector('[aria-current="page"]') || focusables(sidebar)[0]);
-      let frames = 0;
+      const deadline = performance.now() + 2000;
       const focusWhenVisible = () => {
         if (shell.dataset.drawer !== "open" || !target) return;
-        // Check the target itself: under base.css's reduced-motion rule each
-        // element transitions its own inherited visibility.
+        if (sidebar.contains(document.activeElement) && document.activeElement !== sidebar) return;
         if (getComputedStyle(target).visibility === "visible") target.focus();
-        else if (++frames < 30) requestAnimationFrame(focusWhenVisible);
+        if (document.activeElement !== target && performance.now() < deadline) requestAnimationFrame(focusWhenVisible);
       };
       focusWhenVisible();
     } else {

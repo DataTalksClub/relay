@@ -1,4 +1,4 @@
-/* dakit 0.2.0 c607e9d */
+/* dakit 0.2.0 9a4a2a8 */
 // Dakit device-login code helpers — the contract is docs/device-login.md.
 //
 // ES module; pure functions plus one optional input binder. Usable in the
