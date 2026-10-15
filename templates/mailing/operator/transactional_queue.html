@@ -15,7 +15,7 @@
     <section class="section panel" aria-labelledby="queue-table">
       <div class="panel-header">
         <h2 id="queue-table">Queued messages</h2>
-        <span class="muted">{{ queued_total }} message{{ queued_total|pluralize }} queued</span>
+        <span class="muted"><span class="data-num">{{ queued_total }}</span> message{{ queued_total|pluralize }} queued</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -61,7 +61,7 @@
         {% if other_clients_queued_total == 1 %}
           <p>There is 1 queued message under other clients. Switch clients to review those queues.</p>
         {% else %}
-          <p>There are {{ other_clients_queued_total }} queued messages under other clients. Switch clients to review those queues.</p>
+          <p>There are <span class="data-num">{{ other_clients_queued_total }}</span> queued messages under other clients. Switch clients to review those queues.</p>
         {% endif %}
       {% else %}
         <p>No other client currently has queued transactional messages.</p>

@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from mailing.context_processors import ACTIVE_CLIENT_SESSION_KEY
 from mailing.models import Audience, Campaign, Client, InboundAddress, Organization
+from mailing.tests.html_text import data_text
 
 pytestmark = pytest.mark.django_db
 
@@ -148,7 +149,7 @@ def test_campaign_list_create_follows_the_campaigns_title(client, operator, clie
     assert "Create campaign" not in header_texts(parsed)
     assert header_texts(parsed) == ["Audiences", "Find contact"]
     assert_page_create(parsed, "All campaigns", "Create campaign", reverse("mailing:campaign_create"))
-    assert '<span class="dk-collection-header__meta">1 campaign</span>' in parsed.html
+    assert '<span class="dk-collection-header__meta">1 campaign</span>' in data_text(parsed.html)
 
 
 def test_campaign_list_empty_state_repeats_the_create_as_secondary(client, operator, client_record):
@@ -170,7 +171,7 @@ def test_client_list_create_follows_the_clients_title(client, operator, client_r
 
     assert header_texts(parsed) == []
     assert_page_create(parsed, "All clients", "Create client", reverse("mailing:client_create"))
-    assert '<span class="dk-collection-header__meta">1 integration</span>' in parsed.html
+    assert '<span class="dk-collection-header__meta">1 integration</span>' in data_text(parsed.html)
 
 
 def test_client_list_empty_state_repeats_the_create_as_secondary(client, operator):
@@ -190,7 +191,7 @@ def test_audience_list_create_follows_the_audiences_title(client, operator, clie
 
     assert header_texts(parsed) == ["Search contacts"]
     assert_page_create(parsed, "Audience Health", "Create audience", reverse("mailing:audience_create"))
-    assert '<span class="dk-collection-header__meta">1 audience</span>' in parsed.html
+    assert '<span class="dk-collection-header__meta">1 audience</span>' in data_text(parsed.html)
     assert "Open members to check campaign eligibility for DTC Courses." in parsed.html
 
 
@@ -214,7 +215,7 @@ def test_receiving_addresses_create_follows_the_addresses_title(client, operator
 
     assert header_texts(parsed) == ["Inbound mail"]
     assert_page_create(parsed, "Addresses", "New address", reverse("mailing:inbound_address_create"))
-    assert '<span class="dk-collection-header__meta">2 addresses</span>' in parsed.html
+    assert '<span class="dk-collection-header__meta">2 addresses</span>' in data_text(parsed.html)
 
 
 def test_receiving_addresses_empty_state_repeats_the_create_as_secondary(client, operator):

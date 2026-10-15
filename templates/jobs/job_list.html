@@ -4,7 +4,7 @@
 <div class="page-header"><div><h1>Jobs</h1><p>Find waiting work, investigate failures, and see which client is affected.</p></div></div>
 {% include "jobs/_navigation.html" %}
 <section class="section" aria-labelledby="job-summary"><h2 id="job-summary">Current workload</h2>
-<p>Queued: <strong>{{ counts.queued|default:0 }}</strong> · Running: <strong>{{ counts.running|default:0 }}</strong> · Retrying: <strong>{{ counts.retrying|default:0 }}</strong> · Failed: <strong>{{ counts.failed|default:0 }}</strong></p>
+<p>Queued: <strong><span class="data-num">{{ counts.queued|default:0 }}</span></strong> · Running: <strong><span class="data-num">{{ counts.running|default:0 }}</span></strong> · Retrying: <strong><span class="data-num">{{ counts.retrying|default:0 }}</span></strong> · Failed: <strong><span class="data-num">{{ counts.failed|default:0 }}</span></strong></p>
 <p>{% if oldest %}Oldest waiting job: <a href="{% url 'jobs:job_detail' oldest.id %}">{{ oldest.client.name }} / {{ oldest.task_type }}</a>. Waiting since <span class="data-time">{{ oldest.created_at|date:"Y-m-d H:i T" }}</span> ({{ oldest.created_at|timesince }} ago); eligible to run <span class="data-time">{{ oldest.run_after|date:"Y-m-d H:i T" }}</span>.{% else %}No jobs waiting.{% endif %}</p>
 <p class="helptext">Database snapshot <span class="data-time">{{ observed_at|date:"Y-m-d H:i:s T" }}</span>. Waiting work alone does not confirm worker health. <a href="{% url 'jobs:service_health' %}">Check processing health</a>.</p></section>
 <form method="get" class="section"><div class="form-grid">

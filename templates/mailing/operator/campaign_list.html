@@ -58,8 +58,8 @@
                 <td class="data-num nowrap" data-label="Recipients">{{ campaign.recipient_count }}</td>
                 <td class="nowrap" data-label="Delivery">
                   {% if campaign.status == "draft" %}<span class="muted">Review before sending</span>{% elif campaign.status == "scheduled" %}<span class="muted">Audience selected at send time</span>{% else %}
-                  {{ campaign.sent_count }} currently sent / {{ campaign.delivered_count }} delivery confirmations
-                  <div class="helptext">{{ campaign.bounce_count }} bounces / {{ campaign.complaint_count }} complaints</div>
+                  <span class="data-num">{{ campaign.sent_count }}</span> currently sent / <span class="data-num">{{ campaign.delivered_count }}</span> delivery confirmations
+                  <div class="helptext"><span class="data-num">{{ campaign.bounce_count }}</span> bounces / <span class="data-num">{{ campaign.complaint_count }}</span> complaints</div>
                   {% endif %}
                 </td>
               </tr>

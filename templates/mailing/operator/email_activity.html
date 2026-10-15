@@ -45,7 +45,7 @@
     </div>
   </form>
   <section class="section" aria-labelledby="activity-results">
-    <div class="section-header"><div><h2 id="activity-results">{{ activity.paginator.count }} email{{ activity.paginator.count|pluralize }}</h2><p class="muted">Latest activity first. Delivery confirms the receiving server accepted the email.</p></div></div>
+    <div class="section-header"><div><h2 id="activity-results"><span class="data-num">{{ activity.paginator.count }}</span> email{{ activity.paginator.count|pluralize }}</h2><p class="muted">Latest activity first. Delivery confirms the receiving server accepted the email.</p></div></div>
     {% if message_rows %}
       <div class="compact-list">
         {% for row in message_rows %}

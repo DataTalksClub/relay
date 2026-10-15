@@ -39,7 +39,7 @@
                 <td class="truncate">{{ row.note|default:"—" }}</td>
                 <td>
                   {% if row.message_count %}
-                    <a href="{% url 'mailing:inbound_list' %}?address={{ row.address|urlencode }}&amp;state=all">{{ row.message_count }}</a>
+                    <a href="{% url 'mailing:inbound_list' %}?address={{ row.address|urlencode }}&amp;state=all"><span class="data-num">{{ row.message_count }}</span></a>
                   {% else %}
                     <span class="muted">0</span>
                   {% endif %}

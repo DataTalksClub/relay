@@ -216,14 +216,14 @@
       <div class="meta-item">
         <span class="meta-label">Validation</span>
         <div class="badge-row">
-          {% for row in segment_links.validation %}<a class="badge neutral" href="{{ row.url }}">{{ row.label }} {{ row.count }}</a>{% empty %}<span class="badge neutral">No contacts</span>{% endfor %}
+          {% for row in segment_links.validation %}<a class="badge neutral" href="{{ row.url }}">{{ row.label }} <span class="data-num">{{ row.count }}</span></a>{% empty %}<span class="badge neutral">No contacts</span>{% endfor %}
         </div>
       </div>
       <div class="meta-item">
         <span class="meta-label">Tags</span>
         <div class="tag-cloud">
           {% for tag in breakdowns.tags %}
-            <div><a class="badge neutral" href="?section=members&amp;include_tags={{ tag.slug|urlencode }}">{{ tag.slug }}: {{ tag.count }}</a> <a href="{% url 'mailing:tag_detail' tag.id %}">Manage tag</a></div>
+            <div><a class="badge neutral" href="?section=members&amp;include_tags={{ tag.slug|urlencode }}">{{ tag.slug }}: <span class="data-num">{{ tag.count }}</span></a> <a href="{% url 'mailing:tag_detail' tag.id %}">Manage tag</a></div>
           {% empty %}
             <span class="badge neutral">No tags</span>
           {% endfor %}
@@ -232,13 +232,13 @@
       <div class="meta-item">
         <span class="meta-label">Campaign statuses</span>
         <div class="badge-row">
-          {% for row in segment_links.campaign_statuses %}<a class="badge neutral" href="{{ row.url }}">{{ row.label }} {{ row.count }}</a>{% empty %}<span class="badge neutral">No campaign recipients</span>{% endfor %}
+          {% for row in segment_links.campaign_statuses %}<a class="badge neutral" href="{{ row.url }}">{{ row.label }} <span class="data-num">{{ row.count }}</span></a>{% empty %}<span class="badge neutral">No campaign recipients</span>{% endfor %}
         </div>
       </div>
       <div class="meta-item">
         <span class="meta-label">Skip reasons</span>
         <div class="badge-row">
-          {% for row in segment_links.skip_reasons %}<a class="badge warning" href="{{ row.url }}">{{ row.label }} {{ row.count }}</a>{% empty %}<span class="badge success">No skips</span>{% endfor %}
+          {% for row in segment_links.skip_reasons %}<a class="badge warning" href="{{ row.url }}">{{ row.label }} <span class="data-num">{{ row.count }}</span></a>{% empty %}<span class="badge success">No skips</span>{% endfor %}
         </div>
       </div>
     </div>

@@ -38,11 +38,11 @@
                     <div class="helptext">{{ audience.organization.name }} / {{ audience.slug }}</div>
                   </td>
                   <td class="nowrap" data-label="Membership">
-                    {{ row.member_count }} members
-                    <div class="helptext">{{ row.subscribed_count }} subscribed / {{ audience.subscription_count }} subscriptions</div>
+                    <span class="data-num">{{ row.member_count }}</span> members
+                    <div class="helptext"><span class="data-num">{{ row.subscribed_count }}</span> subscribed / <span class="data-num">{{ audience.subscription_count }}</span> subscriptions</div>
                   </td>
                   <td class="nowrap" data-label="Inactive / suppressed">
-                    {{ row.inactive_count }} inactive{% if row.suppressed_count %} / {{ row.suppressed_count }} suppressed{% endif %}
+                    <span class="data-num">{{ row.inactive_count }}</span> inactive{% if row.suppressed_count %} / <span class="data-num">{{ row.suppressed_count }}</span> suppressed{% endif %}
                   </td>
                   <td class="truncate" data-label="Recent activity">
                     {% if row.recent_campaign %}

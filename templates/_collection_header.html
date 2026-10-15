@@ -27,7 +27,7 @@ secondary actions trail.
   </div>
   {% if count or trail_url %}
     <div class="dk-collection-header__trail">
-      {% if count %}<span class="dk-collection-header__meta">{{ count }} {{ count_noun }}{% if count_plural %}{{ count|pluralize:count_plural }}{% else %}{{ count|pluralize }}{% endif %}</span>{% endif %}
+      {% if count %}<span class="dk-collection-header__meta"><span class="data-num">{{ count }}</span> {{ count_noun }}{% if count_plural %}{{ count|pluralize:count_plural }}{% else %}{{ count|pluralize }}{% endif %}</span>{% endif %}
       {% if trail_url %}<a class="dk-button dk-button--secondary dk-button--sm" href="{{ trail_url }}">{{ trail_label }}</a>{% endif %}
     </div>
   {% endif %}

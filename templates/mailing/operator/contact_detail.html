@@ -265,7 +265,7 @@
                 <td><span class="data-time">{{ recipient.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td>{{ recipient.get_skip_reason_display|default:"—" }}</td>
                 <td class="truncate">{{ recipient.ses_message_id|default:"—" }}</td>
-                <td class="nowrap">{{ recipient.open_count }} opens / {{ recipient.click_count }} clicks</td>
+                <td class="nowrap"><span class="data-num">{{ recipient.open_count }}</span> opens / <span class="data-num">{{ recipient.click_count }}</span> clicks</td>
                 <td class="truncate">{{ recipient.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}
@@ -316,7 +316,7 @@
                 <td><span class="data-time">{{ message.delivered_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td><span class="data-time">{{ message.first_opened_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
                 <td><span class="data-time">{{ message.first_clicked_at|date:"Y-m-d H:i"|default:"—" }}</span></td>
-                <td class="nowrap">{{ message.open_count }} opens / {{ message.click_count }} clicks</td>
+                <td class="nowrap"><span class="data-num">{{ message.open_count }}</span> opens / <span class="data-num">{{ message.click_count }}</span> clicks</td>
                 <td class="truncate">{{ message.ses_message_id|default:"—" }}</td>
                 <td class="truncate">{{ row.metadata_summary|default:"—" }}</td>
                 <td class="truncate">{{ message.last_error|default:"—" }}</td>

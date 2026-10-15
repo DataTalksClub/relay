@@ -135,7 +135,7 @@
               {% if row.campaign.status == "draft" %}
                 <a href="{% url 'mailing:campaign_edit' row.campaign.id %}">Resume draft</a>
               {% else %}
-                <span class="muted">{{ row.campaign.recipient_count }} recipients · {{ row.campaign.delivered_count }} delivered</span>
+                <span class="muted"><span class="data-num">{{ row.campaign.recipient_count }}</span> recipients · <span class="data-num">{{ row.campaign.delivered_count }}</span> delivered</span>
                 <a href="{% url 'mailing:campaign_detail' row.campaign.id %}">View progress and results</a>
               {% endif %}
             </div>
@@ -156,11 +156,11 @@
       <h2 id="background-processing">Background processing</h2>
       <div class="badge-row">
         <span class="badge {{ dashboard.worker_health_tone }}">{{ dashboard.worker_health_label }}</span>
-        <span class="muted">{{ dashboard.worker_waiting_count }} item{{ dashboard.worker_waiting_count|pluralize }} waiting across background work.</span>
+        <span class="muted"><span class="data-num">{{ dashboard.worker_waiting_count }}</span> item{{ dashboard.worker_waiting_count|pluralize }} waiting across background work.</span>
       </div>
     </div>
     <p class="muted">Service-wide processing status. Waiting counts alone do not indicate a failure.</p>
-    <p><a href="{% url 'mailing:transactional_queue' %}">Review this client's waiting emails ({{ dashboard.transactional_backlog_count }})</a> · <a href="/jobs/dead-letters/">Review failed service jobs</a></p>
+    <p><a href="{% url 'mailing:transactional_queue' %}">Review this client's waiting emails (<span class="data-num">{{ dashboard.transactional_backlog_count }}</span>)</a> · <a href="/jobs/dead-letters/">Review failed service jobs</a></p>
     <details class="secondary-section panel-diagnostics">
       <summary>Processing diagnostics</summary>
       <div class="table-wrap">

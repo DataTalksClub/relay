@@ -50,6 +50,7 @@ from mailing.services.operator_ui import (
 )
 from mailing.services.transactional_catalog import transactional_queue_queryset
 from mailing.services.worker_status import _backlog_count
+from mailing.tests.html_text import data_text
 
 pytestmark = pytest.mark.django_db
 
@@ -811,7 +812,7 @@ def test_operator_contact_explorer_renders_filters_and_pagination_querystring(
     assert b"Contacts" in response.content
     assert b"person-00@example.com" in response.content
     assert b"person-29@example.com" not in response.content
-    assert b"Page 1 of 2" in response.content
+    assert b"Page 1 of 2" in data_text(response.content)
     assert f"audience={audience.id}&amp;subscription_status=subscribed&amp;page=2".encode() in response.content
 
 
@@ -1158,9 +1159,12 @@ def test_campaign_list_renders_recent_campaigns(client, operator, campaign):
     assert "1 queued / 2 processed" not in html
     assert "0.03/sec" not in html
     assert "2.0/min" not in html
-    assert "3 currently sent / 2 delivery confirmations" in html
+    assert "3 currently sent / 2 delivery confirmations" in data_text(html)
     assert "1 opens / 1 clicks" not in html
-    assert "1 bounces / 1 complaints" in html
+    assert "1 bounces / 1 complaints" in data_text(html)
+    # Quantities and times read as data: mono, tabular, dates unbroken.
+    assert '<span class="data-num">3</span> currently sent / <span class="data-num">2</span> delivery confirmations' in html
+    assert '<span class="data-num">1</span> bounces / <span class="data-num">1</span> complaints' in html
     assert '<span class="badge success">Sent</span>' in html
     assert "Locked" not in html
     assert "Create campaign" in html
@@ -1312,10 +1316,10 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert list_response.status_code == 200
     list_html = list_response.content.decode()
     assert "Audience Health" in list_html
-    assert "3 members" in list_html
-    assert "3 subscribed" in list_html
-    assert "1 inactive" in list_html
-    assert "1 suppressed" in list_html
+    assert "3 members" in data_text(list_html)
+    assert "3 subscribed" in data_text(list_html)
+    assert "1 inactive" in data_text(list_html)
+    assert "1 suppressed" in data_text(list_html)
     assert "Weekly update" in list_html
     assert f'href="{reverse("mailing:audience_detail", args=[audience.id])}"' in list_html
     assert detail_response.status_code == 200
@@ -1351,13 +1355,13 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert "Cannot send —" in detail_html
     assert "Missing email DNS" in detail_html
     assert "No MX 1" not in segment_html
-    assert "Valid email 1" in segment_html
-    assert "No validation data 1" in segment_html
+    assert "Valid email 1" in data_text(segment_html)
+    assert "No validation data 1" in data_text(segment_html)
     assert "Malformed email: 0" not in segment_html
-    assert "Sent 2" in segment_html
-    assert "Skipped 1" in segment_html
+    assert "Sent 2" in data_text(segment_html)
+    assert "Skipped 1" in data_text(segment_html)
     assert "Failed: 0" not in segment_html
-    assert "Invalid email 1" in segment_html
+    assert "Invalid email 1" in data_text(segment_html)
     assert "Client unsubscribe: 0" not in segment_html
     assert "Hard bounced" in health_html
     assert "invalid@example.com" in detail_html
@@ -1871,8 +1875,8 @@ def test_campaign_detail_shows_draft_estimate_and_state_dependent_controls(clien
     assert b"No campaign email events found yet" not in draft_response.content
     confirm_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]), {"confirm_send": "1"})
     assert b"Send this campaign now?" in confirm_response.content
-    assert b"1 recipient will be queued for sending" in confirm_response.content
-    assert b"Send to 1 recipient now" in confirm_response.content
+    assert b"1 recipient will be queued for sending" in data_text(confirm_response.content)
+    assert b"Send to 1 recipient now" in data_text(confirm_response.content)
 
     campaign.status = "queued"
     campaign.save()
@@ -1958,7 +1962,7 @@ def test_campaign_detail_paginates_recipients(client, operator, campaign):
     assert response.status_code == 200
     assert b"person-00@example.com" in response.content
     assert b"person-54@example.com" not in response.content
-    assert b"Page 1 of 2" in response.content
+    assert b"Page 1 of 2" in data_text(response.content)
 
 
 def test_contact_search_and_detail_render_product_context(client, operator, audience, client_record, campaign):
@@ -2132,7 +2136,7 @@ def test_transactional_template_catalog_filters_paginates_and_summarizes_context
     assert "other-template" not in html
     assert "first_name" in html
     assert "verification_url" in html
-    assert "+1" in html
+    assert "+1" in data_text(html)
     assert "{&#x27;name&#x27;" not in html
     assert "?page=2" in html
 
@@ -2302,8 +2306,8 @@ def test_transactional_queue_paginates_and_preserves_query_params(client, operat
     html = response.content.decode()
 
     assert response.status_code == 200
-    assert "Page 2 of 2" in html
-    assert "26 messages queued" in html
+    assert "Page 2 of 2" in data_text(html)
+    assert "26 messages queued" in data_text(html)
 
 
 def test_transactional_queue_empty_state(client, operator, client_record, other_client):
@@ -2332,7 +2336,7 @@ def test_transactional_queue_total_matches_scoped_count(client, operator, client
         client=client_record, status=TransactionalMessageStatus.QUEUED
     ).count()
     assert scoped_count == 2
-    assert f"{scoped_count} message" in html
+    assert f"{scoped_count} message" in data_text(html)
 
 
 def test_transactional_queue_queryset_filters_and_orders(client_record, other_client):
@@ -2360,12 +2364,12 @@ def test_dashboard_transactional_backlog_links_and_is_client_scoped(client, oper
     select_active_client(client, client_record)
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
-    assert f'<a href="{queue_url}">Review this client\'s waiting emails (2)</a>' in html
+    assert f'<a href="{queue_url}">Review this client\'s waiting emails (2)</a>' in data_text(html)
 
     select_active_client(client, other_client)
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
-    assert f'<a href="{queue_url}">Review this client\'s waiting emails (3)</a>' in html
+    assert f'<a href="{queue_url}">Review this client\'s waiting emails (3)</a>' in data_text(html)
 
 
 def test_dashboard_backlog_count_stays_global_in_worker_status(client_record, other_client):
@@ -2394,7 +2398,7 @@ def test_contact_detail_paginates_events(client, operator, campaign, client_reco
     response = client.get(reverse("mailing:contact_detail", args=[contact.normalized_email]))
 
     assert response.status_code == 200
-    assert b"Page 1 of 2" in response.content
+    assert b"Page 1 of 2" in data_text(response.content)
     assert response.content.count(b"<strong>Open</strong>") == 50
 
 

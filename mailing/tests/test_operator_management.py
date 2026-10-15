@@ -30,6 +30,7 @@ from mailing.services.campaigns import (
     snapshot_campaign_recipients,
 )
 from mailing.services.operator_management import assume_recipient_sent
+from mailing.tests.html_text import data_text
 
 pytestmark = pytest.mark.django_db
 
@@ -119,8 +120,8 @@ def test_client_list_renders_active_api_key_count(client, operator, audience, cl
 
     assert response.status_code == 200
     assert "API keys" in page
-    assert '<span class="badge success">1 active</span>' in page
-    assert '<span class="badge neutral">1 revoked</span>' in page
+    assert '<span class="badge success">1 active</span>' in data_text(page)
+    assert '<span class="badge neutral">1 revoked</span>' in data_text(page)
     assert "Never" not in page
 
 
@@ -139,8 +140,8 @@ def test_client_list_key_counts_do_not_bleed_between_clients(client, operator, c
     own_row = own_row[: own_row.index("</tr>")]
     other_row = page[page.index(f'href="{reverse("mailing:client_detail", args=[other_client.id])}"') :]
     other_row = other_row[: other_row.index("</tr>")]
-    assert '<span class="badge success">1 active</span>' in own_row
-    assert '<span class="badge success">2 active</span>' in other_row
+    assert '<span class="badge success">1 active</span>' in data_text(own_row)
+    assert '<span class="badge success">2 active</span>' in data_text(other_row)
 
 
 def test_client_detail_renders_identity_status_and_api_key_rows(client, operator, client_record):
@@ -167,7 +168,7 @@ def test_client_detail_renders_identity_status_and_api_key_rows(client, operator
     assert 'id="api-keys"' in page
     assert page.index('id="senders"') < page.index('id="api-keys"') < page.index('id="integrations"')
     assert '<details class="secondary-section detail-section panel-diagnostics" id="diagnostics">' in page
-    assert '<span class="badge success">1 active API key</span>' in page
+    assert '<span class="badge success">1 active API key</span>' in data_text(page)
     revoked_prefix_position = page.index(revoked_key.display_prefix)
     revoked_row = page[page.rfind("<tr", 0, revoked_prefix_position):]
     revoked_row = revoked_row[:revoked_row.index("</tr>")]

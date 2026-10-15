@@ -18,7 +18,7 @@
     <section class="section panel" aria-labelledby="templates-table">
       <div class="panel-header">
         <h2 id="templates-table">All templates</h2>
-        <span class="muted">{{ templates.paginator.count }} template{{ templates.paginator.count|pluralize }}</span>
+        <span class="muted"><span class="data-num">{{ templates.paginator.count }}</span> template{{ templates.paginator.count|pluralize }}</span>
       </div>
       <div class="table-wrap template-table">
       <table>
@@ -54,7 +54,7 @@
                       <code title="{{ requirement.description|default:'Required by this template.' }}">{{ requirement.name }}</code>
                     {% endfor %}
                     {% if row.hidden_requirement_count %}
-                      <span class="badge neutral">+{{ row.hidden_requirement_count }}</span>
+                      <span class="badge neutral">+<span class="data-num">{{ row.hidden_requirement_count }}</span></span>
                     {% endif %}
                   </div>
                 {% else %}
@@ -62,10 +62,10 @@
                 {% endif %}
               </td>
               <td>
-                {{ row.template.total_message_count }}
+                <span class="data-num">{{ row.template.total_message_count }}</span>
                 <div class="metric-stack">
-                  <span>Queued {{ row.template.queued_count }}</span>
-                  <span>Sent {{ row.template.sent_count }} / Skipped {{ row.template.skipped_count }} / Failed {{ row.template.failed_count }}</span>
+                  <span>Queued <span class="data-num">{{ row.template.queued_count }}</span></span>
+                  <span>Sent <span class="data-num">{{ row.template.sent_count }}</span> / Skipped <span class="data-num">{{ row.template.skipped_count }}</span> / Failed <span class="data-num">{{ row.template.failed_count }}</span></span>
                 </div>
               </td>
               <td class="nowrap"><span class="data-time">{{ row.template.updated_at|date:"Y-m-d H:i" }}</span></td>

@@ -16,7 +16,7 @@
           <span class="badge danger">Inactive client</span>
         {% endif %}
         {% if active_key_count %}
-          <span class="badge success">{{ active_key_count }} active API key{{ active_key_count|pluralize }}</span>
+          <span class="badge success"><span class="data-num">{{ active_key_count }}</span> active API key{{ active_key_count|pluralize }}</span>
         {% else %}
           <span class="badge warning">No active API keys</span>
         {% endif %}
@@ -165,7 +165,7 @@
         <form method="post" action="{% url 'mailing:client_mailchimp_tag_mappings' client.id %}" class="stacked-form">
           {% csrf_token %}
           <input type="hidden" name="audience_id" value="{{ editor.audience.id }}">
-          <label for="mailchimp-mappings-{{ editor.audience.id }}">{{ editor.audience.name }} <span class="muted">({{ editor.audience.slug }}) — {{ editor.count }} mapping{{ editor.count|pluralize }}</span></label>
+          <label for="mailchimp-mappings-{{ editor.audience.id }}">{{ editor.audience.name }} <span class="muted">({{ editor.audience.slug }}) — <span class="data-num">{{ editor.count }}</span> mapping{{ editor.count|pluralize }}</span></label>
           <textarea id="mailchimp-mappings-{{ editor.audience.id }}" name="mappings" rows="4" placeholder="ai-dev-tools-zoomcamp-2026:@registered = ai-dev-tools-zoomcamp-2026">{{ editor.mappings_text }}</textarea>
           <div class="action-row">
             <button type="submit">Save mappings for {{ editor.audience.slug }}</button>

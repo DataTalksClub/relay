@@ -51,7 +51,7 @@
                     <span class="dk-split__meta">
                       {% if row.state != state %}<span class="dk-badge{% if row.state == 'received' %} dk-badge--warning{% elif row.state == 'blocked' %} dk-badge--danger{% endif %}">{{ row.get_state_display }}</span>{% endif %}
                       {% if row.is_spam %}<span class="dk-badge dk-badge--danger">Suspected spam</span>{% endif %}
-                      {% if row.attachment_count %}<span class="dk-badge">{{ row.attachment_count }} attachment{{ row.attachment_count|pluralize }}</span>{% endif %}
+                      {% if row.attachment_count %}<span class="dk-badge"><span class="data-num">{{ row.attachment_count }}</span> attachment{{ row.attachment_count|pluralize }}</span>{% endif %}
                     </span>
                   {% endif %}
                 </a>
