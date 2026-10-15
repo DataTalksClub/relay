@@ -30,6 +30,9 @@
     <link rel="stylesheet" href="{% static 'mailing/css/app.css' %}">
     <script src="{% static 'dakit/dist/dialogs.js' %}"></script>
     <script src="{% static 'dakit/dist/tabs.js' %}" defer></script>
+    {# The page's one create (data-dk-create, from _collection_header.html) answers the c key. #}
+    <script src="{% static 'dakit/dist/collection.js' %}"></script>
+    <script>dakitCollection.installShortcut(document);</script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>

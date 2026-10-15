@@ -1,0 +1,5 @@
+{% comment %}
+The dakit "+ Label" create action (dk-collection-create). Used by
+_collection_header.html, and on its own for the empty-state repeat
+(create_variant="secondary" no_shortcut=True).
+{% endcomment %}<a class="dk-button dk-button--{{ create_variant|default:'primary' }} dk-button--sm dk-collection-create" href="{{ create_url }}"{% if not no_shortcut %} data-dk-create aria-keyshortcuts="c" title="{{ create_label }} (C)"{% endif %}><span class="dk-collection-create__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><span>{{ create_label }}</span></a>

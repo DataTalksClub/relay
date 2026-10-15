@@ -1,0 +1,33 @@
+{% comment %}
+dakit collection header (dakit docs/guidelines.md "Action placement").
+
+A create action belongs to the collection it creates into, right after that
+collection's title, never in the page header's corner. The count and
+secondary actions trail.
+
+  title          heading text (required)
+  title_id       heading id, for aria-labelledby on the section
+  extra_class    classes added to the header (e.g. "panel-header")
+  create_url     href of the create action; omit for no create
+  create_label   verb + noun, e.g. "Create campaign"
+  create_variant "primary" (default) or "secondary"; a page has one primary
+  no_shortcut    true for any create other than the page's one create;
+                 the page's create answers the c key (dist/collection.js)
+  count          number shown as trailing meta ("4 campaigns")
+  count_noun     singular noun after the count
+  count_plural   plural suffix when it is not "s" (e.g. "es")
+  trail_url      one secondary link in the trail (e.g. "View campaigns")
+  trail_label    its text
+{% endcomment %}
+<header class="dk-collection-header{% if extra_class %} {{ extra_class }}{% endif %}">
+  <div class="dk-collection-header__lead">
+    <h2 class="dk-collection-header__title"{% if title_id %} id="{{ title_id }}"{% endif %}>{{ title }}</h2>
+    {% if create_url %}{% include "_collection_create.html" %}{% endif %}
+  </div>
+  {% if count or trail_url %}
+    <div class="dk-collection-header__trail">
+      {% if count %}<span class="dk-collection-header__meta">{{ count }} {{ count_noun }}{% if count_plural %}{{ count|pluralize:count_plural }}{% else %}{{ count|pluralize }}{% endif %}</span>{% endif %}
+      {% if trail_url %}<a class="dk-button dk-button--secondary dk-button--sm" href="{{ trail_url }}">{{ trail_label }}</a>{% endif %}
+    </div>
+  {% endif %}
+</header>

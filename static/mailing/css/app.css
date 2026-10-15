@@ -775,14 +775,14 @@ p {
 }
 
 /* Element defaults skip dakit segments: this CSS is unlayered, so a bare `a`
-   or `button` rule would beat .dk-tab in dakit's component layer. :where()
+   or `button` rule would beat .dk-tab and .dk-button in dakit's component layer. :where()
    keeps these at element specificity. */
-a:where(:not(.dk-tab)) {
+a:where(:not(.dk-tab, .dk-button)) {
   color: var(--dk-text-link);
   text-decoration: none;
 }
 
-a:where(:not(.dk-tab)):hover {
+a:where(:not(.dk-tab, .dk-button)):hover {
   color: var(--dk-text-link-hover);
   text-decoration: underline;
 }
@@ -796,7 +796,7 @@ a:where(:not(.dk-tab)):hover {
   text-decoration: underline;
 }
 
-a:where(:not(.dk-tab)):focus-visible,
+a:where(:not(.dk-tab, .dk-button)):focus-visible,
 button:where(:not(.dk-tab)):focus-visible,
 input:focus-visible,
 select:focus-visible,

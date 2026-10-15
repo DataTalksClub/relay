@@ -10,18 +10,15 @@
       <p>Prepare drafts and follow delivery progress for {{ active_client.name }}.</p>
     </div>
     <div class="actions">
-      <a class="button" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
       <a class="button secondary" href="{% url 'mailing:audience_list' %}">Audiences</a>
       <a class="button secondary" href="{% url 'mailing:contact_search' %}">Find contact</a>
     </div>
   </div>
 
-  {% if campaigns.object_list %}
-    <section class="section panel" aria-labelledby="campaigns-table">
-      <div class="panel-header">
-        <h2 id="campaigns-table">All campaigns</h2>
-        <span class="muted">{{ campaigns.paginator.count }} campaign{{ campaigns.paginator.count|pluralize }}</span>
-      </div>
+  {% url 'mailing:campaign_create' as campaign_create_url %}
+  <section class="section panel" aria-labelledby="campaigns-table">
+    {% include "_collection_header.html" with title="All campaigns" title_id="campaigns-table" extra_class="panel-header" create_url=campaign_create_url create_label="Create campaign" count=campaigns.paginator.count count_noun="campaign" only %}
+    {% if campaigns.object_list %}
       <div class="table-wrap campaign-table stack-table">
         <table>
           <thead>
@@ -72,12 +69,12 @@
         </table>
       </div>
     {% include "mailing/operator/_pagination.html" with page_obj=campaigns querystring=pagination_querystring %}
-    </section>
-  {% else %}
-    <div class="empty-state">
-      <span class="badge neutral">EMPTY</span>
-      <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a broadcast send.</p>
-      <a class="button secondary" href="{% url 'mailing:campaign_create' %}">Create campaign</a>
-    </div>
-  {% endif %}
+    {% else %}
+      <div class="empty-state">
+        <span class="badge neutral">EMPTY</span>
+        <p><strong>No campaigns yet.</strong> Create a campaign draft when an audience is ready for a broadcast send.</p>
+        {% include "_collection_create.html" with create_url=campaign_create_url create_label="Create the first campaign" create_variant="secondary" no_shortcut=True only %}
+      </div>
+    {% endif %}
+  </section>
 {% endblock %}
