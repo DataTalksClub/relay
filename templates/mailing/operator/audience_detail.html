@@ -136,8 +136,8 @@
           <div class="filter-group">
             <h3>Tags</h3>
             <div class="filter-grid tag-filter-grid">
-              <div class="form-field">
-                <label>Include tags</label>
+              <div class="form-field" data-tag-input="include_tags">
+                <label id="include-tags-label">Include tags</label>
                 <div class="checkbox-list">
                   {% for tag in breakdowns.tags %}
                     <label><input type="checkbox" name="include_tags" value="{{ tag.slug }}"{% if tag.slug in filters.include_tags %} checked{% endif %}>{{ tag.slug }}</label>
@@ -146,8 +146,8 @@
                   {% endfor %}
                 </div>
               </div>
-              <div class="form-field">
-                <label>Exclude tags</label>
+              <div class="form-field" data-tag-input="exclude_tags">
+                <label id="exclude-tags-label">Exclude tags</label>
                 <div class="checkbox-list">
                   {% for tag in breakdowns.tags %}
                     <label><input type="checkbox" name="exclude_tags" value="{{ tag.slug }}"{% if tag.slug in filters.exclude_tags %} checked{% endif %}>{{ tag.slug }}</label>

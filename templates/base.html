@@ -118,7 +118,7 @@
 
         <div class="dk-sidebar__foot">
           <button class="dk-account-trigger" type="button" data-dk-popover-trigger="dk-account-menu" aria-expanded="false" aria-controls="dk-account-menu" aria-label="Account, {{ identity.name }}">
-            <span class="dk-avatar dk-avatar--sm" aria-hidden="true">{{ identity.initials }}</span>
+            <span class="dk-avatar dk-avatar--sm" aria-hidden="true"><span class="dk-avatar__initials">{{ identity.initials }}</span></span>
             <span class="dk-account-trigger__name">{{ identity.name }}</span>
             <svg class="dk-account-trigger__chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
           </button>
@@ -139,6 +139,7 @@
         <a class="dk-auth-page__brand" href="/">Relay</a>
         {% if user.is_authenticated %}
           <div class="relay-identity">
+            <span class="dk-avatar dk-avatar--sm" aria-hidden="true"><span class="dk-avatar__initials">{{ user.get_full_name|default:user.get_username|first|upper }}</span></span>
             <p class="dk-auth-page__identity" role="status">{{ user.email|default:user.get_username }}</p>
             <form method="post" action="{% url 'oidc-logout' %}">
               {% csrf_token %}
@@ -167,7 +168,8 @@
           <input type="hidden" name="next" value="{{ request.get_full_path }}">
           <div class="dk-menu__label" role="presentation">Clients</div>
           {% for client in operator_clients %}
-            <button class="dk-menu__item" type="submit" name="client_id" value="{{ client.id }}" role="menuitemradio" aria-checked="{% if operator_active_client and operator_active_client.id == client.id %}true{% else %}false{% endif %}" tabindex="-1">
+            <button class="dk-menu__item" type="submit" name="client_id" value="{{ client.id }}" role="menuitemradio" aria-checked="{% if operator_active_client and operator_active_client.id == client.id %}true{% else %}false{% endif %}" aria-label="{{ client.name }}" tabindex="-1">
+              <span class="dk-avatar dk-avatar--xs" aria-hidden="true"><span class="dk-avatar__initials">{{ client.name|first|upper }}</span></span>
               <span class="dk-menu__text">{{ client.name }}</span>
               <svg class="dk-menu__check" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
             </button>
@@ -200,6 +202,7 @@
     {% endwith %}
     <script src="{% static 'dakit/shell.js' %}"></script>
     <script src="{% static 'dakit/split.js' %}"></script>
+    <script src="{% static 'dakit/tag-input.js' %}"></script>
     <script src="{% static 'mailing/js/operator.js' %}"></script>
   </body>
 </html>

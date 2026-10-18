@@ -36,7 +36,8 @@
       const start = items.indexOf(document.activeElement);
       for (let step = 1; step <= items.length; step++) {
         const item = items[(start + step) % items.length];
-        if (item.textContent.trim().toLowerCase().startsWith(key)) {
+        const label = (item.getAttribute("aria-label") || item.textContent).trim().toLowerCase();
+        if (label.startsWith(key)) {
           item.focus();
           event.preventDefault();
           return;
@@ -161,6 +162,66 @@
     // panes stay visible and focus stays where it is.
     window.addEventListener("popstate", function () {
       render(location.href, phone.matches);
+    });
+  }
+
+  // Tag input progressive enhancement (dakit docs/tag-input.md). Replaces
+  // checkbox lists on audience detail and contact search with dk-tag-input,
+  // keeping chosen values synchronized to hidden inputs for form submission.
+  if (window.dakitTagInput) {
+    document.querySelectorAll("[data-tag-input]").forEach(function (host) {
+      const checkboxes = [...host.querySelectorAll('input[type="checkbox"]')];
+      if (!checkboxes.length) return;
+      const name = host.dataset.tagInput;
+      const labelEl = host.querySelector("label");
+      const labelId = labelEl ? (labelEl.id || (labelEl.id = name + "-label")) : "";
+
+      const options = checkboxes.map(function (cb) {
+        const text = (cb.closest("label") || cb).textContent.trim();
+        let group;
+        let label;
+        if (text.includes("/")) {
+          const slash = text.indexOf("/");
+          group = text.slice(0, slash);
+          label = text.slice(slash + 1);
+        } else {
+          label = text;
+        }
+        return { value: cb.value, label, group };
+      });
+
+      const initialValue = checkboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+
+      const checkboxList = host.querySelector(".checkbox-list");
+      if (checkboxList) checkboxList.hidden = true;
+      checkboxes.forEach((cb) => cb.removeAttribute("name"));
+
+      const hiddenWrap = document.createElement("div");
+      hiddenWrap.className = "dk-visually-hidden";
+      host.appendChild(hiddenWrap);
+
+      const sync = function (values) {
+        hiddenWrap.replaceChildren();
+        values.forEach(function (val) {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = name;
+          input.value = val;
+          hiddenWrap.appendChild(input);
+        });
+      };
+
+      const tagInput = dakitTagInput.create({
+        options,
+        value: initialValue,
+        labelledBy: labelId,
+        placeholder: "Add a tag…",
+        noMatches: "No matching tags",
+        onChange: sync,
+      });
+
+      sync(initialValue);
+      host.appendChild(tagInput.element);
     });
   }
 })();
