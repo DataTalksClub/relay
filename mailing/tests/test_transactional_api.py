@@ -1,8 +1,10 @@
 import json
 import time
 from datetime import timedelta
+from importlib import import_module
 
 import pytest
+from django.apps import apps
 from django.contrib import admin
 from django.test import override_settings
 from django.urls import reverse
@@ -27,6 +29,7 @@ from mailing.models import (
     RecipientListMember,
     Subscription,
     SubscriptionStatus,
+    TransactionalCampaign,
     TransactionalMessage,
     TransactionalMessageStatus,
 )
@@ -892,6 +895,7 @@ def test_transactional_send_to_recipient_list_creates_per_member_messages(
 
     assert response.status_code == 202
     body = response.json()
+    assert isinstance(body["campaign_id"], int)
     assert body["created_count"] == 2
     assert body["enqueued_count"] == 0
     assert body["skipped_count"] == 2
@@ -938,6 +942,7 @@ def test_transactional_send_to_recipient_list_creates_per_member_messages(
     replay = post_recipient_list_transactional(client, recipient_list.key, payload)
 
     assert replay.status_code == 202
+    assert replay.json()["campaign_id"] == body["campaign_id"]
     assert replay.json()["created_count"] == 0
     assert replay.json()["enqueued_count"] == 0
     assert replay.json()["idempotent_replay_count"] == 2
@@ -1917,3 +1922,61 @@ def test_reconciliation_maps_statuses_for_the_package_vocabulary(
     for key, (_, expected_status, expected_reason) in cases.items():
         assert rows[key]["status"] == expected_status, key
         assert rows[key]["reason_code"] == expected_reason, key
+
+
+def test_transactional_campaign_details_counts_and_access(client, audience, api_client_record, template, django_user_model):
+    recipient_list = RecipientList.objects.create(client=api_client_record, audience=audience, key="scores", name="Homework scores")
+    campaign = TransactionalCampaign.objects.create(client=api_client_record, recipient_list=recipient_list, template_key=template.key, idempotency_key="homework:3")
+    contact = Contact.objects.create(email="test@example.com")
+    for status in TransactionalMessageStatus.values:
+        TransactionalMessage.objects.create(
+            client=api_client_record, contact=contact, template=template,
+            template_key=template.key, email=contact.email, campaign=campaign,
+            status=status, delivered_at=timezone.now() if status == "sent" else None,
+        )
+    # Unrelated mail must not inflate this campaign's counts.
+    TransactionalMessage.objects.create(client=api_client_record, contact=contact, template=template, template_key=template.key, email=contact.email)
+    url = reverse("mailing:transactional_campaign_detail", args=[campaign.pk])
+    lookup = reverse("mailing:transactional_campaign_lookup")
+    assert client.get(url).status_code == 302
+    assert client.get(lookup).status_code == 302
+    user = django_user_model.objects.create_user(username="reader", password="test")
+    client.force_login(user)
+    assert client.get(url).status_code == 302
+    user.is_staff = True
+    user.save()
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.context["counts"]["total"] == 7
+    assert response.context["counts"]["delivered"] == 1
+    for status in TransactionalMessageStatus.values:
+        assert response.context["counts"][status] == 1
+    assert b"Bounced" in response.content
+    assert b"Queued" in response.content
+    assert b"Failed" in response.content
+    assert client.get(lookup, {"client": api_client_record.slug, "idempotency_key": "homework:3"}).url == url
+    waiting = client.get(lookup, {"client": "another-client", "idempotency_key": "homework:3"})
+    assert b"Waiting for CMP" in waiting.content
+    assert client.post(url).status_code == 405
+
+
+def test_historical_list_sends_are_backfilled_exactly(audience, api_client_record, template):
+    recipient_list = RecipientList.objects.create(client=api_client_record, audience=audience, key="scores", name="Scores")
+    contact = Contact.objects.create(email="test@example.com")
+    messages = []
+    for key, source in [("homework:3", "submission:1"), ("homework:3", "submission:2"), ("homework:30", "submission:3")]:
+        messages.append(TransactionalMessage.objects.create(
+            client=api_client_record, contact=contact, email=contact.email,
+            template=template, template_key=template.key, status="sent",
+            idempotency_key=f"{key}:{source}",
+            metadata={"recipient_list_key": recipient_list.key, "source_object_key": source},
+        ))
+    migration = import_module("mailing.migrations.0032_backfill_transactional_campaigns")
+    migration.backfill(apps, None)
+    migration.backfill(apps, None)
+    for message in messages:
+        message.refresh_from_db()
+    assert messages[0].campaign_id == messages[1].campaign_id
+    assert messages[0].campaign_id != messages[2].campaign_id
+    assert messages[0].campaign.idempotency_key == "homework:3"
+    assert TransactionalCampaign.objects.count() == 2

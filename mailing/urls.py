@@ -9,6 +9,7 @@ from mailing import (
     ops_views,
     setup_views,
     template_ui_views,
+    transactional_campaign_views,
     transfer_views,
     views,
 )
@@ -27,6 +28,8 @@ urlpatterns = [
     path("internal/ops/status", ops_views.status, name="taskdeck_status"),
     path("internal/transfer/export", transfer_views.transfer_export, name="transfer_export"),
     path("internal/transfer/load", transfer_views.transfer_load, name="transfer_load"),
+    path("transactional-campaigns/lookup/", transactional_campaign_views.lookup, name="transactional_campaign_lookup"),
+    path("transactional-campaigns/<int:campaign_id>/", transactional_campaign_views.detail, name="transactional_campaign_detail"),
     path("campaigns/", views.campaign_list, name="campaign_list"),
     path("campaigns/new/", views.campaign_create, name="campaign_create"),
     path("campaigns/<int:campaign_id>/", views.campaign_detail, name="campaign_detail"),

@@ -15,6 +15,7 @@ from mailing.models import (
     EmailEventType,
     EmailTemplate,
     RecipientList,
+    TransactionalCampaign,
     TransactionalMessage,
     TransactionalMessageStatus,
 )
@@ -322,6 +323,11 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
         if recipient_list is None:
             raise ApiValidationError({"list_key": "not_found"}, status_code=404)
 
+        campaign, _ = TransactionalCampaign.objects.get_or_create(
+            client=authenticated_client,
+            idempotency_key=payload["idempotency_key"],
+            defaults={"recipient_list": recipient_list, "template_key": template.key},
+        )
         members = list(recipient_list.members.select_related("contact").filter(active=True).order_by("id"))
         member_contexts = [
             (member, recipient_list_member_context(payload["context"], member.metadata)) for member in members
@@ -333,6 +339,9 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
             idempotency_key = f"{payload['idempotency_key']}:{member.source_object_key}"
             existing = find_existing_message(authenticated_client, idempotency_key)
             if existing is not None:
+                if existing.campaign_id is None:
+                    existing.campaign = campaign
+                    existing.save(update_fields=["campaign"])
                 idempotent_replay_count += 1
                 continue
 
@@ -369,6 +378,8 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
                     idempotency_key=idempotency_key,
                     status=TransactionalMessageStatus.QUEUED,
                 )
+                message.campaign = campaign
+                message.save(update_fields=["campaign"])
                 append_transactional_event(
                     message,
                     EmailEventType.QUEUED,
@@ -393,6 +404,8 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
                 status=TransactionalMessageStatus.SKIPPED,
                 last_error=delivery_decision["reason"],
             )
+            message.campaign = campaign
+            message.save(update_fields=["campaign"])
             append_transactional_event(
                 message,
                 EmailEventType.SKIPPED,
@@ -416,6 +429,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
             transaction.on_commit(enqueue_batch)
 
     response = {
+        "campaign_id": campaign.id,
         "recipient_list": {
             "key": recipient_list.key,
             "active_member_count": recipient_list.active_member_count,

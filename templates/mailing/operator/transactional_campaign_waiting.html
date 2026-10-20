@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Waiting for campaign | Relay{% endblock %}
+{% block topbar_title %}Transactional campaign{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Waiting for CMP</h1>
+      <p>CMP has queued the notification request. Relay has not accepted this campaign yet.</p>
+      <p>Refresh this page shortly to see delivery counts. If it keeps waiting, check the notification status in CMP for a retry or error.</p>
+    </div>
+  </div>
+{% endblock %}

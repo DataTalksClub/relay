@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Campaign {{ campaign.id }} | Relay{% endblock %}
+{% block topbar_title %}Transactional campaign{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>{{ campaign.recipient_list.name }}</h1>
+      <p>{{ campaign.client.name }} · {{ campaign.template_key }}</p>
+      <p>Campaign {{ campaign.id }} · {{ campaign.created_at|date:"Y-m-d H:i" }}</p>
+    </div>
+  </div>
+  <section class="detail-section panel" aria-labelledby="delivery-counts">
+    <div class="panel-header"><h2 id="delivery-counts">Delivery counts</h2></div>
+    <p>Refresh this page for current counts. Sent means accepted by the provider; delivered means the receiving server confirmed acceptance.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Status</th><th scope="col">Messages</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Total</th><td>{{ counts.total }}</td></tr>
+          {% for row in status_counts %}
+            <tr><th scope="row">{{ row.label }}</th><td>{{ row.count }}</td></tr>
+          {% endfor %}
+          <tr><th scope="row">Delivered (confirmed)</th><td>{{ counts.delivered }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">Delivery confirmations can overlap with later bounces or complaints. Skipped messages were excluded by delivery preferences or suppression rules.</p>
+  </section>
+{% endblock %}

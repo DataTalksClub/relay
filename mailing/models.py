@@ -665,7 +665,22 @@ class TransactionalMessageStatus(models.TextChoices):
     COMPLAINED = "complained", "Complained"
 
 
+class TransactionalCampaign(TimeStampedModel):
+    """One idempotent recipient-list send, delivered by transactional workers."""
+
+    client = models.ForeignKey(Client, on_delete=models.PROTECT)
+    recipient_list = models.ForeignKey(RecipientList, on_delete=models.PROTECT)
+    template_key = models.CharField(max_length=120)
+    idempotency_key = models.CharField(max_length=255)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["client", "idempotency_key"], name="unique_tx_campaign_client_key"),
+        ]
+
+
 class TransactionalMessage(TimeStampedModel):
+    campaign = models.ForeignKey(TransactionalCampaign, null=True, blank=True, on_delete=models.PROTECT, related_name="messages")
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="transactional_messages")
     contact = models.ForeignKey(Contact, on_delete=models.PROTECT, related_name="transactional_messages")
     email = models.EmailField(max_length=320)
