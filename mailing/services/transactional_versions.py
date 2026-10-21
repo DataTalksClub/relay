@@ -118,6 +118,7 @@ def publish_transactional_template(template):
 
 def version_payload(version):
     return {
+        "template_key": version.template.key,
         "version": version.version,
         "subject": version.subject,
         "html_body": version.html_body,
