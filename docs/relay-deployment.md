@@ -1,4 +1,128 @@
-# Relay sandbox deployment
+# Relay deployment
+
+Relay development runs at `https://dev.relay.datatalks.club` in AWS account
+`387546586013` in `eu-west-1`, with its Terraform in
+`DataTalksClub/aws-infra/main/dev`.
+
+The old sandbox host `relay.dtcdev.click` (`i-03b7cd5de0a10a889`, sandbox
+account `817685572750`) had its push-to-main auto-deploy retired on
+2026-10-05 during the dtcdev→Relay transfer (the failed run `37253575983`
+stays preserved as the record of why). That run's `InvalidInstanceId` is
+historical evidence about the SSM target at that moment, not a statement
+that the host is stopped: the same unchanged instance was later
+independently observed healthy and serving `relay.dtcdev.click`. The manual
+dispatch of `Deploy Relay Sandbox` remains, so any use of the retired
+auto-deploy is a conscious choice. The sandbox sections below describe that
+retired deployment surface.
+
+## Development deployment
+
+The `Deploy Relay Development` workflow in
+[`.github/workflows/deploy-development.yml`](../.github/workflows/deploy-development.yml)
+runs the full test gate, then deploys an exact commit to the development
+host. Push to `main` (ignoring `docs/**` and `*.md`) and manual
+`workflow_dispatch` both trigger it; runs serialize in the `relay-development`
+concurrency group and never cancel each other.
+
+| Aspect | Value |
+|---|---|
+| Region | `eu-west-1` |
+| Account | `387546586013` (main) |
+| Host | one private `t4g.micro` ARM64 instance in the website VPC, reached through SSM |
+| Public entry | `https://dev.relay.datatalks.club` behind the dev CloudFront/ALB path on port 8000 |
+| Database | shared dev RDS Postgres `dtc_relay_dev` via `RELAY_DATABASE_URL_SECRET_ARN` |
+| Queues | one dev-owned pair, `ses-webhooks` and its DLQ; no sandbox queue drains |
+| Logs | CloudWatch group `/relay/dev/host` |
+| Secrets | Secrets Manager containers only; the deploy never populates values |
+
+The deploy assumes the role in the `RELAY_DEPLOYMENT_DEPLOY_ROLE_ARN`
+repository variable through the `development` GitHub environment and sends
+one SSM command to `RELAY_DEVELOPMENT_INSTANCE_ID`. Both variables are
+required — a missing variable fails the deploy before any AWS call. There are
+no committed fallback instance ids or role ARNs. The variables are set only
+from applied `main/dev` Terraform output evidence archived on aws-infra#73.
+
+The host checks out the exact `GITHUB_SHA` and runs
+`scripts/deploy_relay_sandbox.sh --environment development <sha>`. The
+development branch of that script:
+
+- fetches `SECRET_KEY` and `DATABASE_URL` from Secrets Manager and fails
+  loudly if either is missing;
+- pins `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` to
+  `dev.relay.datatalks.club` (dev `infrastructure.env` does not carry them);
+  `PUBLIC_BASE_URL`, `DEFAULT_FROM_EMAIL` (`relay-dev@datatalks.club`),
+  `AWS_SES_*` and `RELAY_EMAIL_SEND_ROLE_ARN` flow from
+  `infrastructure.env`;
+- also adds the private in-VPC API host to `ALLOWED_HOSTS` when
+  `infrastructure.env` exports a `RELAY_INTERNAL_URL` key — the DTC website
+  calls Relay at that URL (`aws-infra main/dev` `website_service.tf` sets the
+  website's `RELAY_BASE_URL` to it), and Django would see that hostname as
+  the request Host. Current `main/dev` exports the key
+  (`http://relay-dev.website.internal:8000`), so the website's private calls
+  are allowed; if the key is ever absent, only the public hostname stays
+  allowed. The value is never wildcarded; host names only;
+- starts no PostgreSQL and no Caddy: gunicorn binds `0.0.0.0:8000` for the
+  shared ALB target, and public TLS terminates on the CloudFront/ALB path;
+- gives every container an explicit `--memory` limit (the production limits
+  table) because the host has 1 GiB plus 2 GB swap;
+- drains only the dev-owned `ses-webhooks` queue; no `inbound-email` and no
+  `relay-sandbox-*` drains;
+- provisions the `datatalksclub`/`dtc-courses` client scope and registers the
+  generated `RELAY_BOOTSTRAP_API_KEY` as `development-deployment`, without
+  setting client senders;
+- never writes `RELAY_DRY_RUN` — the variable stays operator-owned, and no
+  email may be exercised on the development host. Enforced dry-run
+  (relay#43) must be on the deployed head before any development worker
+  starts.
+
+The release gate is the same as everywhere: `/health/ready` answers, every
+required container runs, and a `system.echo` task completes through the
+worker. The workflow then polls
+`https://dev.relay.datatalks.club/health/ready` from outside.
+
+### First-deploy operator follow-up (website client)
+
+The first development deploy only proves the host serves and the worker
+drains. The dev website (`https://dev.datatalks.club`) becomes a working
+Relay client only after these out-of-band steps — secret values are never
+printed, committed, or pasted into chat:
+
+1. The deploy generated `RELAY_BOOTSTRAP_API_KEY` into the host-only
+   `/etc/relay/runtime.env` (mode `0600`) and registered it as the
+   `development-deployment` key. Copy that value into the dev website's
+   `website-dev/integrations` secret (`RELAY_API_KEY` JSON key), following
+   the production tenant pattern
+   (`scripts/provision_production_tenant.sh`). Alternatively, provision the
+   already-shared key into the dev database with
+   `provision_client_api_key --organization datatalksclub --client
+   dtc-courses --name <name> --raw-key-env <env>`; either way, exactly one
+   key value must match on both sides.
+2. On the dev host, set the website client row's webhook contract to the
+   website's values (Django shell; no management command owns these
+   fields):
+   `relay_webhook_allowed_origins` must include
+   `https://dev.datatalks.club`, and `relay_webhook_signing_secret` must
+   equal the website's `RELAY_WEBHOOK_SECRET`.
+3. Verify in-VPC before touching the website deploy:
+   `GET http://relay-dev.website.internal:8000/api/schedules` with the
+   website key answers `200` (any `origin_not_allowed`/`401` here is a
+   client-row problem, not a host problem).
+4. Only then run the website `Deploy Dev` with an empty
+   `confirm_dev_schema_reset` — its `sync_relay_schedules` gate must stay
+   enabled and green; never skip it silently.
+
+### Roll back the development host
+
+Pick a known-good commit, then dispatch `Deploy Relay Development` for that
+ref (or run the same script through SSM):
+
+```bash
+git -C /opt/relay fetch origin <commit>
+git -C /opt/relay checkout --force <commit>
+bash /opt/relay/scripts/deploy_relay_sandbox.sh --environment development <commit>
+```
+
+## Sandbox deployment (retired)
 
 Relay runs at `https://relay.dtcdev.click` in AWS sandbox account
 `817685572750` in `eu-west-1`, and we keep its Terraform in

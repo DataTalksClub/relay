@@ -4,10 +4,16 @@ Relay runs email and background jobs for DataTalksClub services. A client calls
 the HTTP API, receives a task ID and reads status from the same service. Client
 projects don't install Relay or deploy their own worker.
 
-The sandbox runs at [relay.dtcdev.click](https://relay.dtcdev.click) on a small
-ARM EC2 instance in `eu-west-1`. We run the web server, task worker, scheduler,
-AWS ingress drains and Postgres as separate containers on that host. Caddy
-terminates HTTPS.
+The old sandbox at [relay.dtcdev.click](https://relay.dtcdev.click) had its
+push-to-main auto-deploy retired on 2026-10-05 during the dtcdev→Relay
+transfer, and development deployments moved to
+[dev.relay.datatalks.club](https://dev.relay.datatalks.club). The host was
+not retired with the pipeline: after a period when its SSM target rejected
+commands, it was independently observed healthy and serving
+`relay.dtcdev.click` again (see
+[docs/relay-deployment.md](docs/relay-deployment.md)). It runs the web
+server, task worker, scheduler, AWS ingress drains and Postgres as separate
+containers on that host, with Caddy terminating HTTPS.
 
 ## Submit a task
 
@@ -132,17 +138,27 @@ The `inbound-email` SNS event still publishes when
 the stored message instead of carrying the body and every attachment. See
 [docs/worker-contracts.md](docs/worker-contracts.md).
 
-## Deploy the sandbox
+## Deploy
 
-Pushing `main` runs the test suite and deploys the complete release through
-AWS Systems Manager. The host runs
-[`scripts/deploy_relay_sandbox.sh`](scripts/deploy_relay_sandbox.sh), then fails
-the deployment unless every required container is running and the worker
-finishes a queued `system.echo` task.
+Pushing `main` runs the test suite and deploys the complete release to
+`dev.relay.datatalks.club` through AWS Systems Manager. The host runs
+[`scripts/deploy_relay_sandbox.sh`](scripts/deploy_relay_sandbox.sh) with
+`--environment development`, then fails the deployment unless every required
+container is running and the worker finishes a queued `system.echo` task.
 
-We store Postgres and Caddy data on the encrypted EBS volume mounted at
-`/var/lib/relay`. Terraform owns the host, DNS, SES identities, AWS ingress
-queues and IAM roles in `DataTalksClub/aws-infra/sandbox/relay`.
+The sandbox no longer deploys on push: `Deploy Relay Sandbox` keeps a manual
+`workflow_dispatch` only, so touching the retired `relay.dtcdev.click`
+auto-deploy is always a conscious choice.
+
+The development host runs no PostgreSQL and no Caddy — the shared dev RDS
+database and the shared ALB/CloudFront path replace them — and every container
+carries an explicit memory limit. No email is exercised on development;
+`RELAY_DRY_RUN` stays operator-owned until a separately authorized change.
+
+The sandbox stores Postgres and Caddy data on the encrypted EBS volume
+mounted at `/var/lib/relay`, and Terraform owns its host, DNS, SES
+identities, AWS ingress queues and IAM roles in
+`DataTalksClub/aws-infra/sandbox/relay`.
 
 Relay uses a task-scoped IAM role for `email.send`. The web and worker instance
 role can assume it but can't call SES directly. If a deployed task type lacks
