@@ -84,6 +84,7 @@ API_DOC_PATHS = {
     "jobs:task_fail": "/api/tasks/{task_id}/fail",
     "jobs:schedules": "/api/schedules",
     "jobs:schedule_detail": "/api/schedules/{schedule_id}",
+    "mailing:api_transactional_templates": "/api/transactional/templates",
     "mailing:api_transactional_template": "/api/transactional/templates/{template_key}",
     "mailing:api_transactional_send": "/api/transactional/send",
     "mailing:api_transactional_message_status": "/api/transactional/messages/{message_id}",
@@ -779,6 +780,7 @@ def endpoint_groups():
                 ("POST", "/api/contacts/imports", "Bulk JSON import/upsert."),
                 ("POST", "/api/contacts/imports/csv", "CSV upload/import."),
                 ("PUT", "/api/transactional/templates/{template_key}", "Create or update a transactional template."),
+                ("GET", "/api/transactional/templates", "List transactional templates."),
                 ("GET", "/api/transactional/templates/{template_key}", "Get one transactional template."),
                 ("POST", "/api/transactional/send", "Queue one transactional email (dry_run renders without sending)."),
                 ("GET", "/api/transactional/messages/{message_id}", "Get transactional message status."),
@@ -979,6 +981,9 @@ def route_path_map():
         API_DOC_PATHS["jobs:task_fail"]: reverse("jobs:task_fail", args=[TASK_ID]),
         API_DOC_PATHS["jobs:schedules"]: reverse("jobs:schedules"),
         API_DOC_PATHS["jobs:schedule_detail"]: reverse("jobs:schedule_detail", args=[TASK_ID]),
+        API_DOC_PATHS["mailing:api_transactional_templates"]: reverse(
+            "mailing:api_transactional_templates",
+        ),
         API_DOC_PATHS["mailing:api_transactional_template"]: reverse(
             "mailing:api_transactional_template",
             args=["homework-submission-confirmation"],
@@ -1684,6 +1689,17 @@ OPENAPI_SPEC = {
                     accepted=True,
                 )
                 | {"409": json_response("Contact suppressed", "#/components/schemas/TransactionalSendResponse")},
+            }
+        },
+        "/api/transactional/templates": {
+            "get": {
+                "tags": ["Transactional"],
+                "summary": "List transactional templates",
+                "description": "Returns all transactional templates scoped to the authenticated client, ordered by key.",
+                "security": [{"BearerAuth": []}],
+                "responses": bearer_responses(
+                    json_response("Transactional templates", "#/components/schemas/TransactionalTemplateListResponse")
+                ),
             }
         },
         "/api/transactional/templates/{template_key}": {
@@ -2950,6 +2966,12 @@ OPENAPI_SPEC = {
                 "properties": {
                     "template": {"$ref": "#/components/schemas/TransactionalTemplate"},
                     "created": {"type": "boolean"},
+                },
+            },
+            "TransactionalTemplateListResponse": {
+                "type": "object",
+                "properties": {
+                    "templates": {"type": "array", "items": {"$ref": "#/components/schemas/TransactionalTemplate"}},
                 },
             },
             "TransactionalMessageStatusResponse": {
