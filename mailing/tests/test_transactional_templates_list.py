@@ -146,3 +146,49 @@ def test_templates_list_includes_latest_version(client, api_client_record):
 
     second = client.get(list_url(), **auth_headers())
     assert second.json()["templates"][0]["latest_version"] == 1
+
+
+def test_publish_version_includes_template_key_for_catalog_client(client, api_client_record):
+    template = EmailTemplate.objects.create(
+        client=api_client_record,
+        key="versioned-publish",
+        name="Versioned",
+        subject="Hi",
+        html_body="<p>Hi</p>",
+    )
+    response = client.post(
+        reverse("mailing:api_transactional_template_publish", args=[template.key]),
+        data={},
+        content_type="application/json",
+        **auth_headers(),
+    )
+    assert response.status_code == 201
+    version = response.json()["version"]
+    assert version["template_key"] == template.key
+    assert version["version"] == 1
+
+
+def test_versions_list_includes_template_key_for_catalog_client(client, api_client_record):
+    template = EmailTemplate.objects.create(
+        client=api_client_record,
+        key="versioned-list",
+        name="Versioned",
+        subject="Hi",
+        html_body="<p>Hi</p>",
+    )
+    client.post(
+        reverse("mailing:api_transactional_template_publish", args=[template.key]),
+        data={},
+        content_type="application/json",
+        **auth_headers(),
+    )
+    response = client.get(
+        reverse("mailing:api_transactional_template_versions", args=[template.key]),
+        **auth_headers(),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["template_key"] == template.key
+    assert len(body["versions"]) == 1
+    assert body["versions"][0]["template_key"] == template.key
+    assert body["versions"][0]["version"] == 1
