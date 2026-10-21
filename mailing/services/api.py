@@ -677,6 +677,14 @@ def get_transactional_template_for_client(template_key, authenticated_client):
     return template_payload(template)
 
 
+def list_transactional_templates_for_client(authenticated_client):
+    templates = EmailTemplate.objects.filter(
+        client=authenticated_client,
+        is_transactional=True,
+    ).order_by("key")
+    return {"templates": [template_payload(template) for template in templates]}
+
+
 @transaction.atomic
 def upsert_transactional_template_for_client(template_key, data, authenticated_client):
     defaults = validate_transactional_template_payload(data, template_key)

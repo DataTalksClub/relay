@@ -64,6 +64,7 @@ from mailing.services.api import (
     get_transactional_message_status_for_client,
     get_transactional_messages_since_for_client,
     get_transactional_template_for_client,
+    list_transactional_templates_for_client,
     preview_campaign_for_client,
     queue_campaign_for_client,
     recount_campaign_for_client,
@@ -2097,6 +2098,19 @@ def api_transactional_template(request, template_key):
     except ApiValidationError as exc:
         return validation_error_response(exc)
 
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_transactional_templates(request):
+    if request.method != "GET":
+        return method_not_allowed_response(["GET"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    payload = list_transactional_templates_for_client(client)
     return JsonResponse(payload, status=200)
 
 

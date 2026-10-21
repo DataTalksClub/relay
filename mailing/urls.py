@@ -221,6 +221,11 @@ urlpatterns = [
         name="api_recipient_list_member",
     ),
     path(
+        "api/transactional/templates",
+        views.api_transactional_templates,
+        name="api_transactional_templates",
+    ),
+    path(
         "api/transactional/templates/<slug:template_key>",
         views.api_transactional_template,
         name="api_transactional_template",
