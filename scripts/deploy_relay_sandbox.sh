@@ -240,14 +240,22 @@ elif [[ "$environment" == development ]]; then
   # turned into an allowed host.
   dev_internal_url="$(sed -n 's/^RELAY_INTERNAL_URL=//p' "$infra_env")"
   dev_internal_url="${dev_internal_url//[[:space:]]/}"
+  # ALB target-group checks send Host=<instance private IP>; website-dev
+  # calls the private DNS name. Discover the primary IPv4 and pin both.
+  dev_private_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  dev_hosts="dev.relay.datatalks.club,relay-dev.website.internal,127.0.0.1,localhost"
+  if [[ -n "$dev_private_ip" ]]; then
+    dev_hosts="dev.relay.datatalks.club,relay-dev.website.internal,${dev_private_ip},127.0.0.1,localhost"
+  fi
   if [[ -n "$dev_internal_url" ]]; then
     dev_internal_host="${dev_internal_url#*://}"
     dev_internal_host="${dev_internal_host%%:*}"
     dev_internal_host="${dev_internal_host%%/*}"
-    if [[ -n "$dev_internal_host" && "$dev_internal_host" != *[*]* && "$dev_internal_host" != *,* ]]; then
-      set_runtime_value ALLOWED_HOSTS "dev.relay.datatalks.club,${dev_internal_host},127.0.0.1,localhost"
+    if [[ -n "$dev_internal_host" && "$dev_internal_host" != *[*]* && "$dev_internal_host" != *,* && ",${dev_hosts}," != *",${dev_internal_host},"* ]]; then
+      dev_hosts="${dev_hosts%,127.0.0.1,localhost},${dev_internal_host},127.0.0.1,localhost"
     fi
   fi
+  set_runtime_value ALLOWED_HOSTS "$dev_hosts"
 elif [[ "$environment" == production ]]; then
   sandbox_role="$(sed -n 's/^RELAY_SANDBOX_EMAIL_SEND_ROLE_ARN=//p' "$infra_env")"
   if [[ -n "$sandbox_role" ]]; then
