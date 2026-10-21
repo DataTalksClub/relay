@@ -392,7 +392,13 @@ else
   bash "$app_dir/scripts/provision_production_tenant.sh"
 fi
 
-run_app python manage.py provision_public_signup
+if [[ "$environment" == development ]]; then
+  # Development intentionally leaves RELAY_PUBLIC_LISTS empty (no public
+  # double-opt-in email from this host). Skip the command that requires it.
+  echo "Skipping provision_public_signup on development (RELAY_PUBLIC_LISTS intentionally empty)."
+else
+  run_app python manage.py provision_public_signup
+fi
 
 app_container_args=(
   --network host
