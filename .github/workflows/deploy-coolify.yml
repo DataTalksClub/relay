@@ -85,6 +85,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Contabo has no GHCR login yet; public package matches public Relay repo.
+      - name: Make GHCR package public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if gh api --method PUT               "orgs/DataTalksClub/packages/container/relay/visibility"               -f visibility=public; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "WARN: could not set package public; Coolify may need registry login" >&2
+
   deploy:
     needs: build-and-push
     runs-on: ubuntu-24.04
