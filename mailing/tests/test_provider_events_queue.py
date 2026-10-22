@@ -39,20 +39,12 @@ def test_ses_event_not_blocked_by_default_queue_backlog(settings):
         }
     )
 
-    default_pending = DBTaskResult.objects.filter(
-        queue_name="default", status=TaskResultStatus.READY
-    ).count()
-    provider_pending = list(
-        DBTaskResult.objects.filter(
-            queue_name="provider-events", status=TaskResultStatus.READY
-        )
-    )
+    default_pending = DBTaskResult.objects.filter(queue_name="default", status=TaskResultStatus.READY).count()
+    provider_pending = list(DBTaskResult.objects.filter(queue_name="provider-events", status=TaskResultStatus.READY))
 
     assert default_pending >= 50
     assert len(provider_pending) == 1
     assert provider_pending[0].task_path.endswith("process_ses_webhook_event")
     # Ordering proof: provider-events row is not behind the default backlog
     # in its own queue (it is the only ready row there).
-    assert (
-        DBTaskResult.objects.filter(queue_name="provider-events").count() == 1
-    )
+    assert DBTaskResult.objects.filter(queue_name="provider-events").count() == 1

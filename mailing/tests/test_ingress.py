@@ -7,10 +7,10 @@ import json
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django_tasks_db.models import DBTaskResult
 
 from mailing.ingress import get_ingress_config
 from mailing.sqs_worker import SqsWorker
-from django_tasks_db.models import DBTaskResult
 from taskdeck.models import TaskRun
 
 pytestmark = pytest.mark.django_db
@@ -74,9 +74,7 @@ def test_ses_ingress_does_not_process_inline(settings, monkeypatch):
 
     monkeypatch.setattr("mailing.services.ses_webhooks.process_ses_webhook", explode)
 
-    worker = SqsWorker(
-        get_ingress_config("ses-webhooks"), client=FakeSqsClient([_message("m1", _ses_payload())])
-    )
+    worker = SqsWorker(get_ingress_config("ses-webhooks"), client=FakeSqsClient([_message("m1", _ses_payload())]))
     assert worker.run_once().deleted == 1
 
 
