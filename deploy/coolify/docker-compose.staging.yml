@@ -1,0 +1,34 @@
+# Coolify service template for Relay staging (Contabo).
+# Secrets (DATABASE_URL, SECRET_KEY, API keys, etc.) live in Coolify UI / API
+# environment variables — never inline them here.
+# CD path: GitHub Actions builds → GHCR → Coolify deploy webhook (no git clone on Contabo).
+services:
+  web:
+    image: ghcr.io/datatalksclub/relay:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      DEBUG: "0"
+      EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+      ALLOWED_HOSTS: relay.datatalks.club,origin.relay.datatalks.club,localhost,127.0.0.1,169.58.124.141
+    command:
+      - gunicorn
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "2"
+      - --access-logfile
+      - "-"
+      - relay.wsgi:application
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    expose:
+      - "8000"
