@@ -10,6 +10,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from mailing.ingress import get_ingress_config
 from mailing.sqs_worker import SqsWorker
+from django_tasks_db.models import DBTaskResult
 from taskdeck.models import TaskRun
 
 pytestmark = pytest.mark.django_db
@@ -55,6 +56,9 @@ def test_ses_ingress_enqueues_a_task_per_message(settings):
     assert result.deleted == 2
     runs = TaskRun.objects.filter(name="process_ses_webhook_event")
     assert runs.count() == 2, "each notification becomes a visible task run"
+    queued = DBTaskResult.objects.filter(task_path__endswith="process_ses_webhook_event")
+    assert queued.count() == 2
+    assert set(queued.values_list("queue_name", flat=True)) == {"provider-events"}
 
 
 def test_ses_ingress_does_not_process_inline(settings, monkeypatch):
@@ -85,6 +89,9 @@ def test_inbound_email_ingress_enqueues(settings):
 
     assert result.deleted == 1
     assert TaskRun.objects.filter(name="process_inbound_email").count() == 1
+    inbound = DBTaskResult.objects.filter(task_path__endswith="process_inbound_email")
+    assert inbound.count() == 1
+    assert inbound.get().queue_name == "provider-events"
 
 
 def test_missing_queue_url_is_a_configuration_error(settings):

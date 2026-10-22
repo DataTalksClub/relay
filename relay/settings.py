@@ -87,6 +87,10 @@ TASKS = {
         "BACKEND": os.environ.get(
             "TASKS_BACKEND", "django_tasks_db.backend.DatabaseBackend"
         ),
+        # "default" = campaign/transactional sends; "provider-events" = SES
+        # webhook + inbound mail so bounce/complaint never wait behind a send
+        # fan-out (F1 / t1126u). db_worker --queue-name selects the lane.
+        "QUEUES": ["default", "provider-events"],
     }
 }
 

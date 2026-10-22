@@ -138,7 +138,7 @@ def _batch_message(template_key, count):
     return f"{template_key}: {recipients}" if template_key else recipients
 
 
-@task()
+@task(queue_name="provider-events")
 def process_ses_webhook_event(payload):
     """Apply one SES delivery/bounce/complaint notification.
 
@@ -156,7 +156,7 @@ def process_ses_webhook_event(payload):
     return _summarise(event, lambda e: {"email_event_id": e.pk, "event_type": e.event_type})
 
 
-@task()
+@task(queue_name="provider-events")
 def process_inbound_email(payload):
     """Handle one inbound-mail object-storage notification."""
     return process_inbound_s3_notification(payload)

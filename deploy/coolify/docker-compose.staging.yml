@@ -9,7 +9,8 @@
 # inbound-mail (production has no SES receipt rule / inbound queue) and minus
 # sandbox-only drains:
 #   web                gunicorn (public; Traefik domains managed in Coolify UI)
-#   worker             django.tasks DB worker (transactional/campaign/recipient tasks)
+#   worker             django.tasks DB worker on queue "default" (sends)
+#   provider-events-worker  django.tasks DB worker on queue "provider-events" (SES/inbound)
 #   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
 #   ses-ingress        drains SQS relay-production-ses-webhooks into django.tasks
 #   cmp-callbacks      CMP webhook outbox dispatcher
@@ -53,7 +54,13 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    command: ["python", "manage.py", "db_worker", "--interval", "1"]
+    command: ["python", "manage.py", "db_worker", "--queue-name", "default", "--interval", "1"]
+
+  provider-events-worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
 
   scheduler:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__

@@ -319,6 +319,7 @@ set_memory_args() {
   case "$1" in
     relay-web) memory_args=(--memory 384m) ;;
     relay-worker) memory_args=(--memory 512m) ;;
+    relay-provider-events-worker) memory_args=(--memory 256m) ;;
     relay-scheduler) memory_args=(--memory 96m) ;;
     relay-ses-ingress|relay-sandbox-ses-ingress|relay-sandbox-inbound-ingress) memory_args=(--memory 128m) ;;
     relay-cmp-callbacks) memory_args=(--memory 96m) ;;
@@ -420,7 +421,10 @@ replace_container relay-web "${app_container_args[@]}" \
   gunicorn --bind "$web_bind" --workers 2 --timeout 60 --access-logfile - relay.wsgi:application
 set_memory_args relay-worker
 replace_container relay-worker "${app_container_args[@]}" \
-  python manage.py db_worker --interval 1
+  python manage.py db_worker --queue-name default --interval 1
+set_memory_args relay-provider-events-worker
+replace_container relay-provider-events-worker "${app_container_args[@]}" \
+  python manage.py db_worker --queue-name provider-events --interval 1
 set_memory_args relay-scheduler
 replace_container relay-scheduler "${app_container_args[@]}" \
   python manage.py run_relay_scheduler --interval 15
@@ -473,6 +477,7 @@ if [[ "$environment" == sandbox ]]; then
     relay-postgres
     relay-web
     relay-worker
+    relay-provider-events-worker
     relay-scheduler
     relay-ses-ingress
     relay-inbound-ingress
@@ -485,6 +490,7 @@ else
   required_containers=(
     relay-web
     relay-worker
+    relay-provider-events-worker
     relay-scheduler
     relay-ses-ingress
     relay-cmp-callbacks
