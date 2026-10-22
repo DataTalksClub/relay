@@ -1,10 +1,11 @@
 # Coolify service template for Relay staging (Contabo).
 # Secrets (DATABASE_URL, SECRET_KEY, API keys, etc.) live in Coolify UI / API
 # environment variables — never inline them here.
+# Image tag: immutable sha-<full github.sha> (ECR-like). Never :latest.
 # CD path: GitHub Actions builds → GHCR → Coolify deploy webhook (no git clone on Contabo).
 services:
   web:
-    image: ghcr.io/datatalksclub/relay:latest
+    image: ghcr.io/datatalksclub/relay:sha-d4a1f555987ca5571a070742584005f22a23f975
     pull_policy: always
     restart: unless-stopped
     environment:
