@@ -10,7 +10,6 @@ on:
     paths-ignore:
       - "docs/**"
       - "*.md"
-      - "deploy/coolify/**"
       - ".github/workflows/deploy-development.yml"
       - ".github/workflows/deploy-prod.yml"
       - ".github/workflows/deploy-sandbox.yml"
@@ -103,7 +102,9 @@ jobs:
     # Staging Contabo Coolify only — production AWS workflows stay separate.
     environment: coolify-staging
     steps:
-      - name: Pin Coolify image to ECR tag YYYYMMDD-HHMMSS-<7> and deploy
+      - uses: actions/checkout@v5
+
+      - name: Apply Coolify compose template and deploy
         env:
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
@@ -116,10 +117,10 @@ jobs:
             echo "Missing Coolify secrets: COOLIFY_URL, COOLIFY_TOKEN, COOLIFY_RELAY_SERVICE_UUID" >&2
             exit 1
           fi
-          # Exact ECR tag (YYYYMMDD-HHMMSS-<7>): pin Coolify compose, never :latest.
-          # Coolify compose services store the image in docker_compose_raw (base64 on write).
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
           python3 - <<'PY'
           import base64, json, os, re, urllib.request
+          import yaml
 
           base = os.environ["COOLIFY_URL"].rstrip("/")
           token = os.environ["COOLIFY_TOKEN"]
@@ -127,6 +128,7 @@ jobs:
           image_ref = os.environ["IMAGE_REF"]
           image_tag = os.environ["IMAGE_TAG"]
           prefix = f"{image_ref}:"
+          template_path = "deploy/coolify/docker-compose.staging.yml"
 
           def call(method, path, payload=None):
               data = None if payload is None else json.dumps(payload).encode()
@@ -144,22 +146,96 @@ jobs:
                   body = resp.read()
                   return resp.status, (json.loads(body) if body else {})
 
+          with open(template_path) as fh:
+              template_text = fh.read()
+          assert "__IMAGE_TAG__" in template_text, "compose template has no __IMAGE_TAG__ placeholder"
+          rendered = template_text.replace("__IMAGE_TAG__", image_tag)
+          assert "__IMAGE_TAG__" not in rendered
+          wanted = yaml.safe_load(rendered)
+          assert set(wanted) == {"services"}, f"unexpected top-level keys: {sorted(wanted)}"
+          for name, svc in wanted["services"].items():
+              assert svc.get("image", "").startswith(prefix), f"service {name} image not pinned to {prefix}*"
+              assert re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{7}", svc["image"][len(prefix):] or ""), (
+                  f"service {name} image tag is not exact YYYYMMDD-HHMMSS-<7>: {svc['image']}"
+              )
+
           _st, svc = call("GET", f"/api/v1/services/{uuid}")
-          raw = svc["docker_compose_raw"]
-          new, n = re.subn(
-              re.escape(prefix) + r"[^\s'\"]+",
-              prefix + image_tag,
-              raw,
-              count=1,
+          live = yaml.safe_load(svc["docker_compose_raw"])
+          live_services = live.get("services", {})
+          wanted_services = wanted["services"]
+
+          # Fail closed instead of clobbering human-managed routing: the live
+          # web service must match the template except for the image tag, and
+          # the live compose must not contain services the template doesn't.
+          live_web = dict(live_services.get("web", {}))
+          wanted_web = dict(wanted_services["web"])
+          assert live_web.get("image", "").startswith(prefix), "live web image is not a relay GHCR image; refusing to overwrite"
+          live_web.pop("image", None)
+          wanted_web.pop("image", None)
+          assert live_web == wanted_web, (
+              "live web service differs from the template (domains/labels managed outside git?). "
+              "Refusing to overwrite; reconcile Coolify UI state with deploy/coolify/docker-compose.staging.yml first."
           )
-          if n != 1:
-              raise SystemExit(f"Could not pin image {prefix}* in Coolify compose (matches={n})")
+          unknown = sorted(set(live_services) - set(wanted_services))
+          assert not unknown, f"live compose has services not in the template {unknown}; refusing to overwrite"
+          added = sorted(set(wanted_services) - set(live_services))
+          print(f"compose guard OK; services to add on Coolify: {added or ['(none)']}")
+
           call(
               "PATCH",
               f"/api/v1/services/{uuid}",
-              {"docker_compose_raw": base64.b64encode(new.encode()).decode()},
+              {"docker_compose_raw": base64.b64encode(rendered.encode()).decode()},
           )
           _st, out = call("POST", f"/api/v1/deploy?uuid={uuid}&force=true")
           print(json.dumps(out))
-          print(f"Pinned {prefix}{image_tag} and triggered Coolify deploy for {uuid}")
+          print(f"Applied template with {prefix}{image_tag} on all {len(wanted_services)} services and triggered deploy for {uuid}")
           PY
+
+      - name: Verify Coolify status and public web health
+        env:
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_SERVICE_UUID }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+
+          base = os.environ["COOLIFY_URL"].rstrip("/")
+          token = os.environ["COOLIFY_TOKEN"]
+          uuid = os.environ["COOLIFY_SERVICE_UUID"]
+
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  f"{base}{path}",
+                  data=data,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/json",
+                      "Content-Type": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req) as resp:
+                  body = resp.read()
+                  return resp.status, (json.loads(body) if body else {})
+
+          status = None
+          for _ in range(96):  # ~8 minutes
+              _st, svc = call("GET", f"/api/v1/services/{uuid}")
+              status = svc.get("status")
+              print(f"coolify service status: {status}", flush=True)
+              if status == "running:healthy":
+                  break
+              time.sleep(5)
+          print(f"final coolify service status: {status}")
+          PY
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error https://relay.datatalks.club/health/ready; then
+              echo; echo "public web health OK"; exit 0
+            fi
+            sleep 10
+          done
+          echo "public web health check FAILED (routing broken by this change?)" >&2
+          exit 1

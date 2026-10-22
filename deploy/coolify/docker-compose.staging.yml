@@ -1,11 +1,26 @@
 # Coolify service template for Relay staging (Contabo).
 # Secrets (DATABASE_URL, SECRET_KEY, API keys, etc.) live in Coolify UI / API
 # environment variables — never inline them here.
-# Image tag: exact ECR format YYYYMMDD-HHMMSS-<7> (never :latest, never sha-<…>).
-# CD path: GitHub Actions builds → GHCR → Coolify deploy webhook (no git clone on Contabo).
+# Image tag: __IMAGE_TAG__ is substituted by .github/workflows/deploy-coolify.yml
+# with the exact ECR format YYYYMMDD-HHMMSS-<7> (never :latest, never sha-<…>).
+# CD path: GitHub Actions builds → GHCR → Coolify deploy API (no git clone on Contabo).
+#
+# Service set mirrors scripts/deploy_relay_sandbox.sh production list, minus
+# inbound-mail (production has no SES receipt rule / inbound queue) and minus
+# sandbox-only drains:
+#   web                gunicorn (public; Traefik domains managed in Coolify UI)
+#   worker             django.tasks DB worker (transactional/campaign/recipient tasks)
+#   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
+#   ses-ingress        drains SQS relay-production-ses-webhooks into django.tasks
+#   cmp-callbacks      CMP webhook outbox dispatcher
+#   client-callbacks   tenant client-callback outbox dispatcher
+#   recipient-imports  recipient-list import jobs
+# There is no prune container: the app has no retention/prune command yet
+# (the AWS EventBridge relay-production-prune-database rule references a host
+# script that was never implemented here); retention stays a documented gap.
 services:
   web:
-    image: ghcr.io/datatalksclub/relay:20261021-094333-f922dc4
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -33,3 +48,39 @@ services:
       start_period: 40s
     expose:
       - "8000"
+
+  worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--interval", "1"]
+
+  scheduler:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "run_relay_scheduler", "--interval", "15"]
+
+  ses-ingress:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "drain_sqs_ingress", "ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
+
+  cmp-callbacks:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+
+  client-callbacks:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "process_client_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+
+  recipient-imports:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
