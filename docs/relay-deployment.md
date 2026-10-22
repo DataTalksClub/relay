@@ -1,8 +1,26 @@
 # Relay deployment
 
-Relay development runs at `https://dev.relay.datatalks.club` in AWS account
-`387546586013` in `eu-west-1`, with its Terraform in
-`DataTalksClub/aws-infra/main/dev`.
+Relay development runs at `https://dev.relay.datatalks.club`. Delivery is
+owned by the `Deploy Relay Coolify (Contabo)` workflow in
+[`.github/workflows/deploy-coolify.yml`](../.github/workflows/deploy-coolify.yml):
+GitHub Actions builds `linux/amd64` into GHCR and the Coolify deploy API
+rolls the Contabo host, which serves both `relay.datatalks.club` and
+`dev.relay.datatalks.club` (CloudFront origin `origin.dev.relay.datatalks.club`
+resolves to the Contabo host).
+
+The old AWS EC2/SSM development path is retired. Its host
+`i-0a3d2851cb906dc69` (main account `387546586013`, `eu-west-1`, Terraform
+`DataTalksClub/aws-infra/main/dev`) was terminated on 2026-10-22 at 04:29 UTC
+(CloudTrail `TerminateInstances` by `ml-in-action`; previous state `running`),
+after the last green SSM deploy (run `39714002383`). The next push-to-main run
+(`39761744485`) then failed with
+`InvalidInstanceId: Instances not in a valid state for account` because the
+repository variable `RELAY_DEVELOPMENT_INSTANCE_ID` still pointed at the
+terminated instance. The variable was removed and the workflow below no
+longer sends SSM commands, so this failure mode cannot recur. Note for
+aws-infra: its `main/dev` root still declares `aws_instance.relay_host`, so
+the next Terraform apply would try to recreate the host — that drift belongs
+to aws-infra, not to this repo.
 
 The old sandbox host `relay.dtcdev.click` (`i-03b7cd5de0a10a889`, sandbox
 account `817685572750`) had its push-to-main auto-deploy retired on
@@ -19,30 +37,43 @@ retired deployment surface.
 
 The `Deploy Relay Development` workflow in
 [`.github/workflows/deploy-development.yml`](../.github/workflows/deploy-development.yml)
-runs the full test gate, then deploys an exact commit to the development
-host. Push to `main` (ignoring `docs/**` and `*.md`) and manual
+runs the full test gate, then verifies the development entry point. Push to
+`main` (ignoring `docs/**` and `*.md`) and manual
 `workflow_dispatch` both trigger it; runs serialize in the `relay-development`
 concurrency group and never cancel each other.
 
 | Aspect | Value |
 |---|---|
+| Delivery | `Deploy Relay Coolify (Contabo)` workflow (GHA → GHCR → Coolify deploy API) |
+| Public entry | `https://dev.relay.datatalks.club` served by the Contabo host |
+| Release gate | this workflow polls `https://dev.relay.datatalks.club/health/ready` up to 30 minutes |
+
+The workflow needs no AWS credentials and no GitHub environment: there is no
+SSM target anymore. The Coolify workflow verifies both `relay.datatalks.club`
+and `dev.relay.datatalks.club` after each deploy.
+
+### Retired AWS EC2/SSM development path (record)
+
+Until 2026-10-22 the host below served development. It is kept
+as a record only: the instance was terminated during the Contabo cutover and
+`Deploy Relay Development` no longer uses it.
+
+| Aspect | Value (retired) |
+|---|---|
 | Region | `eu-west-1` |
 | Account | `387546586013` (main) |
-| Host | one private `t4g.micro` ARM64 instance in the website VPC, reached through SSM |
+| Host | one private `t4g.micro` ARM64 instance in the website VPC, reached through SSM (`i-0a3d2851cb906dc69`, terminated 2026-10-22) |
 | Public entry | `https://dev.relay.datatalks.club` behind the dev CloudFront/ALB path on port 8000 |
 | Database | shared dev RDS Postgres `dtc_relay_dev` via `RELAY_DATABASE_URL_SECRET_ARN` |
 | Queues | one dev-owned pair, `ses-webhooks` and its DLQ; no sandbox queue drains |
 | Logs | CloudWatch group `/relay/dev/host` |
 | Secrets | Secrets Manager containers only; the deploy never populates values |
 
-The deploy assumes the role in the `RELAY_DEPLOYMENT_DEPLOY_ROLE_ARN`
-repository variable through the `development` GitHub environment and sends
-one SSM command to `RELAY_DEVELOPMENT_INSTANCE_ID`. Both variables are
-required — a missing variable fails the deploy before any AWS call. There are
-no committed fallback instance ids or role ARNs. The variables are set only
-from applied `main/dev` Terraform output evidence archived on aws-infra#73.
+The retired deploy assumed the role in the `RELAY_DEPLOYMENT_DEPLOY_ROLE_ARN`
+repository variable through the `development` GitHub environment and sent
+one SSM command to `RELAY_DEVELOPMENT_INSTANCE_ID` (since removed).
 
-The host checks out the exact `GITHUB_SHA` and runs
+The retired host checked out the exact `GITHUB_SHA` and ran
 `scripts/deploy_relay_sandbox.sh --environment development <sha>`. The
 development branch of that script:
 
@@ -75,9 +106,9 @@ development branch of that script:
   (relay#43) must be on the deployed head before any development worker
   starts.
 
-The release gate is the same as everywhere: `/health/ready` answers, every
+The retired release gate was: `/health/ready` answers, every
 required container runs, and a `system.echo` task completes through the
-worker. The workflow then polls
+worker. The retired workflow then polled
 `https://dev.relay.datatalks.club/health/ready` from outside.
 
 ### First-deploy operator follow-up (website client)

@@ -14,12 +14,8 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
-  AWS_REGION: eu-west-1
-  DEVELOPMENT_INSTANCE_ID: ${{ vars.RELAY_DEVELOPMENT_INSTANCE_ID }}
-  DEVELOPMENT_DEPLOY_ROLE_ARN: ${{ vars.RELAY_DEPLOYMENT_DEPLOY_ROLE_ARN }}
   DEVELOPMENT_HEALTH_URL: https://dev.relay.datatalks.club/health/ready
 
 jobs:
@@ -41,77 +37,29 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: test
-    # Push to main deploys the exact commit to dev.relay.datatalks.club. A
-    # manual dispatch deploys the selected ref to the same development host.
+    # Delivery to dev.relay.datatalks.club runs through the
+    # "Deploy Relay Coolify (Contabo)" workflow: the former AWS EC2 host
+    # (i-0a3d2851cb906dc69) was terminated during the Contabo cutover on
+    # 2026-10-22, and the public origin now points at the Contabo host, so
+    # there is no SSM target left. This job keeps the push-to-main gate and
+    # verifies the development entry point instead of sending SSM commands.
     # Production and the retired sandbox are separate workflows.
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    # The development GitHub environment gates OIDC; the deployer role and
-    # host instance come from repository variables fed by aws-infra main/dev
-    # evidence, with no committed fallback.
-    environment: development
     steps:
-      - name: Check deployment variables
-        run: |
-          if [[ -z "$DEVELOPMENT_INSTANCE_ID" ]]; then
-            echo "Set the repository variable RELAY_DEVELOPMENT_INSTANCE_ID to the main/dev host instance id." >&2
-            exit 1
-          fi
-          if [[ -z "$DEVELOPMENT_DEPLOY_ROLE_ARN" ]]; then
-            echo "Set the repository variable RELAY_DEPLOYMENT_DEPLOY_ROLE_ARN to the development deployer role ARN." >&2
-            exit 1
-          fi
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ env.DEVELOPMENT_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Deploy the complete Relay release
-        id: deploy
+      - name: Verify public development health
         run: |
           set -euo pipefail
-          command_id=$(
-            aws ssm send-command \
-              --region "$AWS_REGION" \
-              --instance-ids "$DEVELOPMENT_INSTANCE_ID" \
-              --document-name AWS-RunShellScript \
-              --comment "Deploy Relay development ${GITHUB_SHA}" \
-              --parameters "commands=[\"set -euo pipefail\",\"git config --system --get-all safe.directory | grep -Fxq /opt/relay || git config --system --add safe.directory /opt/relay\",\"if [[ ! -d /opt/relay/.git ]]; then if [[ -f /opt/relay/README ]]; then mv /opt/relay/README /var/lib/relay/bootstrap-readme; fi; git -C /opt/relay init; fi\",\"if git -C /opt/relay remote get-url origin >/dev/null 2>&1; then git -C /opt/relay remote set-url origin https://github.com/DataTalksClub/relay.git; else git -C /opt/relay remote add origin https://github.com/DataTalksClub/relay.git; fi\",\"git -C /opt/relay fetch origin ${GITHUB_SHA}\",\"git -C /opt/relay checkout --force ${GITHUB_SHA}\",\"bash /opt/relay/scripts/deploy_relay_sandbox.sh --environment development ${GITHUB_SHA}\"]" \
-              --query 'Command.CommandId' \
-              --output text
-          )
-          echo "command_id=$command_id" >>"$GITHUB_OUTPUT"
-          # The first development deploy builds the image cold on the
-          # t4g.micro host, so this waits up to 30 minutes.
+          echo "Delivery to dev.relay.datatalks.club runs via the Deploy Relay Coolify (Contabo) workflow."
+          echo "This job verifies the development entry point after the test gate."
+          # The Coolify deploy of the same push takes ~15 minutes, so this
+          # polls up to 30 minutes before failing.
           for _ in $(seq 1 360); do
-            status=$(aws ssm get-command-invocation \
-              --region "$AWS_REGION" \
-              --command-id "$command_id" \
-              --instance-id "$DEVELOPMENT_INSTANCE_ID" \
-              --query Status --output text 2>/dev/null || true)
-            case "$status" in
-              Success) exit 0 ;;
-              Failed|Cancelled|TimedOut|Cancelling) exit 1 ;;
-            esac
+            if curl --fail --silent --show-error "$DEVELOPMENT_HEALTH_URL"; then
+              echo
+              echo "development health OK"
+              exit 0
+            fi
             sleep 5
           done
-          echo "Relay development deployment did not finish within 30 minutes" >&2
+          echo "Development health did not become ready within 30 minutes" >&2
           exit 1
-
-      - name: Show deployment output
-        if: always()
-        run: |
-          command_id="${{ steps.deploy.outputs.command_id }}"
-          if [[ -z "$command_id" ]]; then
-            echo "No SSM deployment command was created."
-            exit 0
-          fi
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --command-id "$command_id" \
-            --instance-id "$DEVELOPMENT_INSTANCE_ID" \
-            --query '{Status:Status,ResponseCode:ResponseCode,Stdout:StandardOutputContent,Stderr:StandardErrorContent}'
-
-      - name: Verify public health
-        run: curl --fail --silent --show-error --retry 10 --retry-delay 3 "$DEVELOPMENT_HEALTH_URL"

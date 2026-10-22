@@ -140,11 +140,14 @@ the stored message instead of carrying the body and every attachment. See
 
 ## Deploy
 
-Pushing `main` runs the test suite and deploys the complete release to
-`dev.relay.datatalks.club` through AWS Systems Manager. The host runs
-[`scripts/deploy_relay_sandbox.sh`](scripts/deploy_relay_sandbox.sh) with
-`--environment development`, then fails the deployment unless every required
-container is running and the worker finishes a queued `system.echo` task.
+Pushing `main` runs the test suite and delivers the complete release to
+`dev.relay.datatalks.club` through the `Deploy Relay Coolify (Contabo)`
+workflow (GHA builds `linux/amd64` into GHCR, Coolify rolls the Contabo host,
+which serves both `relay.datatalks.club` and `dev.relay.datatalks.club`).
+`Deploy Relay Development` keeps the push-to-main test gate and verifies the
+development health endpoint. The former AWS EC2/SSM development path is
+retired: its host `i-0a3d2851cb906dc69` was terminated during the Contabo
+cutover on 2026-10-22, and the workflow no longer sends SSM commands.
 
 The sandbox no longer deploys on push: `Deploy Relay Sandbox` keeps a manual
 `workflow_dispatch` only, so touching the retired `relay.dtcdev.click`
