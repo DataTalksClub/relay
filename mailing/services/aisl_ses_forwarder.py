@@ -75,11 +75,9 @@ def forward_sns_notification(payload, record):
             if response.status != 200:
                 raise ValueError("Unexpected AISHL HTTP status")
             result = json.loads(response.read(4096))
-        # "ignored" is a durable acknowledgement too: AISHL recorded the
-        # audit row and decided the event is a no-op (malformed inner
-        # Message or unknown kind get HTTP 200 precisely so the sender
-        # stops retrying). Retrying those would only burn redrives.
-        if not isinstance(result, dict) or result.get("status") not in {"ok", "duplicate", "ignored"}:
+        # These two source topics must produce recognized bounce/complaint
+        # events. Preserve unexpected/ignored notifications for DLQ inspection.
+        if not isinstance(result, dict) or result.get("status") not in {"ok", "duplicate"}:
             raise ValueError("AISHL did not acknowledge the event")
     except Exception as exc:
         # No recipient addresses, bodies, response bodies, or secret values.

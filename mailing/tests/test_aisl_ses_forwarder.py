@@ -51,7 +51,7 @@ def run(monkeypatch, payload=None, status="ok", error=None):
     return result, client, opener
 
 
-@pytest.mark.parametrize("status", ["ok", "duplicate", "ignored"])
+@pytest.mark.parametrize("status", ["ok", "duplicate"])
 def test_acknowledge_only_after_aisl_accepts_original_signed_envelope(monkeypatch, status):
     result, client, opener = run(monkeypatch, status=status)
     request = opener.open.call_args.args[0]
@@ -75,7 +75,7 @@ def test_http_failure_retains_message_for_sqs_retry(monkeypatch, error):
 
 
 def test_unexpected_200_does_not_drop_event(monkeypatch):
-    result, client, _ = run(monkeypatch, status="unacknowledged")
+    result, client, _ = run(monkeypatch, status="ignored")
     assert result.failed == 1
     client.delete_message.assert_not_called()
 
