@@ -16,9 +16,14 @@
 #   cmp-callbacks      CMP webhook outbox dispatcher
 #   client-callbacks   tenant client-callback outbox dispatcher
 #   recipient-imports  recipient-list import jobs
-# There is no prune container: the app has no retention/prune command yet
-# (the AWS EventBridge relay-production-prune-database rule references a host
-# script that was never implemented here); retention stays a documented gap.
+# There is no prune container: finished django-tasks result rows are pruned by
+# the scheduler loop itself (jobs.services.prune_finished_task_results, daily,
+# 14-day retention, all queues). The retired AWS EventBridge
+# relay-production-prune-database rule referenced a host script that was never
+# implemented here and must stay retired: the scheduler is the single owner.
+# Inbound mail is intentionally disabled in production (no SES receipt rule /
+# inbound queue; see docs/production-aux-ownership.md); only ses-webhooks is
+# drained. Sandbox-only drains live in docs/operations.md, not here.
 services:
   web:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
