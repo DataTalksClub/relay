@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import json
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from datetime import timedelta
 from urllib.parse import urlsplit
 
 from django.conf import settings
+from django.core.management import call_command
 from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
@@ -25,6 +27,53 @@ TASK_TYPES = frozenset({TASK_TYPE_ECHO, TASK_TYPE_EMAIL_SEND, TASK_TYPE_WEBHOOK}
 
 class IdempotencyConflict(Exception):
     pass
+
+
+logger = logging.getLogger(__name__)
+
+
+# Retention for finished django-tasks DB result rows (derived worker receipts,
+# not business data). Business/compliance rows -- email_events,
+# campaign_recipients (suppression/unsubscribe state), callback outboxes -- are
+# never pruned by this sweep. 14 days matches the upstream prune default and
+# the longest SQS redelivery horizon, so a receipt lives as long as the queue
+# could still redeliver its message. Steady state at ~1.6k results/day is
+# ~22k rows (~45 MB); without the sweep the table grows without bound
+# (33k rows / 68 MB in the first three weeks on Contabo).
+TASK_RESULT_RETENTION_DAYS = 14
+TASK_RESULT_FAILED_RETENTION_DAYS = 14
+
+# The scheduler is the single owner of this sweep (see run_relay_scheduler):
+# no Coolify scheduled task and no retired AWS rule may prune the same table.
+# Module-level day gate; the sweep is idempotent, so a restart that repeats a
+# day's run only deletes rows that were already eligible.
+_TASK_RESULTS_PRUNE_LAST_RUN_DATE = None
+
+
+def prune_finished_task_results(*, today=None):
+    """Delete finished task-result rows older than retention, at most daily.
+
+    Returns 1 when the sweep ran, 0 when skipped or failed. Never raises: a
+    hygiene sweep must not take down the 15-second scheduler loop, so failures
+    are logged and retried the next UTC day.
+    """
+    global _TASK_RESULTS_PRUNE_LAST_RUN_DATE
+    day = today if today is not None else timezone.now().date()
+    if _TASK_RESULTS_PRUNE_LAST_RUN_DATE == day:
+        return 0
+    _TASK_RESULTS_PRUNE_LAST_RUN_DATE = day
+    try:
+        call_command(
+            "prune_db_task_results",
+            queue_name="*",
+            min_age_days=TASK_RESULT_RETENTION_DAYS,
+            failed_min_age_days=TASK_RESULT_FAILED_RETENTION_DAYS,
+            verbosity=0,
+        )
+    except Exception:
+        logger.exception("task-results prune failed; retrying next UTC day")
+        return 0
+    return 1
 
 
 @dataclass(frozen=True)

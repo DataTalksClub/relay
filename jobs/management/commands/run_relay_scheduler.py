@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand
 from jobs.scheduling import run_due_schedules
 from jobs.services import (
     fail_expired_leases,
+    prune_finished_task_results,
     record_scheduler_heartbeat,
     recover_unenqueued_jobs,
 )
@@ -13,8 +14,9 @@ from mailing.services.campaigns import dispatch_due_campaigns
 
 class Command(BaseCommand):
     help = (
-        "Dispatch due campaigns and Relay schedules, fail expired ack-lease tasks, and recover queued "
-        "jobs that were not enqueued. Each pass records a scheduler heartbeat."
+        "Dispatch due campaigns and Relay schedules, fail expired ack-lease tasks, recover queued "
+        "jobs that were not enqueued, and prune finished task results past retention. Each pass "
+        "records a scheduler heartbeat."
     )
 
     def add_arguments(self, parser):
@@ -27,6 +29,7 @@ class Command(BaseCommand):
             recovered = recover_unenqueued_jobs()
             fired = run_due_schedules()
             campaigns = dispatch_due_campaigns()
+            pruned = prune_finished_task_results()
             # The one liveness signal this loop has. Written on every pass,
             # including the empty ones, because "nothing to do" and "not
             # running" have to look different to anything reading the row.
@@ -36,9 +39,9 @@ class Command(BaseCommand):
                 recovered_jobs=recovered,
                 campaigns_dispatched=len(campaigns),
             )
-            if expired or recovered or fired or campaigns:
+            if expired or recovered or fired or campaigns or pruned:
                 self.stdout.write(
-                    f"leases_expired={expired} recovered={recovered} schedules_fired={len(fired)} campaigns_dispatched={len(campaigns)}"
+                    f"leases_expired={expired} recovered={recovered} schedules_fired={len(fired)} campaigns_dispatched={len(campaigns)} task_results_pruned={bool(pruned)}"
                 )
             if options["once"]:
                 return
