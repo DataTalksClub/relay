@@ -33,6 +33,25 @@ aws-infra: its `main/dev` root still declares `aws_instance.relay_host`, so
 the next Terraform apply would try to recreate the host — that drift belongs
 to aws-infra, not to this repo.
 
+Recovery evidence checked on 2026-10-23:
+
+- [Failed development run 39761744485](https://github.com/DataTalksClub/relay/actions/runs/39761744485)
+  passed AWS credential setup, then failed `SendCommand` at
+  `2026-10-22T10:18:37Z`. Its deploy log records the terminated instance,
+  account `387546586013`, and `eu-west-1`, consistent with the cutover
+  history above rather than an account or region mismatch.
+- Commit `74ddb69ed6162bcc51327f1e6b67166f93085731` removed the SSM calls.
+  The resulting [Deploy Relay Development run 39765630943](https://github.com/DataTalksClub/relay/actions/runs/39765630943)
+  passed both tests and public development health verification. This was a
+  health gate; image delivery was separately verified by the successful
+  [Coolify run 39765630710](https://github.com/DataTalksClub/relay/actions/runs/39765630710)
+  for the same commit.
+- Commit `410bb4fd97783990d8cb3945511e4ddff3d408e7` consolidated delivery
+  and development health verification into `deploy-dev.yml` and deleted
+  `deploy-development.yml`. The current development workflow uses Coolify
+  secrets and contains no AWS credential setup, instance variable, or SSM
+  command. It does not require access to the retired AWS host.
+
 The old sandbox host `relay.dtcdev.click` (`i-03b7cd5de0a10a889`, sandbox
 account `817685572750`) had its push-to-main auto-deploy retired on
 2026-10-05 during the dtcdev→Relay transfer (the failed run `37253575983`
