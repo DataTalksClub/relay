@@ -23,6 +23,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from mailing import tasks
 from mailing.services.aisl_ses_forwarder import aisl_ses_ingress_handler, validate_config
+from mailing.services.ses_webhooks import normalize_ses_webhook_worker_payload
 from mailing.sqs import process_sqs_event
 from mailing.sqs_worker import WorkerConfig
 
@@ -38,6 +39,7 @@ INGRESS_WORKER_NAMES = (
 
 
 def _handle_ses_webhook_record(payload, record):
+    payload = normalize_ses_webhook_worker_payload(payload, sqs_attributes=record.get("attributes"))
     tasks.process_ses_webhook_event.enqueue(payload)
 
 

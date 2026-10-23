@@ -41,7 +41,7 @@ def _handle_campaign_email_record(payload, record):
 
 
 def _handle_ses_webhook_record(payload, record):
-    process_ses_webhook(normalize_ses_webhook_worker_payload(payload))
+    process_ses_webhook(normalize_ses_webhook_worker_payload(payload, sqs_attributes=record.get("attributes")))
 
 
 def _handle_email_event_record(payload, record):

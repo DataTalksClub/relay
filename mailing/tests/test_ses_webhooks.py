@@ -126,6 +126,7 @@ def test_webhook_endpoint_enqueues_valid_notification_without_mutating_state(cli
             "metadata": {
                 "sns_message_id": "sns-delivery-1",
                 "sns_topic_arn": "arn:aws:sns:us-east-1:123456789012:ses",
+                "sns_timestamp": "2026-05-24T12:00:01Z",
                 "mail_timestamp": "2026-05-24T12:00:00Z",
                 "mail_source": "newsletter@example.com",
             },
@@ -242,6 +243,25 @@ def test_worker_raw_sns_delivery_updates_campaign_recipient(recipient):
     assert event.event_type == EmailEventType.DELIVERED
     assert event.provider_event_id == "sns-raw-delivery"
     assert event.metadata["sns_message_id"] == "sns-raw-delivery"
+    assert event.metadata["sns_timestamp"] == "2026-05-24T12:00:01Z"
+
+
+def test_worker_preserves_sqs_timing_metadata(recipient):
+    event = records_from_payloads([
+        ("message-1", sns_payload(ses_payload("Delivery", "ses-campaign-1")))
+    ])
+    event["Records"][0]["attributes"] = {
+        "SentTimestamp": "1792756799000",
+        "ApproximateFirstReceiveTimestamp": "1792756800000",
+        "ApproximateReceiveCount": "2",
+    }
+
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+
+    metadata = EmailEvent.objects.get().metadata
+    assert metadata["sqs_sent_timestamp"] == "1792756799000"
+    assert metadata["sqs_approximate_first_receive_timestamp"] == "1792756800000"
+    assert "ApproximateReceiveCount" not in metadata
 
 
 def test_worker_delivery_updates_transactional_message(transactional_message):

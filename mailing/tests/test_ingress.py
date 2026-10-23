@@ -10,7 +10,10 @@ from django.core.exceptions import ImproperlyConfigured
 from django_tasks_db.models import DBTaskResult
 
 from mailing.ingress import get_ingress_config
+from mailing.models import EmailEvent
 from mailing.sqs_worker import SqsWorker
+from mailing.tasks import process_ses_webhook_event
+from mailing.tests.test_ses_webhooks import ses_payload, sns_payload
 from taskdeck.models import TaskRun
 
 pytestmark = pytest.mark.django_db
@@ -40,8 +43,11 @@ def _ses_payload(mail_id="ses-1"):
     return {
         "contract": "ses-webhooks",
         "version": 1,
-        "notification_type": "Delivery",
-        "message_id": mail_id,
+        "provider": "ses",
+        "notification_type": "delivery",
+        "provider_event_id": f"sns-{mail_id}",
+        "ses_message_id": mail_id,
+        "received_at": "2026-10-23T12:00:00Z",
     }
 
 
@@ -96,6 +102,45 @@ def test_missing_queue_url_is_a_configuration_error(settings):
     settings.SQS_SES_WEBHOOKS_QUEUE_URL = ""
     with pytest.raises(ImproperlyConfigured):
         get_ingress_config("ses-webhooks")
+
+
+@pytest.mark.parametrize("raw_sns", [True, False])
+def test_ses_ingress_preserves_transport_timestamps_through_task_processing(settings, raw_sns):
+    settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
+    payload = sns_payload(ses_payload("Delivery", "ses-1")) if raw_sns else _ses_payload()
+    message = _message("m1", payload)
+    message["Attributes"] = {
+        "SentTimestamp": "1792756799000",
+        "ApproximateFirstReceiveTimestamp": "1792756800000",
+    }
+    result = SqsWorker(get_ingress_config("ses-webhooks"), client=FakeSqsClient([message])).run_once()
+
+    assert result.deleted == 1
+    queued = DBTaskResult.objects.get(task_path__endswith="process_ses_webhook_event")
+    queued_payload = queued.args_kwargs["args"][0]
+    # Processing later must retain the receipt time captured by ingress.
+    received_at = queued_payload["received_at"]
+    process_ses_webhook_event.func(queued_payload)
+    metadata = EmailEvent.objects.get().metadata
+    assert metadata["received_at"] == received_at
+    assert metadata["sqs_sent_timestamp"] == "1792756799000"
+    assert metadata["sqs_approximate_first_receive_timestamp"] == "1792756800000"
+    if raw_sns:
+        assert metadata["sns_timestamp"] == "2026-05-24T12:00:01Z"
+    else:
+        assert received_at == payload["received_at"]
+
+
+def test_ses_ingress_retries_malformed_payload_without_deleting_it(settings):
+    settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
+    client = FakeSqsClient([_message("bad", {"Type": "Notification", "Message": "bad-json"})])
+
+    result = SqsWorker(get_ingress_config("ses-webhooks"), client=client).run_once()
+
+    assert result.failed == 1
+    assert result.deleted == 0
+    assert client.deleted_receipts == []
+    assert not DBTaskResult.objects.exists()
 
 
 def test_unknown_ingress_worker_is_rejected():

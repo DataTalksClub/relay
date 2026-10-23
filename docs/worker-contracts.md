@@ -222,6 +222,39 @@ or the standard `ses-ingress` service to consume it. See aws-infra
 
 Purpose: process SES delivery, bounce, complaint, open, click, send, or reject notifications asynchronously.
 
+### Measuring ingress lag
+
+SNS normalization preserves `Timestamp` as `metadata.sns_timestamp` on both
+the HTTP and SQS paths. The Relay SQS drain normalizes before enqueueing, so
+`received_at` records arrival at Relay rather than task-worker pickup. Existing
+normalized payloads retain their original `received_at`. SQS system attributes
+are preserved verbatim as `metadata.sqs_sent_timestamp` and
+`metadata.sqs_approximate_first_receive_timestamp` (epoch milliseconds as strings).
+Only those two attributes are copied; receipt handles and message bodies are
+not added to event metadata. Missing timestamps do not prevent processing.
+
+Run this read-only query against the desired deployment's application database:
+
+```bash
+uv run python manage.py report_ses_ingress_lag --json
+```
+
+The default window is the last 24 hours by `EmailEvent.created_at`; use
+`--hours N` to change it. `p50_seconds` and `p95_seconds` measure
+`EmailEvent.created_at - sns_timestamp`, including transport, queue wait and
+processing up to event persistence. Percentiles use linear interpolation at
+`(sample_count - 1) * percentile`. The report counts SES events, valid samples,
+missing/invalid timestamps and negative lags separately. Naive timestamps and
+negative lags are excluded rather than assumed or clamped; no usable samples
+produce `null` percentiles in JSON and `unavailable` in text. Reports expose
+only aggregate counts and timing, with no message identifiers or destinations.
+
+Older event rows lack these timestamps and are not backfilled. Record sample
+coverage with each measurement; a pre-change baseline can be unavailable.
+Compare measurements before and after a queue-worker change using recorded
+deployment times and non-overlapping windows. Preserve high lag observations:
+they may reflect backlog or retries rather than steady-state ingress latency.
+
 Terraform-managed sandbox and production deployments route SES configuration-set events to SNS and subscribe that SNS topic directly to the `ses-webhooks` SQS queue. In that default path, the worker receives raw SNS `Notification` envelopes from SQS and normalizes the embedded SES `Message` into this Datamailer contract before processing it.
 
 The HTTP SES/SNS webhook endpoint remains an optional ingress path for deployments that cannot use direct SNS-to-SQS delivery or need an externally reachable, signature-validated webhook URL. That endpoint performs the same normalization and enqueues this contract payload. Both ingress paths converge on the processor below.

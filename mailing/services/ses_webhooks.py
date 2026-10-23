@@ -187,17 +187,26 @@ def normalize_ses_notification(sns_payload, *, received_at=None):
     return validate_ses_webhook_message(payload)
 
 
-def normalize_ses_webhook_worker_payload(payload, *, received_at=None):
+def normalize_ses_webhook_worker_payload(payload, *, received_at=None, sqs_attributes=None):
     if not isinstance(payload, dict):
         raise SesWebhookError("SES webhook worker payload must be a JSON object")
 
     if payload.get("contract") == SES_WEBHOOKS_CONTRACT:
-        return validate_ses_webhook_message(payload)
+        normalized = validate_ses_webhook_message(payload)
+    elif payload.get("Type") == SNS_NOTIFICATION:
+        normalized = normalize_ses_notification(payload, received_at=received_at)
+    else:
+        raise SesWebhookError("unsupported SES webhook worker payload")
 
-    if payload.get("Type") == SNS_NOTIFICATION:
-        return normalize_ses_notification(payload, received_at=received_at)
-
-    raise SesWebhookError("unsupported SES webhook worker payload")
+    metadata = dict(normalized.get("metadata") or {})
+    for attribute, key in (
+        ("SentTimestamp", "sqs_sent_timestamp"),
+        ("ApproximateFirstReceiveTimestamp", "sqs_approximate_first_receive_timestamp"),
+    ):
+        value = (sqs_attributes or {}).get(attribute)
+        if value not in (None, ""):
+            metadata[key] = value
+    return normalized | {"metadata": metadata}
 
 
 def build_ses_metadata(ses_payload, sns_payload):
@@ -207,6 +216,7 @@ def build_ses_metadata(ses_payload, sns_payload):
     metadata = {
         "sns_message_id": sns_payload.get("MessageId"),
         "sns_topic_arn": sns_payload.get("TopicArn"),
+        "sns_timestamp": sns_payload.get("Timestamp"),
         "mail_timestamp": mail.get("timestamp"),
         "mail_source": mail.get("source"),
     }
