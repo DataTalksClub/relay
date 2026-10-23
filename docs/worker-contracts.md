@@ -41,6 +41,41 @@ Malformed JSON, missing required fields, unknown contract names, and unsupported
 
 Transactional and campaign work use separate queues and workers so campaign backlog cannot delay account-critical email.
 
+## Django provider-events lane
+
+In the Django deployment, campaign and transactional sends share the `default`
+task queue. `process_ses_webhook_event` and `process_inbound_email` use
+`provider-events`, which is registered alongside `default` in `TASKS`.
+Both the HTTP SES fallback and the SQS ingress drain enqueue the same SES task.
+SQS messages are deleted after that durable enqueue; the drain does not process
+notifications inline.
+
+Run both workers with explicit queue selection:
+
+```bash
+uv run python manage.py db_worker --queue-name default --interval 1
+uv run python manage.py db_worker --queue-name provider-events --interval 1
+```
+
+The Coolify templates name the second service `provider-events-worker`;
+`scripts/deploy_relay_sandbox.sh` starts `relay-provider-events-worker` with the
+same command. Deploy the web, ingress, and both workers from the same image.
+An unqualified worker selects `default`; a worker using `--queue-name '*'`
+would consume both lanes and remove their isolation. Tasks already enqueued on
+`default` before rollout remain there and finish on the default worker.
+
+The staff-only `/api/workers/status` retains its SES ingress entry. Individual
+SES task runs, including queued and completed states, appear in the taskdeck
+contract at `/internal/ops/status` using its configured bearer authentication.
+The isolation regression test runs the real provider worker through both HTTP
+and fake SQS ingress while 50 `send_campaign_email_batch` tasks remain ready on
+`default`, and checks that the delivery is applied and both status endpoints
+continue to expose SES work. Run it with:
+
+```bash
+uv run pytest mailing/tests/test_provider_events_queue.py mailing/tests/test_ingress.py
+```
+
 ## `inbound-email` v1
 
 SES stores the raw MIME object under the private inbound bucket's `raw/` prefix. S3 sends an object-created notification to the `inbound-email` queue. Relay parses the message, files it in its own mailbox, and publishes one normalized SNS event naming the stored message. The published event is optional and off unless `INBOUND_EMAIL_EVENTS_TOPIC_ARN` is set.
