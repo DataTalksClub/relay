@@ -85,6 +85,13 @@ services:
     restart: unless-stopped
     command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
 
+  aisl-ses-ingress:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    # AISHL is the sole mutation owner; acknowledge only after its HTTP 200.
+    command: ["python", "manage.py", "drain_sqs_ingress", "aisl-ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
+
   client-callbacks:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always

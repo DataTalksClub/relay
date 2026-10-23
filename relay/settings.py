@@ -258,6 +258,24 @@ SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = os.environ.get("SQS_TRANSACTIONAL_EMAIL_QUEU
 SQS_CAMPAIGN_EMAIL_QUEUE_URL = os.environ.get("SQS_CAMPAIGN_EMAIL_QUEUE_URL", "")
 SQS_EMAIL_EVENTS_QUEUE_URL = os.environ.get("SQS_EMAIL_EVENTS_QUEUE_URL", "")
 SQS_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SES_WEBHOOKS_QUEUE_URL", "")
+SQS_AISL_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_AISL_SES_WEBHOOKS_QUEUE_URL", "")
+AISL_SES_WEBHOOK_URL = os.environ.get("AISL_SES_WEBHOOK_URL", "https://aishippinglabs.com/api/ses-events")
+AISL_SES_WEBHOOK_SECRET_ARN = os.environ.get("AISL_SES_WEBHOOK_SECRET_ARN", "")
+AISL_SES_TOPIC_ARNS = tuple(filter(None, (
+    value.strip() for value in os.environ.get("AISL_SES_TOPIC_ARNS", "").split(",")
+)))
+
+# Only transport IDs and acknowledgement status are logged by this adapter.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"aisl_ses_console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "mailing.services.aisl_ses_forwarder": {
+            "handlers": ["aisl_ses_console"], "level": "INFO", "propagate": False,
+        },
+    },
+}
 SQS_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_INBOUND_EMAIL_QUEUE_URL", "")
 SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL", "")
 SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL", "")

@@ -160,6 +160,29 @@ Idempotency: the future sender must load each `campaign_recipients` row and only
 
 ## `ses-webhooks` v1
 
+### AISHL transport exception
+
+AISHL's existing SES stream uses its own `aisl-ses-webhooks` SQS queue and the
+Coolify `aisl-ses-ingress` service (`drain_sqs_ingress aisl-ses-webhooks`). It is
+an HTTP transport to AISHL's existing `POST /api/ses-events`, not the Relay
+processor described below. AISHL owns `SesEvent` and subscriber mutations; this
+adapter must not enqueue `process_ses_webhook_event` or emit client callbacks.
+
+It forwards the original signed SNS envelope and stable MessageId unchanged,
+with the existing shared secret read from Secrets Manager (five-minute cache).
+Only HTTP 200 with `status=ok` or `duplicate` deletes the SQS message; failures
+retry in SQS, then redrive to its DLQ. Redirects are refused. Configure
+`SQS_AISL_SES_WEBHOOKS_QUEUE_URL`, `AISL_SES_WEBHOOK_URL` (HTTPS),
+`AISL_SES_WEBHOOK_SECRET_ARN`, and comma-separated `AISL_SES_TOPIC_ARNS` through
+Coolify. The runtime IAM policy grants receive/delete/visibility/attributes on
+this queue and read of that one secret. No credential values belong in git.
+
+Keep SNS-to-Lambda subscriptions active until live AISHL audit evidence proves
+this transport. Website issue #1998 makes duplicate handling atomic before
+dual-run. The dedicated queue has exactly one owner; do not configure Relay dev
+or the standard `ses-ingress` service to consume it. See aws-infra
+`main/aisl/docs/ses-relay-migration.md` for activation, rollback and retirement.
+
 Purpose: process SES delivery, bounce, complaint, open, click, send, or reject notifications asynchronously.
 
 Terraform-managed sandbox and production deployments route SES configuration-set events to SNS and subscribe that SNS topic directly to the `ses-webhooks` SQS queue. In that default path, the worker receives raw SNS `Notification` envelopes from SQS and normalizes the embedded SES `Message` into this Datamailer contract before processing it.

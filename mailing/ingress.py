@@ -22,12 +22,14 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from mailing import tasks
+from mailing.services.aisl_ses_forwarder import aisl_ses_ingress_handler, validate_config
 from mailing.sqs import process_sqs_event
 from mailing.sqs_worker import WorkerConfig
 
 logger = logging.getLogger(__name__)
 
 INGRESS_WORKER_NAMES = (
+    "aisl-ses-webhooks",
     "ses-webhooks",
     "inbound-email",
     "sandbox-ses-webhooks",
@@ -53,6 +55,11 @@ def inbound_email_ingress_handler(event, context=None):
 
 def get_ingress_config(name):
     configs = {
+        "aisl-ses-webhooks": WorkerConfig(
+            name="aisl-ses-webhooks-ingress",
+            queue_url=settings.SQS_AISL_SES_WEBHOOKS_QUEUE_URL,
+            handler=aisl_ses_ingress_handler,
+        ),
         "ses-webhooks": WorkerConfig(
             name="ses-webhooks-ingress",
             queue_url=settings.SQS_SES_WEBHOOKS_QUEUE_URL,
@@ -79,4 +86,6 @@ def get_ingress_config(name):
     config = configs[name]
     if not config.queue_url:
         raise ImproperlyConfigured(f"SQS queue URL is required for the {name} ingress worker.")
+    if name == "aisl-ses-webhooks":
+        validate_config()
     return config
