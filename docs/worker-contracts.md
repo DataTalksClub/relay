@@ -174,7 +174,9 @@ Only HTTP 200 with `status=ok` or `duplicate` deletes the SQS message; failures
 retry in SQS, then redrive to its DLQ. Redirects are refused. Configure
 `SQS_AISL_SES_WEBHOOKS_QUEUE_URL`, `AISL_SES_WEBHOOK_URL` (HTTPS),
 `AISL_SES_WEBHOOK_SECRET_ARN`, and comma-separated `AISL_SES_TOPIC_ARNS` through
-Coolify. The runtime IAM policy grants receive/delete/visibility/attributes on
+Coolify. `AISL_SES_FORWARD_ENABLED` defaults to `0` (standby without polling);
+set it to `1` only after AISHL atomic deduplication is deployed. The runtime IAM
+policy grants receive/delete/visibility/attributes on
 this queue and read of that one secret. No credential values belong in git.
 
 Keep SNS-to-Lambda subscriptions active until live AISHL audit evidence proves

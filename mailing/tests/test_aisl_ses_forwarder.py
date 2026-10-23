@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.core.management import call_command
 
 from mailing.ingress import get_ingress_config
 from mailing.services import aisl_ses_forwarder as forwarder
@@ -110,3 +111,13 @@ def test_secret_cache_refreshes_for_rotation(monkeypatch):
     clock[0] += 301
     assert forwarder._shared_secret() == "rotated"
     assert secrets.get_secret_value.call_count == 2
+
+
+def test_command_standby_does_not_create_a_consumer(settings, monkeypatch):
+    settings.AISL_SES_FORWARD_ENABLED = False
+    worker = MagicMock()
+    monkeypatch.setattr("mailing.management.commands.drain_sqs_ingress.SqsWorker", worker)
+    output = io.StringIO()
+    call_command("drain_sqs_ingress", "aisl-ses-webhooks", "--once", stdout=output)
+    worker.assert_not_called()
+    assert "standby" in output.getvalue()

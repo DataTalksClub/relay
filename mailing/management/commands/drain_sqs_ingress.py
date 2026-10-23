@@ -6,7 +6,9 @@ fed by AWS itself.
 """
 
 import signal
+import time
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from mailing.ingress import INGRESS_WORKER_NAMES, get_ingress_config
@@ -36,6 +38,11 @@ class Command(BaseCommand):
         signal.signal(signal.SIGINT, request_stop)
 
         name = options["worker"]
+        if name == "aisl-ses-webhooks" and not settings.AISL_SES_FORWARD_ENABLED:
+            self.stdout.write("AISHL SES ingress standby (AISL_SES_FORWARD_ENABLED=0); no messages consumed")
+            while not options["once"] and not stop_requested:
+                time.sleep(1)
+            return
         worker = SqsWorker(
             get_ingress_config(name),
             batch_size=options["batch_size"],
