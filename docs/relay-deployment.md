@@ -1,12 +1,23 @@
 # Relay deployment
 
-Relay development runs at `https://dev.relay.datatalks.club`. Delivery is
-owned by the `Deploy Relay Coolify (Contabo)` workflow in
-[`.github/workflows/deploy-coolify.yml`](../.github/workflows/deploy-coolify.yml):
-GitHub Actions builds `linux/amd64` into GHCR and the Coolify deploy API
-rolls the Contabo host, which serves both `relay.datatalks.club` and
-`dev.relay.datatalks.club` (CloudFront origin `origin.dev.relay.datatalks.club`
-resolves to the Contabo host).
+Relay development runs at `https://dev.relay.datatalks.club` (Coolify
+resource `relay-dev`, `relay_dev` database). Delivery is owned by the
+`Deploy Relay Dev (Contabo)` workflow in
+[`.github/workflows/deploy-dev.yml`](../.github/workflows/deploy-dev.yml):
+push to `main` runs the test gate, builds `linux/amd64` into GHCR, and the
+Coolify deploy API rolls the DEV service (web + DB workers + scheduler +
+callback dispatchers; no `ses-ingress` — DEV has no SQS queue and must never
+drain the production queue).
+
+Production (`https://relay.datatalks.club`, Coolify resource `relay-staging`,
+`relay` database) is promoted ONLY by the manually dispatched
+`Deploy Relay Prod (Contabo)` workflow in
+[`.github/workflows/deploy-prod.yml`](../.github/workflows/deploy-prod.yml):
+it promotes one dev-proven release (the `dev-release` artifact of a
+successful deploy-dev run on main, latest by default or a named tag for
+rollback) through the `production` GitHub environment (required reviewer).
+A push to `main` can never deploy production: deploy-dev.yml only knows the
+DEV service UUID.
 
 The old AWS EC2/SSM development path is retired. Its host
 `i-0a3d2851cb906dc69` (main account `387546586013`, `eu-west-1`, Terraform
@@ -35,22 +46,40 @@ retired deployment surface.
 
 ## Development deployment
 
-The `Deploy Relay Development` workflow in
-[`.github/workflows/deploy-development.yml`](../.github/workflows/deploy-development.yml)
-runs the full test gate, then verifies the development entry point. Push to
+The `Deploy Relay Dev (Contabo)` workflow in
+[`.github/workflows/deploy-dev.yml`](../.github/workflows/deploy-dev.yml)
+runs the full test gate, builds the release image, applies
+[`deploy/coolify/docker-compose.dev.yml`](../deploy/coolify/docker-compose.dev.yml)
+to the DEV service, and verifies the development entry point. Push to
 `main` (ignoring `docs/**` and `*.md`) and manual
-`workflow_dispatch` both trigger it; runs serialize in the `relay-development`
+`workflow_dispatch` both trigger it; runs serialize in the `relay-dev`
 concurrency group and never cancel each other.
 
 | Aspect | Value |
 |---|---|
-| Delivery | `Deploy Relay Coolify (Contabo)` workflow (GHA → GHCR → Coolify deploy API) |
+| Delivery | `Deploy Relay Dev (Contabo)` workflow (GHA → GHCR → Coolify deploy API) |
 | Public entry | `https://dev.relay.datatalks.club` served by the Contabo host |
-| Release gate | this workflow polls `https://dev.relay.datatalks.club/health/ready` up to 30 minutes |
+| Release gate | Coolify `running:healthy` + `https://dev.relay.datatalks.club/health/ready` |
+| Proven-release record | `dev-release` artifact (`image_tag`, `source_sha`, `dev_run_id`) |
 
-The workflow needs no AWS credentials and no GitHub environment: there is no
-SSM target anymore. The Coolify workflow verifies both `relay.datatalks.club`
-and `dev.relay.datatalks.club` after each deploy.
+The workflow needs no AWS credentials; it uses the `development` GitHub
+environment and the `COOLIFY_RELAY_DEV_SERVICE_UUID` secret.
+
+## Production promotion
+
+The `Deploy Relay Prod (Contabo)` workflow in
+[`.github/workflows/deploy-prod.yml`](../.github/workflows/deploy-prod.yml)
+is `workflow_dispatch` only (`confirm_production: true`, optional
+`image_tag`). It resolves the tag to a dev-proven release — the
+`dev-release` artifact of a successful deploy-dev run on main — refuses any
+tag no successful DEV run proved, applies
+[`deploy/coolify/docker-compose.staging.yml`](../deploy/coolify/docker-compose.staging.yml)
+to the prod service through the `production` GitHub environment (required
+reviewer), and verifies `https://relay.datatalks.club/health/ready`.
+The retired `Deploy Relay Development` SSM/health-poll workflow
+(`deploy-development.yml`) was deleted; its health-gate role is absorbed by
+deploy-dev.yml. The Coolify workflows verify their own entry point after
+each deploy.
 
 ### Retired AWS EC2/SSM development path (record)
 

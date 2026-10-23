@@ -1,8 +1,9 @@
 # Coolify service template for Relay staging (Contabo).
 # Secrets (DATABASE_URL, SECRET_KEY, API keys, etc.) live in Coolify UI / API
 # environment variables — never inline them here.
-# Image tag: __IMAGE_TAG__ is substituted by .github/workflows/deploy-coolify.yml
-# with the exact ECR format YYYYMMDD-HHMMSS-<7> (never :latest, never sha-<…>).
+# Image tag: __IMAGE_TAG__ is substituted by .github/workflows/deploy-prod.yml
+# (manual promote of a dev-proven release) with the exact format
+# YYYYMMDD-HHMMSS-<7> (never :latest, never sha-<…>).
 # CD path: GitHub Actions builds → GHCR → Coolify deploy API (no git clone on Contabo).
 #
 # Service set mirrors scripts/deploy_relay_sandbox.sh production list, minus

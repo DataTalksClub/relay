@@ -1,0 +1,87 @@
+# Coolify service template for Relay DEV (Contabo, resource relay-dev).
+# Secrets (DATABASE_URL, SECRET_KEY, API keys, etc.) live in Coolify UI / API
+# environment variables — never inline them here.
+# Image tag: __IMAGE_TAG__ is substituted by .github/workflows/deploy-dev.yml
+# with the exact format YYYYMMDD-HHMMSS-<7> (never :latest, never sha-<…>).
+# CD path: push to main builds → GHCR → Coolify deploy API (no git clone on Contabo).
+#
+# Service set mirrors deploy/coolify/docker-compose.staging.yml (production),
+# minus ses-ingress:
+#   web                gunicorn (public; Traefik domains managed in Coolify UI)
+#   worker             django.tasks DB worker on queue "default" (sends)
+#   provider-events-worker  django.tasks DB worker on queue "provider-events"
+#   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
+#   cmp-callbacks      CMP webhook outbox dispatcher
+#   client-callbacks   tenant client-callback outbox dispatcher
+#   recipient-imports  recipient-list import jobs
+# There is NO ses-ingress on DEV: DEV has no SQS queue wired (EMAIL_BACKEND is
+# console, no AWS send keys) and must never drain the production
+# relay-production-ses-webhooks queue. SES/SQS dual-run proving (t1272u) lands
+# here only after a dedicated DEV queue + config set exist.
+# DEV database is relay_dev on the shared pg-relay host — never relay (prod).
+services:
+  web:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      DEBUG: "0"
+      EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+      ALLOWED_HOSTS: dev.relay.datatalks.club,origin.dev.relay.datatalks.club,localhost,127.0.0.1,169.58.124.141
+    command:
+      - gunicorn
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "2"
+      - --access-logfile
+      - "-"
+      - relay.wsgi:application
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    expose:
+      - "8000"
+
+  worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "default", "--interval", "1"]
+
+  provider-events-worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+
+  scheduler:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "run_relay_scheduler", "--interval", "15"]
+
+  cmp-callbacks:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+
+  client-callbacks:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "process_client_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+
+  recipient-imports:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]

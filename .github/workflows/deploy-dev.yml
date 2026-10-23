@@ -1,7 +1,10 @@
-name: Deploy Relay Coolify (Contabo)
+name: Deploy Relay Dev (Contabo)
 
-# Pilot CD: GHA builds linux/amd64 → GHCR → Coolify pulls image via deploy API.
+# Auto-DEV: push to main builds linux/amd64 → GHCR → Coolify relay-dev deploy.
 # No git SSH / deploy keys / git clone on Contabo.
+# Production is NEVER touched here: manual promote only via deploy-prod.yml
+# (workflow_dispatch + production environment). A push must not be able to
+# deploy the prod UUID: this workflow only knows COOLIFY_RELAY_DEV_SERVICE_UUID.
 
 on:
   workflow_dispatch:
@@ -10,12 +13,12 @@ on:
     paths-ignore:
       - "docs/**"
       - "*.md"
-      - ".github/workflows/deploy-development.yml"
+      - "deploy/coolify/docker-compose.staging.yml"
       - ".github/workflows/deploy-prod.yml"
       - ".github/workflows/deploy-sandbox.yml"
 
 concurrency:
-  group: relay-coolify
+  group: relay-dev
   cancel-in-progress: false
 
 permissions:
@@ -99,22 +102,23 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: ubuntu-24.04
-    # Staging Contabo Coolify only — production AWS workflows stay separate.
-    environment: coolify-staging
+    # DEV only (relay-dev, dev.relay.datatalks.club). Production promotion is
+    # the separate, manually dispatched deploy-prod.yml workflow.
+    environment: development
     steps:
       - uses: actions/checkout@v5
 
-      - name: Apply Coolify compose template and deploy
+      - name: Apply Coolify DEV compose template and deploy
         env:
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_SERVICE_UUID }}
+          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_DEV_SERVICE_UUID }}
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
         run: |
           set -euo pipefail
           if [[ -z "${COOLIFY_URL:-}" || -z "${COOLIFY_TOKEN:-}" || -z "${COOLIFY_SERVICE_UUID:-}" ]]; then
-            echo "Missing Coolify secrets: COOLIFY_URL, COOLIFY_TOKEN, COOLIFY_RELAY_SERVICE_UUID" >&2
+            echo "Missing Coolify secrets: COOLIFY_URL, COOLIFY_TOKEN, COOLIFY_RELAY_DEV_SERVICE_UUID" >&2
             exit 1
           fi
           python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
@@ -128,7 +132,7 @@ jobs:
           image_ref = os.environ["IMAGE_REF"]
           image_tag = os.environ["IMAGE_TAG"]
           prefix = f"{image_ref}:"
-          template_path = "deploy/coolify/docker-compose.staging.yml"
+          template_path = "deploy/coolify/docker-compose.dev.yml"
 
           def call(method, path, payload=None):
               data = None if payload is None else json.dumps(payload).encode()
@@ -174,7 +178,7 @@ jobs:
           wanted_web.pop("image", None)
           assert live_web == wanted_web, (
               "live web service differs from the template (domains/labels managed outside git?). "
-              "Refusing to overwrite; reconcile Coolify UI state with deploy/coolify/docker-compose.staging.yml first."
+              "Refusing to overwrite; reconcile Coolify UI state with deploy/coolify/docker-compose.dev.yml first."
           )
           unknown = sorted(set(live_services) - set(wanted_services))
           assert not unknown, f"live compose has services not in the template {unknown}; refusing to overwrite"
@@ -191,11 +195,11 @@ jobs:
           print(f"Applied template with {prefix}{image_tag} on all {len(wanted_services)} services and triggered deploy for {uuid}")
           PY
 
-      - name: Verify Coolify status and public web health
+      - name: Verify Coolify status and DEV web health
         env:
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_SERVICE_UUID }}
+          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_DEV_SERVICE_UUID }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -232,23 +236,33 @@ jobs:
           print(f"final coolify service status: {status}")
           PY
           for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error https://relay.datatalks.club/health/ready; then
-              echo; echo "public web health OK"; break
+            if curl --fail --silent --show-error https://dev.relay.datatalks.club/health/ready; then
+              echo; echo "dev web health OK"; break
             fi
             if [ "$_" -eq 30 ]; then
-              echo "public web health check FAILED (routing broken by this change?)" >&2
+              echo "dev web health check FAILED (routing broken by this change?)" >&2
               exit 1
             fi
             sleep 10
           done
-          # The same Contabo host also serves dev.relay.datatalks.club (the
-          # retired AWS EC2 dev host is gone; Deploy Relay Development polls
-          # this URL as its release gate), so verify it here too.
-          for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error https://dev.relay.datatalks.club/health/ready; then
-              echo; echo "dev web health OK"; exit 0
-            fi
-            sleep 10
-          done
-          echo "dev web health check FAILED" >&2
-          exit 1
+
+      - name: Record the release proven in dev
+        # deploy-prod.yml promotes exactly one of these records: the image tag
+        # plus the source SHA of the dev run that proved it. A record whose
+        # source SHA does not match its run is refused at promote time.
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp
+          jq -n \
+            --arg image_tag "${{ needs.build-and-push.outputs.image_tag }}" \
+            --arg source_sha "$GITHUB_SHA" \
+            --arg dev_run_id "${{ github.run_id }}" \
+            '{image_tag: $image_tag, source_sha: $source_sha, dev_run_id: $dev_run_id}' \
+            > .tmp/dev-release.json
+          cat .tmp/dev-release.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dev-release
+          path: .tmp/dev-release.json
+          if-no-files-found: error
+          retention-days: 90

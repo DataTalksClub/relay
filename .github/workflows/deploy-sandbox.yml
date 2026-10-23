@@ -3,7 +3,7 @@ name: Deploy Relay Sandbox
 on:
   workflow_dispatch:
   # The push trigger was retired on 2026-10-05 during the dtcdev->Relay
-  # transfer, and push-to-main deploys moved to deploy-development.yml
+  # transfer, and push-to-main deploys moved to deploy-dev.yml
   # (dev.relay.datatalks.club). The host relay.dtcdev.click
   # (i-03b7cd5de0a10a889) was not retired with the pipeline and was later
   # observed serving again; the manual dispatch remains so touching the
@@ -47,8 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     # A manual dispatch deploys the selected ref to the sandbox host.
-    # Push-to-main deployment moved to deploy-development.yml. Production is a
-    # separate workflow.
+    # Push-to-main deployment moved to deploy-dev.yml. Production is a
+    # separate workflow (deploy-prod.yml, manual promote only).
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Configure AWS credentials

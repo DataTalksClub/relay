@@ -1,7 +1,28 @@
-name: Deploy Relay Production
+name: Deploy Relay Prod (Contabo)
+
+# Manual promote ONLY: a dev-proven release (built + auto-deployed to DEV by
+# deploy-dev.yml) is promoted to the prod UUID (relay-staging resource,
+# relay.datatalks.club) after a human approves the production environment.
+# Nothing here runs on push. Push-to-main always stops at DEV.
+# No git SSH / deploy keys / git clone on Contabo.
 
 on:
   workflow_dispatch:
+    inputs:
+      confirm_production:
+        description: Promote the dev-proven release to relay.datatalks.club
+        required: true
+        default: false
+        type: boolean
+      image_tag:
+        description: >-
+          Promote this specific dev-proven image tag (YYYYMMDD-HHMMSS-<7>)
+          instead of the latest proven release (explicit rollback selection;
+          the tag must come from a successful deploy-dev run on main).
+          Leave empty for the latest.
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: relay-production
@@ -9,92 +30,229 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
+  actions: read
+  packages: read
 
 env:
-  AWS_REGION: eu-west-1
-  PROD_INSTANCE_ID: ${{ vars.RELAY_PRODUCTION_INSTANCE_ID }}
-  PROD_DEPLOY_ROLE_ARN: ${{ vars.RELAY_PRODUCTION_DEPLOY_ROLE_ARN || 'arn:aws:iam::387546586013:role/relay-production-github-deploy' }}
+  REGISTRY: ghcr.io
+  IMAGE_NAME: datatalksclub/relay
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  select:
+    runs-on: ubuntu-24.04
+    outputs:
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      dev_run_id: ${{ steps.resolve.outputs.dev_run_id }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
-      - name: Install dependencies
-        run: uv sync --frozen --dev
-      - name: Run lint and checks
-        run: |
-          uv run ruff check .
-          uv run python manage.py makemigrations --check --dry-run
-          uv run python manage.py check
-      - name: Run tests
-        run: uv run pytest
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: test
-    # The production GitHub environment carries the required reviewer, so a
-    # dispatch only proceeds after an owner approves it.
-    environment: production
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Check deployment variables
-        run: |
-          if [[ -z "$PROD_INSTANCE_ID" ]]; then
-            echo "Set the repository variable RELAY_PRODUCTION_INSTANCE_ID to the main/relay host instance id." >&2
-            exit 1
-          fi
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ env.PROD_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Deploy the complete Relay release
-        id: deploy
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
-          command_id=$(
-            aws ssm send-command \
-              --region "$AWS_REGION" \
-              --instance-ids "$PROD_INSTANCE_ID" \
-              --document-name AWS-RunShellScript \
-              --comment "Deploy Relay production ${GITHUB_SHA}" \
-              --parameters "commands=[\"set -euo pipefail\",\"git config --system --get-all safe.directory | grep -Fxq /opt/relay || git config --system --add safe.directory /opt/relay\",\"if [[ ! -d /opt/relay/.git ]]; then if [[ -f /opt/relay/README ]]; then mv /opt/relay/README /var/lib/relay/bootstrap-readme; fi; git -C /opt/relay init; fi\",\"if git -C /opt/relay remote get-url origin >/dev/null 2>&1; then git -C /opt/relay remote set-url origin https://github.com/DataTalksClub/relay.git; else git -C /opt/relay remote add origin https://github.com/DataTalksClub/relay.git; fi\",\"git -C /opt/relay fetch origin ${GITHUB_SHA}\",\"git -C /opt/relay checkout --force ${GITHUB_SHA}\",\"bash /opt/relay/scripts/deploy_relay_sandbox.sh --environment production ${GITHUB_SHA}\"]" \
-              --query 'Command.CommandId' \
-              --output text
-          )
-          echo "command_id=$command_id" >>"$GITHUB_OUTPUT"
-          # The first production deploy builds the image cold on the host, so
-          # this waits up to 30 minutes.
-          for _ in $(seq 1 360); do
-            status=$(aws ssm get-command-invocation \
-              --region "$AWS_REGION" \
-              --command-id "$command_id" \
-              --instance-id "$PROD_INSTANCE_ID" \
-              --query Status --output text 2>/dev/null || true)
-            case "$status" in
-              Success) exit 0 ;;
-              Failed|Cancelled|TimedOut|Cancelling) exit 1 ;;
-            esac
-            sleep 5
-          done
-          echo "Relay production deployment did not finish within 30 minutes" >&2
-          exit 1
-
-      - name: Show deployment output
-        if: always()
-        run: |
-          command_id="${{ steps.deploy.outputs.command_id }}"
-          if [[ -z "$command_id" ]]; then
-            echo "No SSM deployment command was created."
-            exit 0
+          if [[ "${{ inputs.confirm_production }}" != "true" ]]; then
+            echo "confirm_production must be true to promote to production." >&2
+            exit 1
           fi
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --command-id "$command_id" \
-            --instance-id "$PROD_INSTANCE_ID" \
-            --query '{Status:Status,ResponseCode:ResponseCode,Stdout:StandardOutputContent,Stderr:StandardErrorContent}'
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production promotion runs only from main." >&2
+            exit 1
+          fi
+          # Candidates: recent successful deploy-dev runs on main, newest first.
+          runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-dev.yml/runs?branch=main&status=success&per_page=20" --jq '[.workflow_runs[] | {id, head_sha}]')"
+          if [[ -n "$IMAGE_TAG_INPUT" ]]; then
+            if ! [[ "$IMAGE_TAG_INPUT" =~ ^[0-9]{8}-[0-9]{6}-[0-9a-f]{7}$ ]]; then
+              echo "image_tag must be YYYYMMDD-HHMMSS-<7>, got: $IMAGE_TAG_INPUT" >&2
+              exit 1
+            fi
+            wanted="$IMAGE_TAG_INPUT"
+          else
+            run_id="$(jq -r '.[0].id' <<< "$runs")"
+            if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+              echo "No successful deploy-dev run on main to promote." >&2
+              exit 1
+            fi
+            echo "No image_tag given; promoting latest dev-proven run $run_id."
+          fi
+          # The tag is accepted only if it equals the dev-release record of
+          # the successful deploy-dev run that proved it (binds tag to the
+          # exact run + source SHA; a hand-typed unproven tag is refused).
+          mkdir -p .tmp/promotion
+          : > .tmp/promotion/tags.txt
+          while read -r run_id head_sha; do
+            rm -rf .tmp/promotion/candidate && mkdir -p .tmp/promotion/candidate
+            if gh run download "$run_id" -n dev-release -D .tmp/promotion/candidate >/dev/null 2>&1; then
+              tag="$(jq -er '.image_tag' .tmp/promotion/candidate/dev-release.json)"
+              sha="$(jq -er '.source_sha' .tmp/promotion/candidate/dev-release.json)"
+              if [[ "$sha" == "$head_sha" ]] && jq -e 'keys == ["dev_run_id","image_tag","source_sha"]' .tmp/promotion/candidate/dev-release.json >/dev/null; then
+                echo "$tag $sha $run_id" >> .tmp/promotion/tags.txt
+              fi
+            fi
+          done < <(jq -r '.[] | "\(.id) \(.head_sha)"' <<< "$runs")
+          if [[ -n "${wanted:-}" ]]; then
+            line="$(grep -m1 "^${wanted} " .tmp/promotion/tags.txt || true)"
+            if [[ -z "$line" ]]; then
+              echo "image_tag $wanted is not a dev-proven release (no matching successful deploy-dev run)." >&2
+              exit 1
+            fi
+          else
+            line="$(head -n1 .tmp/promotion/tags.txt)"
+            if [[ -z "$line" ]]; then
+              echo "Latest deploy-dev run has no dev-release record to promote." >&2
+              exit 1
+            fi
+          fi
+          echo "image_tag=$(awk '{print $1}' <<< "$line")" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(awk '{print $2}' <<< "$line")" >> "$GITHUB_OUTPUT"
+          echo "dev_run_id=$(awk '{print $3}' <<< "$line")" >> "$GITHUB_OUTPUT"
+          echo "Promoting dev-proven release: $line"
+
+  promote:
+    needs: select
+    runs-on: ubuntu-24.04
+    # The production GitHub environment carries the required reviewer, so a
+    # dispatch only proceeds after a human approves it.
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Apply Coolify PROD compose template and deploy
+        env:
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_PROD_SERVICE_UUID }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.select.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${COOLIFY_URL:-}" || -z "${COOLIFY_TOKEN:-}" || -z "${COOLIFY_SERVICE_UUID:-}" ]]; then
+            echo "Missing Coolify secrets: COOLIFY_URL, COOLIFY_TOKEN, COOLIFY_RELAY_PROD_SERVICE_UUID" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production promotion runs only from main." >&2
+            exit 1
+          fi
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          python3 - <<'PY'
+          import base64, json, os, re, urllib.request
+          import yaml
+
+          base = os.environ["COOLIFY_URL"].rstrip("/")
+          token = os.environ["COOLIFY_TOKEN"]
+          uuid = os.environ["COOLIFY_SERVICE_UUID"]
+          image_ref = os.environ["IMAGE_REF"]
+          image_tag = os.environ["IMAGE_TAG"]
+          prefix = f"{image_ref}:"
+          template_path = "deploy/coolify/docker-compose.staging.yml"
+
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  f"{base}{path}",
+                  data=data,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/json",
+                      "Content-Type": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req) as resp:
+                  body = resp.read()
+                  return resp.status, (json.loads(body) if body else {})
+
+          with open(template_path) as fh:
+              template_text = fh.read()
+          assert "__IMAGE_TAG__" in template_text, "compose template has no __IMAGE_TAG__ placeholder"
+          rendered = template_text.replace("__IMAGE_TAG__", image_tag)
+          assert "__IMAGE_TAG__" not in rendered
+          wanted = yaml.safe_load(rendered)
+          assert set(wanted) == {"services"}, f"unexpected top-level keys: {sorted(wanted)}"
+          for name, svc in wanted["services"].items():
+              assert svc.get("image", "").startswith(prefix), f"service {name} image not pinned to {prefix}*"
+              assert re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{7}", svc["image"][len(prefix):] or ""), (
+                  f"service {name} image tag is not exact YYYYMMDD-HHMMSS-<7>: {svc['image']}"
+              )
+
+          _st, svc = call("GET", f"/api/v1/services/{uuid}")
+          live = yaml.safe_load(svc["docker_compose_raw"])
+          live_services = live.get("services", {})
+          wanted_services = wanted["services"]
+
+          # Fail closed instead of clobbering human-managed routing: the live
+          # web service must match the template except for the image tag, and
+          # the live compose must not contain services the template doesn't.
+          live_web = dict(live_services.get("web", {}))
+          wanted_web = dict(wanted_services["web"])
+          assert live_web.get("image", "").startswith(prefix), "live web image is not a relay GHCR image; refusing to overwrite"
+          live_web.pop("image", None)
+          wanted_web.pop("image", None)
+          assert live_web == wanted_web, (
+              "live web service differs from the template (domains/labels managed outside git?). "
+              "Refusing to overwrite; reconcile Coolify UI state with deploy/coolify/docker-compose.staging.yml first."
+          )
+          unknown = sorted(set(live_services) - set(wanted_services))
+          assert not unknown, f"live compose has services not in the template {unknown}; refusing to overwrite"
+          added = sorted(set(wanted_services) - set(live_services))
+          print(f"compose guard OK; services to add on Coolify: {added or ['(none)']}")
+
+          call(
+              "PATCH",
+              f"/api/v1/services/{uuid}",
+              {"docker_compose_raw": base64.b64encode(rendered.encode()).decode()},
+          )
+          _st, out = call("POST", f"/api/v1/deploy?uuid={uuid}&force=true")
+          print(json.dumps(out))
+          print(f"Promoted dev-proven {prefix}{image_tag} to prod {uuid}")
+          PY
+
+      - name: Verify Coolify status and PROD web health
+        env:
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_PROD_SERVICE_UUID }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+
+          base = os.environ["COOLIFY_URL"].rstrip("/")
+          token = os.environ["COOLIFY_TOKEN"]
+          uuid = os.environ["COOLIFY_SERVICE_UUID"]
+
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  f"{base}{path}",
+                  data=data,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/json",
+                      "Content-Type": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req) as resp:
+                  body = resp.read()
+                  return resp.status, (json.loads(body) if body else {})
+
+          status = None
+          for _ in range(96):  # ~8 minutes
+              _st, svc = call("GET", f"/api/v1/services/{uuid}")
+              status = svc.get("status")
+              print(f"coolify service status: {status}", flush=True)
+              if status == "running:healthy":
+                  break
+              time.sleep(5)
+          print(f"final coolify service status: {status}")
+          PY
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error https://relay.datatalks.club/health/ready; then
+              echo; echo "prod web health OK"; exit 0
+            fi
+            sleep 10
+          done
+          echo "prod web health check FAILED (routing broken by this change?)" >&2
+          exit 1
