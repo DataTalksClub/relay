@@ -10,7 +10,7 @@ class Command(BaseCommand):
     help = "Run SES delivery gap monitoring, or send an explicit test alert to dev@dtcdev.click."
 
     def add_arguments(self, parser):
-        parser.add_argument("--force", action="store_true", help="Bypass alert cooldown.")
+        parser.add_argument("--force", action="store_true", help="Bypass SNS alert cooldown; outcome gaps are reported once per SES send.")
         parser.add_argument("--test-alert", action="store_true", help="Send a test alert to dev@dtcdev.click.")
 
     def handle(self, *args, **options):

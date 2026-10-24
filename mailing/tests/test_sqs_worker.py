@@ -111,3 +111,17 @@ def _message(message_id, payload=None):
         "Body": json.dumps(payload or {"contract": "test"}),
         "MD5OfBody": "md5",
     }
+
+
+def test_sqs_worker_preserves_entire_batch_for_uncorrelated_failures():
+    for failures in ([{}], [None], [{"itemIdentifier": "unknown"}], [{"itemIdentifier": []}],
+                     [{"itemIdentifier": "failed-1"}, {}]):
+        client = FakeSqsClient([_message("failed-1"), _message("other-1")])
+        worker = SqsWorker(
+            WorkerConfig(name="test", queue_url="https://sqs.example/test",
+                         handler=lambda e, c: {"batchItemFailures": failures}), client=client,
+        )
+        result = worker.run_once()
+        assert result.deleted == 0
+        assert result.failed == 2
+        assert client.deleted_receipts == []

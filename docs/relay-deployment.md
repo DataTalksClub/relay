@@ -331,3 +331,30 @@ client uses the `courses` sender ID, which resolves to
 Submit an email and wait for the transactional message to reach `sent`. Then
 confirm the SES event reaches `relay-sandbox-ses-webhooks` and drains without a
 DLQ message before you update a client to use Relay.
+
+## SES outcome monitoring
+
+The scheduler's AWS runtime identity needs `cloudwatch:GetMetricStatistics`.
+The additive policy is [deploy/aws/relay-ses-monitor-policy.json](../deploy/aws/relay-ses-monitor-policy.json).
+CloudWatch metric reads require `Resource: "*"`; this grants no write access.
+The SNS guard compares only provider events and SES audit records for its
+configured topic, over a minute-aligned 30-minute window ending two minutes
+ago to allow ingress to settle. Query failures are logged as
+`ses_monitor_cloudwatch_query_failed`; a failed query is not a successful guard check.
+
+Outcome gaps use the send timestamp (creation time only for legacy rows) and
+require an SES message ID. Successful alerts create an
+`monitor.ses_outcome_gap.reported` operator audit for each message and SES send ID.
+These receipts survive restarts and deployments. A later send ID can alert
+again; failed alert delivery leaves the incident eligible for retry. Message
+row locks prevent concurrent checkers from sending the same incident.
+`check_ses_delivery_gap --force` bypasses the SNS cooldown, but preserves
+outcome receipts. An existing confirmed alert can be backfilled as an audit
+with its original send ID, delivery time and evidence; this does not invent
+a delivery or bounce outcome. SMTP acceptance followed by a database failure
+can still repeat an alert because the two systems do not share a transaction.
+
+SES `DeliveryDelay` is evidence of an ongoing attempt. It is not a terminal
+bounce. A final transactional `Bounce`, including a transient bounce after
+retry expiration, ends the message in `bounced`; only a permanent bounce
+suppresses the contact. See [SES notification semantics](https://docs.aws.amazon.com/ses/latest/dg/notification-contents.html).

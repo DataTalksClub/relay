@@ -1,8 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Event
 from unittest.mock import MagicMock
 
 import pytest
 from django.core.management import call_command
+from django.db import close_old_connections, connection
 from django.utils import timezone
 
 from mailing.models import (
@@ -146,9 +149,10 @@ def test_check_sns_persisted_gap_triggers_when_published_exceeds_persisted():
         EmailEvent.objects.create(
             event_type=EmailEventType.DELIVERED,
             provider_event_id=f"evt-{i}",
+            metadata={"sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events"},
         )
 
-    now = timezone.now() + timedelta(seconds=1)
+    now = timezone.now() + timedelta(minutes=3)
 
     # CloudWatch reports 10 published messages in the 30-min window
     fake_cw = MagicMock()
@@ -170,16 +174,18 @@ def test_check_sns_persisted_gap_silent_when_persisted_matches_or_exceeds():
         EmailEvent.objects.create(
             event_type=EmailEventType.DELIVERED,
             provider_event_id=f"evt-match-{i}",
+            metadata={"sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events"},
         )
     for i in range(2):
         OperatorAudit.objects.create(
             action="ses.delivery_delay.unsupported",
             target_type="ses_notification",
             target_id=0,
-            metadata={"provider_event_id": f"delay-{i}"},
+            metadata={"provider_event_id": f"delay-{i}",
+                      "sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events"},
         )
 
-    now = timezone.now() + timedelta(seconds=1)
+    now = timezone.now() + timedelta(minutes=3)
 
     fake_cw = MagicMock()
     fake_cw.get_metric_statistics.return_value = {
@@ -238,3 +244,125 @@ def test_management_command_check_ses_delivery_gap(monkeypatch):
     call_command("check_ses_delivery_gap", "--test-alert")
     assert len(calls) == 1
     assert calls[0][1] is True
+
+
+@pytest.mark.django_db
+def test_gap_receipt_survives_restart_and_force_but_new_send_alerts(client_obj, contact_obj, template_obj, monkeypatch):
+    now = timezone.now()
+    message = TransactionalMessage.objects.create(
+        client=client_obj, contact=contact_obj, template=template_obj, email=contact_obj.email,
+        template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id="first-send",
+        sent_at=now - timedelta(hours=3),
+    )
+    sent = []
+    monkeypatch.setattr("mailing.services.ses_monitor.send_monitor_alert", lambda payload, **kw: sent.append(payload))
+    monkeypatch.setattr("mailing.services.ses_monitor.check_sns_persisted_gap", lambda *a, **kw: None)
+    assert len(check_ses_delivery_gap(now=now)) == 1
+    monkeypatch.setattr("mailing.services.ses_monitor._last_alert_by_kind", {})
+    assert check_ses_delivery_gap(now=now + timedelta(hours=2), force=True) == []
+    assert check_ses_outcome_gap(now) is None
+    assert len(sent) == 1
+    receipt = OperatorAudit.objects.get(action="monitor.ses_outcome_gap.reported", target_id=message.pk)
+    assert receipt.metadata["ses_message_id"] == "first-send"
+    # The same database row can be sent again by an explicitly authorized retry.
+    TransactionalMessage.objects.filter(pk=message.pk).update(ses_message_id="second-send")
+    assert len(check_ses_delivery_gap(now=now)) == 1
+    assert len(sent) == 2
+
+
+@pytest.mark.django_db
+def test_gap_failed_transport_retries_and_new_message_is_not_throttled(client_obj, contact_obj, template_obj, monkeypatch):
+    now = timezone.now()
+    def create_message(send_id):
+        return TransactionalMessage.objects.create(
+            client=client_obj, contact=contact_obj, template=template_obj, email=contact_obj.email,
+            template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id=send_id,
+            sent_at=now - timedelta(hours=3),
+        )
+    create_message("failed-transport")
+    monkeypatch.setattr("mailing.services.ses_monitor.check_sns_persisted_gap", lambda *a, **kw: None)
+    def fail(*a, **kw):
+        raise RuntimeError("SMTP unavailable")
+    monkeypatch.setattr("mailing.services.ses_monitor.send_monitor_alert", fail)
+    assert check_ses_delivery_gap(now=now) == []
+    assert not OperatorAudit.objects.filter(action="monitor.ses_outcome_gap.reported").exists()
+    sent = []
+    monkeypatch.setattr("mailing.services.ses_monitor.send_monitor_alert", lambda payload, **kw: sent.append(payload))
+    assert len(check_ses_delivery_gap(now=now)) == 1
+    second = create_message("new-gap")
+    assert check_ses_delivery_gap(now=now)[0]["message_ids"] == [second.pk]
+    assert len(sent) == 2
+
+
+@pytest.mark.django_db
+def test_gap_uses_send_time_and_requires_ses_acceptance(client_obj, contact_obj, template_obj):
+    now = timezone.now()
+    for send_id, sent_at in [("recent-send", now - timedelta(minutes=10)), ("", None)]:
+        message = TransactionalMessage.objects.create(
+            client=client_obj, contact=contact_obj, template=template_obj, email=contact_obj.email,
+            template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id=send_id, sent_at=sent_at,
+        )
+        TransactionalMessage.objects.filter(pk=message.pk).update(created_at=now - timedelta(days=2))
+    assert check_ses_outcome_gap(now) is None
+
+
+@pytest.mark.django_db
+def test_gap_test_transport_does_not_acknowledge_real_incident(client_obj, contact_obj, template_obj, monkeypatch):
+    now = timezone.now()
+    TransactionalMessage.objects.create(
+        client=client_obj, contact=contact_obj, template=template_obj, email=contact_obj.email,
+        template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id="test-only",
+        sent_at=now - timedelta(hours=3),
+    )
+    monkeypatch.setattr("mailing.services.ses_monitor.send_monitor_alert", lambda *a, **kw: None)
+    monkeypatch.setattr("mailing.services.ses_monitor.check_sns_persisted_gap", lambda *a, **kw: None)
+    assert len(check_ses_delivery_gap(now=now, test=True)) == 1
+    assert check_ses_outcome_gap(now) is not None
+
+
+@pytest.mark.django_db
+def test_sns_gap_cannot_be_hidden_by_local_or_other_topic_events():
+    for i, topic in enumerate(["", "arn:aws:sns:eu-west-1:123:other-topic"]):
+        EmailEvent.objects.create(event_type=EmailEventType.DELIVERED, provider_event_id=f"other-{i}",
+                                  metadata={"sns_topic_arn": topic})
+    EmailEvent.objects.create(event_type=EmailEventType.QUEUED)
+    fake_cw = MagicMock()
+    fake_cw.get_metric_statistics.return_value = {"Datapoints": [{"Sum": 2.0}]}
+    alert = check_sns_persisted_gap(timezone.now() + timedelta(minutes=3), cw_client=fake_cw)
+    assert alert["relay_persisted"] == 0
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_gap_checkers_send_only_once(client_obj, contact_obj, template_obj, monkeypatch):
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL row locking required")
+    now = timezone.now()
+    TransactionalMessage.objects.create(
+        client=client_obj, contact=contact_obj, template=template_obj, email=contact_obj.email,
+        template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id="concurrent",
+        sent_at=now - timedelta(hours=3),
+    )
+    entered, release = Event(), Event()
+    sent = []
+    def send(payload, **kw):
+        sent.append(payload)
+        entered.set()
+        assert release.wait(timeout=10)
+    def check():
+        close_old_connections()
+        try:
+            return check_ses_delivery_gap(now=now)
+        finally:
+            close_old_connections()
+    monkeypatch.setattr("mailing.services.ses_monitor.send_monitor_alert", send)
+    monkeypatch.setattr("mailing.services.ses_monitor.check_sns_persisted_gap", lambda *a, **kw: None)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(check)
+        try:
+            assert entered.wait(timeout=10)
+            assert executor.submit(check).result(timeout=5) == []
+        finally:
+            release.set()
+        assert len(first.result(timeout=5)) == 1
+    assert len(sent) == 1
+    assert check_ses_delivery_gap(now=now) == []

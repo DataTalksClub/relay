@@ -58,11 +58,16 @@ class SqsWorker:
             )
             return WorkerResult(received=len(messages), deleted=0, failed=len(messages))
 
-        failed_message_ids = {
-            item["itemIdentifier"]
+        received_ids = {message["MessageId"] for message in messages}
+        if any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("itemIdentifier"), str)
+            or item["itemIdentifier"] not in received_ids
             for item in failures
-            if isinstance(item, dict) and item.get("itemIdentifier")
-        }
+        ):
+            logger.error("SQS worker returned uncorrelated batch failures for queue %s", self.config.queue_url)
+            return WorkerResult(received=len(messages), deleted=0, failed=len(messages))
+        failed_message_ids = {item["itemIdentifier"] for item in failures}
 
         deleted = 0
         for message in messages:

@@ -175,7 +175,9 @@ def safe_reason_code(event):
 def is_hard_bounce(metadata):
     bounce_type = (metadata.get("bounce_type") or "").casefold()
     bounce_sub_type = (metadata.get("bounce_sub_type") or "").casefold()
-    return bounce_type == "permanent" or bounce_sub_type in {"general", "suppressed", "onaccountsuppressionlist"}
+    if bounce_type:
+        return bounce_type == "permanent"
+    return bounce_sub_type in {"general", "suppressed", "onaccountsuppressionlist"}
 
 
 def next_callback_sequence(client, message_kind, message_ref):

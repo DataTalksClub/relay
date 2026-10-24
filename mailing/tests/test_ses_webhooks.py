@@ -758,3 +758,19 @@ def test_unsupported_future_ses_event_type_creates_audit_entry():
     assert audit_entry.target_type == "ses_notification"
     assert audit_entry.target_id == 0
     assert audit_entry.metadata["event_type"] == "SomeFutureEvent"
+
+
+def test_transactional_transient_bounce_is_terminal_without_contact_suppression(transactional_message):
+    payload = webhook_payload(
+        "bounce", "sns-retry-expired", "ses-tx-1",
+        metadata={"bounce_type": "Transient", "bounce_sub_type": "General"},
+    )
+    event = records_from_payloads([("retry-expired", payload)])
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+    transactional_message.refresh_from_db()
+    transactional_message.contact.refresh_from_db()
+    assert transactional_message.status == TransactionalMessageStatus.BOUNCED
+    assert transactional_message.last_error == "soft_bounce"
+    assert transactional_message.contact.hard_bounced_at is None
+    assert transactional_message.events.filter(provider_event_id="sns-retry-expired").count() == 1

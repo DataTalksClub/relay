@@ -461,9 +461,11 @@ def apply_transactional_message_update(message, notification_type, occurred_at, 
         message.delivered_at = occurred_at
         update_fields.append("delivered_at")
     elif notification_type == "bounce":
+        # SES publishes Bounce only after delivery attempts have ended, even
+        # for a transient failure. Contact suppression still requires Permanent.
+        message.status = TransactionalMessageStatus.BOUNCED
+        update_fields.append("status")
         if is_hard_bounce(metadata):
-            message.status = TransactionalMessageStatus.BOUNCED
-            update_fields.append("status")
             mark_hard_bounced(message.contact, occurred_at)
         else:
             message.last_error = "soft_bounce"
