@@ -51,6 +51,22 @@ mailbox has a serialized per-minute cap; refusals are recorded. DMARC messages
 are retained in raw storage and suppressed from forwarding, preserving the old
 archive-only behaviour without running the forwarding Lambda.
 
+DMARC archive equivalence (migration difference, documented not hidden): the
+legacy Lambda saved a second copy of each DMARC report to the separate
+`<domain>-dmarc-reports` bucket (versioned, transition to STANDARD_IA at 30
+days, expiry at 365 days) while the inbound `.eml` expired from the
+`<domain>-ses-emails` bucket after 7 days. Relay keeps the single raw MIME in
+the ingress bucket (same 7-day lifecycle) plus the durable `InboundMessage` row
+and a `suppressed/dmarc_archived` delivery record, and never forwards or wakes
+a bot for it. Behaviour parity (archive-only, no-forward) is implemented and
+covered by `test_dmarc_report_archived_not_forwarded`. Retention parity (a
+365-day second copy) is NOT claimed: reproducing it needs either (a) a
+`dmarc/` prefix lifecycle rule on the ingress bucket or a copy to the legacy
+DMARC bucket at ingest, plus runtime `s3:PutObject` IAM — a Terraform + IAM
+change that is a REMOVAL/ADD proposal only until Alexey approves and the
+authorized MAIN apply path exists. Until then, DMARC raw older than 7 days is
+available only as the stored body/snippet/metadata row, not as raw MIME.
+
 The `process_inbound_deliveries` worker owns dispatch and reconciliation. DEV
 runs it with outbound sending disabled, and never drains a production queue.
 Production's ingress stands by until its queue is configured. Provision routes,
@@ -82,3 +98,17 @@ datamailer inbound deliveries
 
 Only references belong in those JSON files. A default rule already exists after
 creating a domain; PATCH its ID rather than creating another `*` mailbox.
+
+## dtcdev.click bot wake targets (no new credentials)
+
+`dev@`, `tofu@`, and `orin@dtcdev.click` are BOT mailboxes with the same
+sender allowlist (Alexey's addresses plus `noreply@datatalks.club`,
+`no-reply@dtcdev.click`, `alerts@dtcdev.click`). Their `webhook_secret_id`
+values (`env:INBOUND_DEV_WEBHOOK`, `env:INBOUND_TOFU_WEBHOOK`,
+`env:INBOUND_ORIN_WEBHOOK`) point at the existing authenticated dapier webhook
+hooks for `dev`/`tofu`/`orin`, which run the mailbox workflows that file Hub
+intake tasks for the matching project. No direct bot-destination URL/token
+pairs exist in tofu/orin workflow storage; do not invent any. Set/rotate the
+hook-backed JSON secrets through Coolify/Secrets Manager only. Keep the current
+dapier `dev@` email wake intact until the Relay webhook path is proved live
+with a 2xx for each of `dev@`, `tofu@`, and `orin@`.

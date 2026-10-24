@@ -14,7 +14,7 @@ from django.test import Client as HttpClient
 from django.utils import timezone
 
 from mailing.inbound_mime import parse_mime
-from mailing.models import InboundDelivery, InboundDomain, InboundMailbox, OperatorAudit
+from mailing.models import InboundDelivery, InboundDomain, InboundMailbox, InboundMessage, OperatorAudit
 from mailing.services.admin_auth import create_admin_api_key
 from mailing.services.inbound_email import process_inbound_object, process_inbound_s3_notification
 from mailing.services.inbound_routing import match_mailboxes, process_due_deliveries, routing_health
@@ -124,6 +124,38 @@ def test_loop_protection(domain, headers, sender, reason):
     ingest(mime(sender=sender, headers=headers))
     row = InboundDelivery.objects.get()
     assert (row.status, row.reason) == ('suppressed', reason)
+
+
+@pytest.mark.parametrize('sender,subject', [
+    ('DMARC <dmarc-noreply@google.com>', 'Prüfung — 日本語'),
+    ('Alexey <alexey@example.net>', 'Report domain example.com submitted by Google'),
+    ('Alexey <alexey@example.net>', 'DMARC aggregation for example.com'),
+])
+def test_dmarc_report_archived_not_forwarded(domain, sender, subject):
+    # Migration difference vs legacy Lambda (see docs/inbound-routing.md):
+    # legacy saved a second copy to the separate dmarc-reports bucket
+    # (365-day retention, versioned, IA at 30 days); Relay keeps the single
+    # raw MIME in the ingress bucket (7-day lifecycle) plus the durable
+    # suppressed delivery row, and never forwards. Behaviour parity is
+    # archive-only + no-forward; retention parity needs the proposed
+    # dmarc-prefix lifecycle/copy follow-up, not claimed here.
+    box = mailbox(domain, kind='forward', local_part='team',
+                  destinations=['alexey@example.net'], sender_allowlist=[])
+    raw_message = EmailMessage()
+    raw_message['From'] = sender
+    raw_message['To'] = 'team@example.com'
+    raw_message['Subject'] = subject
+    raw_message['Message-ID'] = '<dmarc-report@example.net>'
+    raw_message['Date'] = 'Sat, 24 Oct 2026 12:00:00 +0200'
+    raw_message.set_content('dmarc aggregate report')
+    ingest(raw_message.as_bytes())
+    row = InboundDelivery.objects.get(mailbox=box)
+    assert (row.status, row.reason) == ('suppressed', 'dmarc_archived')
+    assert InboundMessage.objects.filter(message_id='<dmarc-report@example.net>').exists()
+    with patch('mailing.services.inbound_routing.post_webhook') as post:
+        process_due_deliveries()
+    post.assert_not_called()
+    assert InboundDelivery.objects.get(pk=row.pk).status == 'suppressed'
 
 
 def test_auto_generated_alert_allowed_and_rate_cap(domain):
