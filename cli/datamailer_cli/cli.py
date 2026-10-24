@@ -99,6 +99,17 @@ def build_parser() -> argparse.ArgumentParser:
     domains.add_argument("--verify", action="store_true")
     domains.add_argument("--delete", action="store_true", help="Disable a domain.")
     domains.set_defaults(handler=cmd_domains)
+
+    p_layout = sub.add_parser("layout", help="Show or set the client's email layout (own header/footer/shell).")
+    _add_connection_args(p_layout)
+    p_layout.add_argument("--set-html", dest="set_html", help="Set layout_html from this string.")
+    p_layout.add_argument("--set-file", dest="set_file", help="Set layout_html from this file.")
+    p_layout.add_argument("--brand", dest="brand_name", help="Brand display name for the layout.")
+    p_layout.add_argument("--website", dest="website_url", help="Brand website URL.")
+    p_layout.add_argument("--logo", dest="logo_url", help="Brand logo URL.")
+    p_layout.add_argument("--sender", dest="sender_id", default="", help="Per-sender override id.")
+    p_layout.add_argument("--json", action="store_true", help="Print the raw JSON response.")
+    p_layout.set_defaults(handler=cmd_layout)
     return parser
 
 
@@ -239,6 +250,32 @@ def _print_senders(result, as_json: bool) -> int:
     print(f"default sender: {result.get('default_sender_id') or '(none configured)'}")
     for sender in result.get("senders") or []:
         print(f"  - {sender.get('id')}: {sender.get('email')}")
+    return 0
+
+
+def cmd_layout(args) -> int:
+    client = _client(args)
+    if not args.set_html and not args.set_file and not args.brand_name:
+        result = client.get_layouts()
+        if args.json:
+            print(json.dumps(result, indent=2))
+            return 0
+        for item in result.get("layouts", []):
+            print(f"{item.get('sender_id') or 'default'}: {item.get('brand_name')}")
+        return 0
+    layout_html = args.set_html or ""
+    if args.set_file:
+        with open(args.set_file, encoding="utf-8") as handle:
+            layout_html = handle.read()
+    payload = {
+        "sender_id": args.sender_id or "",
+        "brand_name": args.brand_name or "",
+        "website_url": args.website_url or "",
+        "logo_url": args.logo_url or "",
+        "layout_html": layout_html,
+    }
+    result = client.set_layout(payload)
+    print(json.dumps(result, indent=2) if args.json else f"layout saved: {result.get('brand_name')}")
     return 0
 
 

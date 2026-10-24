@@ -6,6 +6,7 @@ from mailing.models import (
     Client,
     Contact,
     EmailEvent,
+    EmailLayout,
     EmailTemplate,
     EmailTemplateVersion,
     Organization,
@@ -13,6 +14,7 @@ from mailing.models import (
 )
 from mailing.queue_contracts import validate_transactional_email_message
 from mailing.services.auth import create_client_api_key
+from mailing.services.email_layouts import default_layouts
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -34,6 +36,14 @@ def api_client_record(organization):
         sender_emails=[{"id": "newsletter", "email": "newsletter@example.com"}],
     )
     create_client_api_key(client=client, name="Transactional test", raw_api_key=API_KEY)
+    spec = default_layouts()["dtc-courses"]
+    EmailLayout.objects.create(
+        client=client,
+        sender_id="",
+        brand_name=spec["brand_name"],
+        website_url=spec["website_url"],
+        layout_html=spec["layout_html"],
+    )
     return client
 
 
@@ -560,7 +570,6 @@ def test_markdown_send_wraps_body_in_email_shell_with_footer(
     markdown_template,
     settings,
 ):
-    settings.RELAY_EMAIL_BRAND_NAME = "Datamailer"
     settings.RELAY_EMAIL_SITE_BASE_URL = "https://datamailer.example.com"
 
     response = post_send(
@@ -576,7 +585,8 @@ def test_markdown_send_wraps_body_in_email_shell_with_footer(
     assert response.status_code == 202
     message = TransactionalMessage.objects.get()
     assert message.html_body.startswith("<!DOCTYPE html>")
-    assert "Datamailer" in message.html_body
+    assert "DataTalks.Club" in message.html_body
+    assert "Relay" not in message.html_body
     assert "<h1>Hi Ada</h1>" in message.html_body
     assert "email-footer" in message.html_body
     # Text part carries the substituted markdown source, not HTML.

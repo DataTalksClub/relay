@@ -94,6 +94,14 @@ class DatamailerClient:
         _, data = self.request("GET", f"/api/transactional/messages/{message_id}")
         return data
 
+    def get_layouts(self) -> Any:
+        _, data = self.request("GET", "/api/email-layouts")
+        return data
+
+    def set_layout(self, payload: dict) -> Any:
+        _, data = self.request("PUT", "/api/email-layouts", payload=payload)
+        return data
+
 
 def _parse_body(raw: bytes) -> Any:
     if not raw:

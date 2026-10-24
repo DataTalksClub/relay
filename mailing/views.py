@@ -2208,6 +2208,41 @@ def api_transactional_send(request):
 
 
 @csrf_exempt
+def api_email_layouts(request):
+    from mailing.services.email_layouts import list_layouts_for_client, upsert_layout_for_client  # noqa: PLC0415
+
+    if request.method not in {"GET", "PUT"}:
+        return method_not_allowed_response(["GET", "PUT"])
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+    try:
+        if request.method == "GET":
+            payload = list_layouts_for_client(client)
+        else:
+            payload = upsert_layout_for_client(client, json_request_body(request))
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_email_layout_detail(request):
+    from mailing.services.email_layouts import get_layout_for_client_api  # noqa: PLC0415
+
+    if request.method != "GET":
+        return method_not_allowed_response(["GET"])
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+    try:
+        payload = get_layout_for_client_api(client, request.GET.get("sender_id", ""))
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
 def api_campaign(request, external_key):
     if request.method not in {"GET", "PUT"}:
         return method_not_allowed_response(["GET", "PUT"])

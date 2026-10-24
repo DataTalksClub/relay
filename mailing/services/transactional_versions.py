@@ -79,19 +79,24 @@ def resolve_render_source(template, version_number=None):
     return draft_render_source(template)
 
 
-def render_source_message_fields(source, context):
+def render_source_message_fields(source, context, *, sender_id=""):
     """Subject/html/text exactly as a send renders them (preview parity).
 
     Markdown templates follow the donor render order: Django-template context
-    substitution first, then markdown to HTML, then the shared email shell.
-    The text part carries the substituted markdown source.
+    substitution first, then markdown to HTML, then the CLIENT'S OWN layout
+    shell. The text part carries the substituted markdown source.
     """
     subject = render_template_string(source.subject, context)
     if source.markdown_body:
         rendered_body = render_template_string(source.markdown_body, context)
         return {
             "subject": subject,
-            "html_body": wrap_email_html(subject, render_email_markdown(rendered_body)),
+            "html_body": wrap_email_html(
+                subject,
+                render_email_markdown(rendered_body),
+                client=source.template.client,
+                sender_id=sender_id,
+            ),
             "text_body": rendered_body,
         }
     return {
@@ -142,7 +147,7 @@ def versions_payload(template):
 def preview_transactional_template(template, context, version_number=None):
     """Render the draft or one version with a context; no rows are written."""
     source = resolve_render_source(template, version_number)
-    fields = render_source_message_fields(source, context)
+    fields = render_source_message_fields(source, context, sender_id=template.default_sender_id or "")
     return fields | {
         "template_key": template.key,
         "template_version": source.version_number,

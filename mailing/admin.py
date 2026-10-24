@@ -14,6 +14,7 @@ from mailing.models import (
     Contact,
     ContactTag,
     EmailEvent,
+    EmailLayout,
     EmailTemplate,
     InboundAddress,
     InboundMessage,
@@ -219,6 +220,15 @@ class CampaignRecipientAdmin(admin.ModelAdmin):
         "ses_message_id",
     )
     autocomplete_fields = ("campaign", "contact")
+
+
+@admin.register(EmailLayout)
+class EmailLayoutAdmin(admin.ModelAdmin):
+    readonly_fields = ("created_at", "updated_at")
+    list_display = ("client", "sender_id", "brand_name", "website_url", "updated_at")
+    list_filter = ("client",)
+    search_fields = ("brand_name", "client__name", "client__slug", "sender_id")
+    autocomplete_fields = ("client",)
 
 
 @admin.register(EmailTemplate)

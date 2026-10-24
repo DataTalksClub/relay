@@ -1017,7 +1017,7 @@ def build_transactional_message(*, client, contact, template, source, payload, s
     """
     context = payload["context"]
     metadata = delivery_option_metadata(payload)
-    rendered = render_source_message_fields(source, context)
+    rendered = render_source_message_fields(source, context, sender_id=sender.sender_id if sender else "")
     revalidate_rendered_calendar_alternative(payload, rendered)
     return TransactionalMessage(
         client=client,

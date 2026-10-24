@@ -254,6 +254,8 @@ urlpatterns = [
         name="api_transactional_template_test_send",
     ),
     path("api/transactional/send", views.api_transactional_send, name="api_transactional_send"),
+    path("api/email-layout", views.api_email_layout_detail, name="api_email_layout_detail"),
+    path("api/email-layouts", views.api_email_layouts, name="api_email_layouts"),
     path(
         "api/transactional/messages",
         views.api_transactional_messages_reconcile,

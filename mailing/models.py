@@ -655,6 +655,40 @@ class EmailTemplateVersion(TimeStampedModel):
         return f"{self.template.key} v{self.version} ({self.template.client.slug})"
 
 
+class EmailLayout(TimeStampedModel):
+    """Per-client (per-site) email layout: own header/footer/HTML shell.
+
+    Each client/site owns its layout template; markdown templates render
+    inside their own client's layout. ``sender_id`` empty means the client
+    default; a non-empty ``sender_id`` overrides the default for that
+    sender. The shell is a full Django template receiving ``subject``,
+    ``body_html``, ``footer_note``, ``brand_name``, ``brand_website_url``
+    and ``brand_logo_url``. There is deliberately no shared Relay-branded
+    fallback: a missing layout renders a plain neutral shell.
+    """
+
+    client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="email_layouts")
+    sender_id = models.SlugField(max_length=80, blank=True, default="")
+    brand_name = models.CharField(max_length=120)
+    logo_url = models.URLField(max_length=2048, blank=True, default="")
+    website_url = models.URLField(max_length=2048, blank=True, default="")
+    layout_html = models.TextField()
+
+    class Meta:
+        db_table = "email_layouts"
+        ordering = ["client__organization__slug", "client__slug", "sender_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["client", "sender_id"], name="unique_email_layout_client_sender"),
+        ]
+        indexes = [
+            models.Index(fields=["client", "sender_id"], name="email_layout_client_sender_idx"),
+        ]
+
+    def __str__(self):
+        scope = self.sender_id or "default"
+        return f"{self.client.slug}/{scope} ({self.brand_name})"
+
+
 class TransactionalMessageStatus(models.TextChoices):
     QUEUED = "queued", "Queued"
     SENDING = "sending", "Sending"
