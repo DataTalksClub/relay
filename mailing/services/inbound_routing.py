@@ -25,6 +25,7 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
+from mailing.services.dmarc import is_dmarc_report
 from mailing.services.transactional import append_transactional_event, build_transactional_queue_payload
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,8 @@ def match_mailboxes(addresses):
 
 def loop_reason(raw, parsed):
     mime = BytesParser(policy=policy.default).parsebytes(raw)
+    if is_dmarc_report(mime):
+        return 'dmarc_archived'
     if mime.get('X-Loop') or mime.get('X-Relay-Inbound'):
         return 'loop_header'
     # Alert-style Auto-Submitted mail is allowed once; Relay's own replies and
@@ -68,10 +71,6 @@ def loop_reason(raw, parsed):
         for part in mime.walk()
     ):
         return 'bounce_or_calendar_reply'
-    if (any(a in {'dmarc-noreply@google.com', 'dmarc-noreply@yahoo.com', 'noreply-dmarc-support@microsoft.com', 'dmarcreport@microsoft.com', 'auto-dmarc@icloud.com', 'dmarc-reports@proofpoint.com', 'dmarc@returnpath.net'} for a in parsed.sender_addresses)
-            or any(p in parsed.subject.lower() for p in ('report domain', 'dmarc report', 'dmarc aggregation'))
-            or any('dmarc' in a.filename.lower() and a.filename.endswith(('.zip', '.xml.gz', '.xml')) for a in parsed.attachments)):
-        return 'dmarc_archived'
     if any(a.startswith(('mailer-daemon@', 'postmaster@')) for a in parsed.sender_addresses):
         return 'bounce_sender'
     if InboundDomain.objects.filter(from_email__in=parsed.sender_addresses).exists():
@@ -88,7 +87,7 @@ def create_deliveries(stored, parsed, raw, matches):
         mailbox = InboundMailbox.objects.select_for_update().get(pk=mailbox.pk)
         why = reason
         if mailbox.kind == InboundMailbox.Kind.DISCARD:
-            why = 'domain_default_discard'
+            why = why or 'domain_default_discard'
         elif mailbox.kind == InboundMailbox.Kind.BOT and (
             len(parsed.sender_addresses) != 1 or parsed.sender_addresses[0] not in mailbox.sender_allowlist
         ):

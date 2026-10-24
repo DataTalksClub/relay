@@ -60,6 +60,7 @@ from mailing.models import (
     InboundMessage,
     InboundMessageState,
 )
+from mailing.services.dmarc import archive_report, is_dmarc_report, mime_message
 from mailing.services.inbound_routing import create_deliveries, match_mailboxes
 
 logger = logging.getLogger(__name__)
@@ -111,12 +112,13 @@ def process_inbound_object(bucket, key, *, s3, publisher=None, recipients=None):
         return {"discarded": "no_matching_address", "message_id": message.message_id}
 
     blocked = find_blocked_sender(message.sender_addresses)
-    if blocked is not None:
+    if blocked is not None and not (matches and is_dmarc_report(mime_message(raw))):
         return file_blocked(message, blocked, bucket=bucket, key=key, size_bytes=len(raw))
 
     try:
         with transaction.atomic():
             stored = file_message(message, bucket=bucket, key=key, size_bytes=len(raw), s3=s3, recipient=recipient)
+            archive_report(stored, raw, matches)
             create_deliveries(stored, message, raw, matches)
     except IntegrityError:
         # The same message delivered twice. The old path signalled this with a

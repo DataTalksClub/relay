@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib import admin
+from django.db import models
 
 from mailing.models import (
     Audience,
@@ -514,3 +515,49 @@ class SendingDomainAdmin(admin.ModelAdmin):
     def verify_domains(self, request, queryset):
         for row in queryset:
             refresh(row)
+
+
+from mailing.models import DmarcArchive, DmarcAttachment, DmarcRecord, DmarcReport  # noqa: E402
+
+
+class DmarcReadOnlyAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields if not isinstance(field, models.BinaryField))
+
+    def get_exclude(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields if isinstance(field, models.BinaryField))
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(DmarcArchive)
+class DmarcArchiveAdmin(DmarcReadOnlyAdmin):
+    list_display = ('id', 'domain', 'reporter_domain', 'message_id', 'created_at', 'retain_until', 'parse_error')
+    list_filter = ('domain', 'reporter_domain')
+    search_fields = ('message__message_id', 'reporter_domain')
+
+
+@admin.register(DmarcAttachment)
+class DmarcAttachmentAdmin(DmarcReadOnlyAdmin):
+    list_display = ('id', 'archive', 'filename', 'parse_error')
+    list_select_related = ('archive',)
+
+
+@admin.register(DmarcReport)
+class DmarcReportAdmin(DmarcReadOnlyAdmin):
+    list_display = ('id', 'reporter_org', 'report_id', 'date_begin', 'date_end', 'attachment')
+    search_fields = ('reporter_org', 'report_id')
+
+
+@admin.register(DmarcRecord)
+class DmarcRecordAdmin(DmarcReadOnlyAdmin):
+    list_display = ('id', 'report', 'source_ip', 'count', 'disposition', 'dkim', 'spf')
+    list_filter = ('disposition', 'dkim', 'spf')
+    search_fields = ('source_ip', 'report__report_id')
