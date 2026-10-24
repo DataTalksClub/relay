@@ -17,6 +17,12 @@
     <div class="actions">
       <a class="button secondary" href="{% url 'mailing:template_detail' message.template_id %}">Template</a>
       <a class="button secondary" href="{% url 'mailing:contact_detail' message.contact.normalized_email %}">Contact</a>
+      {% if message.status == 'failed' %}
+      <form method="post" action="{% url 'mailing:transactional_message_retry' message.id %}" style="display:inline">
+        {% csrf_token %}
+        <button class="button primary" type="submit">Retry send</button>
+      </form>
+      {% endif %}
     </div>
   </div>
 

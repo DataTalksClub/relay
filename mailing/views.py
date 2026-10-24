@@ -447,6 +447,34 @@ def transactional_message_detail(request, message_id):
 
 
 @staff_member_required
+@require_POST
+def transactional_message_retry(request, message_id):
+    """Operator UI action: re-queue one failed transactional message."""
+    from mailing.services.transactional_retry import (  # noqa: PLC0415
+        TransactionalRetryError,
+        retry_transactional_message,
+    )
+
+    active_client = require_active_client(request)
+    if active_client is None:
+        return redirect("mailing:dashboard")
+    message = get_object_or_404(
+        TransactionalMessage.objects.select_related("client", "contact", "template"),
+        pk=message_id,
+        client=active_client,
+    )
+    reason = (request.POST.get("reason") or "").strip()
+    force = request.POST.get("force") == "1"
+    try:
+        retry_transactional_message(message.pk, actor=request.user, reason=reason, force=force)
+    except TransactionalRetryError as exc:
+        messages.error(request, f"Retry refused ({exc.code}): {exc}")
+        return redirect("mailing:transactional_message_detail", message_id=message.id)
+    messages.success(request, f"Message {message.id} re-queued for delivery.")
+    return redirect("mailing:transactional_message_detail", message_id=message.id)
+
+
+@staff_member_required
 @require_GET
 def inbound_list(request):
     """The receiving mailbox: a dakit list–detail split.

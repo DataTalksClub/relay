@@ -120,6 +120,11 @@ urlpatterns = [
         views.transactional_message_detail,
         name="transactional_message_detail",
     ),
+    path(
+        "transactional/messages/<int:message_id>/retry/",
+        views.transactional_message_retry,
+        name="transactional_message_retry",
+    ),
     path("t/o/<str:tracking_token>.gif", views.tracking_open, name="tracking_open"),
     path("t/c/<str:tracking_token>", views.tracking_click, name="tracking_click"),
     path("unsubscribe/<str:unsubscribe_token>", views.public_unsubscribe, name="public_unsubscribe"),

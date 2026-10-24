@@ -449,3 +449,120 @@ def schedule_action(request, schedule_id):
     except OperationConflict as exc:
         raise ApiError("confirmation_conflict", status=409, fields={"confirmation": str(exc)}) from exc
     return JsonResponse(projection("schedules", schedule))
+
+
+@admin_endpoint(["POST"])
+def transactional_retry(request, message_id):
+    from mailing.services.transactional_retry import (  # noqa: PLC0415
+        TransactionalRetryError,
+        retry_transactional_message,
+    )
+
+    data = body(request, {"reason", "force"})
+    reason = data.get("reason", "")
+    if reason not in ("", None) and not isinstance(reason, str):
+        raise ApiError("validation_error", fields={"reason": "must_be_string"})
+    force = data.get("force", False)
+    if force not in (True, False):
+        raise ApiError("validation_error", fields={"force": "must_be_boolean"})
+    try:
+        result = retry_transactional_message(
+            message_id, actor=request.admin_key.user, reason=reason or "", force=force
+        )
+    except models.TransactionalMessage.DoesNotExist as exc:
+        raise ApiError("not_found", 404) from exc
+    except TransactionalRetryError as exc:
+        raise ApiError(exc.code, exc.status_code) from exc
+    message = models.TransactionalMessage.objects.get(pk=result.message_id)
+    return JsonResponse(
+        {
+            "id": message.id,
+            "status": message.status,
+            "retry_count": result.retry_count,
+            "sender_changed": result.sender_changed,
+            "enqueued": result.enqueued,
+            "dry_run_enforced": result.dry_run_enforced,
+        }
+    )
+
+
+@admin_endpoint(["POST"])
+def transactional_bulk_retry(request):
+    from django.utils.dateparse import parse_datetime  # noqa: PLC0415
+
+    from mailing.services.transactional_retry import (  # noqa: PLC0415
+        MAX_BULK_RETRY,
+        bulk_retry_transactional_messages,
+        collect_retry_candidates,
+    )
+
+    data = body(
+        request,
+        {
+            "client", "client_id", "status", "template_key", "error_contains",
+            "created_after", "created_before", "limit", "reason", "force",
+            "dry_run", "confirm",
+        },
+    )
+    reason = data.get("reason", "")
+    if reason not in ("", None) and not isinstance(reason, str):
+        raise ApiError("validation_error", fields={"reason": "must_be_string"})
+    reason = (reason or "").strip()
+    force = data.get("force", False)
+    if force not in (True, False):
+        raise ApiError("validation_error", fields={"force": "must_be_boolean"})
+    if force and not reason:
+        raise ApiError("reason_required", 400)
+    dry_run = data.get("dry_run", False)
+    if dry_run not in (True, False):
+        raise ApiError("validation_error", fields={"dry_run": "must_be_boolean"})
+    confirm = data.get("confirm", False)
+    if confirm not in (True, False):
+        raise ApiError("validation_error", fields={"confirm": "must_be_boolean"})
+    if not dry_run and not confirm:
+        raise ApiError("confirmation_required", 400)
+    limit = data.get("limit", MAX_BULK_RETRY)
+    if not isinstance(limit, int) or not 1 <= limit <= MAX_BULK_RETRY:
+        raise ApiError("validation_error", fields={"limit": f"must_be_int_1_{MAX_BULK_RETRY}"})
+    status = data.get("status", models.TransactionalMessageStatus.FAILED)
+    if not isinstance(status, str) or status not in dict(models.TransactionalMessageStatus.choices):
+        raise ApiError("validation_error", fields={"status": "invalid_status"})
+    client = None
+    if data.get("client_id") is not None:
+        if not isinstance(data["client_id"], int):
+            raise ApiError("validation_error", fields={"client_id": "invalid_type"})
+        client = get_record(models.Client, pk=data["client_id"])
+    client_slug = data.get("client", "")
+    if client_slug not in ("", None) and not isinstance(client_slug, str):
+        raise ApiError("validation_error", fields={"client": "invalid_type"})
+    for text_field in ("template_key", "error_contains"):
+        if data.get(text_field) not in ("", None) and not isinstance(data[text_field], str):
+            raise ApiError("validation_error", fields={text_field: "invalid_type"})
+    created_after = created_before = None
+    for key in ("created_after", "created_before"):
+        if data.get(key) not in ("", None):
+            if not isinstance(data[key], str):
+                raise ApiError("validation_error", fields={key: "invalid_type"})
+            parsed = parse_datetime(data[key])
+            if parsed is None:
+                raise ApiError("validation_error", fields={key: "invalid_datetime"})
+            if key == "created_after":
+                created_after = parsed
+            else:
+                created_before = parsed
+    qs = collect_retry_candidates(
+        client=client,
+        client_slug=(client_slug or "").strip(),
+        status=status,
+        created_after=created_after,
+        created_before=created_before,
+        error_contains=(data.get("error_contains") or "").strip(),
+        template_key=(data.get("template_key") or "").strip(),
+    )
+    total = qs.count()
+    if total > MAX_BULK_RETRY and not dry_run:
+        raise ApiError("batch_too_large", 400, fields={"total": total, "max": MAX_BULK_RETRY})
+    result = bulk_retry_transactional_messages(
+        qs, actor=request.admin_key.user, reason=reason, force=force, limit=limit, dry_run=dry_run
+    )
+    return JsonResponse({"total_matching": total, **result.to_dict()})

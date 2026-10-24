@@ -45,6 +45,16 @@ urlpatterns = [
     path("workers", operations.status, {"kind": "workers"}, name="workers"),
     path("dashboard", operations.status, {"kind": "dashboard"}, name="dashboard"),
     path("dead-letters/<uuid:task_id>/retry", operations.dead_letter_retry, name="dead_letter_retry"),
+    path(
+        "transactional-messages/<int:message_id>/retry",
+        operations.transactional_retry,
+        name="transactional_retry",
+    ),
+    path(
+        "transactional-messages/retry",
+        operations.transactional_bulk_retry,
+        name="transactional_bulk_retry",
+    ),
 ]
 for resource in admin_api.RESOURCE_MODELS:
     urlpatterns += [
@@ -143,6 +153,7 @@ OPERATOR_API_PARITY = {
     "transactional_queue": "read_transactional-messages",
     "email_activity": "read_transactional-messages",
     "transactional_message_detail": "read_transactional-messages_detail",
+    "transactional_message_retry": "transactional_retry",
     "inbound_list": "read_inbound-messages",
     "inbound_message_raw": "read_inbound-messages_detail",
     "inbound_message_detail": "read_inbound-messages_detail",
