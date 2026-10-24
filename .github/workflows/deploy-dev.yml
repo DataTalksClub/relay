@@ -45,8 +45,30 @@ jobs:
       - name: Tests
         run: uv run pytest
 
+  database-preflight-test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: relay_test
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: relay_preflight_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U relay_test -d relay_preflight_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen --dev
+      - name: Concurrent migrations and restore-owner rejection on real PostgreSQL
+        env:
+          RELAY_TEST_POSTGRES_URL: postgresql://relay_test:test-only@localhost:5432/relay_preflight_test
+        run: uv run pytest tests/test_db_preflight_postgresql.py -q
+
   build-and-push:
-    needs: test
+    needs: [test, database-preflight-test]
     runs-on: ubuntu-24.04
     outputs:
       image_tag: ${{ steps.identity.outputs.version }}
@@ -108,6 +130,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Candidate database ownership and migration preflight (before rolling switch)
+        env:
+          PREFLIGHT_SSH_KEY: ${{ secrets.RELAY_PREFLIGHT_SSH_KEY }}
+          PREFLIGHT_KNOWN_HOSTS: ${{ secrets.RELAY_PREFLIGHT_KNOWN_HOSTS }}
+          PREFLIGHT_TARGET: ${{ secrets.RELAY_PREFLIGHT_TARGET }}
+          PREFLIGHT_ENVIRONMENT: development
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/run_db_preflight.sh
+
       - name: Apply Coolify DEV compose template and deploy
         env:
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
@@ -121,7 +155,7 @@ jobs:
             echo "Missing Coolify secrets: COOLIFY_URL, COOLIFY_TOKEN, COOLIFY_RELAY_DEV_SERVICE_UUID" >&2
             exit 1
           fi
-          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          python3 -c "import yaml" 2>/dev/null || uv pip install --system --quiet pyyaml
           python3 - <<'PY'
           import base64, json, os, re, urllib.request
           import yaml
