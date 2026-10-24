@@ -72,7 +72,15 @@ def html_to_text(value):
 
 
 def message_parts(message):
-    return list(message.walk()) if message.is_multipart() else [message]
+    # Attached messages are attachments, not extra body paragraphs. Do not
+    # descend into their multipart tree while summarizing this message.
+    if message.get_content_disposition() == "attachment" or message.get_filename():
+        yield message
+    elif message.is_multipart():
+        for part in message.iter_parts():
+            yield from message_parts(part)
+    else:
+        yield message
 
 
 def part_text(part):
@@ -112,18 +120,19 @@ def parse_mime(raw):
     html_parts = []
     attachments = []
     for part in message_parts(message):
-        if part.is_multipart():
-            continue
         disposition = part.get_content_disposition() or ""
         filename = part.get_filename() or ""
-        if disposition == "attachment" or filename:
+        if disposition == "attachment" or filename or (part.get("content-id") and part.get_content_maintype() != "text"):
+            payload = part.get_payload(decode=True)
+            if payload is None and part.get_content_type() == "message/rfc822":
+                payload = b"\r\n".join(child.as_bytes() for child in part.get_payload())
             attachments.append(
                 Attachment(
                     filename=filename,
                     content_type=part.get_content_type(),
                     content_id=str(part.get("content-id") or "").strip("<>"),
                     disposition=disposition or "inline",
-                    payload=part.get_payload(decode=True) or b"",
+                    payload=payload or b"",
                 )
             )
             continue

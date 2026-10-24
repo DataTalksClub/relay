@@ -84,6 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_senders.add_argument("--json", action="store_true", help="Print the raw JSON response.")
     p_senders.set_defaults(handler=cmd_senders)
 
+    routing = sub.add_parser("inbound", help="Manage domain routing with an admin API key.")
+    _add_connection_args(routing)
+    routing.add_argument("resource", choices=("domains", "mailboxes", "deliveries"))
+    routing.add_argument("--id", type=int)
+    routing.add_argument("--data-file", help="Create or patch from a JSON file; use - for stdin.")
+    routing.set_defaults(handler=cmd_inbound)
     return parser
 
 
@@ -254,3 +260,26 @@ def _prompt(label: str, default: str, *, secret: bool = False) -> str:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
+
+
+def cmd_inbound(args):
+    path = "/api/admin/inbound-" + args.resource
+    if args.id is not None:
+        path += f"/{args.id}"
+    payload = None
+    method = "GET"
+    if args.data_file:
+        if args.resource == "deliveries":
+            raise ApiError("Deliveries are read-only.")
+        try:
+            if args.data_file == "-":
+                payload = json.load(sys.stdin)
+            else:
+                with open(args.data_file) as stream:
+                    payload = json.load(stream)
+        except (OSError, ValueError):
+            raise ApiError("Could not read routing JSON.") from None
+        method = "PATCH" if args.id is not None else "POST"
+    _, result = _client(args).request(method, path, payload=payload)
+    print(json.dumps(result, indent=2))
+    return 0

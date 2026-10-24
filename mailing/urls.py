@@ -90,6 +90,7 @@ urlpatterns = [
     path("api-docs/", documentation_views.api_docs, name="api_docs"),
     path("api-docs/openapi.json", views.api_docs_json, name="api_docs_json"),
     path("api/workers/status", views.api_worker_status, name="api_worker_status"),
+    path("inbound/messages/<int:message_id>/raw/", views.inbound_message_raw, name="inbound_message_raw"),
     path("inbound/", views.inbound_list, name="inbound_list"),
     path(
         "inbound/messages/<int:message_id>/",

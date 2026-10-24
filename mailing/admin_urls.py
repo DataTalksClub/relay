@@ -1,7 +1,7 @@
 from django.urls import path
 from django.views.decorators.csrf import csrf_exempt
 
-from mailing import admin_api
+from mailing import admin_api, inbound_routing_api
 from mailing import admin_operations as operations
 from mailing.urls import urlpatterns as client_patterns
 
@@ -140,6 +140,7 @@ OPERATOR_API_PARITY = {
     "email_activity": "read_transactional-messages",
     "transactional_message_detail": "read_transactional-messages_detail",
     "inbound_list": "read_inbound-messages",
+    "inbound_message_raw": "read_inbound-messages_detail",
     "inbound_message_detail": "read_inbound-messages_detail",
     "inbound_address_list": "read_inbound-addresses",
     "inbound_address_create": "read_inbound-addresses",
@@ -177,3 +178,11 @@ OPERATOR_API_PARITY = {
     "dead_letter_list": "read_dead-letters",
     "dead_letter_retry": "dead_letter_retry",
 }
+
+urlpatterns += [
+    path("inbound-domains", inbound_routing_api.domains, name="inbound_domains"),
+    path("inbound-domains/<int:pk>", inbound_routing_api.domains, name="inbound_domain_detail"),
+    path("inbound-mailboxes", inbound_routing_api.mailboxes, name="inbound_mailboxes"),
+    path("inbound-mailboxes/<int:pk>", inbound_routing_api.mailboxes, name="inbound_mailbox_detail"),
+    path("inbound-deliveries", inbound_routing_api.deliveries, name="inbound_deliveries"),
+]

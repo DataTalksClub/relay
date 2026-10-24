@@ -1,7 +1,10 @@
 import threading
 import time
 from dataclasses import dataclass
+from email import policy
 from email.message import EmailMessage, Message
+from email.parser import BytesParser
+from email.utils import formataddr, parseaddr
 
 from django.conf import settings
 
@@ -47,12 +50,19 @@ def send_email(
     message_parts=None,
     configuration_set=None,
     calendar_alternative=None,
+    original_mime=None,
 ):
     calendar = validate_calendar_alternative(calendar_alternative, text_body, html_body, message_parts, headers)
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
     content = _Content(subject, html_body, text_body, headers, message_parts, calendar)
     raw = bool(headers or message_parts or calendar is not None)
-    parameters = _raw_parameters(envelope, content) if raw else _simple_parameters(envelope, content)
+    if original_mime is not None:
+        forwarded = _forward_message(envelope, original_mime)
+        parameters = {"Source": source, "Destinations": [to_email], "RawMessage": {"Data": forwarded.as_bytes()}}
+        _configuration(parameters, configuration_set)
+        raw = True
+    else:
+        parameters = _raw_parameters(envelope, content) if raw else _simple_parameters(envelope, content)
     ensure_transport_allowed("SES send_email")
     throttle_ses_send()
     if raw:
@@ -189,3 +199,25 @@ def throttle_ses_send():
                 time.sleep(wait_seconds)
                 now += wait_seconds
         _last_ses_send_monotonic = now
+
+
+def _forward_message(envelope, raw):
+    # Keep the original MIME tree intact, including inline parts, charsets,
+    # nested multipart, calendar data, and binary attachments.
+    message = BytesParser(policy=policy.SMTP).parsebytes(raw)
+    original_from = str(message.get("From", ""))
+    display, address = parseaddr(original_from)
+    originals = {name: str(message[name]) for name in ("Date", "Message-ID", "References", "In-Reply-To", "Subject") if message[name]}
+    for name in list(message.keys()):
+        lower = name.lower()
+        if lower in {"from", "to", "cc", "bcc", "reply-to", "sender", "return-path", "received", "authentication-results", "dkim-signature", "arc-seal", "arc-message-signature", "arc-authentication-results", "message-id", "date", "auto-submitted", "x-loop"} or lower.startswith("x-ses-"):
+            del message[name]
+    message["From"] = formataddr((f"{display or address} via {envelope.source.rpartition('@')[2]}", envelope.source))
+    message["To"] = envelope.to_email
+    message["Reply-To"] = original_from
+    message["Auto-Submitted"] = "auto-forwarded"
+    message["X-Loop"] = "relay-inbound"
+    message["X-Relay-Inbound"] = "forward"
+    for name, value in originals.items():
+        message["X-Original-" + name] = value
+    return message

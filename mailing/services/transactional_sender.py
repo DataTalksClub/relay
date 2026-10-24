@@ -56,6 +56,10 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
             client = ses_client_for_source(source)
             configuration_set = configuration_set_for_source(source)
         try:
+            forward_options = {}
+            if message.inbound_source_id:
+                from mailing.services.inbound_routing import load_forward_mime  # noqa: PLC0415
+                forward_options["original_mime"] = load_forward_mime(message)
             ses_message_id = send_email(
                 ses_client=client,
                 configuration_set=configuration_set,
@@ -70,6 +74,7 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
                 headers=message.metadata.get("headers", {}),
                 message_parts=message.metadata.get("message_parts", []),
                 calendar_alternative=message.metadata.get("calendar_alternative"),
+                **forward_options,
             )
         except ClientError as exc:
             if _is_permanent_client_error(exc):

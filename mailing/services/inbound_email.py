@@ -60,6 +60,7 @@ from mailing.models import (
     InboundMessage,
     InboundMessageState,
 )
+from mailing.services.inbound_routing import create_deliveries, match_mailboxes
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,12 @@ BLOCKED_SNIPPET_CHARS = 120
 
 def process_inbound_s3_notification(payload, *, s3=None, publisher=None):
     s3 = s3 or s3_client()
+    if payload.get("notificationType") == "Received":
+        action = payload["receipt"]["action"]
+        if action.get("type") != "S3":
+            raise ValueError("inbound receipt must store MIME in S3")
+        return [process_inbound_object(action["bucketName"], action["objectKey"], s3=s3,
+                                      recipients=payload["receipt"]["recipients"], publisher=publisher)]
     results = []
     for record in payload.get("Records", []):
         if record.get("eventSource") != "aws:s3":
@@ -84,14 +91,21 @@ def process_inbound_s3_notification(payload, *, s3=None, publisher=None):
     return results
 
 
-def process_inbound_object(bucket, key, *, s3, publisher=None):
+def process_inbound_object(bucket, key, *, s3, publisher=None, recipients=None):
     raw = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
     message = parse_mime(raw)
 
     if not message.message_id:
         raise ValueError("inbound MIME message is missing Message-ID")
 
-    recipient = match_recipient(message.recipient_addresses)
+    addresses = recipients if recipients is not None else message.recipient_addresses
+    matches = match_mailboxes(addresses)
+    if matches:
+        mailbox, address = matches[0]
+        local, _, domain = address.rpartition("@")
+        recipient = InboundAddress(local_part=local, domain=domain)
+    else:
+        recipient = match_recipient(addresses)
     if recipient is None:
         logger.info("inbound message %s matched no Relay address; discarded", message.message_id)
         return {"discarded": "no_matching_address", "message_id": message.message_id}
@@ -101,15 +115,19 @@ def process_inbound_object(bucket, key, *, s3, publisher=None):
         return file_blocked(message, blocked, bucket=bucket, key=key, size_bytes=len(raw))
 
     try:
-        stored = file_message(message, bucket=bucket, key=key, size_bytes=len(raw), s3=s3, recipient=recipient)
+        with transaction.atomic():
+            stored = file_message(message, bucket=bucket, key=key, size_bytes=len(raw), s3=s3, recipient=recipient)
+            create_deliveries(stored, message, raw, matches)
     except IntegrityError:
         # The same message delivered twice. The old path signalled this with a
         # DynamoDB conditional write; the unique constraint says the same thing
         # and cannot half-succeed, because it is in the same transaction.
+        if not InboundMessage.objects.filter(message_id=message.message_id).exists():
+            raise
         logger.info("inbound message %s was already filed; treating as replay", message.message_id)
         return {"message_id": message.message_id, "replay": True}
 
-    if stored.state == InboundMessageState.RECEIVED and settings.INBOUND_EMAIL_EVENTS_TOPIC_ARN:
+    if not matches and stored.state == InboundMessageState.RECEIVED and settings.INBOUND_EMAIL_EVENTS_TOPIC_ARN:
         publish_event(publisher, stored, recipient)
 
     return {

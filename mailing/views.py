@@ -202,7 +202,10 @@ from mailing.setup_views import client_setup_context
 
 
 def health(request):
-    return JsonResponse({"status": "ok", "service": "relay"})
+    from mailing.services.inbound_routing import routing_health  # noqa: PLC0415
+    routing = routing_health()
+    return JsonResponse({"status": "fail" if routing["status"] == "FAIL" else "ok", "service": "relay",
+                         "inbound_routing": routing}, status=503 if routing["status"] == "FAIL" else 200)
 
 
 def readiness(request):
@@ -2461,3 +2464,15 @@ def ses_webhook(request):
         },
         status=200,
     )
+
+
+@staff_member_required
+def inbound_message_raw(request, message_id):
+    from mailing.aws import s3_client  # noqa: PLC0415
+    message = get_object_or_404(InboundMessage, pk=message_id)
+    raw = s3_client().get_object(Bucket=message.raw_bucket, Key=message.raw_key)["Body"].read()
+    response = HttpResponse(raw, content_type="message/rfc822")
+    response["Content-Disposition"] = f'attachment; filename="message-{message.pk}.eml"'
+    response["Cache-Control"] = "no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response

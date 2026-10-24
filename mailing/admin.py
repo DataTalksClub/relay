@@ -419,3 +419,41 @@ class BlockedSenderAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
     list_filter = ("scope", "origin")
     search_fields = ("value", "reason")
     autocomplete_fields = ("origin_message",)
+
+
+from mailing.models import InboundDelivery, InboundDomain, InboundMailbox  # noqa: E402
+from mailing.services.operator_management import audit as routing_audit  # noqa: E402
+
+
+class RoutingAdmin(admin.ModelAdmin):
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        routing_audit(request.user, "inbound_routing.update" if change else "inbound_routing.create", obj,
+                      {"fields": sorted(form.changed_data)})
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(InboundDomain)
+class InboundDomainAdmin(RoutingAdmin):
+    list_display = ("name", "client", "from_email", "enabled")
+
+
+@admin.register(InboundMailbox)
+class InboundMailboxAdmin(RoutingAdmin):
+    list_display = ("local_part", "domain", "kind", "enabled")
+    list_filter = ("domain", "kind", "enabled")
+
+
+@admin.register(InboundDelivery)
+class InboundDeliveryAdmin(admin.ModelAdmin):
+    list_display = ("id", "message", "mailbox", "status", "reason", "attempt_count", "response_status", "outbound_message")
+    readonly_fields = tuple(field.name for field in InboundDelivery._meta.fields)
+    list_filter = ("status", "mailbox")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
