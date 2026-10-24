@@ -229,14 +229,27 @@ jobs:
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_PROD_SERVICE_UUID }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.select.outputs.image_tag }}
         run: |
           set -euo pipefail
+          # Root-cause fix: the aggregate service `status` stays
+          # `running:unknown` because only `web` defines a healthcheck, so
+          # gating on `status == "running:healthy"` always burned ~8 min.
+          # Gate on per-application state instead (CMP t658u pattern): every
+          # app on the pinned image and `running*`, fail fast on
+          # exited/dead/unhealthy, then require /health/ready.
           python3 - <<'PY'
-          import json, os, time, urllib.request
+          import json, os, sys, time, urllib.request
 
           base = os.environ["COOLIFY_URL"].rstrip("/")
           token = os.environ["COOLIFY_TOKEN"]
           uuid = os.environ["COOLIFY_SERVICE_UUID"]
+          want = f"{os.environ['IMAGE_REF']}:{os.environ['IMAGE_TAG']}"
+          FATAL = ("unhealthy", "exited", "dead", "failed")
+          deadline = time.time() + 300  # 5 min for pull + boot; success breaks out in seconds
+          start = time.time()
+          last = ""
 
           def call(method, path, payload=None):
               data = None if payload is None else json.dumps(payload).encode()
@@ -250,25 +263,66 @@ jobs:
                       "Content-Type": "application/json",
                   },
               )
-              with urllib.request.urlopen(req) as resp:
+              with urllib.request.urlopen(req, timeout=30) as resp:
                   body = resp.read()
                   return resp.status, (json.loads(body) if body else {})
 
-          status = None
-          for _ in range(96):  # ~8 minutes
-              _st, svc = call("GET", f"/api/v1/services/{uuid}")
-              status = svc.get("status")
-              print(f"coolify service status: {status}", flush=True)
-              if status == "running:healthy":
+          def evaluate(apps):
+              problems = []
+              fatal = False
+              for app in apps or []:
+                  name = app.get("name") or app.get("service") or "?"
+                  image = str(app.get("image", "") or "")
+                  status = str(app.get("status", "") or "")
+                  lowered = status.lower()
+                  if image != want:
+                      problems.append(f"{name}: image {image!r} != {want!r}")
+                  if not status.startswith("running"):
+                      problems.append(f"{name}: status {status!r} not running")
+                  if any(t in lowered for t in FATAL):
+                      problems.append(f"{name}: fatal status {status!r}")
+                      fatal = True
+              if problems:
+                  return False, "; ".join(problems), fatal
+              return True, f"all {len(apps)} apps on {want} and running", False
+
+          ready = False
+          while time.time() < deadline:
+              try:
+                  _st, svc = call("GET", f"/api/v1/services/{uuid}")
+              except Exception as e:
+                  last = f"transient fetch error: {type(e).__name__}: {e}"
+                  print(f"coolify verify: {last}", flush=True)
+                  time.sleep(5)
+                  continue
+              agg = svc.get("status")
+              apps = svc.get("applications") or []
+              summary = "; ".join(
+                  f"{a.get('name') or '?'}={a.get('image')}:{a.get('status')}" for a in apps
+              ) or "<no applications>"
+              ok, reason, fatal = evaluate(apps)
+              last = f"aggregate={agg} apps=[{summary}] -> {reason}"
+              print(f"coolify verify: {last}", flush=True)
+              if fatal:
+                  print(f"::error::Coolify deploy failed fast: {reason}", flush=True)
+                  sys.exit(1)
+              if ok:
+                  ready = True
                   break
               time.sleep(5)
-          print(f"final coolify service status: {status}")
+          elapsed = int(time.time() - start)
+          print(f"coolify verify done ready={ready} elapsed_s={elapsed} last={last}")
+          if not ready:
+              print(f"::error::Timed out waiting for {want} (last: {last})", flush=True)
+              sys.exit(1)
           PY
-          for _ in $(seq 1 30); do
+          for i in $(seq 1 12); do
             if curl --fail --silent --show-error https://relay.datatalks.club/health/ready; then
               echo; echo "prod web health OK"; exit 0
             fi
-            sleep 10
+            if [ "$i" -eq 12 ]; then
+              echo "prod web health check FAILED (routing broken by this change?)" >&2
+              exit 1
+            fi
+            sleep 5
           done
-          echo "prod web health check FAILED (routing broken by this change?)" >&2
-          exit 1
