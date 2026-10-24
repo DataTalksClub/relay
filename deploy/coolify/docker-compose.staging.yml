@@ -57,6 +57,9 @@ services:
       start_period: 40s
     expose:
       - "8000"
+    # Preserve the existing production routing managed outside this compose.
+    labels:
+      traefik.enable: "false"
 
   worker:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
