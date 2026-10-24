@@ -1344,6 +1344,9 @@ class TransactionalRequestMinute(models.Model):
     minute = models.DateTimeField(db_index=True)
     total = models.PositiveIntegerField(default=0)
     errors = models.PositiveIntegerField(default=0)
+    # HTTP 5xx subset of errors. 4xx are client-side (bad input, bad key);
+    # 5xx are Relay-side and page at low volume, 4xx only as a flood.
+    server_errors = models.PositiveIntegerField(default=0)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["client", "minute"], name="tx_request_client_minute_unique")]

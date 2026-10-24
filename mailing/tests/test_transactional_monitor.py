@@ -81,14 +81,58 @@ def test_new_client_and_low_baseline_never_page(client_record):
 def test_error_threshold_not_silenced_at_night_and_expires(client_record, settings):
     now = datetime(2026, 10, 24, 0, tzinfo=UTC)
     settings.RELAY_TRANSACTIONAL_MONITOR_CLIENTS = {str(client_record.pk): {"quiet_hours": list(range(24))}}
-    row = TransactionalRequestMinute.objects.create(client=client_record, minute=now, total=10, errors=2)
+    row = TransactionalRequestMinute.objects.create(
+        client=client_record, minute=now, total=10, errors=2, server_errors=2)
     assert monitor.client_alerts(client_record, now)[0]["kind"] == "api_errors"
-    row.errors = 1
+    row.server_errors = 1
+    row.errors = 2
     row.save()
     assert monitor.client_alerts(client_record, now) == []
     row.errors = 10
+    row.server_errors = 10
     row.save()
     assert monitor.client_alerts(client_record, now + timedelta(minutes=15)) == []
+
+
+def test_single_4xx_probe_at_low_volume_does_not_page(client_record):
+    # Replay of 2026-10-24 14:18-14:33 UTC for client 2: one 401 auth probe
+    # among 5 requests paged before the 4xx/5xx split and must stay silent now.
+    now = datetime(2026, 10, 24, 14, 33, tzinfo=UTC)
+    TransactionalRequestMinute.objects.create(
+        client=client_record, minute=datetime(2026, 10, 24, 14, 21, tzinfo=UTC),
+        total=1, errors=0, server_errors=0)
+    TransactionalRequestMinute.objects.create(
+        client=client_record, minute=datetime(2026, 10, 24, 14, 22, tzinfo=UTC),
+        total=3, errors=1, server_errors=0)
+    TransactionalRequestMinute.objects.create(
+        client=client_record, minute=datetime(2026, 10, 24, 14, 32, tzinfo=UTC),
+        total=1, errors=0, server_errors=0)
+    assert monitor.client_alerts(client_record, now) == []
+
+
+def test_single_500_pages_at_low_volume(client_record):
+    now = datetime(2026, 10, 24, 12, tzinfo=UTC)
+    TransactionalRequestMinute.objects.create(
+        client=client_record, minute=now, total=5, errors=1, server_errors=1)
+    alerts = monitor.client_alerts(client_record, now)
+    assert alerts[0]["kind"] == "api_errors"
+    assert alerts[0]["server_errors"] == 1
+
+
+def test_4xx_flood_at_volume_pages(client_record):
+    now = datetime(2026, 10, 24, 12, tzinfo=UTC)
+    TransactionalRequestMinute.objects.create(
+        client=client_record, minute=now, total=20, errors=5, server_errors=0)
+    assert monitor.client_alerts(client_record, now)[0]["kind"] == "api_errors"
+
+
+def test_full_4xx_at_low_volume_does_not_page(client_record):
+    # Even 100% 4xx stays silent below the flood volume: a total stoppage with
+    # zero acceptances is covered by the acceptance-gap check instead.
+    now = datetime(2026, 10, 24, 12, tzinfo=UTC)
+    TransactionalRequestMinute.objects.create(
+        client=client_record, minute=now, total=10, errors=10, server_errors=0)
+    assert monitor.client_alerts(client_record, now) == []
 
 
 def test_persisted_repeat_limit_and_delivery_failure_retry(client_record):
@@ -110,6 +154,7 @@ def test_api_metrics_include_auth_failures_without_storing_token(client_record, 
     assert response.status_code == status
     metric = TransactionalRequestMinute.objects.get(client=client_record)
     assert (metric.total, metric.errors) == (1, int(status >= 400))
+    assert metric.server_errors == int(status >= 500)
     assert raw not in str(metric.__dict__)
 
 

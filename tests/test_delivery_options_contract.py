@@ -230,6 +230,7 @@ def test_invalid_native_api_options_have_zero_effects(boundary, client, monkeypa
     assert database_counts() == before and queued == []
     metric = TransactionalRequestMinute.objects.get(client=boundary[0])
     assert (metric.total, metric.errors) == (1, 1)
+    assert metric.server_errors == 0
 
 
 def selected_options():

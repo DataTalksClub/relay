@@ -23,7 +23,7 @@ _last_check = None
 def policy_for(client_id):
     return {
         "min_daily": 10, "timezone": "Europe/Berlin", "quiet_hours": [],
-        "error_percent": 20, "min_requests": 5,
+        "error_percent": 20, "min_requests": 5, "min_requests_4xx": 20,
         **settings.RELAY_TRANSACTIONAL_MONITOR_CLIENTS.get(str(client_id), {}),
     }
 
@@ -50,11 +50,22 @@ def client_alerts(client, now):
                        "baseline_count": baseline, "gap_minutes": int((now - latest).total_seconds() / 60)})
     counts = TransactionalRequestMinute.objects.filter(
         client=client, minute__gt=now - timedelta(minutes=15), minute__lte=now,
-    ).aggregate(total=Sum("total"), errors=Sum("errors"))
+    ).aggregate(total=Sum("total"), errors=Sum("errors"), server_errors=Sum("server_errors"))
     total, errors = counts["total"] or 0, counts["errors"] or 0
-    if total >= max(1, policy["min_requests"]) and errors * 100 >= total * policy["error_percent"]:
+    server_errors = counts["server_errors"] or 0
+    client_errors = errors - server_errors
+    # Relay-side 5xx page at low volume: a real outage must never be muted.
+    server_alarm = (total >= max(1, policy["min_requests"])
+                    and server_errors * 100 >= total * policy["error_percent"])
+    # Client-side 4xx (bad input, bad key, operator probes) page only as a
+    # flood at meaningful volume. A total 4xx stoppage with zero acceptances
+    # is still covered by the acceptance-gap check above.
+    client_alarm = (total >= max(1, policy["min_requests_4xx"])
+                    and client_errors * 100 >= total * policy["error_percent"])
+    if server_alarm or client_alarm:
         alerts.append({"kind": "api_errors", "client_id": client.pk,
-                       "requests": total, "errors": errors, "error_percent": round(errors * 100 / total, 1)})
+                       "requests": total, "errors": errors, "server_errors": server_errors,
+                       "error_percent": round(errors * 100 / total, 1)})
     return alerts
 
 

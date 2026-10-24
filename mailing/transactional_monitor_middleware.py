@@ -30,7 +30,8 @@ class TransactionalMonitorMiddleware:
                 row, _ = TransactionalRequestMinute.objects.get_or_create(
                     client_id=client_id, minute=timezone.now().replace(second=0, microsecond=0))
                 TransactionalRequestMinute.objects.filter(pk=row.pk).update(
-                    total=F("total") + 1, errors=F("errors") + int(response.status_code >= 400))
+                    total=F("total") + 1, errors=F("errors") + int(response.status_code >= 400),
+                    server_errors=F("server_errors") + int(response.status_code >= 500))
         except Exception as exc:
             logger.error("relay_transactional_api_metric_failed error_type=%s", type(exc).__name__)
         return response

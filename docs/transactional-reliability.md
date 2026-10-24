@@ -53,13 +53,20 @@ full active hour has elapsed. With a healthy scheduler, detection is at the
 60-minute threshold plus at most one 15-second scheduler tick.
 
 `RELAY_TRANSACTIONAL_MONITOR_CLIENTS` is JSON keyed by numeric client ID, e.g.
-`{"2":{"min_daily":10,"timezone":"Europe/Berlin","quiet_hours":[0,1,2,3,4,5],"error_percent":20,"min_requests":5}}`.
-Use `enabled:false` for a client to disable its checks. The default error check
-pages at >=20% HTTP 4xx/5xx over the last 15 minutes with at least 5 requests,
-including at night. Minute counters expire after a day. The boundary minute is
-excluded, giving up to one minute of rounding at the start of that window.
+`{"2":{"min_daily":10,"timezone":"Europe/Berlin","quiet_hours":[0,1,2,3,4,5],"error_percent":20,"min_requests":5,"min_requests_4xx":20}}`.
+Use `enabled:false` for a client to disable its checks. Relay-side HTTP 5xx page
+at >=20% over the last 15 minutes with at least 5 requests, including at night,
+so a real server outage is never muted. Client-side HTTP 4xx (bad input, bad or
+revoked key, operator auth probes) page only as a flood: >=20% 4xx with at
+least 20 requests in 15 minutes. A single 4xx probe at low traffic does not
+page (2026-10-24: one 401 probe among 5 requests for client 2 paged before this
+split and would stay silent now). A total 4xx stoppage with zero acceptances is
+still covered by the acceptance-gap check. Minute counters expire after a day.
+The boundary minute is excluded, giving up to one minute of rounding at the
+start of that window.
 
-The middleware stores only client ID, minute, total and error counts. It uses
+The middleware stores only client ID, minute, total, error and server-error (5xx)
+counts. It uses
 the authenticated client or, on authentication failure, the key's public ID as
 an attribution hint (including revoked keys). An unknown/missing key cannot be
 assigned to a client. Public-ID attribution is not proof of caller identity.
