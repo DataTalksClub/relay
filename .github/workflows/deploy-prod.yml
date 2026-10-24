@@ -82,7 +82,7 @@ jobs:
           : > .tmp/promotion/tags.txt
           while read -r run_id head_sha; do
             rm -rf .tmp/promotion/candidate && mkdir -p .tmp/promotion/candidate
-            if gh run download "$run_id" -n dev-release -D .tmp/promotion/candidate >/dev/null 2>&1; then
+            if gh run download "$run_id" --repo "$GITHUB_REPOSITORY" -n dev-release -D .tmp/promotion/candidate >/dev/null 2>&1; then
               tag="$(jq -er '.image_tag' .tmp/promotion/candidate/dev-release.json)"
               sha="$(jq -er '.source_sha' .tmp/promotion/candidate/dev-release.json)"
               if [[ "$sha" == "$head_sha" ]] && jq -e 'keys == ["dev_run_id","image_tag","source_sha"]' .tmp/promotion/candidate/dev-release.json >/dev/null; then
