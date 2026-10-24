@@ -80,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="id=email",
         help="Define a sender, e.g. --set 'results=Agent <agent@example.com>'. Repeatable.",
     )
+    p_senders.add_argument("--delete", action="append", default=[], help="Remove a sender id.")
     p_senders.add_argument("--default", dest="default_sender", help="Sender id to use as the default.")
     p_senders.add_argument("--json", action="store_true", help="Print the raw JSON response.")
     p_senders.set_defaults(handler=cmd_senders)
@@ -90,6 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
     routing.add_argument("--id", type=int)
     routing.add_argument("--data-file", help="Create or patch from a JSON file; use - for stdin.")
     routing.set_defaults(handler=cmd_inbound)
+    domains = sub.add_parser("domains", help="Manage sending domains through Relay.")
+    _add_connection_args(domains)
+    domains.add_argument("--admin", action="store_true", help="Use an admin key to authorize domains and provider routes.")
+    domains.add_argument("--id", type=int)
+    domains.add_argument("--data-file", help="Register/update a domain from JSON; - reads stdin.")
+    domains.add_argument("--verify", action="store_true")
+    domains.add_argument("--delete", action="store_true", help="Disable a domain.")
+    domains.set_defaults(handler=cmd_domains)
     return parser
 
 
@@ -203,23 +212,23 @@ def cmd_whoami(args) -> int:
 
 def cmd_senders(args) -> int:
     client = _client(args)
-    if not args.set_senders and not args.default_sender:
-        result = client.get_senders()
-        return _print_senders(result, args.json)
-
-    senders = []
+    if not args.set_senders and not args.default_sender and not args.delete:
+        return _print_senders(client.get_senders(), args.json)
+    current = client.get_senders()
+    senders = {item['id']: item for item in current.get('senders', [])}
     for item in args.set_senders or []:
         sender_id, sep, email = item.partition("=")
         if not sep or not sender_id.strip() or not email.strip():
-            raise ApiError(f"Invalid --set value {item!r}. Use the form id=email.")
-        senders.append({"id": sender_id.strip(), "email": email.strip()})
-
-    if not senders:
-        raise ApiError("Pass at least one --set id=email to update senders.")
-
-    payload = {"senders": senders}
-    payload["default_sender_id"] = args.default_sender or senders[0]["id"]
-    result = client.set_senders(payload)
+            raise ApiError("Use --set id=email.")
+        senders[sender_id.strip()] = {"id": sender_id.strip(), "email": email.strip()}
+    for sender_id in args.delete:
+        if sender_id not in senders:
+            raise ApiError(f"Unknown sender: {sender_id}")
+        del senders[sender_id]
+    default = args.default_sender or current.get('default_sender_id') or next(iter(senders), '')
+    if default not in senders:
+        raise ApiError("Select a remaining sender with --default before deleting the default.")
+    result = client.set_senders({'senders': list(senders.values()), 'default_sender_id': default})
     return _print_senders(result, args.json)
 
 
@@ -280,6 +289,36 @@ def cmd_inbound(args):
         except (OSError, ValueError):
             raise ApiError("Could not read routing JSON.") from None
         method = "PATCH" if args.id is not None else "POST"
+    _, result = _client(args).request(method, path, payload=payload)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_domains(args):
+    if not args.admin and (args.id or args.data_file or args.verify or args.delete):
+        raise ApiError("Domain authorization requires --admin and an admin API key.")
+    if args.verify and args.delete or args.data_file and (args.verify or args.delete):
+        raise ApiError("Choose one domain action.")
+    path = '/api/admin/sending-domains' if args.admin else '/api/client/sending-domains'
+    if args.id:
+        path += f'/{args.id}'
+    method, payload = 'GET', None
+    if args.verify or args.delete:
+        if not args.id:
+            raise ApiError('--id is required.')
+        method = 'POST' if args.verify else 'DELETE'
+        if args.verify:
+            path += '/verify'
+    if args.data_file:
+        try:
+            if args.data_file == '-':
+                payload = json.load(sys.stdin)
+            else:
+                with open(args.data_file) as stream:
+                    payload = json.load(stream)
+        except (OSError, ValueError):
+            raise ApiError('Could not read domain JSON.') from None
+        method = 'PATCH' if args.id else 'POST'
     _, result = _client(args).request(method, path, payload=payload)
     print(json.dumps(result, indent=2))
     return 0

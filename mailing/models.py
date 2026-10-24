@@ -1322,3 +1322,4 @@ class TransactionalMonitorState(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["client", "kind"], name="tx_monitor_client_kind_unique")]
+from mailing.sending_domain_models import SendingDomain  # noqa: E402,F401

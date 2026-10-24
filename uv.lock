@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-10-08T08:40:30.232903778Z"
+exclude-newer = "2026-10-17T13:36:31.448589042Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -240,6 +240,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f4/25/bc21ad4a610634f0a66f4faea4522eed26b55dbd50c4ac853128d24091d3/django_tasks_db-0.12.0.tar.gz", hash = "sha256:314d486b8c1786705b4afaf03dadaf0b1b104163acce9c5d9c9bb2aef205c501", size = 26724, upload-time = "2026-02-06T16:54:33.021Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/09/1c/e14198615e22df28b333540f2e506d6ddef7aff16d510818e94ebc01440c/django_tasks_db-0.12.0-py3-none-any.whl", hash = "sha256:69e3a1edcbf1efeeb1268da465e8ea5296ddd80834719769acc719b82da2d62e", size = 28832, upload-time = "2026-02-06T16:54:31.564Z" },
+]
+
+[[package]]
+name = "dnspython"
+version = "2.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/4a/50822184bd67cc6493f0fb6a880749158fcd31ab3fa07409acfd91f9fc85/dnspython-2.9.0.tar.gz", hash = "sha256:b44dc6b18f07a8b1c56676a19fbfdb5209415b046a9cece286baafa87ff3f7f1", size = 423560, upload-time = "2026-10-09T00:07:24.352Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/02/cdcc9b7c051786a103c3b09e1003a82fa0c66bcb91ffbdabcfbf7b4163b9/dnspython-2.9.0-py3-none-any.whl", hash = "sha256:9a4aedb833c3c1b49214d04d44d3032ab7a9135f7c1d29a549b4ff78fd82fda9", size = 354822, upload-time = "2026-10-09T00:07:22.622Z" },
 ]
 
 [[package]]
@@ -583,6 +592,7 @@ dependencies = [
     { name = "dj-database-url" },
     { name = "django" },
     { name = "django-tasks-db" },
+    { name = "dnspython" },
     { name = "gunicorn" },
     { name = "markdown" },
     { name = "psycopg2-binary" },
@@ -610,6 +620,7 @@ requires-dist = [
     { name = "dj-database-url", specifier = ">=3.0.0" },
     { name = "django", specifier = ">=6.0.0,<7.0.0" },
     { name = "django-tasks-db", specifier = ">=0.12.0" },
+    { name = "dnspython", specifier = ">=2.9.0" },
     { name = "gunicorn", specifier = ">=23.0.0" },
     { name = "markdown", specifier = ">=3.6" },
     { name = "psycopg2-binary", specifier = ">=2.9.11" },

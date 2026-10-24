@@ -20,10 +20,14 @@ from mailing.models import (
     MailchimpSync,
     MailchimpTagMapping,
     Organization,
+    SendingDomain,
     Subscription,
     Tag,
     TransactionalMessage,
 )
+from mailing.services.api import validate_sender_policy_payload
+from mailing.services.api_errors import ApiValidationError
+from mailing.services.sending_domains import refresh, validate_sender_domains
 
 
 class CreatedAtReadOnlyMixin:
@@ -45,8 +49,23 @@ class AudienceAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
     prepopulated_fields = {"slug": ("name",)}
 
 
+class ClientSenderAdminForm(forms.ModelForm):
+    def clean(self):
+        cleaned = super().clean()
+        org = cleaned.get('organization')
+        if org and cleaned.get('sender_emails'):
+            try:
+                policy = validate_sender_policy_payload({'senders': cleaned.get('sender_emails'), 'default_sender_id': cleaned.get('default_sender_id')})
+                validate_sender_domains(Client(pk=self.instance.pk, organization=org),
+                    policy['sender_emails'], previous=(self.instance.sender_emails or []) if org.pk == self.instance.organization_id else [])
+            except ApiValidationError as exc:
+                self.add_error('sender_emails', str(exc.errors))
+        return cleaned
+
+
 @admin.register(Client)
 class ClientAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
+    form = ClientSenderAdminForm
     readonly_fields = ("created_at", "updated_at")
     list_display = ("name", "slug", "organization", "default_sender_id", "is_active", "created_at")
     list_filter = ("organization", "is_active")
@@ -457,3 +476,31 @@ class InboundDeliveryAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+class SendingDomainAdminForm(forms.ModelForm):
+    def clean(self):
+        cleaned = super().clean()
+        organization = cleaned.get('organization')
+        clients = cleaned.get('clients')
+        if organization and clients is not None and clients.exclude(organization=organization).exists():
+            self.add_error('clients', 'All clients must belong to the selected organization.')
+        return cleaned
+
+
+@admin.register(SendingDomain)
+class SendingDomainAdmin(admin.ModelAdmin):
+    form = SendingDomainAdminForm
+    list_display = ('name', 'organization', 'region', 'enabled', 'checked_at')
+    readonly_fields = ('verification', 'checked_at')
+    filter_horizontal = ('clients',)
+    actions = ('verify_domains',)
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        refresh(obj, register=True)
+
+    @admin.action(description='Refresh provider verification')
+    def verify_domains(self, request, queryset):
+        for row in queryset:
+            refresh(row)

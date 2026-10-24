@@ -8,6 +8,8 @@ from django.utils import timezone
 from mailing import aws
 from mailing.ses_routes import configuration_set_for_source, parse_ses_domain_routes
 
+pytestmark = pytest.mark.django_db
+
 SANDBOX_ROLE = "arn:aws:iam::817685572750:role/relay-sandbox-email-send"
 ROUTES = (
     "dtcdev.click role="

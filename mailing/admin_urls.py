@@ -1,7 +1,7 @@
 from django.urls import path
 from django.views.decorators.csrf import csrf_exempt
 
-from mailing import admin_api, inbound_routing_api
+from mailing import admin_api, inbound_routing_api, sending_domains_api
 from mailing import admin_operations as operations
 from mailing.urls import urlpatterns as client_patterns
 
@@ -185,4 +185,10 @@ urlpatterns += [
     path("inbound-mailboxes", inbound_routing_api.mailboxes, name="inbound_mailboxes"),
     path("inbound-mailboxes/<int:pk>", inbound_routing_api.mailboxes, name="inbound_mailbox_detail"),
     path("inbound-deliveries", inbound_routing_api.deliveries, name="inbound_deliveries"),
+]
+
+urlpatterns += [
+    path("sending-domains", sending_domains_api.domains, name="sending_domains"),
+    path("sending-domains/<int:pk>", sending_domains_api.domains, name="sending_domain_detail"),
+    path("sending-domains/<int:pk>/verify", sending_domains_api.verify, name="sending_domain_verify"),
 ]

@@ -22,7 +22,9 @@ from mailing.models import (
     SubscriptionStatus,
     Tag,
 )
+from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_composer import EDITOR_METADATA_KEY, parse_blocks, render_blocks
+from mailing.services.sending_domains import validate_sender_domains
 
 
 class OperatorForm:
@@ -418,6 +420,12 @@ class ClientForm(OperatorForm, forms.ModelForm):
                 self.add_error("slug", "Client slug must be unique within this organization.")
         sender_emails = cleaned.get("sender_emails") or []
         default_sender_id = cleaned.get("default_sender_id")
+        if organization and sender_emails:
+            scoped_client = Client(pk=self.instance.pk, organization=organization)
+            try:
+                validate_sender_domains(scoped_client, sender_emails, previous=(self.instance.sender_emails or []) if organization.pk == self.instance.organization_id else [])
+            except ApiValidationError as exc:
+                self.add_error("sender_emails", exc.errors.get("senders", "Invalid sending domain."))
         sender_ids = {sender["id"] for sender in sender_emails}
         if sender_emails and not default_sender_id:
             cleaned["default_sender_id"] = sender_emails[0]["id"]

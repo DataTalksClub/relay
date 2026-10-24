@@ -4,7 +4,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.text import slugify
 
-from mailing.models import Client, Contact, EmailTemplate, Organization, TransactionalMessage
+from mailing.models import Client, Contact, EmailTemplate, Organization, SendingDomain, TransactionalMessage
 from mailing.services.api_docs import build_openapi_spec, workflow_examples
 from mailing.setup_views import SenderRowsClientForm, client_setup_context
 
@@ -12,8 +12,12 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def setup_client():
+def setup_client(monkeypatch):
     org = Organization.objects.create(name="Example", slug="example")
+    SendingDomain.objects.create(name="example.com", organization=org,
+        role_arn="arn:aws:iam::817685572750:role/test", region="us-east-1", configuration_set="test")
+    monkeypatch.setattr("mailing.services.sending_domains.refresh", lambda row: {
+        "route_status": "available", "verified": True, "dkim_status": "SUCCESS"})
     return Client.objects.create(organization=org, name="App", slug="app")
 
 

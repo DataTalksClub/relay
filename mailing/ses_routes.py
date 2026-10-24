@@ -11,6 +11,8 @@ from email.utils import parseaddr
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
+from mailing.models import SendingDomain
+
 
 @dataclass(frozen=True)
 class SesRoute:
@@ -48,7 +50,13 @@ def domain_of(source):
 
 
 def route_for_source(source):
-    return parse_ses_domain_routes(settings.RELAY_SES_DOMAIN_ROUTES).get(domain_of(source))
+    domain = domain_of(source)
+    row = SendingDomain.objects.filter(name=domain).first()
+    if row is not None:
+        if not row.enabled:
+            raise ImproperlyConfigured(f"Sending domain {domain} is disabled.")
+        return SesRoute(row.role_arn, row.region, row.configuration_set)
+    return parse_ses_domain_routes(settings.RELAY_SES_DOMAIN_ROUTES).get(domain)
 
 
 def configuration_set_for_source(source):

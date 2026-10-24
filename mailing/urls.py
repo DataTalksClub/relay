@@ -7,6 +7,7 @@ from mailing import (
     contact_ui_views,
     documentation_views,
     ops_views,
+    sending_domains_api,
     setup_views,
     template_ui_views,
     transactional_campaign_views,
@@ -17,6 +18,7 @@ from mailing import (
 app_name = "mailing"
 
 urlpatterns = [
+    path("api/client/sending-domains", sending_domains_api.client_domains, name="api_client_sending_domains"),
     path("api-docs/workflows/<slug:workflow>/", documentation_views.api_docs_workflow, name="api_docs_workflow"),
     path("api-docs/reference/", documentation_views.api_docs_reference, name="api_docs_reference"),
     path("api-docs/legacy/", documentation_views.api_docs_legacy, name="api_docs_legacy"),

@@ -27,6 +27,7 @@ from mailing.models import (
     Organization,
     RecipientList,
     RecipientListMember,
+    SendingDomain,
     Subscription,
     SubscriptionStatus,
     TransactionalCampaign,
@@ -1253,6 +1254,10 @@ def test_transactional_send_uses_configured_display_sender(client, api_client_re
 
 
 def test_client_sender_api_gets_and_updates_authenticated_client(client, api_client_record, template, monkeypatch):
+    SendingDomain.objects.create(name="dtcdev.click", organization=api_client_record.organization,
+        role_arn="arn:aws:iam::817685572750:role/test", region="us-east-1", configuration_set="test")
+    monkeypatch.setattr("mailing.services.sending_domains.refresh", lambda row: {
+        "route_status": "available", "verified": True, "dkim_status": "SUCCESS"})
     get_response = client.get(reverse("mailing:api_client_senders"), **auth_headers())
 
     assert get_response.status_code == 200

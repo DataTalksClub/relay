@@ -56,6 +56,7 @@ from mailing.services.contacts import (
     unsubscribe_contact,
     upsert_contact,
 )
+from mailing.services.sending_domains import validate_sender_domains
 
 
 @dataclass(frozen=True)
@@ -579,6 +580,7 @@ def retry_campaign_recipient_for_client(external_key, recipient_id, data, authen
 @transaction.atomic
 def update_client_sender_policy_for_client(data, authenticated_client):
     updates = validate_sender_policy_payload(data)
+    validate_sender_domains(authenticated_client, updates["sender_emails"], previous=authenticated_client.sender_emails)
     authenticated_client.default_sender_id = updates["default_sender_id"]
     authenticated_client.sender_emails = updates["sender_emails"]
     authenticated_client.save(update_fields=["default_sender_id", "sender_emails", "updated_at"])
