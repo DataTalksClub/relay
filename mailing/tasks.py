@@ -10,8 +10,11 @@ settings.
 """
 
 import logging
+from datetime import timedelta
 
+from django.conf import settings
 from django.tasks import task
+from django.utils import timezone
 
 import taskdeck
 from mailing.queue_contracts import (
@@ -43,7 +46,7 @@ def _summarise(value, to_dict):
 
 
 @task()
-def send_transactional_email(payload):
+def send_transactional_email(payload, *, attempt=1):
     """Render and send one transactional message."""
     validate_transactional_email_message(payload)
 
@@ -54,7 +57,29 @@ def send_transactional_email(payload):
     if message_id:
         taskdeck.set_entity("transactional_message", message_id)
 
-    message = send_transactional_email_from_queue(payload)
+    try:
+        message = send_transactional_email_from_queue(payload)
+    except Exception as exc:
+        # django-tasks-db records FAILED tasks but does not retry them. Queue
+        # a separate delayed attempt, retaining the original failure in the
+        # task history. The service's persisted claim/terminal checks remain
+        # the authority on whether SES may be called again.
+        if attempt < settings.RELAY_TRANSACTIONAL_MAX_ATTEMPTS:
+            delay = min(
+                settings.RELAY_TRANSACTIONAL_RETRY_BASE_SECONDS * 2 ** (attempt - 1),
+                settings.RELAY_TRANSACTIONAL_RETRY_MAX_SECONDS,
+            )
+            result = send_transactional_email.using(
+                run_after=timezone.now() + timedelta(seconds=delay),
+            ).enqueue(payload, attempt=attempt + 1)
+            taskdeck.stamp(result, entity=("transactional_message", message_id), owner_id=client_id)
+        else:
+            from mailing.services.transactional_reliability import (  # noqa: PLC0415 - avoids enqueue cycle
+                fail_exhausted_transactional_message,
+            )
+
+            fail_exhausted_transactional_message(payload, attempt, exc)
+        raise
     return _summarise(message, lambda m: {"transactional_message_id": m.pk, "status": m.status})
 
 

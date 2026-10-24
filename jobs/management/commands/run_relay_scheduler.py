@@ -10,6 +10,7 @@ from jobs.services import (
     recover_unenqueued_jobs,
 )
 from mailing.services.campaigns import dispatch_due_campaigns
+from mailing.services.transactional_reliability import alert_stuck_transactional_messages
 
 
 class Command(BaseCommand):
@@ -30,6 +31,7 @@ class Command(BaseCommand):
             fired = run_due_schedules()
             campaigns = dispatch_due_campaigns()
             pruned = prune_finished_task_results()
+            alert_stuck_transactional_messages()
             # The one liveness signal this loop has. Written on every pass,
             # including the empty ones, because "nothing to do" and "not
             # running" have to look different to anything reading the row.

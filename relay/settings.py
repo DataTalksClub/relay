@@ -94,6 +94,15 @@ TASKS = {
     }
 }
 
+# Transactional retries include the initial attempt; delayed tasks do not
+# occupy a worker while waiting. Queue age uses created_at, never updated_at.
+RELAY_TRANSACTIONAL_MAX_ATTEMPTS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_MAX_ATTEMPTS", "5")))
+RELAY_TRANSACTIONAL_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_RETRY_BASE_SECONDS", "60")))
+RELAY_TRANSACTIONAL_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_RETRY_MAX_SECONDS", "900")))
+RELAY_TRANSACTIONAL_QUEUED_ALERT_MINUTES = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_QUEUED_ALERT_MINUTES", "15")))
+RELAY_TRANSACTIONAL_ALERT_REPEAT_SECONDS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_ALERT_REPEAT_SECONDS", "300")))
+RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL = os.environ.get("RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL", "").strip()
+
 # Identifies this project in the taskdeck status contract and in TaskRun rows.
 TASKDECK_PROJECT = "relay"
 

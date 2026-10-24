@@ -84,6 +84,24 @@ concurrency group and never cancel each other.
 The workflow needs no AWS credentials; it uses the `development` GitHub
 environment and the `COOLIFY_RELAY_DEV_SERVICE_UUID` secret.
 
+### Migration startup gate
+
+The release image runs `scripts/container-entrypoint.sh` before every role's
+command, including web, database workers, scheduler, and callback dispatchers.
+It runs `python /app/manage.py migrate_before_start` and only executes the
+application command after migrations succeed. A migration failure exits the
+container before new web code can serve or new workers can consume tasks.
+Container restarts run the gate again. Do not override the image entrypoint
+in service definitions.
+
+`migrate_before_start` holds a PostgreSQL session advisory lock while applying
+migrations, so containers starting together wait for one migration runner.
+The lock is released after success or failure (and PostgreSQL releases it if
+the connection dies). Each waiting container checks/applies migrations itself
+before starting. SQLite development/test environments run migrations without
+the PostgreSQL lock. Schema changes must still support any older containers
+that remain running during a rolling deployment.
+
 ## Production promotion
 
 The `Deploy Relay Prod (Contabo)` workflow in
