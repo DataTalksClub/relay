@@ -51,21 +51,44 @@ mailbox has a serialized per-minute cap; refusals are recorded. DMARC messages
 are retained in raw storage and suppressed from forwarding, preserving the old
 archive-only behaviour without running the forwarding Lambda.
 
-DMARC archive equivalence (migration difference, documented not hidden): the
-legacy Lambda saved a second copy of each DMARC report to the separate
-`<domain>-dmarc-reports` bucket (versioned, transition to STANDARD_IA at 30
-days, expiry at 365 days) while the inbound `.eml` expired from the
-`<domain>-ses-emails` bucket after 7 days. Relay keeps the single raw MIME in
-the ingress bucket (same 7-day lifecycle) plus the durable `InboundMessage` row
-and a `suppressed/dmarc_archived` delivery record, and never forwards or wakes
-a bot for it. Behaviour parity (archive-only, no-forward) is implemented and
-covered by `test_dmarc_report_archived_not_forwarded`. Retention parity (a
-365-day second copy) is NOT claimed: reproducing it needs either (a) a
-`dmarc/` prefix lifecycle rule on the ingress bucket or a copy to the legacy
-DMARC bucket at ingest, plus runtime `s3:PutObject` IAM — a Terraform + IAM
-change that is a REMOVAL/ADD proposal only until Alexey approves and the
-authorized MAIN apply path exists. Until then, DMARC raw older than 7 days is
-available only as the stored body/snippet/metadata row, not as raw MIME.
+DMARC aggregate reports use the shared Relay database archive for every enabled
+inbound domain. Detection ports the AISHL Lambda's sender substring, subject
+regex and attachment heuristics (including decoded non-ASCII subjects). It runs
+before loop/allowlist/default-discard handling, so reports neither forward nor
+wake bots, even when the sender is blocked. A message addressed to two domains
+has an archive for each domain; notification replays do not duplicate evidence.
+
+`DmarcArchive` retains the complete raw `.eml`, `DmarcAttachment` retains the
+original application zip/xml.gz/gz/xml bytes, and `DmarcReport`/`DmarcRecord`
+store aggregate metadata, published policy, source IP/count, evaluated
+DKIM/SPF/disposition, identifiers and authentication results. The sender-domain
+layout follows the Lambda: `dmarc/<reporter-domain>/<timestamp>-<digest>.eml`
+and `dmarc-zips/<reporter-domain>/<timestamp>-<digest>-<filename>`.
+These are database evidence keys, not pointers into the seven-day ingress
+bucket. The digest avoids the Lambda's same-second filename collision.
+`retain_until` is at least 365 days after ingest; there is no automatic expiry
+or deletion operation. DMARC admin/API access is read-only. Database backups
+must include these binary fields; archive volume adds to database/backup size.
+
+Compressed XML is bounded to 10 MiB decompressed, ZIPs to 32 members and
+25,000 records per report. XML entity/DOCTYPE declarations are rejected and
+ZIP paths are never extracted to disk. Invalid reports retain both raw and
+attachment evidence with a parse-error class, emit a numeric-ID ERROR log,
+and remain suppressed. Parsing never fetches external resources.
+
+Read in Django admin under DMARC archives/attachments/reports/records, through
+admin-key API `GET /api/admin/inbound-dmarc` (optional `?domain=...`) and
+`GET /api/admin/inbound-dmarc/<id>` (including parsed rows), or CLI
+`datamailer inbound dmarc [--id ID]`. Download the archived evidence using
+`GET /api/admin/inbound-dmarc/<id>/raw` and
+`GET /api/admin/inbound-dmarc/<id>/attachments/<attachment-id>`.
+On the server: `uv run python manage.py dmarc_reports --domain aishippinglabs.com`
+or `dmarc_reports --id ID`. No credentials or binary mail bodies appear in list
+responses. Client send keys cannot access this operator API.
+
+The old Lambda's versioned S3 bucket (IA at 30 days, expiry at 365) is unchanged.
+An optional parity copy is not needed for durable retention and is not enabled;
+new MAIN IAM/S3 access requires a separate Terraform proposal and Alexey's OK.
 
 The `process_inbound_deliveries` worker owns dispatch and reconciliation. DEV
 runs it with outbound sending disabled, and never drains a production queue.

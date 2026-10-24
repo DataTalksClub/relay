@@ -17,3 +17,12 @@ def test_inbound_cli_uses_admin_api_and_prints_result(monkeypatch, capsys):
     with patch('datamailer_cli.api.DatamailerClient.request', return_value=(200, {'id': 12})) as request:
         assert main(['inbound', 'mailboxes', '--id', '12', '--data-file', '-']) == 0
     request.assert_called_once_with('PATCH', '/api/admin/inbound-mailboxes/12', payload=data)
+
+
+def test_dmarc_cli_reads_parsed_report(monkeypatch, capsys):
+    monkeypatch.setenv('DATAMAILER_URL', 'https://relay.example.net')
+    monkeypatch.setenv('DATAMAILER_API_KEY', 'admin-test')
+    with patch('datamailer_cli.api.DatamailerClient.request', return_value=(200, {'id': 16, 'attachments': []})) as request:
+        assert main(['inbound', 'dmarc', '--id', '16']) == 0
+    request.assert_called_once_with('GET', '/api/admin/inbound-dmarc/16', payload=None)
+    assert json.loads(capsys.readouterr().out)['id'] == 16

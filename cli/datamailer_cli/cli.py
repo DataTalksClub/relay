@@ -87,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     routing = sub.add_parser("inbound", help="Manage domain routing with an admin API key.")
     _add_connection_args(routing)
-    routing.add_argument("resource", choices=("domains", "mailboxes", "deliveries"))
+    routing.add_argument("resource", choices=("domains", "mailboxes", "deliveries", "dmarc"))
     routing.add_argument("--id", type=int)
     routing.add_argument("--data-file", help="Create or patch from a JSON file; use - for stdin.")
     routing.set_defaults(handler=cmd_inbound)
@@ -315,8 +315,8 @@ def cmd_inbound(args):
     payload = None
     method = "GET"
     if args.data_file:
-        if args.resource == "deliveries":
-            raise ApiError("Deliveries are read-only.")
+        if args.resource in {"deliveries", "dmarc"}:
+            raise ApiError("Deliveries and DMARC archives are read-only.")
         try:
             if args.data_file == "-":
                 payload = json.load(sys.stdin)
