@@ -680,6 +680,7 @@ class TransactionalCampaign(TimeStampedModel):
 
 
 class TransactionalMessage(TimeStampedModel):
+    inbound_source = models.ForeignKey("InboundMessage", on_delete=models.PROTECT, null=True, blank=True)
     campaign = models.ForeignKey(TransactionalCampaign, null=True, blank=True, on_delete=models.PROTECT, related_name="messages")
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="transactional_messages")
     contact = models.ForeignKey(Contact, on_delete=models.PROTECT, related_name="transactional_messages")
@@ -1298,3 +1299,6 @@ class BlockedSender(TimeStampedModel):
 
     def __str__(self):
         return f"{self.scope}: {self.value}"
+
+# Kept in a separate module so routing configuration stays together.
+from mailing.inbound_routing_models import InboundDelivery, InboundDomain, InboundMailbox  # noqa: E402,F401
