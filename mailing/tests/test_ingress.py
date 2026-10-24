@@ -4,12 +4,14 @@ work enqueued by Django.
 """
 
 import json
+from pathlib import Path
 
 import pytest
+import yaml
 from django.core.exceptions import ImproperlyConfigured
 from django_tasks_db.models import DBTaskResult
 
-from mailing.ingress import get_ingress_config
+from mailing.ingress import INGRESS_WORKER_NAMES, get_ingress_config
 from mailing.models import EmailEvent
 from mailing.sqs_worker import SqsWorker
 from mailing.tasks import process_ses_webhook_event
@@ -146,3 +148,51 @@ def test_ses_ingress_retries_malformed_payload_without_deleting_it(settings):
 def test_unknown_ingress_worker_is_rejected():
     with pytest.raises(ValueError):
         get_ingress_config("not-a-queue")
+
+
+def test_every_active_ingress_worker_has_coolify_consumer():
+    """Regression guard: ensure every active SQS ingress queue Relay owns
+    (from INGRESS_WORKER_NAMES) has a running consumer in the Coolify stack
+    template (deploy/coolify/docker-compose.staging.yml).
+
+    Inbound mail (inbound-email, sandbox-inbound-email) is intentionally disabled
+    in production (per docs/production-aux-ownership.md), so it is excluded from
+    the required active consumers.
+    """
+    # Intentional production exceptions per docs/production-aux-ownership.md
+    INTENTIONALLY_DISABLED = {"inbound-email", "sandbox-inbound-email"}
+
+    required_workers = set(INGRESS_WORKER_NAMES) - INTENTIONALLY_DISABLED
+
+    compose_path = (
+        Path(__file__).resolve().parent.parent.parent
+        / "deploy"
+        / "coolify"
+        / "docker-compose.staging.yml"
+    )
+    assert compose_path.exists(), f"compose file {compose_path} not found"
+
+    with compose_path.open() as f:
+        compose_data = yaml.safe_load(f)
+
+    services = compose_data.get("services", {})
+
+    drained_workers = set()
+    for _service_name, svc in services.items():
+        cmd = svc.get("command", [])
+        if (
+            isinstance(cmd, list)
+            and len(cmd) >= 4
+            and cmd[0] == "python"
+            and cmd[1] == "manage.py"
+            and cmd[2] == "drain_sqs_ingress"
+        ):
+            drained_workers.add(cmd[3])
+
+    missing = required_workers - drained_workers
+    assert not missing, (
+        f"Active SQS ingress queues missing running consumer in Coolify stack: {missing}. "
+        f"Every SQS ingress queue Relay owns must have a consumer in "
+        f"deploy/coolify/docker-compose.staging.yml to prevent unconsumed backlogs."
+    )
+

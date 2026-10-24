@@ -278,7 +278,10 @@ LOGGING = {
     },
 }
 SQS_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_INBOUND_EMAIL_QUEUE_URL", "")
-SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL", "")
+SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL = os.environ.get(
+    "SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL",
+    "https://sqs.eu-west-1.amazonaws.com/817685572750/relay-sandbox-ses-webhooks",
+)
 SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL", "")
 INBOUND_EMAIL_EVENTS_TOPIC_ARN = os.environ.get("INBOUND_EMAIL_EVENTS_TOPIC_ARN", "")
 # INBOUND_EMAIL_IDEMPOTENCY_TABLE is deliberately not read any more. Idempotency

@@ -7,14 +7,16 @@
 # CD path: GitHub Actions builds → GHCR → Coolify deploy API (no git clone on Contabo).
 #
 # Service set mirrors scripts/deploy_relay_sandbox.sh production list, minus
-# inbound-mail (production has no SES receipt rule / inbound queue) and minus
-# sandbox-only drains:
+# inbound-mail (production has no SES receipt rule / inbound queue; see
+# docs/production-aux-ownership.md):
 #   web                gunicorn (public; Traefik domains managed in Coolify UI)
 #   worker             django.tasks DB worker on queue "default" (sends)
 #   provider-events-worker  django.tasks DB worker on queue "provider-events" (SES/inbound)
 #   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
 #   ses-ingress        drains SQS relay-production-ses-webhooks into django.tasks
 #   cmp-callbacks      CMP webhook outbox dispatcher
+#   aisl-ses-ingress   transports AISHL SES notifications to its webhook
+#   sandbox-ses-ingress drains SQS relay-sandbox-ses-webhooks into django.tasks
 #   client-callbacks   tenant client-callback outbox dispatcher
 #   recipient-imports  recipient-list import jobs
 # There is no prune container: finished django-tasks result rows are pruned by
@@ -23,8 +25,8 @@
 # relay-production-prune-database rule referenced a host script that was never
 # implemented here and must stay retired: the scheduler is the single owner.
 # Inbound mail is intentionally disabled in production (no SES receipt rule /
-# inbound queue; see docs/production-aux-ownership.md); only ses-webhooks is
-# drained. Sandbox-only drains live in docs/operations.md, not here.
+# inbound queue; see docs/production-aux-ownership.md); only ses-webhooks and
+# sandbox-ses-webhooks are drained.
 services:
   web:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
@@ -92,6 +94,17 @@ services:
     restart: unless-stopped
     # AISHL is the sole mutation owner; acknowledge only after its HTTP 200.
     command: ["python", "manage.py", "drain_sqs_ingress", "aisl-ses-webhooks", "--batch-size", "1", "--wait-time", "20"]
+
+  sandbox-ses-ingress:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      AWS_ACCESS_KEY_ID: ${SANDBOX_AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${SANDBOX_AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: eu-west-1
+      SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL: https://sqs.eu-west-1.amazonaws.com/817685572750/relay-sandbox-ses-webhooks
+    command: ["python", "manage.py", "drain_sqs_ingress", "sandbox-ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
 
   client-callbacks:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
