@@ -286,32 +286,40 @@ def record_unsupported_ses_event(payload):
     if existing:
         return existing
 
-    source = correlate_ses_message(payload.get("ses_message_id", ""))
-    target_type = "ses_notification"
-    target_id = 0
-    if source is not None:
-        target_type = source.__class__.__name__.lower()
-        target_id = source.id
+    with transaction.atomic():
+        existing = OperatorAudit.objects.select_for_update().filter(
+            action__endswith="unsupported",
+            metadata__provider_event_id=provider_event_id,
+        ).first()
+        if existing:
+            return existing
 
-    action = f"ses.{notification_type}.unsupported" if notification_type != "unsupported" else "ses.event.unsupported"
+        source = correlate_ses_message(payload.get("ses_message_id", ""))
+        target_type = "ses_notification"
+        target_id = 0
+        if source is not None:
+            target_type = source.__class__.__name__.lower()
+            target_id = source.id
 
-    metadata = safe_metadata(
-        {
-            "provider": payload.get("provider", "ses"),
-            "provider_event_id": provider_event_id,
-            "ses_message_id": payload.get("ses_message_id", ""),
-            "notification_type": notification_type,
-            **(payload.get("metadata") or {}),
-        }
-    )
+        action = f"ses.{notification_type}.unsupported" if notification_type != "unsupported" else "ses.event.unsupported"
 
-    return OperatorAudit.objects.create(
-        actor=None,
-        action=action,
-        target_type=target_type,
-        target_id=target_id,
-        metadata=metadata,
-    )
+        metadata = safe_metadata(
+            {
+                "provider": payload.get("provider", "ses"),
+                "provider_event_id": provider_event_id,
+                "ses_message_id": payload.get("ses_message_id", ""),
+                "notification_type": notification_type,
+                **(payload.get("metadata") or {}),
+            }
+        )
+
+        return OperatorAudit.objects.create(
+            actor=None,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            metadata=metadata,
+        )
 
 
 def process_ses_webhook(payload):
