@@ -83,6 +83,18 @@
           "webhook_secret_id": "env:INBOUND_TOFU_WEBHOOK"
         },
         {
+          "local_part": "orin",
+          "kind": "bot",
+          "sender_allowlist": [
+            "alexey.s.grigoriev@gmail.com",
+            "alexey@datatalks.club",
+            "noreply@datatalks.club",
+            "no-reply@dtcdev.click",
+            "alerts@dtcdev.click"
+          ],
+          "webhook_secret_id": "env:INBOUND_ORIN_WEBHOOK"
+        },
+        {
           "local_part": "*",
           "kind": "discard"
         }
