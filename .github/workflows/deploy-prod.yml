@@ -116,6 +116,10 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Older dev-proven images must use their own worker commands.
+          # Checking out main can pair a rollback image with newer services.
+          ref: ${{ needs.select.outputs.source_sha }}
 
       - name: Apply Coolify PROD compose template and deploy
         env:
