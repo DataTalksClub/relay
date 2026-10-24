@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('mailing', '0037_email_layout'),
+        ('mailing', '0038_dmarc_archive'),
     ]
 
     operations = [
