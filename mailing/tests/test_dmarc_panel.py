@@ -2,8 +2,11 @@ import gzip
 import io
 import json
 import os
+import sys
 import tempfile
+import types
 import zipfile
+from email.message import EmailMessage
 
 import pytest
 from django.core.management import call_command
@@ -62,6 +65,42 @@ def test_import_gz_suffix_and_idempotent_rerun(domain, tmp_path):  # noqa: F811
     second = run_import(f"--local-dir={tmp_path}")
     assert (second["imported"], second["duplicates"]) == (0, 1), second
     assert DmarcReport.objects.count() == 1
+
+
+def test_import_s3_branch_with_stubbed_boto3(domain, tmp_path, monkeypatch):  # noqa: F811
+    payload = gzip.compress(XML.replace(b"ac16-test", b"ac16-s3"))
+
+    class FakeS3:
+        def list_objects_v2(self, **kwargs):
+            assert kwargs["Bucket"] == "dmarc-test"
+            return {"Contents": [{"Key": "dmarc/google.com/x.eml"}], "IsTruncated": False}
+
+        def get_object(self, Bucket, Key):  # noqa: N803
+            assert (Bucket, Key) == ("dmarc-test", "dmarc/google.com/x.eml")
+            message = EmailMessage()
+            message["From"] = "dmarc-noreply@google.com"
+            message["To"] = "team@example.com"
+            message["Subject"] = "Report Domain: example.com"
+            message.set_content("Aggregate report")
+            message.add_attachment(payload, maintype="application", subtype="gzip", filename="report.xml.gz")
+            stream = io.BytesIO()
+            stream.write(message.as_bytes())
+            stream.seek(0)
+
+            class Body:
+                def read(self):
+                    return message.as_bytes()
+
+            return {"Body": Body()}
+
+    fake_boto3 = types.ModuleType("boto3")
+    fake_boto3.client = lambda service, **kwargs: FakeS3()  # noqa: ARG005
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+    stats = run_import("--bucket=dmarc-test")
+    assert (stats["scanned"], stats["imported"]) == (1, 1), stats
+    assert DmarcReport.objects.filter(report_id="ac16-s3").exists()
+    rerun = run_import("--bucket=dmarc-test")
+    assert (rerun["imported"], rerun["duplicates"]) == (0, 1), rerun
 
 
 def test_import_dry_run_writes_nothing(domain, tmp_path):  # noqa: F811
