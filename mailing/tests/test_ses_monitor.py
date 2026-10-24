@@ -463,3 +463,79 @@ def test_sns_gap_force_bypasses_confirmation(monkeypatch):
     alerts = check_ses_delivery_gap(now=now, force=True)
     assert len(alerts) == 1
     assert len(sent) == 1
+
+
+@pytest.mark.django_db
+def test_outcome_gap_ignores_active_delivery_delay(client_obj, contact_obj, template_obj):
+    now = timezone.now()
+    message = TransactionalMessage.objects.create(
+        client=client_obj, contact=contact_obj, template=template_obj, email=contact_obj.email,
+        template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id="delay-active",
+        sent_at=now - timedelta(hours=3),
+    )
+    OperatorAudit.objects.create(
+        action="ses.delivery_delay.unsupported",
+        target_type="transactionalmessage",
+        target_id=message.pk,
+        metadata={
+            "ses_message_id": "delay-active",
+            "expiration_time": (now + timedelta(hours=11)).isoformat(),
+        },
+    )
+    assert check_ses_outcome_gap(now) is None
+
+
+@pytest.mark.django_db
+def test_outcome_gap_fires_after_delivery_delay_expiration(client_obj, contact_obj, template_obj):
+    now = timezone.now()
+    message = TransactionalMessage.objects.create(
+        client=client_obj, contact=contact_obj, template=template_obj, email=contact_obj.email,
+        template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id="delay-expired",
+        sent_at=now - timedelta(hours=16),
+    )
+    OperatorAudit.objects.create(
+        action="ses.delivery_delay.unsupported",
+        target_type="transactionalmessage",
+        target_id=message.pk,
+        metadata={
+            "ses_message_id": "delay-expired",
+            "expiration_time": (now - timedelta(minutes=1)).isoformat(),
+        },
+    )
+    alert = check_ses_outcome_gap(now)
+    assert alert is not None
+    assert message.pk in alert["message_ids"]
+
+
+@pytest.mark.django_db
+def test_outcome_gap_delay_without_expiration_uses_retry_window(client_obj, contact_obj, template_obj):
+    now = timezone.now()
+    recent = TransactionalMessage.objects.create(
+        client=client_obj, contact=contact_obj, template=template_obj, email=contact_obj.email,
+        template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id="delay-recent",
+        sent_at=now - timedelta(hours=3),
+    )
+    OperatorAudit.objects.create(
+        action="ses.delivery_delay.unsupported",
+        target_type="transactionalmessage",
+        target_id=recent.pk,
+        metadata={"ses_message_id": "delay-recent"},
+    )
+    assert check_ses_outcome_gap(now) is None
+
+    old = TransactionalMessage.objects.create(
+        client=client_obj, contact=contact_obj, template=template_obj, email="old@example.com",
+        template_key="welcome", status=TransactionalMessageStatus.SENT, ses_message_id="delay-old",
+        sent_at=now - timedelta(hours=20),
+    )
+    audit = OperatorAudit.objects.create(
+        action="ses.delivery_delay.unsupported",
+        target_type="transactionalmessage",
+        target_id=old.pk,
+        metadata={"ses_message_id": "delay-old"},
+    )
+    OperatorAudit.objects.filter(pk=audit.pk).update(created_at=now - timedelta(hours=15))
+    alert = check_ses_outcome_gap(now)
+    assert alert is not None
+    assert old.pk in alert["message_ids"]
+    assert recent.pk not in alert["message_ids"]

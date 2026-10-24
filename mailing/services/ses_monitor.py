@@ -14,6 +14,7 @@ from django.db.models import Exists, OuterRef
 from django.db.models.fields.json import KT
 from django.db.models.functions import Coalesce
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from mailing.aws import aws_client
 from mailing.models import EmailEvent, EmailEventType, OperatorAudit, TransactionalMessage, TransactionalMessageStatus
@@ -51,6 +52,52 @@ def get_sns_published_count(topic_name, start_time, end_time, *, client=None):
 
 OUTCOME_GAP_REPORTED = "monitor.ses_outcome_gap.reported"
 
+# SES retries a delayed send for ~14h before emitting a terminal bounce.
+# A DeliveryDelay audit proves SES accepted the notification path end to end;
+# paging while its retry window is still open pages on healthy retries.
+SES_DELIVERY_DELAY_RETRY_WINDOW = timedelta(hours=14)
+
+
+def _delivery_delay_active(audit, now):
+    metadata = audit.get("metadata") if isinstance(audit, dict) else getattr(audit, "metadata", None)
+    metadata = metadata or {}
+    created_at = audit.get("created_at") if isinstance(audit, dict) else getattr(audit, "created_at", None)
+    expiration_raw = metadata.get("expiration_time")
+    if expiration_raw:
+        parsed = parse_datetime(str(expiration_raw)) if isinstance(expiration_raw, str) else None
+        if parsed is None:
+            return True
+        if parsed.tzinfo is None:
+            parsed = timezone.make_aware(parsed)
+        return parsed > now
+    if created_at is None:
+        return True
+    if getattr(created_at, "tzinfo", None) is None:
+        created_at = timezone.make_aware(created_at)
+    return created_at + SES_DELIVERY_DELAY_RETRY_WINDOW > now
+
+
+def _active_delivery_delay_ses_ids(now, ses_message_ids):
+    """Return the subset of SES send IDs with an unexpired DeliveryDelay audit."""
+    ses_message_ids = [sid for sid in dict.fromkeys(ses_message_ids) if sid]
+    if not ses_message_ids:
+        return set()
+    audits = (
+        OperatorAudit.objects.filter(
+            action__startswith="ses.delivery_delay",
+            metadata__ses_message_id__in=ses_message_ids,
+        )
+        .values("metadata", "created_at")
+    )
+    # Group by SES send ID; any unexpired delay keeps the send quiet.
+    by_send: dict[str, list] = {}
+    for audit in audits:
+        metadata = audit.get("metadata") or {}
+        send_id = metadata.get("ses_message_id", "")
+        if send_id:
+            by_send.setdefault(send_id, []).append(audit)
+    return {send_id for send_id, rows in by_send.items() if any(_delivery_delay_active(row, now) for row in rows)}
+
 
 def unreported_ses_outcomes(now, lookback_days):
     reported = OperatorAudit.objects.annotate(send_id=KT("metadata__ses_message_id")).filter(
@@ -59,7 +106,7 @@ def unreported_ses_outcomes(now, lookback_days):
         target_id=OuterRef("pk"),
         send_id=OuterRef("ses_message_id"),
     )
-    return (
+    base = (
         TransactionalMessage.objects.annotate(outcome_sent_at=Coalesce("sent_at", "created_at"))
         .filter(
             outcome_sent_at__gte=now - timedelta(days=lookback_days),
@@ -72,6 +119,11 @@ def unreported_ses_outcomes(now, lookback_days):
         .filter(~Exists(reported))
         .order_by("pk")
     )
+    candidate_ses_ids = list(base.values_list("ses_message_id", flat=True)[:200])
+    active = _active_delivery_delay_ses_ids(now, candidate_ses_ids)
+    if not active:
+        return base
+    return base.exclude(ses_message_id__in=list(active))
 
 
 def check_ses_outcome_gap(now=None, *, threshold=None, lookback_days=None):

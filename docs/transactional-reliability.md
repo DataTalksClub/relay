@@ -106,6 +106,9 @@ Relay guards against unconfirmed SES deliveries and dropped event notifications:
    `RELAY_SES_OUTCOME_GAP_THRESHOLD` (default: 1), an alert is triggered.
    Transient delivery delays (such as SES retrying a null-MX host) keep messages in
    `sent` state until SES either succeeds or hard-bounces after its 14-hour retry window.
+   An unexpired `ses.delivery_delay` audit suppresses the gap for that send until
+   its `expiration_time` (fallback: 14h from the audit); after expiry with still no
+   terminal event, the gap pages again.
 2. **SNS vs. Relay Persisted Gap**: Over a rolling 30-minute window ending two
    minutes ago (minute-aligned), the number of messages published to the SES
    SNS topic (`RELAY_SES_EVENTS_TOPIC_NAME`, default:
