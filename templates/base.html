@@ -97,6 +97,10 @@
               <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>
               <span class="dk-nav-item__label">Receiving addresses</span>
             </a>
+            <a class="dk-nav-item" href="{% url 'mailing:dmarc_report_list' %}"{% if current_url_name == "dmarc_report_list" or current_url_name == "dmarc_report_detail" or current_url_name == "dmarc_summary" %} aria-current="page"{% endif %}>
+              <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <span class="dk-nav-item__label">DMARC reports</span>
+            </a>
             <a class="dk-nav-item" href="{% url 'mailing:client_list' %}"{% if current_url_name == "client_list" or current_url_name == "client_create" %} aria-current="page"{% endif %}>
               <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><rect width="20" height="14" x="2" y="6" rx="2"/></svg>
               <span class="dk-nav-item__label">Clients</span>

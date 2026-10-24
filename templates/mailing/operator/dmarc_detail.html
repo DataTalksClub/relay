@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ report.reporter_org|default:"DMARC report" }} {{ report.report_id }} | Relay{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>{{ report.reporter_org|default:"(unknown reporter)" }} — {{ report.report_id|default:report.pk }}</h1>
+      <p>Domain {{ domain.name }} · <span class="data-time">{{ report.date_begin|date:"M j, Y H:i" }}</span> – <span class="data-time">{{ report.date_end|date:"M j, Y H:i" }}</span> UTC · <span class="data-num">{{ total_messages }}</span> messages, <span class="data-num">{{ passed_messages }}</span> DMARC pass</p>
+    </div>
+    <div class="actions">
+      <a class="button secondary" href="{% url 'mailing:dmarc_report_list' %}">All reports</a>
+      <a class="button secondary" href="{% url 'mailing:dmarc_report_xml' report.pk %}">Raw XML</a>
+      <a class="button secondary" href="{% url 'mailing:dmarc_report_attachment' report.pk attachment.pk %}">Original attachment</a>
+    </div>
+  </div>
+  <section class="section" aria-labelledby="dmarc-policy">
+    <div class="section-header"><div><h2 id="dmarc-policy">Published policy</h2></div></div>
+    <dl class="detail-grid">
+      <dt>Report ID</dt><dd>{{ report.report_id }}</dd>
+      <dt>Reporter org</dt><dd>{{ report.reporter_org|default:"—" }}</dd>
+      <dt>Attachment</dt><dd>{{ attachment.filename }} ({{ attachment.storage_key }})</dd>
+      <dt>Policy domain</dt><dd>{{ report.policy.domain|default:domain.name }}</dd>
+      <dt>p / sp / pct</dt><dd>{{ report.policy.p|default:"—" }} / {{ report.policy.sp|default:"—" }} / {{ report.policy.pct|default:"—" }}</dd>
+      <dt>adkim / aspf</dt><dd>{{ report.policy.adkim|default:"—" }} / {{ report.policy.aspf|default:"—" }}</dd>
+    </dl>
+  </section>
+  <section class="section" aria-labelledby="dmarc-records">
+    <div class="section-header"><div><h2 id="dmarc-records"><span class="data-num">{{ records|length }}</span> source-IP row{{ records|length|pluralize }}</h2><p class="muted">DMARC pass means aligned DKIM or SPF passed.</p></div></div>
+    {% if records %}
+      <table class="data-table">
+        <thead>
+          <tr><th>Source IP</th><th>Count</th><th>Disposition</th><th>Header from</th><th>SPF</th><th>DKIM</th><th>DMARC</th></tr>
+        </thead>
+        <tbody>
+          {% for row in records %}
+            <tr>
+              <td class="data-num">{{ row.source_ip }}</td>
+              <td class="data-num">{{ row.count }}</td>
+              <td>{{ row.disposition|default:"—" }}</td>
+              <td>{{ row.header_from|default:"—" }}</td>
+              <td>{{ row.spf|default:"—" }}{% if row.spf_detail.domain %} ({{ row.spf_detail.domain }}: {{ row.spf_detail.result|default:"—" }}){% endif %}</td>
+              <td>{{ row.dkim|default:"—" }}{% if row.dkim_detail.domain %} ({{ row.dkim_detail.domain }}{% if row.dkim_detail.selector %}/{{ row.dkim_detail.selector }}{% endif %}: {{ row.dkim_detail.result|default:"—" }}){% endif %}</td>
+              <td>{% if row.dmarc_pass %}<span class="badge success">pass</span>{% else %}<span class="badge danger">fail</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state"><strong>No parsed rows.</strong><p>The attachment failed to parse; the raw evidence is preserved above.</p></div>
+    {% endif %}
+  </section>
+{% endblock %}

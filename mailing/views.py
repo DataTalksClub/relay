@@ -7,8 +7,8 @@ from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
 from django.db import connection
-from django.db.models import Count, Max, Q
-from django.http import HttpResponse, JsonResponse
+from django.db.models import Count, Max, Q, Sum
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import Resolver404, resolve, reverse
 from django.utils import timezone
@@ -203,9 +203,12 @@ from mailing.setup_views import client_setup_context
 
 def health(request):
     from mailing.services.inbound_routing import routing_health  # noqa: PLC0415
+
     routing = routing_health()
-    return JsonResponse({"status": "fail" if routing["status"] == "FAIL" else "ok", "service": "relay",
-                         "inbound_routing": routing}, status=503 if routing["status"] == "FAIL" else 200)
+    return JsonResponse(
+        {"status": "fail" if routing["status"] == "FAIL" else "ok", "service": "relay", "inbound_routing": routing},
+        status=503 if routing["status"] == "FAIL" else 200,
+    )
 
 
 def readiness(request):
@@ -244,7 +247,9 @@ def require_active_client(request):
     client = active_operator_client(request)
     expected_client = request.POST.get("operator_client_id") if request.method == "POST" else None
     if expected_client and (client is None or expected_client != str(client.id)):
-        messages.warning(request, "The active client changed in another tab. Review the selected client before trying again.")
+        messages.warning(
+            request, "The active client changed in another tab. Review the selected client before trying again."
+        )
         return None
     if client is None:
         messages.info(request, "Select an active client before using this section.")
@@ -391,16 +396,20 @@ def email_activity(request):
         if row.message.status == TransactionalMessageStatus.SENT:
             badge = Badge("Delivered", "success") if row.message.delivered_at else Badge("Sent to provider", "neutral")
         rows.append({"message": row.message, "badge": badge})
-    return render(request, "mailing/operator/email_activity.html", {
-        "active_client": active_client,
-        "activity": activity,
-        "message_rows": rows,
-        "query": query,
-        "status": status,
-        "period": period,
-        "status_options": status_options,
-        "pagination_querystring": pagination_querystring(request),
-    })
+    return render(
+        request,
+        "mailing/operator/email_activity.html",
+        {
+            "active_client": active_client,
+            "activity": activity,
+            "message_rows": rows,
+            "query": query,
+            "status": status,
+            "period": period,
+            "status_options": status_options,
+            "pagination_querystring": pagination_querystring(request),
+        },
+    )
 
 
 @staff_member_required
@@ -747,7 +756,11 @@ def campaign_detail(request, campaign_id):
         {"recipient": recipient, "badge": Badge(recipient.get_status_display(), delivery_tone(recipient.status))}
         for recipient in recipients.object_list
     ]
-    estimate = estimate_campaign_recipients(campaign) if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SCHEDULED} else None
+    estimate = (
+        estimate_campaign_recipients(campaign)
+        if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SCHEDULED}
+        else None
+    )
     preview_rows = [
         {"row": row, "tone": "success" if row.status == CampaignRecipientStatus.PENDING else "warning"}
         for row in (estimate.preview_rows if estimate else [])
@@ -810,12 +823,16 @@ def campaign_queue(request, campaign_id):
         messages.warning(request, "The recipient count changed. Review the updated recipients before sending.")
         return redirect(f"{reverse('mailing:campaign_detail', args=[campaign.id])}?confirm_send=1")
     try:
-        result = queue_campaign(campaign, expected_revision=request.POST.get("review_revision"), reject_past_schedule=True)
+        result = queue_campaign(
+            campaign, expected_revision=request.POST.get("review_revision"), reject_past_schedule=True
+        )
     except CampaignNotReady as exc:
         messages.error(request, str(exc))
         return redirect("mailing:campaign_detail", campaign_id=campaign.id)
     if result.scheduled:
-        messages.success(request, "Campaign scheduled. Eligible recipients will be selected at dispatch time; no email was sent.")
+        messages.success(
+            request, "Campaign scheduled. Eligible recipients will be selected at dispatch time; no email was sent."
+        )
     elif result.queued:
         messages.success(
             request,
@@ -840,9 +857,7 @@ def campaign_recipient_assume_sent(request, campaign_id, recipient_id):
         assume_recipient_sent(actor=request.user, campaign=campaign, recipient=recipient)
     except CampaignRecipientConflict:
         messages.error(request, "Only failed recipients can be marked as assumed sent.")
-        return redirect(
-            f"{reverse('mailing:campaign_detail', args=[campaign.id])}?filter=failed"
-        )
+        return redirect(f"{reverse('mailing:campaign_detail', args=[campaign.id])}?filter=failed")
     messages.success(request, "Recipient marked as assumed sent without resending.")
     return redirect("mailing:campaign_detail", campaign_id=campaign.id)
 
@@ -923,7 +938,7 @@ def contact_detail(request, contact_email, *, bound_forms=None):
                     "global_unsubscribed": contact.global_unsubscribed_at is not None,
                     "hard_bounced": contact.hard_bounced_at is not None,
                     "complained": contact.complained_at is not None,
-                }
+                },
             ),
             "subscription_form": ContactSubscriptionForm(active_client=active_client, auto_id="subscription_%s"),
             "tag_add_form": ContactTagAddForm(active_client=active_client, auto_id="tag_add_%s"),
@@ -949,6 +964,7 @@ def contact_record_redirect(request, contact):
     destination = reverse("mailing:contact_detail", args=[contact.normalized_email])
     if request.GET.get("return"):
         from urllib.parse import urlencode  # noqa: PLC0415
+
         destination += "?" + urlencode({"return": contact_return_url(request)})
     return redirect(destination)
 
@@ -1141,7 +1157,9 @@ def audience_detail(request, audience_id):
     if active_client is None:
         return redirect("mailing:dashboard")
     audience = get_object_or_404(audience_detail_queryset(), pk=audience_id, organization=active_client.organization)
-    return render(request, "mailing/operator/audience_detail.html", audience_page_context(request, audience, active_client))
+    return render(
+        request, "mailing/operator/audience_detail.html", audience_page_context(request, audience, active_client)
+    )
 
 
 @staff_member_required
@@ -1236,12 +1254,19 @@ def client_select(request):
     except Resolver404:
         return redirect("mailing:dashboard")
     landing_pages = {
-        "campaign_detail": "campaign_list", "campaign_edit": "campaign_list",
-        "campaign_create": "campaign_list", "template_detail": "template_catalog",
-        "transactional_message_detail": "email_activity", "client_detail": "dashboard",
-        "client_edit": "dashboard", "audience_detail": "audience_list",
-        "audience_edit": "audience_list", "audience_create": "audience_list",
-        "tag_detail": "audience_list", "tag_edit": "audience_list", "tag_create": "audience_list",
+        "campaign_detail": "campaign_list",
+        "campaign_edit": "campaign_list",
+        "campaign_create": "campaign_list",
+        "template_detail": "template_catalog",
+        "transactional_message_detail": "email_activity",
+        "client_detail": "dashboard",
+        "client_edit": "dashboard",
+        "audience_detail": "audience_list",
+        "audience_edit": "audience_list",
+        "audience_create": "audience_list",
+        "tag_detail": "audience_list",
+        "tag_edit": "audience_list",
+        "tag_create": "audience_list",
     }
     if not client_id:
         return redirect("mailing:dashboard")
@@ -1272,9 +1297,7 @@ def client_detail(request, client_id):
     key_form = ClientApiKeyForm(client=client)
     api_keys = client_api_keys_for_detail(client)
     client_callbacks = (
-        ClientCallback.objects.filter(client=client)
-        .select_related("endpoint")
-        .order_by("-created_at", "-id")[:10]
+        ClientCallback.objects.filter(client=client).select_related("endpoint").order_by("-created_at", "-id")[:10]
     )
     cmp_callbacks = (
         CmpCallback.objects.filter(client=client)
@@ -1282,9 +1305,7 @@ def client_detail(request, client_id):
         .order_by("-created_at", "-id")[:10]
     )
     mailchimp_syncs = (
-        MailchimpSync.objects.filter(client=client)
-        .select_related("contact")
-        .order_by("-created_at", "-id")[:10]
+        MailchimpSync.objects.filter(client=client).select_related("contact").order_by("-created_at", "-id")[:10]
     )
     return render(
         request,
@@ -1328,9 +1349,7 @@ def _mailchimp_tag_mapping_editors(client):
 @require_POST
 def client_mailchimp_tag_mappings(request, client_id):
     client = get_object_or_404(Client.objects.select_related("organization"), pk=client_id)
-    audience = get_object_or_404(
-        Audience, pk=request.POST.get("audience_id"), organization=client.organization
-    )
+    audience = get_object_or_404(Audience, pk=request.POST.get("audience_id"), organization=client.organization)
     mappings = []
     for raw_line in (request.POST.get("mappings") or "").splitlines():
         enabled = "(disabled)" not in raw_line
@@ -2533,6 +2552,7 @@ def ses_webhook(request):
 @staff_member_required
 def inbound_message_raw(request, message_id):
     from mailing.aws import s3_client  # noqa: PLC0415
+
     message = get_object_or_404(InboundMessage, pk=message_id)
     raw = s3_client().get_object(Bucket=message.raw_bucket, Key=message.raw_key)["Body"].read()
     response = HttpResponse(raw, content_type="message/rfc822")
@@ -2540,3 +2560,225 @@ def inbound_message_raw(request, message_id):
     response["Cache-Control"] = "no-store"
     response["X-Content-Type-Options"] = "nosniff"
     return response
+
+
+def _dmarc_pass_q(prefix=""):
+    return Q(**{f"{prefix}dkim": "pass"}) | Q(**{f"{prefix}spf": "pass"})
+
+
+@staff_member_required
+def dmarc_report_list(request):
+    from mailing.models import DmarcReport  # noqa: PLC0415
+
+    domain_filter = request.GET.get("domain", "").strip().lower()[:255]
+    org_filter = request.GET.get("org", "").strip()[:255]
+    date_from = request.GET.get("from", "").strip()[:10]
+    date_to = request.GET.get("to", "").strip()[:10]
+
+    queryset = DmarcReport.objects.select_related("attachment__archive__domain")
+    if domain_filter:
+        queryset = queryset.filter(attachment__archive__domain__name=domain_filter)
+    if org_filter:
+        queryset = queryset.filter(reporter_org__icontains=org_filter)
+    parsed_from = parsed_to = None
+    for raw, op in ((date_from, "gte"), (date_to, "lte")):
+        if not raw:
+            continue
+        try:
+            value = timezone.datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            value = None
+        if value is None:
+            continue
+        if op == "gte":
+            parsed_from = raw
+            queryset = queryset.filter(date_begin__gte=value)
+        else:
+            parsed_to = raw
+            queryset = queryset.filter(date_begin__lt=value + timedelta(days=1))
+    queryset = queryset.annotate(
+        record_count=Count("records"),
+        message_total=Sum("records__count"),
+        dkim_pass=Count("records", filter=Q(records__dkim="pass")),
+        spf_pass=Count("records", filter=Q(records__spf="pass")),
+        dmarc_pass_records=Count("records", filter=_dmarc_pass_q("records__")),
+        dmarc_pass_messages=Sum("records__count", filter=_dmarc_pass_q("records__")),
+    ).order_by("-date_end", "-id")
+    page = paginate(request, queryset, per_page=25)
+
+    from mailing.models import DmarcArchive  # noqa: PLC0415
+
+    domains = sorted(DmarcArchive.objects.select_related("domain").values_list("domain__name", flat=True).distinct())
+    orgs = sorted(DmarcReport.objects.exclude(reporter_org="").values_list("reporter_org", flat=True).distinct()[:100])
+    return render(
+        request,
+        "mailing/operator/dmarc_list.html",
+        {
+            "page": page,
+            "domain_filter": domain_filter,
+            "org_filter": org_filter,
+            "date_from": parsed_from or "",
+            "date_to": parsed_to or "",
+            "domains": domains,
+            "orgs": orgs,
+            "pagination_querystring": pagination_querystring(request),
+        },
+    )
+
+
+@staff_member_required
+def dmarc_report_detail(request, report_id):
+    from mailing.models import DmarcReport  # noqa: PLC0415
+
+    report = get_object_or_404(
+        DmarcReport.objects.select_related("attachment__archive__domain", "attachment__archive"), pk=report_id
+    )
+    records = list(report.records.order_by("-count", "source_ip"))
+    for record in records:
+        record.dmarc_pass = record.dkim == "pass" or record.spf == "pass"
+        identifiers = record.identifiers or {}
+        record.header_from = identifiers.get("header_from", "")
+        auth = record.auth_results or {}
+        dkim_results = auth.get("dkim") or []
+        spf_results = auth.get("spf") or []
+        record.dkim_detail = dkim_results[0] if dkim_results else {}
+        record.spf_detail = spf_results[0] if spf_results else {}
+    total = sum(r.count for r in records)
+    passed = sum(r.count for r in records if r.dmarc_pass)
+    return render(
+        request,
+        "mailing/operator/dmarc_detail.html",
+        {
+            "report": report,
+            "records": records,
+            "domain": report.attachment.archive.domain,
+            "archive": report.attachment.archive,
+            "attachment": report.attachment,
+            "total_messages": total,
+            "passed_messages": passed,
+        },
+    )
+
+
+@staff_member_required
+def dmarc_report_xml(request, report_id):
+    from mailing.models import DmarcReport  # noqa: PLC0415
+    from mailing.services.dmarc import xml_documents  # noqa: PLC0415
+
+    report = get_object_or_404(DmarcReport.objects.select_related("attachment"), pk=report_id)
+    attachment = report.attachment
+    payload = bytes(attachment.payload)
+    members = list(xml_documents(payload, attachment.filename))
+    chosen = None
+    for member, xml in members:
+        if member == report.member_name:
+            chosen = xml
+            break
+    if chosen is None and len(members) == 1:
+        chosen = members[0][1]
+    if chosen is None:
+        raise Http404("Report XML not found in stored attachment.")
+    response = HttpResponse(chosen, content_type="application/xml")
+    response["Content-Disposition"] = f'attachment; filename="dmarc-report-{report.pk}.xml"'
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@staff_member_required
+def dmarc_report_attachment(request, report_id, attachment_id):
+    from mailing.models import DmarcAttachment  # noqa: PLC0415
+
+    attachment = get_object_or_404(DmarcAttachment, pk=attachment_id, reports__pk=report_id)
+    response = HttpResponse(bytes(attachment.payload), content_type="application/octet-stream")
+    response["Content-Disposition"] = f'attachment; filename="dmarc-attachment-{attachment.pk}.bin"'
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@staff_member_required
+def dmarc_summary(request):
+    from django.db.models.functions import TruncDate  # noqa: PLC0415
+
+    from mailing.models import DmarcRecord, DmarcReport  # noqa: PLC0415
+
+    domain_filter = request.GET.get("domain", "").strip().lower()[:255]
+    days = request.GET.get("days", "30").strip()
+    if days not in {"7", "30", "90", "365"}:
+        days = "30"
+    since = timezone.now() - timedelta(days=int(days))
+
+    reports = DmarcReport.objects.select_related("attachment__archive__domain").filter(date_begin__gte=since)
+    if domain_filter:
+        reports = reports.filter(attachment__archive__domain__name=domain_filter)
+    report_ids = list(reports.values_list("pk", flat=True))
+    record_qs = DmarcRecord.objects.filter(report_id__in=report_ids)
+
+    by_domain = list(
+        record_qs.values("report__attachment__archive__domain__name")
+        .annotate(
+            records=Count("pk"),
+            messages=Sum("count"),
+            dmarc_pass=Sum("count", filter=_dmarc_pass_q()),
+            spf_fail=Count("pk", filter=~Q(spf="pass")),
+            dkim_fail=Count("pk", filter=~Q(dkim="pass")),
+        )
+        .order_by("-messages")
+    )
+    for row in by_domain:
+        messages = row["messages"] or 0
+        row["pass_pct"] = round(100.0 * (row["dmarc_pass"] or 0) / messages, 1) if messages else 0.0
+
+    bucket = TruncDate("report__date_begin")
+    over_time = list(
+        record_qs.annotate(day=bucket)
+        .values("day")
+        .annotate(
+            messages=Sum("count"),
+            dmarc_pass=Sum("count", filter=_dmarc_pass_q()),
+            spf_fail=Count("pk", filter=~Q(spf="pass")),
+            dkim_fail=Count("pk", filter=~Q(dkim="pass")),
+        )
+        .order_by("day")
+    )
+    for row in over_time:
+        messages = row["messages"] or 0
+        row["pass_pct"] = round(100.0 * (row["dmarc_pass"] or 0) / messages, 1) if messages else 0.0
+
+    failing_ips = list(
+        record_qs.exclude(_dmarc_pass_q())
+        .values("source_ip")
+        .annotate(
+            messages=Sum("count"),
+            orgs=Count("report__reporter_org", distinct=True),
+        )
+        .order_by("-messages")[:20]
+    )
+    failing_orgs = list(
+        record_qs.exclude(_dmarc_pass_q())
+        .values("report__reporter_org")
+        .annotate(
+            messages=Sum("count"),
+            ips=Count("source_ip", distinct=True),
+        )
+        .order_by("-messages")[:20]
+    )
+
+    from mailing.models import DmarcArchive  # noqa: PLC0415
+
+    domains = sorted(DmarcArchive.objects.select_related("domain").values_list("domain__name", flat=True).distinct())
+    return render(
+        request,
+        "mailing/operator/dmarc_summary.html",
+        {
+            "domain_filter": domain_filter,
+            "days": days,
+            "domains": domains,
+            "by_domain": by_domain,
+            "over_time": over_time,
+            "failing_ips": failing_ips,
+            "failing_orgs": failing_orgs,
+            "report_count": len(report_ids),
+        },
+    )

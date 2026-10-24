@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}DMARC reports | Relay{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>DMARC reports</h1>
+      <p>Aggregate reports received for all Relay inbound domains. DMARC pass means DKIM or SPF passed aligned evaluation.</p>
+    </div>
+    <div class="actions">
+      <a class="button secondary" href="{% url 'mailing:dmarc_summary' %}{% if domain_filter %}?domain={{ domain_filter|urlencode }}{% endif %}">Per-domain summary</a>
+    </div>
+  </div>
+  <form method="get" class="section">
+    <div class="filter-grid">
+      <div class="form-field">
+        <label for="dmarc-domain">Domain</label>
+        <select id="dmarc-domain" name="domain">
+          <option value="">All domains</option>
+          {% for name in domains %}<option value="{{ name }}"{% if domain_filter == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="dmarc-org">Reporter org</label>
+        <select id="dmarc-org" name="org">
+          <option value="">All reporters</option>
+          {% for name in orgs %}<option value="{{ name }}"{% if org_filter == name %} selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="dmarc-from">From</label>
+        <input type="date" id="dmarc-from" name="from" value="{{ date_from }}">
+      </div>
+      <div class="form-field">
+        <label for="dmarc-to">To</label>
+        <input type="date" id="dmarc-to" name="to" value="{{ date_to }}">
+      </div>
+    </div>
+    <div class="toolbar">
+      <button type="submit">Filter reports</button>
+      {% if domain_filter or org_filter or date_from or date_to %}<a class="button secondary" href="{% url 'mailing:dmarc_report_list' %}">Clear filters</a>{% endif %}
+    </div>
+  </form>
+  <section class="section" aria-labelledby="dmarc-results">
+    <div class="section-header"><div><h2 id="dmarc-results"><span class="data-num">{{ page.paginator.count }}</span> report{{ page.paginator.count|pluralize }}</h2></div></div>
+    {% if page.object_list %}
+      <div class="compact-list">
+        {% for row in page.object_list %}
+          <article class="compact-row">
+            <div class="compact-row-main">
+              <a href="{% url 'mailing:dmarc_report_detail' row.pk %}"><strong>{{ row.reporter_org|default:"(unknown reporter)" }} — {{ row.report_id|default:row.pk }}</strong></a>
+              <span class="badge">{{ row.attachment.archive.domain.name }}</span>
+            </div>
+            <div class="compact-row-meta">
+              <span><span class="data-time">{{ row.date_begin|date:"M j, Y" }}</span> – <span class="data-time">{{ row.date_end|date:"M j, Y" }}</span></span>
+              <span><span class="data-num">{{ row.record_count }}</span> record{{ row.record_count|pluralize }}, <span class="data-num">{{ row.message_total|default:0 }}</span> message{{ row.message_total|pluralize }}</span>
+              <span>DMARC pass <span class="data-num">{{ row.dmarc_pass_records|default:0 }}</span>/{{ row.record_count }} records</span>
+              <span>SPF pass <span class="data-num">{{ row.spf_pass|default:0 }}</span> · DKIM pass <span class="data-num">{{ row.dkim_pass|default:0 }}</span></span>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+      {% include 'mailing/operator/_pagination.html' with page_obj=page querystring=pagination_querystring %}
+    {% else %}
+      <div class="empty-state">
+        <strong>No DMARC reports match these filters.</strong>
+        <p>Try a different domain, reporter, or date range.</p>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}
