@@ -96,3 +96,32 @@ Run `uv run python manage.py check_transactional_health` for an immediate check.
 `--test-alert` sends a clearly marked forced test, hard-coded to
 `dev@dtcdev.click` regardless of configured recipients. Neither command resends
 client messages or changes their delivery state.
+
+## SES delivery gaps and webhook ingestion monitoring
+
+Relay guards against unconfirmed SES deliveries and dropped event notifications:
+
+1. **SES Outcome Gap**: Sent messages older than 2 hours that have neither a delivery,
+   bounce, nor complaint event are flagged. If the count reaches
+   `RELAY_SES_OUTCOME_GAP_THRESHOLD` (default: 1), an alert is triggered.
+   Transient delivery delays (such as SES retrying a null-MX host) keep messages in
+   `sent` state until SES either succeeds or hard-bounces after its 14-hour retry window.
+2. **SNS vs. Relay Persisted Gap**: Over a rolling 30-minute window, the number of
+   messages published to the SES SNS topic (`RELAY_SES_EVENTS_TOPIC_NAME`, default:
+   `relay-production-ses-events`) is compared against persisted `EmailEvent` and
+   SES `OperatorAudit` records in Relay. If SNS published events exceed persisted events,
+   an alert is triggered, indicating ingress worker downtime or message drops.
+
+Both alerts dispatch through the existing ops alert transport (`send_monitor_alert` /
+msmtp SMTP / SES fallback) with repeat throttling (1 hour per kind).
+The scheduler executes `check_ses_delivery_gap()` on every tick.
+Immediate checks and forced tests can be run via:
+`uv run python manage.py check_ses_delivery_gap [--force] [--test-alert]`.
+
+### SQS Consumer Ingress Safety
+
+SQS consumers (`SqsWorker` and `process_sqs_event`) ensure that any failure during
+ingress processing (handler exception, non-dict response, or unidentifiable record failure)
+retains the message in SQS. Unacknowledged failed messages are retried up to `maxReceiveCount`
+and routed directly to the SQS Dead Letter Queue (DLQ) for operator inspection, preventing
+accidental acknowledgment or silent deletion of unpersisted messages.

@@ -58,20 +58,32 @@ def json_body(record):
 
 def process_sqs_event(event, handler):
     failed_message_ids = []
-    for record in event.get("Records", []):
+    unidentified_failure = False
+    records = event.get("Records", []) if isinstance(event, dict) else []
+    for record in records:
+        message_id = record.get("messageId") or record.get("MessageId") or ""
         try:
             handler(json_body(record), record)
         except Exception as exc:
-            message_id = record.get("messageId", "<unknown>")
+            msg_identifier = message_id or "<unknown>"
             exc_class = exc.__class__.__name__
             sanitized_reason = sanitize_for_logging(str(exc))
             logger.error(
                 "SQS message %s failed (%s): %s",
-                message_id,
+                msg_identifier,
                 exc_class,
                 sanitized_reason,
             )
-            failed_message_ids.append(record.get("messageId", ""))
+            if message_id:
+                failed_message_ids.append(message_id)
+            else:
+                unidentified_failure = True
+
+    if unidentified_failure:
+        # If any message failed without an identifiable messageId, mark ALL records as failed
+        # to ensure no message is deleted that failed to persist.
+        all_ids = [r.get("messageId") or r.get("MessageId") for r in records if isinstance(r, dict)]
+        return partial_batch_response([m for m in all_ids if m])
 
     return partial_batch_response(failed_message_ids)
 

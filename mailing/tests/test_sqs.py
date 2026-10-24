@@ -92,3 +92,20 @@ def test_process_sqs_event_logs_failure_reason_with_redacted_secrets_and_emails(
     assert "token=[redacted]" in log_text
     assert "user.secret@example.com" not in log_text
     assert "supersecretkey123" not in log_text
+
+
+def test_process_sqs_event_preserves_messages_on_unidentified_failure():
+    event = {
+        "Records": [
+            {"messageId": "msg-1", "body": "{}"},
+            {"messageId": "", "body": "{}"},  # Record with empty messageId
+        ]
+    }
+
+    def handler(body, record):
+        if not record.get("messageId"):
+            raise ValueError("failure without messageId")
+
+    response = process_sqs_event(event, handler)
+    # When an unidentifiable failure occurs, all messages must be reported failed to avoid deleting
+    assert response == {"batchItemFailures": [{"itemIdentifier": "msg-1"}]}

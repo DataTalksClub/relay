@@ -1,8 +1,11 @@
+import logging
 from dataclasses import dataclass
 from time import sleep
 
 from mailing.aws import sqs_client
 from mailing.sqs import records_from_messages
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -19,7 +22,6 @@ class WorkerResult:
     failed: int
 
 
-
 class SqsWorker:
     def __init__(self, config, *, client=None, batch_size=10, wait_time=20, visibility_timeout=None):
         self.config = config
@@ -33,8 +35,34 @@ class SqsWorker:
         if not messages:
             return WorkerResult(received=0, deleted=0, failed=0)
 
-        response = self.config.handler(records_from_messages(messages), None)
-        failed_message_ids = {item["itemIdentifier"] for item in response.get("batchItemFailures", [])}
+        try:
+            response = self.config.handler(records_from_messages(messages), None)
+        except Exception:
+            logger.exception("SQS worker handler failed for queue %s", self.config.queue_url)
+            return WorkerResult(received=len(messages), deleted=0, failed=len(messages))
+
+        if not isinstance(response, dict):
+            logger.error(
+                "SQS worker handler returned non-dict response for queue %s: %r",
+                self.config.queue_url,
+                response,
+            )
+            return WorkerResult(received=len(messages), deleted=0, failed=len(messages))
+
+        failures = response.get("batchItemFailures")
+        if not isinstance(failures, list):
+            logger.error(
+                "SQS worker handler returned invalid batchItemFailures for queue %s: %r",
+                self.config.queue_url,
+                failures,
+            )
+            return WorkerResult(received=len(messages), deleted=0, failed=len(messages))
+
+        failed_message_ids = {
+            item["itemIdentifier"]
+            for item in failures
+            if isinstance(item, dict) and item.get("itemIdentifier")
+        }
 
         deleted = 0
         for message in messages:

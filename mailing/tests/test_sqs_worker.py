@@ -70,6 +70,40 @@ def test_sqs_worker_empty_poll_does_not_delete():
     assert client.deleted_receipts == []
 
 
+def test_sqs_worker_does_not_delete_on_handler_exception():
+    client = FakeSqsClient([_message("err-1")])
+
+    def exploding_handler(event, context):
+        raise RuntimeError("database connection crashed")
+
+    worker = SqsWorker(
+        WorkerConfig(name="test", queue_url="https://sqs.example/test", handler=exploding_handler),
+        client=client,
+    )
+
+    result = worker.run_once()
+
+    assert result.received == 1
+    assert result.deleted == 0
+    assert result.failed == 1
+    assert client.deleted_receipts == [], "message must be preserved for SQS retry and DLQ"
+
+
+def test_sqs_worker_does_not_delete_on_invalid_or_non_dict_response():
+    client = FakeSqsClient([_message("bad-resp-1")])
+
+    for bad_response in (None, "error", 123, {"invalid_key": True}):
+        worker = SqsWorker(
+            WorkerConfig(name="test", queue_url="https://sqs.example/test", handler=lambda e, c: bad_response),
+            client=client,
+        )
+        result = worker.run_once()
+        assert result.received == 1
+        assert result.deleted == 0
+        assert result.failed == 1
+        assert client.deleted_receipts == []
+
+
 def _message(message_id, payload=None):
     return {
         "MessageId": message_id,
