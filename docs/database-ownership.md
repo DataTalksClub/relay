@@ -115,6 +115,13 @@ restarts. Deploy through these workflows; a direct Coolify UI deploy skips
 the workflow preflight. A rollback image older than `db_preflight` fails
 closed; first rebuild that source with the preflight command before promotion.
 
+Coolify can start a service process before attaching its shared database
+network. Before acquiring the advisory lock, the startup gate retries transient
+DNS/connection-refused/startup errors up to 30 times, two seconds apart, without
+logging connection details. Authentication errors fail immediately. Failed
+migration operations are never retried by this wait. This absorbs the observed
+first-connection DNS gap without restarting otherwise healthy containers.
+
 ## Host runner installation and credentials
 
 Install `scripts/relay_db_preflight_host.py` as root-owned, mode 0755,

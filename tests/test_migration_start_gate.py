@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.core.management.base import CommandError
+from django.db import OperationalError
 
 from mailing.management.commands.migrate_before_start import MIGRATION_LOCK_ID, Command
 
@@ -47,6 +48,45 @@ def test_sqlite_gate_runs_migrations_without_postgresql_lock():
         Command().handle(verbosity=0)
     migrate.assert_called_once_with("migrate", interactive=False, verbosity=0)
     connection.cursor.assert_not_called()
+
+
+def test_startup_waits_for_docker_dns_before_any_migration_or_lock():
+    connection = MagicMock(vendor="postgresql")
+    connection.ensure_connection.side_effect = [
+        OperationalError('could not translate host name "private-host" to address: Temporary failure in name resolution'),
+        OperationalError("connection refused"),
+        None,
+    ]
+    with (
+        patch("mailing.management.commands.migrate_before_start.connections", {"default": connection}),
+        patch("mailing.management.commands.migrate_before_start.time.sleep") as sleep,
+        patch("mailing.management.commands.migrate_before_start.call_command") as migrate,
+    ):
+        Command().handle(verbosity=0)
+    assert connection.ensure_connection.call_count == 3
+    assert connection.close.call_count == 2
+    assert sleep.call_count == 2
+    migrate.assert_called_once_with("migrate", interactive=False, verbosity=0)
+
+
+@pytest.mark.parametrize("message,expected_attempts", [
+    ("Temporary failure in name resolution", 30),
+    ("password authentication failed", 1),
+])
+def test_connection_wait_is_bounded_and_never_retries_auth_or_runs_migrations(message, expected_attempts):
+    connection = MagicMock(vendor="postgresql")
+    connection.ensure_connection.side_effect = OperationalError(message)
+    with (
+        patch("mailing.management.commands.migrate_before_start.connections", {"default": connection}),
+        patch("mailing.management.commands.migrate_before_start.time.sleep") as sleep,
+        patch("mailing.management.commands.migrate_before_start.call_command") as migrate,
+        pytest.raises((CommandError, OperationalError)),
+    ):
+        Command().handle(verbosity=0)
+    assert connection.ensure_connection.call_count == expected_attempts
+    assert sleep.call_count == expected_attempts - 1
+    connection.cursor.assert_not_called()
+    migrate.assert_not_called()
 
 
 @pytest.mark.parametrize("migration_status", [0, 1])
