@@ -1428,6 +1428,7 @@ def authenticate_api_request(request):
         return request._admin_api_client, None
     auth_result = authenticate_bearer_token(request.headers.get("Authorization"))
     if auth_result.is_authenticated:
+        request._transactional_monitor_client_id = auth_result.client.pk
         return auth_result.client, None
 
     return None, JsonResponse(

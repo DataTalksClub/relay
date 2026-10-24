@@ -357,3 +357,10 @@ TRANSACTIONAL_TEST_SEND_ALLOWLIST = csv_env("TRANSACTIONAL_TEST_SEND_ALLOWLIST",
 # markdown external-link rewriter (ported from the AISL email pipeline).
 RELAY_EMAIL_BRAND_NAME = os.environ.get("RELAY_EMAIL_BRAND_NAME", "Relay")
 RELAY_EMAIL_SITE_BASE_URL = os.environ.get("RELAY_EMAIL_SITE_BASE_URL", "")
+
+# No-history clients never page. Overrides keyed by client ID, without secrets.
+RELAY_TRANSACTIONAL_MONITOR_ENABLED = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_ENABLED", "1") == "1"
+RELAY_TRANSACTIONAL_MONITOR_CLIENTS = json.loads(os.environ.get("RELAY_TRANSACTIONAL_MONITOR_CLIENTS", "{}"))
+RELAY_TRANSACTIONAL_MONITOR_FROM = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_FROM", "noreply@datatalks.club")
+RELAY_TRANSACTIONAL_MONITOR_TO = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_TO", "dev@dtcdev.click")
+MIDDLEWARE.insert(0, "mailing.transactional_monitor_middleware.TransactionalMonitorMiddleware")

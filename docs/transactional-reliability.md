@@ -41,3 +41,46 @@ alert. This monitor never resends historical messages.
 Retry tasks must be persisted in the database. A database outage that prevents
 that insert leaves the original task failed; once database access returns,
 the queued-age monitor reports the unresolved message for operator recovery.
+
+## Acceptance gaps and API errors
+
+`run_relay_scheduler` also checks transactional acceptance every 15 seconds. A
+client with at least 70 acceptances in the trailing seven days (10/day) pages
+when its latest acceptance is at least 60 minutes old. All hours are active by
+default: CMP serves a global audience. Clients with no traffic history do not
+page. An explicitly configured quiet hour suppresses the gap check until a
+full active hour has elapsed. With a healthy scheduler, detection is at the
+60-minute threshold plus at most one 15-second scheduler tick.
+
+`RELAY_TRANSACTIONAL_MONITOR_CLIENTS` is JSON keyed by numeric client ID, e.g.
+`{"2":{"min_daily":10,"timezone":"Europe/Berlin","quiet_hours":[0,1,2,3,4,5],"error_percent":20,"min_requests":5}}`.
+Use `enabled:false` for a client to disable its checks. The default error check
+pages at >=20% HTTP 4xx/5xx over the last 15 minutes with at least 5 requests,
+including at night. Minute counters expire after a day. The boundary minute is
+excluded, giving up to one minute of rounding at the start of that window.
+
+The middleware stores only client ID, minute, total and error counts. It uses
+the authenticated client or, on authentication failure, the key's public ID as
+an attribution hint (including revoked keys). An unknown/missing key cannot be
+assigned to a client. Public-ID attribution is not proof of caller identity.
+Responses rejected by a CDN/WAF/load balancer never reach this middleware;
+those require edge telemetry. A total stoppage is still covered by the gap
+check. Database outages can also prevent counters and the scheduler from
+working; existing external ops availability checks remain necessary.
+
+Alerts use Relay's SES transport and domain routing, with the existing Contabo
+ops From identity `noreply@datatalks.club` and `dev@dtcdev.click` as recipient.
+Override with `RELAY_TRANSACTIONAL_MONITOR_FROM` / `_TO`. This uses SES API
+credentials already configured for Relay, rather than copying the host's
+sendmail SMTP credentials. Delivery is synchronous and does not depend on the
+transactional worker queue. Enforced Relay dry-run still blocks transport.
+Successful pages repeat at most once per hour per client/reason, persisted in
+the database across scheduler restarts; failed sends remain eligible for retry.
+The scheduler emits `relay_transactional_monitor_heartbeat` each check and
+`relay_transactional_alert_delivery_failed` if delivery fails, without error
+text or private mail data. `RELAY_TRANSACTIONAL_MONITOR_ENABLED=0` disables it.
+
+Run `uv run python manage.py check_transactional_health` for an immediate check.
+`--test-alert` sends a clearly marked forced test, hard-coded to
+`dev@dtcdev.click` regardless of configured recipients. Neither command resends
+client messages or changes their delivery state.

@@ -723,6 +723,7 @@ class TransactionalMessage(TimeStampedModel):
         indexes = [
             models.Index(fields=["contact", "created_at"], name="tx_msg_contact_created_idx"),
             models.Index(fields=["client", "status", "created_at"], name="tx_msg_cli_status_created_idx"),
+            models.Index(fields=["client", "created_at"], name="tx_msg_client_created_idx"),
         ]
 
     def __str__(self):
@@ -1302,3 +1303,22 @@ class BlockedSender(TimeStampedModel):
 
 # Kept in a separate module so routing configuration stays together.
 from mailing.inbound_routing_models import InboundDelivery, InboundDomain, InboundMailbox  # noqa: E402,F401
+
+
+class TransactionalRequestMinute(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE)
+    minute = models.DateTimeField(db_index=True)
+    total = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["client", "minute"], name="tx_request_client_minute_unique")]
+
+
+class TransactionalMonitorState(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE)
+    kind = models.CharField(max_length=32)
+    last_alert_at = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["client", "kind"], name="tx_monitor_client_kind_unique")]
