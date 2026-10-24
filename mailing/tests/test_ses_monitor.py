@@ -8,6 +8,7 @@ from django.core.management import call_command
 from django.db import close_old_connections, connection
 from django.utils import timezone
 
+import mailing.services.ses_monitor as ses_monitor_module
 from mailing.models import (
     Client,
     Contact,
@@ -366,3 +367,99 @@ def test_concurrent_gap_checkers_send_only_once(client_obj, contact_obj, templat
         assert len(first.result(timeout=5)) == 1
     assert len(sent) == 1
     assert check_ses_delivery_gap(now=now) == []
+
+
+def _reset_sns_gap_state(monkeypatch):
+    monkeypatch.setattr(ses_monitor_module, "_pending_sns_gap", None)
+    monkeypatch.setattr(ses_monitor_module, "_last_alert_by_kind", {})
+
+
+@pytest.mark.django_db
+def test_sns_gap_requires_confirmation_before_paging(monkeypatch):
+    now = timezone.now()
+    _reset_sns_gap_state(monkeypatch)
+    gap = {
+        "kind": "ses_sns_persisted_gap",
+        "window_minutes": 30,
+        "sns_published": 17,
+        "relay_persisted": 16,
+        "topic": "relay-production-ses-events",
+    }
+    monkeypatch.setattr(ses_monitor_module, "check_sns_persisted_gap", lambda *a, **kw: gap)
+    monkeypatch.setattr(ses_monitor_module, "report_ses_outcome_gap", lambda *a, **kw: None)
+    sent = []
+    monkeypatch.setattr(ses_monitor_module, "send_monitor_alert", lambda payload, **kw: sent.append(payload))
+
+    # First sighting starts pending, no page (normal ingest lag window).
+    assert check_ses_delivery_gap(now=now) == []
+    assert len(sent) == 0
+    assert ses_monitor_module._pending_sns_gap is not None
+
+    # Still gap one minute later: confirming, still no page.
+    assert check_ses_delivery_gap(now=now + timedelta(minutes=1)) == []
+    assert len(sent) == 0
+
+    # Gap persists past the 5-minute confirmation: pages once.
+    alerts = check_ses_delivery_gap(now=now + timedelta(minutes=6))
+    assert len(alerts) == 1
+    assert alerts[0]["kind"] == "ses_sns_persisted_gap"
+    assert len(sent) == 1
+
+    # Immediate re-check throttled (1h), no duplicate page.
+    assert check_ses_delivery_gap(now=now + timedelta(minutes=7)) == []
+    assert len(sent) == 1
+
+
+@pytest.mark.django_db
+def test_sns_gap_resolved_before_confirmation_never_pages(monkeypatch):
+    now = timezone.now()
+    _reset_sns_gap_state(monkeypatch)
+    gap = {
+        "kind": "ses_sns_persisted_gap",
+        "window_minutes": 30,
+        "sns_published": 17,
+        "relay_persisted": 16,
+        "topic": "relay-production-ses-events",
+    }
+    calls = {"gap": True}
+    monkeypatch.setattr(
+        ses_monitor_module, "check_sns_persisted_gap", lambda *a, **kw: gap if calls["gap"] else None
+    )
+    monkeypatch.setattr(ses_monitor_module, "report_ses_outcome_gap", lambda *a, **kw: None)
+    sent = []
+    monkeypatch.setattr(ses_monitor_module, "send_monitor_alert", lambda payload, **kw: sent.append(payload))
+
+    assert check_ses_delivery_gap(now=now) == []
+    assert ses_monitor_module._pending_sns_gap is not None
+
+    # Lagging persist lands before confirmation: pending clears, never pages.
+    calls["gap"] = False
+    assert check_ses_delivery_gap(now=now + timedelta(minutes=2)) == []
+    assert len(sent) == 0
+    assert ses_monitor_module._pending_sns_gap is None
+
+    # A new isolated blip requires fresh confirmation, not an immediate page.
+    calls["gap"] = True
+    assert check_ses_delivery_gap(now=now + timedelta(minutes=3)) == []
+    assert len(sent) == 0
+
+
+@pytest.mark.django_db
+def test_sns_gap_force_bypasses_confirmation(monkeypatch):
+    now = timezone.now()
+    _reset_sns_gap_state(monkeypatch)
+    gap = {
+        "kind": "ses_sns_persisted_gap",
+        "window_minutes": 30,
+        "sns_published": 17,
+        "relay_persisted": 16,
+        "topic": "relay-production-ses-events",
+    }
+    monkeypatch.setattr(ses_monitor_module, "check_sns_persisted_gap", lambda *a, **kw: gap)
+    monkeypatch.setattr(ses_monitor_module, "report_ses_outcome_gap", lambda *a, **kw: None)
+    sent = []
+    monkeypatch.setattr(ses_monitor_module, "send_monitor_alert", lambda payload, **kw: sent.append(payload))
+
+    alerts = check_ses_delivery_gap(now=now, force=True)
+    assert len(alerts) == 1
+    assert len(sent) == 1

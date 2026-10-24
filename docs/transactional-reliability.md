@@ -106,11 +106,17 @@ Relay guards against unconfirmed SES deliveries and dropped event notifications:
    `RELAY_SES_OUTCOME_GAP_THRESHOLD` (default: 1), an alert is triggered.
    Transient delivery delays (such as SES retrying a null-MX host) keep messages in
    `sent` state until SES either succeeds or hard-bounces after its 14-hour retry window.
-2. **SNS vs. Relay Persisted Gap**: Over a rolling 30-minute window, the number of
-   messages published to the SES SNS topic (`RELAY_SES_EVENTS_TOPIC_NAME`, default:
+2. **SNS vs. Relay Persisted Gap**: Over a rolling 30-minute window ending two
+   minutes ago (minute-aligned), the number of messages published to the SES
+   SNS topic (`RELAY_SES_EVENTS_TOPIC_NAME`, default:
    `relay-production-ses-events`) is compared against persisted `EmailEvent` and
-   SES `OperatorAudit` records in Relay. If SNS published events exceed persisted events,
-   an alert is triggered, indicating ingress worker downtime or message drops.
+   SES `OperatorAudit` records in Relay. A first sighting only starts a pending
+   window (`relay_ses_gap_pending`); the page fires only if the gap is still
+   present after `RELAY_SNS_GAP_CONFIRM_MINUTES` (default: 5). Normal ingest lag
+   — including a persist landing just after the minute-aligned window end —
+   resolves before confirmation; a real loss persists for the full 30-minute
+   window and still pages, only delayed. `force=True` (manual
+   `check_ses_delivery_gap --force`) bypasses the confirmation for verification.
 
 Both alerts dispatch through the existing ops alert transport (`send_monitor_alert` /
 msmtp SMTP / SES fallback) with repeat throttling (1 hour per kind).

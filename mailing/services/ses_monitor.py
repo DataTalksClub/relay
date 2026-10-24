@@ -22,6 +22,7 @@ from mailing.services.transactional_monitor import send_monitor_alert
 logger = logging.getLogger(__name__)
 
 _last_alert_by_kind = {}
+_pending_sns_gap = None
 
 
 def get_sns_published_count(topic_name, start_time, end_time, *, client=None):
@@ -126,7 +127,13 @@ def report_ses_outcome_gap(now, *, test=False):
 
 
 def check_sns_persisted_gap(now=None, *, cw_client=None, topic_name=None, window_minutes=30):
-    """Check if SNS published events exceed Relay persisted events over window."""
+    """Check if SNS published events exceed Relay persisted events over window.
+
+    The SNS window ends two minutes ago (minute-aligned) to allow normal
+    ingest to settle. A single boundary-straddling persist (e.g. created
+    0.5s after window_end) still shows as a gap here; callers must confirm
+    persistence before paging (see check_ses_delivery_gap).
+    """
     now = now or timezone.now()
     topic_name = topic_name or getattr(settings, "RELAY_SES_EVENTS_TOPIC_NAME", "relay-production-ses-events")
     window_end = (now - timedelta(minutes=2)).replace(second=0, microsecond=0)
@@ -156,6 +163,8 @@ def check_sns_persisted_gap(now=None, *, cw_client=None, topic_name=None, window
         return {
             "kind": "ses_sns_persisted_gap",
             "window_minutes": window_minutes,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
             "sns_published": sns_published,
             "relay_persisted": total_persisted,
             "topic": topic_name,
@@ -164,8 +173,17 @@ def check_sns_persisted_gap(now=None, *, cw_client=None, topic_name=None, window
 
 
 def check_ses_delivery_gap(*, now=None, force=False, cw_client=None, test=False):
-    """Run SES delivery guard checks and emit alerts via ops alert path."""
-    global _last_alert_by_kind
+    """Run SES delivery guard checks and emit alerts via ops alert path.
+
+    The SNS persisted gap pages only after confirmation: a first sighting
+    starts a pending window (no page) and the alert fires only if the gap
+    is still present after RELAY_SNS_GAP_CONFIRM_MINUTES (default 5).
+    Normal ingest lag (including a persist landing just after the
+    minute-aligned window_end) resolves before confirmation; a real loss
+    persists for the full 30-minute window and still pages, only delayed.
+    force=True bypasses the confirmation for manual verification.
+    """
+    global _last_alert_by_kind, _pending_sns_gap
     now = now or timezone.now()
 
     if not getattr(settings, "RELAY_SES_MONITOR_ENABLED", True) and not force:
@@ -183,7 +201,34 @@ def check_ses_delivery_gap(*, now=None, force=False, cw_client=None, test=False)
 
     sns_gap = check_sns_persisted_gap(now, cw_client=cw_client)
     if sns_gap:
-        alerts.append(sns_gap)
+        if force:
+            alerts.append(sns_gap)
+            _pending_sns_gap = None
+        else:
+            confirm_minutes = getattr(settings, "RELAY_SNS_GAP_CONFIRM_MINUTES", 5)
+            if _pending_sns_gap is None:
+                _pending_sns_gap = {"first_seen": now, "gap": sns_gap}
+                logger.warning(
+                    "relay_ses_gap_pending kind=%s sns_published=%s relay_persisted=%s",
+                    sns_gap["kind"],
+                    sns_gap["sns_published"],
+                    sns_gap["relay_persisted"],
+                )
+            elif (now - _pending_sns_gap["first_seen"]) >= timedelta(minutes=confirm_minutes):
+                alerts.append(sns_gap)
+                _pending_sns_gap = None
+            else:
+                _pending_sns_gap["gap"] = sns_gap
+                logger.info(
+                    "relay_ses_gap_confirming kind=%s sns_published=%s relay_persisted=%s",
+                    sns_gap["kind"],
+                    sns_gap["sns_published"],
+                    sns_gap["relay_persisted"],
+                )
+    else:
+        if _pending_sns_gap is not None:
+            logger.info("relay_ses_gap_resolved kind=ses_sns_persisted_gap")
+        _pending_sns_gap = None
 
     for alert in alerts:
         kind = alert["kind"]
