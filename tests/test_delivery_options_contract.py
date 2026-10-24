@@ -10,7 +10,14 @@ import pytest
 from django.apps import apps
 from django.urls import reverse
 
-from mailing.models import Client, Contact, EmailTemplate, Organization, TransactionalMessage
+from mailing.models import (
+    Client,
+    Contact,
+    EmailTemplate,
+    Organization,
+    TransactionalMessage,
+    TransactionalRequestMinute,
+)
 from mailing.services import transactional as native
 from mailing.services.auth import create_client_api_key
 from mailing.services.senders import resolve_sender_email
@@ -72,6 +79,10 @@ def post(client, payload):
 def database_counts():
     counts = {}
     for model in apps.get_models():
+        # Rejected API requests deliberately increment operational error counters.
+        # Every delivery/domain model must still have zero side effects.
+        if model is TransactionalRequestMinute:
+            continue
         if model._meta.app_label in {"mailing", "jobs", "django_tasks_db"}:
             counts[model._meta.label] = model.objects.count()
     return counts
@@ -217,6 +228,8 @@ def test_invalid_native_api_options_have_zero_effects(boundary, client, monkeypa
     response = post(client, request_payload(**options))
     assert response.status_code == 400 and response.json()["error"]["fields"] == error
     assert database_counts() == before and queued == []
+    metric = TransactionalRequestMinute.objects.get(client=boundary[0])
+    assert (metric.total, metric.errors) == (1, 1)
 
 
 def selected_options():
