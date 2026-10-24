@@ -7,8 +7,7 @@
 # CD path: GitHub Actions builds → GHCR → Coolify deploy API (no git clone on Contabo).
 #
 # Service set mirrors scripts/deploy_relay_sandbox.sh production list, minus
-# inbound-mail (production has no SES receipt rule / inbound queue; see
-# docs/production-aux-ownership.md):
+# inbound is enabled by the per-domain receipt-rule migration:
 #   web                gunicorn (public; Traefik domains managed in Coolify UI)
 #   worker             django.tasks DB worker on queue "default" (sends)
 #   provider-events-worker  django.tasks DB worker on queue "provider-events" (SES/inbound)
@@ -24,9 +23,8 @@
 # 14-day retention, all queues). The retired AWS EventBridge
 # relay-production-prune-database rule referenced a host script that was never
 # implemented here and must stay retired: the scheduler is the single owner.
-# Inbound mail is intentionally disabled in production (no SES receipt rule /
-# inbound queue; see docs/production-aux-ownership.md); only ses-webhooks and
-# sandbox-ses-webhooks are drained.
+# Inbound ingress consumes only SQS_INBOUND_EMAIL_QUEUE_URL, configured in Coolify.
+# DEV has no inbound ingress and cannot drain this production queue.
 services:
   web:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
@@ -120,3 +118,16 @@ services:
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
+
+  inbound-deliveries:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "process_inbound_deliveries"]
+
+  inbound-ingress:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    # Stage code before receipt cutover; absence of queue is intentional standby.
+    command: ["sh", "-ec", 'if [ -n "$${SQS_INBOUND_EMAIL_QUEUE_URL:-}" ]; then exec python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20; else echo "inbound ingress standby: no queue configured"; exec sleep infinity; fi']

@@ -85,3 +85,9 @@ services:
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
+
+  inbound-deliveries:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "process_inbound_deliveries"]

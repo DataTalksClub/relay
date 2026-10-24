@@ -1,0 +1,92 @@
+{
+  "domains": [
+    {
+      "name": "aishippinglabs.com",
+      "client": "aisl-website",
+      "from_email": "noreply@aishippinglabs.com",
+      "mailboxes": [
+        {
+          "local_part": "alexey",
+          "kind": "forward",
+          "destinations": [
+            "alexey@datatalks.club"
+          ]
+        },
+        {
+          "local_part": "team",
+          "kind": "forward",
+          "destinations": [
+            "alexey@datatalks.club"
+          ]
+        },
+        {
+          "local_part": "content",
+          "kind": "forward",
+          "destinations": [
+            "alexey@datatalks.club"
+          ]
+        },
+        {
+          "local_part": "welcome",
+          "kind": "forward",
+          "destinations": [
+            "alexey@datatalks.club"
+          ]
+        },
+        {
+          "local_part": "admin",
+          "kind": "forward",
+          "destinations": [
+            "alexey.s.grigoriev@gmail.com"
+          ]
+        },
+        {
+          "local_part": "test",
+          "kind": "forward",
+          "destinations": [
+            "alexey.s.grigoriev@gmail.com"
+          ]
+        },
+        {
+          "local_part": "*",
+          "kind": "discard"
+        }
+      ]
+    },
+    {
+      "name": "dtcdev.click",
+      "client": "dtc-website",
+      "from_email": "no-reply@dtcdev.click",
+      "mailboxes": [
+        {
+          "local_part": "dev",
+          "kind": "bot",
+          "sender_allowlist": [
+            "alexey.s.grigoriev@gmail.com",
+            "alexey@datatalks.club",
+            "noreply@datatalks.club",
+            "no-reply@dtcdev.click",
+            "alerts@dtcdev.click"
+          ],
+          "webhook_secret_id": "env:INBOUND_DEV_WEBHOOK"
+        },
+        {
+          "local_part": "tofu",
+          "kind": "bot",
+          "sender_allowlist": [
+            "alexey.s.grigoriev@gmail.com",
+            "alexey@datatalks.club",
+            "noreply@datatalks.club",
+            "no-reply@dtcdev.click",
+            "alerts@dtcdev.click"
+          ],
+          "webhook_secret_id": "env:INBOUND_TOFU_WEBHOOK"
+        },
+        {
+          "local_part": "*",
+          "kind": "discard"
+        }
+      ]
+    }
+  ]
+}
