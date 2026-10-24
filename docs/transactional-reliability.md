@@ -68,12 +68,17 @@ those require edge telemetry. A total stoppage is still covered by the gap
 check. Database outages can also prevent counters and the scheduler from
 working; existing external ops availability checks remain necessary.
 
-Alerts use Relay's SES transport and domain routing, with the existing Contabo
-ops From identity `noreply@datatalks.club` and `dev@dtcdev.click` as recipient.
-Override with `RELAY_TRANSACTIONAL_MONITOR_FROM` / `_TO`. This uses SES API
-credentials already configured for Relay, rather than copying the host's
-sendmail SMTP credentials. Delivery is synchronous and does not depend on the
-transactional worker queue. Enforced Relay dry-run still blocks transport.
+Production alerts use the same msmtp/SES SMTP path as the host's ops alerts,
+with From `noreply@datatalks.club` and recipient `dev@dtcdev.click`. The scheduler
+alone mounts `/etc/msmtprc` read-only at `/run/relay-ops-msmtprc`; credentials
+stay in the existing host file and are never copied into git or environment
+variables. The image includes msmtp. `RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG`
+selects this config file; without it the monitor uses Relay's SES API transport.
+The production send role cannot send the ops identity, so the SMTP mount is
+required there. Override From/To with `RELAY_TRANSACTIONAL_MONITOR_FROM` / `_TO`.
+Delivery is synchronous and does not depend on the transactional worker queue.
+Enforced Relay dry-run blocks both transports. SMTP has a bounded 20-second
+process timeout, and its diagnostics are suppressed to protect credentials.
 Successful pages repeat at most once per hour per client/reason, persisted in
 the database across scheduler restarts; failed sends remain eligible for retry.
 The scheduler emits `relay_transactional_monitor_heartbeat` each check and

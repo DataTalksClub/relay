@@ -364,3 +364,5 @@ RELAY_TRANSACTIONAL_MONITOR_CLIENTS = json.loads(os.environ.get("RELAY_TRANSACTI
 RELAY_TRANSACTIONAL_MONITOR_FROM = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_FROM", "noreply@datatalks.club")
 RELAY_TRANSACTIONAL_MONITOR_TO = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_TO", "dev@dtcdev.click")
 MIDDLEWARE.insert(0, "mailing.transactional_monitor_middleware.TransactionalMonitorMiddleware")
+
+RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG", "")

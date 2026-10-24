@@ -7,6 +7,9 @@ ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_FROZEN=1
 
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends msmtp ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./

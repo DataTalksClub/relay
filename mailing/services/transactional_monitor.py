@@ -1,7 +1,10 @@
 """Privacy-preserving acceptance and API failure monitoring; never resends mail."""
 import json
 import logging
+import subprocess
 from datetime import timedelta
+from email.message import EmailMessage
+from email.utils import make_msgid
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -9,6 +12,7 @@ from django.db.models import Max, Sum
 from django.utils import timezone
 
 from mailing.aws import ses_client_for_source
+from mailing.dry_run import ensure_transport_allowed
 from mailing.models import Client, TransactionalMessage, TransactionalMonitorState, TransactionalRequestMinute
 from mailing.ses import send_email
 
@@ -59,9 +63,31 @@ def send_monitor_alert(payload, *, test=False):
     destination = "dev@dtcdev.click" if test else settings.RELAY_TRANSACTIONAL_MONITOR_TO
     source = settings.RELAY_TRANSACTIONAL_MONITOR_FROM
     body = json.dumps(payload, sort_keys=True)
+    if settings.RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG:
+        return send_ops_smtp(source, destination, payload["kind"], body)
     return send_email(ses_client=ses_client_for_source(source), source=source,
                       to_email=destination, subject="[Relay transactional monitor] " + payload["kind"],
                       text_body=body, html_body="",)
+
+
+def send_ops_smtp(source, destination, kind, body):
+    ensure_transport_allowed("ops alert SMTP")
+    message = EmailMessage()
+    message["From"] = source
+    message["To"] = destination
+    message["Subject"] = "[Relay transactional monitor] " + kind
+    message["Message-ID"] = make_msgid(domain="relay.datatalks.club")
+    message.set_content(body)
+    try:
+        subprocess.run(
+            ["/usr/bin/msmtp", "--file=" + settings.RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG,
+             "--from=" + source, "--timeout=15", "--", destination],
+            input=message.as_bytes(), capture_output=True, check=True, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # SMTP diagnostics may include credentials or addresses; never propagate them.
+        raise RuntimeError("ops_alert_transport_failed") from None
+    return str(message["Message-ID"])
 
 
 def check_transactional_health(*, now=None, force=False):

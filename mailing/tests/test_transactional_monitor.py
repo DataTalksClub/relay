@@ -1,3 +1,4 @@
+import subprocess
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
@@ -6,6 +7,7 @@ from django.core.management import call_command
 from django.http import HttpResponse
 from django.test import RequestFactory
 
+from mailing.dry_run import DryRunSuppressed
 from mailing.models import (
     Client,
     Contact,
@@ -120,3 +122,39 @@ def test_test_command_has_fixed_recipient(monkeypatch, settings):
     settings.RELAY_TRANSACTIONAL_MONITOR_TO = "unwanted@example.invalid"
     call_command("check_transactional_health", test_alert=True)
     assert sender.call_args.kwargs["to_email"] == "dev@dtcdev.click"
+
+
+def test_ops_transport_uses_existing_config_and_fixed_test_recipient(monkeypatch, settings):
+    settings.RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG = "/run/relay-ops-msmtprc"
+    settings.RELAY_TRANSACTIONAL_MONITOR_TO = "unwanted@example.invalid"
+    monkeypatch.delenv("RELAY_DRY_RUN", raising=False)
+    transport = Mock()
+    monkeypatch.setattr(monitor.subprocess, "run", transport)
+    message_id = real_send_monitor_alert({"kind": "forced_test"}, test=True)
+    command = transport.call_args.args[0]
+    assert command == ["/usr/bin/msmtp", "--file=/run/relay-ops-msmtprc",
+                       "--from=" + settings.RELAY_TRANSACTIONAL_MONITOR_FROM,
+                       "--timeout=15", "--", "dev@dtcdev.click"]
+    assert b"To: dev@dtcdev.click" in transport.call_args.kwargs["input"]
+    assert b"unwanted@example.invalid" not in transport.call_args.kwargs["input"]
+    assert transport.call_args.kwargs["timeout"] == 20
+    assert message_id.endswith("@relay.datatalks.club>")
+
+
+def test_ops_transport_obeys_enforced_dry_run(monkeypatch, settings):
+    settings.RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG = "/run/relay-ops-msmtprc"
+    monkeypatch.setenv("RELAY_DRY_RUN", "1")
+    transport = Mock()
+    monkeypatch.setattr(monitor.subprocess, "run", transport)
+    with pytest.raises(DryRunSuppressed):
+        real_send_monitor_alert({"kind": "forced_test"}, test=True)
+    transport.assert_not_called()
+
+
+def test_ops_transport_sanitizes_failure_diagnostics(monkeypatch, settings):
+    settings.RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG = "/run/relay-ops-msmtprc"
+    monkeypatch.delenv("RELAY_DRY_RUN", raising=False)
+    failure = subprocess.CalledProcessError(1, ["msmtp"], stderr=b"private diagnostic")
+    monkeypatch.setattr(monitor.subprocess, "run", Mock(side_effect=failure))
+    with pytest.raises(RuntimeError, match="^ops_alert_transport_failed$"):
+        real_send_monitor_alert({"kind": "forced_test"}, test=True)

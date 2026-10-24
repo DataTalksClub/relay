@@ -75,6 +75,11 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
+    environment:
+      RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG: /run/relay-ops-msmtprc
+    volumes:
+      # Reuse the existing host ops transport; never copy SMTP secrets into git/env.
+      - /etc/msmtprc:/run/relay-ops-msmtprc:ro
     command: ["python", "manage.py", "run_relay_scheduler", "--interval", "15"]
 
   ses-ingress:
