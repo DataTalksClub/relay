@@ -133,16 +133,62 @@ def test_ses_ingress_preserves_transport_timestamps_through_task_processing(sett
         assert received_at == payload["received_at"]
 
 
-def test_ses_ingress_retries_malformed_payload_without_deleting_it(settings):
+def test_ses_ingress_retries_malformed_payload_without_deleting_it(settings, caplog):
     settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
     client = FakeSqsClient([_message("bad", {"Type": "Notification", "Message": "bad-json"})])
 
-    result = SqsWorker(get_ingress_config("ses-webhooks"), client=client).run_once()
+    with caplog.at_level("ERROR"):
+        result = SqsWorker(get_ingress_config("ses-webhooks"), client=client).run_once()
 
     assert result.failed == 1
     assert result.deleted == 0
     assert client.deleted_receipts == []
     assert not DBTaskResult.objects.exists()
+    assert "bad" in caplog.text
+    assert "SesWebhookError" in caplog.text
+    assert "invalid SES notification message" in caplog.text
+
+
+def test_ses_ingress_processes_and_deletes_delivery_delay_notification(settings):
+    settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
+    delay_payload = {
+        "Type": "Notification",
+        "MessageId": "sns-delay-1",
+        "TopicArn": "arn:aws:sns:eu-west-1:387546586013:relay-production-ses-events",
+        "Message": json.dumps(
+            {
+                "eventType": "DeliveryDelay",
+                "mail": {
+                    "timestamp": "2026-10-24T10:38:18.805Z",
+                    "source": "newsletter@example.com",
+                    "messageId": "ses-delay-msg-1",
+                    "destination": ["recipient@example.com"],
+                },
+                "deliveryDelay": {
+                    "timestamp": "2026-10-24T10:38:18.805Z",
+                    "delayType": "TransientCommunicationFailure",
+                    "expirationTime": "2026-10-24T18:07:05.177Z",
+                    "delayedRecipients": [
+                        {
+                            "emailAddress": "recipient@example.com",
+                            "status": "4.4.1",
+                            "diagnosticCode": "smtp; 421 4.4.1 Unable to connect to remote host",
+                        }
+                    ],
+                },
+            }
+        ),
+    }
+    client = FakeSqsClient([_message("m-delay", delay_payload)])
+
+    worker = SqsWorker(get_ingress_config("ses-webhooks"), client=client)
+    result = worker.run_once()
+
+    assert result.failed == 0
+    assert result.deleted == 1
+    assert client.deleted_receipts == ["receipt-m-delay"]
+    queued = DBTaskResult.objects.filter(task_path__endswith="process_ses_webhook_event")
+    assert queued.count() == 1
 
 
 def test_unknown_ingress_worker_is_rejected():

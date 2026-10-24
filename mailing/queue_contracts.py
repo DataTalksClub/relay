@@ -10,7 +10,17 @@ SES_WEBHOOKS_CONTRACT = "ses-webhooks"
 EMAIL_EVENTS_CONTRACT = "email-events"
 
 TRACKING_EVENT_TYPES = {"open", "click", "unsubscribe"}
-SES_NOTIFICATION_TYPES = {"send", "reject", "delivery", "bounce", "complaint", "open", "click"}
+SES_NOTIFICATION_TYPES = {
+    "send",
+    "reject",
+    "delivery",
+    "bounce",
+    "complaint",
+    "open",
+    "click",
+    "delivery_delay",
+    "unsupported",
+}
 
 
 class ContractValidationError(ValueError):

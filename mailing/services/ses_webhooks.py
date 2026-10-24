@@ -20,12 +20,15 @@ from mailing.models import (
     Contact,
     EmailEvent,
     EmailEventType,
+    OperatorAudit,
     TransactionalMessage,
     TransactionalMessageStatus,
 )
 from mailing.queue_contracts import CONTRACT_VERSION, SES_WEBHOOKS_CONTRACT, validate_ses_webhook_message
 from mailing.services.client_callbacks import emit_client_callback, is_hard_bounce
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
+from mailing.services.operator_management import safe_metadata
+from mailing.sqs import sanitize_for_logging
 
 SNS_NOTIFICATION = "Notification"
 SNS_SUBSCRIPTION_CONFIRMATION = "SubscriptionConfirmation"
@@ -40,6 +43,7 @@ SES_EVENT_TYPES = {
     "Complaint": "complaint",
     "Open": "open",
     "Click": "click",
+    "DeliveryDelay": "delivery_delay",
 }
 
 EVENT_TYPE_BY_NOTIFICATION = {
@@ -165,9 +169,7 @@ def normalize_ses_notification(sns_payload, *, received_at=None):
         raise SesWebhookError("SES notification message must be an object")
 
     event_name = ses_payload.get("eventType") or ses_payload.get("notificationType")
-    notification_type = SES_EVENT_TYPES.get(event_name)
-    if notification_type is None:
-        raise SesWebhookError("unsupported SES notification type")
+    notification_type = SES_EVENT_TYPES.get(event_name, "unsupported")
 
     mail = ses_payload.get("mail") or {}
     ses_message_id = mail.get("messageId") or ses_payload.get("mailMessageId") or ""
@@ -195,6 +197,22 @@ def normalize_ses_webhook_worker_payload(payload, *, received_at=None, sqs_attri
         normalized = validate_ses_webhook_message(payload)
     elif payload.get("Type") == SNS_NOTIFICATION:
         normalized = normalize_ses_notification(payload, received_at=received_at)
+    elif payload.get("Type") == SNS_SUBSCRIPTION_CONFIRMATION:
+        normalized = validate_ses_webhook_message(
+            {
+                "contract": SES_WEBHOOKS_CONTRACT,
+                "version": CONTRACT_VERSION,
+                "provider": "ses",
+                "provider_event_id": payload.get("MessageId", ""),
+                "notification_type": "unsupported",
+                "received_at": (received_at or timezone.now()).isoformat(),
+                "metadata": {
+                    "sns_type": SNS_SUBSCRIPTION_CONFIRMATION,
+                    "sns_message_id": payload.get("MessageId"),
+                    "sns_topic_arn": payload.get("TopicArn"),
+                },
+            }
+        )
     else:
         raise SesWebhookError("unsupported SES webhook worker payload")
 
@@ -210,8 +228,14 @@ def normalize_ses_webhook_worker_payload(payload, *, received_at=None, sqs_attri
 
 
 def build_ses_metadata(ses_payload, sns_payload):
-    notification_type = SES_EVENT_TYPES[ses_payload.get("eventType") or ses_payload.get("notificationType")]
-    detail = ses_payload.get(notification_type) or {}
+    event_name = ses_payload.get("eventType") or ses_payload.get("notificationType")
+    notification_type = SES_EVENT_TYPES.get(event_name, "unsupported")
+    detail = (
+        ses_payload.get("deliveryDelay")
+        or ses_payload.get(notification_type)
+        or (ses_payload.get(event_name) if event_name else None)
+        or {}
+    )
     mail = ses_payload.get("mail") or {}
     metadata = {
         "sns_message_id": sns_payload.get("MessageId"),
@@ -231,12 +255,73 @@ def build_ses_metadata(ses_payload, sns_payload):
         metadata["reason"] = detail.get("reason")
     elif notification_type == "click":
         metadata["url"] = detail.get("link")
+    elif notification_type == "delivery_delay":
+        metadata["event_type"] = "DeliveryDelay"
+        if detail.get("delayType"):
+            metadata["delay_type"] = detail["delayType"]
+        if detail.get("expirationTime"):
+            metadata["expiration_time"] = detail["expirationTime"]
+        delayed_recipients = detail.get("delayedRecipients") or []
+        if isinstance(delayed_recipients, list) and delayed_recipients:
+            diag = delayed_recipients[0].get("diagnosticCode", "")
+            if diag:
+                metadata["diagnostic_code"] = sanitize_for_logging(diag)
+            status = delayed_recipients[0].get("status", "")
+            if status:
+                metadata["delayed_status"] = status
+    elif notification_type == "unsupported":
+        if event_name:
+            metadata["event_type"] = str(event_name)
     return {key: value for key, value in metadata.items() if value not in (None, "")}
+
+
+def record_unsupported_ses_event(payload):
+    provider_event_id = payload["provider_event_id"]
+    notification_type = payload["notification_type"]
+
+    existing = OperatorAudit.objects.filter(
+        action__endswith="unsupported",
+        metadata__provider_event_id=provider_event_id,
+    ).first()
+    if existing:
+        return existing
+
+    source = correlate_ses_message(payload.get("ses_message_id", ""))
+    target_type = "ses_notification"
+    target_id = 0
+    if source is not None:
+        target_type = source.__class__.__name__.lower()
+        target_id = source.id
+
+    action = f"ses.{notification_type}.unsupported" if notification_type != "unsupported" else "ses.event.unsupported"
+
+    metadata = safe_metadata(
+        {
+            "provider": payload.get("provider", "ses"),
+            "provider_event_id": provider_event_id,
+            "ses_message_id": payload.get("ses_message_id", ""),
+            "notification_type": notification_type,
+            **(payload.get("metadata") or {}),
+        }
+    )
+
+    return OperatorAudit.objects.create(
+        actor=None,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        metadata=metadata,
+    )
 
 
 def process_ses_webhook(payload):
     validate_ses_webhook_message(payload)
     provider_event_id = payload["provider_event_id"]
+    notification_type = payload["notification_type"]
+
+    if notification_type in {"delivery_delay", "unsupported"}:
+        return record_unsupported_ses_event(payload)
+
     if EmailEvent.objects.filter(provider_event_id=provider_event_id).exists():
         return None
 

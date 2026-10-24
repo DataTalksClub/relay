@@ -177,8 +177,18 @@ def process_ses_webhook_event(payload):
         process_ses_webhook,
     )
 
-    event = process_ses_webhook(normalize_ses_webhook_worker_payload(payload))
-    return _summarise(event, lambda e: {"email_event_id": e.pk, "event_type": e.event_type})
+    result = process_ses_webhook(normalize_ses_webhook_worker_payload(payload))
+    if result is None:
+        return None
+    if hasattr(result, "action"):
+        return {
+            "operator_audit_id": getattr(result, "pk", getattr(result, "id", None)),
+            "action": result.action,
+        }
+    return {
+        "email_event_id": getattr(result, "pk", getattr(result, "id", None)),
+        "event_type": getattr(result, "event_type", None),
+    }
 
 
 @task(queue_name="provider-events")

@@ -64,3 +64,31 @@ def test_process_sqs_event_reports_failed_message_ids():
     assert process_sqs_event(event, handler) == {
         "batchItemFailures": [{"itemIdentifier": "message-1"}],
     }
+
+
+def test_process_sqs_event_logs_failure_reason_with_redacted_secrets_and_emails(caplog):
+    event = records_from_messages(
+        [
+            {
+                "MessageId": "msg-fail-42",
+                "ReceiptHandle": "receipt-fail-42",
+                "Body": '{"type": "transactional"}',
+            }
+        ]
+    )
+
+    def handler(body, record):
+        raise ValueError("Failed sending to user.secret@example.com with token=supersecretkey123")
+
+    with caplog.at_level("ERROR"):
+        response = process_sqs_event(event, handler)
+
+    assert response == {"batchItemFailures": [{"itemIdentifier": "msg-fail-42"}]}
+    assert len(caplog.records) == 1
+    log_text = caplog.text
+    assert "msg-fail-42" in log_text
+    assert "ValueError" in log_text
+    assert "[redacted-email]" in log_text
+    assert "token=[redacted]" in log_text
+    assert "user.secret@example.com" not in log_text
+    assert "supersecretkey123" not in log_text

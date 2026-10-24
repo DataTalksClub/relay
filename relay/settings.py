@@ -279,10 +279,20 @@ AISL_SES_TOPIC_ARNS = tuple(filter(None, (
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "handlers": {"aisl_ses_console": {"class": "logging.StreamHandler"}},
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+        "aisl_ses_console": {"class": "logging.StreamHandler"},
+    },
     "loggers": {
+        "mailing": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
         "mailing.services.aisl_ses_forwarder": {
-            "handlers": ["aisl_ses_console"], "level": "INFO", "propagate": False,
+            "handlers": ["aisl_ses_console"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }

@@ -1,9 +1,27 @@
 import json
+import logging
+import re
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from mailing.aws import sqs_client
+
+logger = logging.getLogger(__name__)
+
+EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+SECRET_PATTERN = re.compile(
+    r"(?i)\b(api_key|token|secret|password|signature|authorization|access_key|private_key)\b\s*[:=]\s*['\"]?[^\s,'\"]+['\"]?"
+)
+
+
+def sanitize_for_logging(message: str) -> str:
+    if not message:
+        return ""
+    text = str(message)
+    text = EMAIL_PATTERN.sub("[redacted-email]", text)
+    text = SECRET_PATTERN.sub(r"\1=[redacted]", text)
+    return text
 
 
 def partial_batch_response(failed_message_ids):
@@ -43,8 +61,17 @@ def process_sqs_event(event, handler):
     for record in event.get("Records", []):
         try:
             handler(json_body(record), record)
-        except Exception:
-            failed_message_ids.append(record["messageId"])
+        except Exception as exc:
+            message_id = record.get("messageId", "<unknown>")
+            exc_class = exc.__class__.__name__
+            sanitized_reason = sanitize_for_logging(str(exc))
+            logger.error(
+                "SQS message %s failed (%s): %s",
+                message_id,
+                exc_class,
+                sanitized_reason,
+            )
+            failed_message_ids.append(record.get("messageId", ""))
 
     return partial_batch_response(failed_message_ids)
 

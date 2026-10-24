@@ -24,6 +24,7 @@ from mailing.models import (
     EmailEvent,
     EmailEventType,
     EmailTemplate,
+    OperatorAudit,
     Organization,
     TransactionalMessage,
     TransactionalMessageStatus,
@@ -607,3 +608,153 @@ def build_test_certificate(private_key):
         .sign(private_key, hashes.SHA256())
     )
     return cert.public_bytes(serialization.Encoding.PEM)
+
+
+def test_delivery_delay_creates_operator_audit_for_transactional_message(transactional_message):
+    message_payload = {
+        "eventType": "DeliveryDelay",
+        "mail": {
+            "timestamp": "2026-10-24T10:38:18.805Z",
+            "source": "newsletter@example.com",
+            "messageId": transactional_message.ses_message_id,
+            "destination": [transactional_message.email],
+        },
+        "deliveryDelay": {
+            "timestamp": "2026-10-24T10:38:18.805Z",
+            "delayType": "TransientCommunicationFailure",
+            "expirationTime": "2026-10-24T18:07:05.177Z",
+            "delayedRecipients": [
+                {
+                    "emailAddress": transactional_message.email,
+                    "status": "4.4.1",
+                    "diagnosticCode": "smtp; 421 4.4.1 Unable to connect to remote host",
+                }
+            ],
+        },
+    }
+    event = records_from_payloads([("msg-tx-delay", sns_payload(message_payload, message_id="sns-tx-delay-1"))])
+
+    response = ses_webhooks_handler(event, None)
+
+    assert response == {"batchItemFailures": []}
+    transactional_message.refresh_from_db()
+    assert transactional_message.status == TransactionalMessageStatus.SENT
+    assert EmailEvent.objects.count() == 0
+
+    audit_entry = OperatorAudit.objects.get(metadata__provider_event_id="sns-tx-delay-1")
+    assert audit_entry.action == "ses.delivery_delay.unsupported"
+    assert audit_entry.target_type == "transactionalmessage"
+    assert audit_entry.target_id == transactional_message.id
+    assert audit_entry.metadata["delay_type"] == "TransientCommunicationFailure"
+    assert audit_entry.metadata["diagnostic_code"] == "smtp; 421 4.4.1 Unable to connect to remote host"
+    assert audit_entry.metadata["delayed_status"] == "4.4.1"
+    assert transactional_message.email not in str(audit_entry.metadata)
+
+
+def test_delivery_delay_creates_operator_audit_for_campaign_recipient(recipient):
+    message_payload = {
+        "eventType": "DeliveryDelay",
+        "mail": {
+            "timestamp": "2026-10-24T10:38:18.805Z",
+            "source": "newsletter@example.com",
+            "messageId": recipient.ses_message_id,
+            "destination": [recipient.email],
+        },
+        "deliveryDelay": {
+            "timestamp": "2026-10-24T10:38:18.805Z",
+            "delayType": "TransientCommunicationFailure",
+            "delayedRecipients": [
+                {
+                    "emailAddress": recipient.email,
+                    "status": "4.4.1",
+                    "diagnosticCode": "smtp; 421 4.4.1 Unable to connect to remote host",
+                }
+            ],
+        },
+    }
+    event = records_from_payloads([("msg-cr-delay", sns_payload(message_payload, message_id="sns-cr-delay-1"))])
+
+    response = ses_webhooks_handler(event, None)
+
+    assert response == {"batchItemFailures": []}
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.SENT
+    assert EmailEvent.objects.count() == 0
+
+    audit_entry = OperatorAudit.objects.get(metadata__provider_event_id="sns-cr-delay-1")
+    assert audit_entry.action == "ses.delivery_delay.unsupported"
+    assert audit_entry.target_type == "campaignrecipient"
+    assert audit_entry.target_id == recipient.id
+    assert recipient.email not in str(audit_entry.metadata)
+
+
+def test_delivery_delay_idempotency_does_not_duplicate_operator_audit(transactional_message):
+    message_payload = {
+        "eventType": "DeliveryDelay",
+        "mail": {
+            "timestamp": "2026-10-24T10:38:18.805Z",
+            "source": "newsletter@example.com",
+            "messageId": transactional_message.ses_message_id,
+            "destination": [transactional_message.email],
+        },
+        "deliveryDelay": {
+            "timestamp": "2026-10-24T10:38:18.805Z",
+            "delayType": "TransientCommunicationFailure",
+        },
+    }
+    event = records_from_payloads([("msg-tx-delay", sns_payload(message_payload, message_id="sns-tx-delay-idem"))])
+
+    response1 = ses_webhooks_handler(event, None)
+    response2 = ses_webhooks_handler(event, None)
+
+    assert response1 == {"batchItemFailures": []}
+    assert response2 == {"batchItemFailures": []}
+    assert OperatorAudit.objects.filter(metadata__provider_event_id="sns-tx-delay-idem").count() == 1
+
+
+def test_delivery_delay_redacts_email_in_diagnostic_code(transactional_message):
+    message_payload = {
+        "eventType": "DeliveryDelay",
+        "mail": {
+            "source": "newsletter@example.com",
+            "messageId": transactional_message.ses_message_id,
+        },
+        "deliveryDelay": {
+            "delayType": "TransientCommunicationFailure",
+            "delayedRecipients": [
+                {
+                    "emailAddress": transactional_message.email,
+                    "diagnosticCode": f"smtp; error connecting to mailbox {transactional_message.email}",
+                }
+            ],
+        },
+    }
+    event = records_from_payloads([("msg-tx-delay", sns_payload(message_payload, message_id="sns-tx-delay-diag"))])
+
+    response = ses_webhooks_handler(event, None)
+
+    assert response == {"batchItemFailures": []}
+    audit_entry = OperatorAudit.objects.get(metadata__provider_event_id="sns-tx-delay-diag")
+    assert "[redacted-email]" in audit_entry.metadata["diagnostic_code"]
+    assert transactional_message.email not in audit_entry.metadata["diagnostic_code"]
+
+
+def test_unsupported_future_ses_event_type_creates_audit_entry():
+    message_payload = {
+        "eventType": "SomeFutureEvent",
+        "mail": {
+            "timestamp": "2026-10-24T10:38:18.805Z",
+            "source": "newsletter@example.com",
+            "messageId": "unknown-ses-id",
+        },
+    }
+    event = records_from_payloads([("msg-unknown", sns_payload(message_payload, message_id="sns-unknown-1"))])
+
+    response = ses_webhooks_handler(event, None)
+
+    assert response == {"batchItemFailures": []}
+    audit_entry = OperatorAudit.objects.get(metadata__provider_event_id="sns-unknown-1")
+    assert audit_entry.action == "ses.event.unsupported"
+    assert audit_entry.target_type == "ses_notification"
+    assert audit_entry.target_id == 0
+    assert audit_entry.metadata["event_type"] == "SomeFutureEvent"
