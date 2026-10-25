@@ -6,8 +6,10 @@ Alerts when:
 """
 import json
 import logging
+import os
 from datetime import UTC, timedelta
 from itertools import chain
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.db import transaction
@@ -16,6 +18,7 @@ from django.db.models.fields.json import KT
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django_tasks_db.models import DBTaskResult
 
 from mailing.aws import aws_client
 from mailing.models import EmailEvent, EmailEventType, OperatorAudit, TransactionalMessage, TransactionalMessageStatus
@@ -27,13 +30,12 @@ _last_alert_by_kind = {}
 _pending_sns_gap = None
 
 
-def get_sns_published_count(topic_name, start_time, end_time, *, client=None):
-    """Query CloudWatch for SNS NumberOfMessagesPublished in the given time window."""
+def get_sns_metric_count(topic_name, start_time, end_time, metric, *, client=None):
     try:
         cw = client or aws_client("cloudwatch")
         res = cw.get_metric_statistics(
             Namespace="AWS/SNS",
-            MetricName="NumberOfMessagesPublished",
+            MetricName=metric,
             Dimensions=[{"Name": "TopicName", "Value": topic_name}],
             StartTime=start_time,
             EndTime=end_time,
@@ -49,6 +51,10 @@ def get_sns_published_count(topic_name, start_time, end_time, *, client=None):
             type(exc).__name__,
         )
         return None
+
+
+def get_sns_published_count(topic_name, start_time, end_time, *, client=None):
+    return get_sns_metric_count(topic_name, start_time, end_time, "NumberOfMessagesPublished", client=client)
 
 
 OUTCOME_GAP_REPORTED = "monitor.ses_outcome_gap.reported"
@@ -183,8 +189,8 @@ class SNSMetricsUnavailable(Exception):
     """A failed metric read cannot resolve an outstanding reconciliation."""
 
 
-def count_persisted_sns_notifications(topic_name, window_start, window_end):
-    """Count distinct SNS publications, including rows persisted after window_end.
+def persisted_sns_notification_ids(topic_name, window_start, window_end):
+    """Return SNS IDs, including rows persisted after window_end.
 
     SNS Timestamp is the cohort clock; created_at is only a scan lower bound
     (with two minutes of clock-skew allowance). Parse timestamps in Python so
@@ -202,8 +208,12 @@ def count_persisted_sns_notifications(topic_name, window_start, window_end):
         Coalesce(KT("metadata__sns_message_id"), KT("metadata__provider_event_id")),
         KT("metadata__sns_timestamp"),
     )
+    return _notification_ids(chain(events.iterator(), audits.iterator()), window_start, window_end)
+
+
+def _notification_ids(rows, window_start, window_end):
     notification_ids = set()
-    for notification_id, raw in chain(events.iterator(), audits.iterator()):
+    for notification_id, raw in rows:
         try:
             published_at = parse_datetime(raw) if isinstance(raw, str) else None
         except ValueError:
@@ -213,34 +223,118 @@ def count_persisted_sns_notifications(topic_name, window_start, window_end):
             continue
         if window_start <= published_at < window_end:
             notification_ids.add(notification_id)
-    return len(notification_ids)
+    return notification_ids
+
+
+def count_persisted_sns_notifications(topic_name, window_start, window_end):
+    return len(persisted_sns_notification_ids(topic_name, window_start, window_end))
+
+
+def received_sns_notification_ids(topic_name, window_start, window_end):
+    """The durable enqueue is committed before the SQS consumer acknowledges.
+
+    Match actual SNS IDs, never a cross-service metric count. A failed/missing
+    provider task remains expected even when unrelated notifications persist.
+    Task-result retention is much longer than this 30-minute cohort.
+    """
+    receipts = DBTaskResult.objects.filter(
+        task_path="mailing.tasks.process_ses_webhook_event",
+        enqueued_at__gte=window_start - timedelta(minutes=2),
+        args_kwargs__args__0__metadata__sns_topic_arn__endswith=":" + topic_name,
+    ).order_by().values_list(
+        KT("args_kwargs__args__0__provider_event_id"),
+        KT("args_kwargs__args__0__metadata__sns_timestamp"),
+    )
+    return _notification_ids(receipts.iterator(), window_start, window_end)
+
+
+def check_ses_transport_health(now, *, cw_client=None, sqs_client=None):
+    """Cover failures before durable enqueue without comparing different clocks."""
+    queue_url = getattr(settings, "SQS_SES_WEBHOOKS_QUEUE_URL", "")
+    if not queue_url:
+        return []
+    topic = getattr(settings, "RELAY_SES_EVENTS_TOPIC_NAME", "relay-production-ses-events")
+    end = now.astimezone(UTC).replace(second=0, microsecond=0)
+    start = end - timedelta(minutes=30)
+    alerts = []
+    failures = get_sns_metric_count(topic, start, end, "NumberOfNotificationsFailed", client=cw_client)
+    if failures:
+        alerts.append({"kind": "ses_sns_delivery_failed", "topic": topic, "failed_notifications": failures,
+                       "window_start": start.isoformat(), "window_end": end.isoformat()})
+    try:
+        sqs = sqs_client or aws_client("sqs")
+        attrs = sqs.get_queue_attributes(QueueUrl=queue_url, AttributeNames=[
+            "ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible", "RedrivePolicy",
+        ])["Attributes"]
+        depth = int(attrs.get("ApproximateNumberOfMessages", 0)) + int(
+            attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
+        queue_name = urlsplit(queue_url).path.rsplit("/", 1)[-1]
+        if depth:
+            cw = cw_client or aws_client("cloudwatch")
+            age = cw.get_metric_statistics(
+                Namespace="AWS/SQS", MetricName="ApproximateAgeOfOldestMessage",
+                Dimensions=[{"Name": "QueueName", "Value": queue_name}],
+                StartTime=end-timedelta(minutes=5), EndTime=end, Period=60, Statistics=["Maximum"],
+            )
+            oldest = max((d["Maximum"] for d in age.get("Datapoints", [])), default=0)
+            if oldest >= 300:
+                alerts.append({"kind": "ses_sqs_ingress_stalled", "queue": queue_name,
+                               "depth": depth, "oldest_age_seconds": oldest})
+        dlq_arn = json.loads(attrs.get("RedrivePolicy", "{}")).get("deadLetterTargetArn")
+        if dlq_arn:
+            _, _, service, region, account, dlq_name = dlq_arn.split(":", 5)
+            if service != "sqs":
+                raise ValueError("invalid redrive target")
+            dlq_url = f"https://sqs.{region}.amazonaws.com/{account}/{dlq_name}"
+            dlq = sqs.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=[
+                "ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible",
+            ])["Attributes"]
+            dlq_depth = int(dlq.get("ApproximateNumberOfMessages", 0)) + int(
+                dlq.get("ApproximateNumberOfMessagesNotVisible", 0))
+            if dlq_depth:
+                alerts.append({"kind": "ses_sqs_dlq_nonempty", "queue": dlq_name, "depth": dlq_depth})
+    except Exception as exc:
+        logger.error("ses_monitor_transport_query_failed error_type=%s", type(exc).__name__)
+    return alerts
 
 
 def check_sns_persisted_gap(now=None, *, cw_client=None, topic_name=None, window_minutes=30, require_metrics=False):
-    """Compare the same publication cohort in CloudWatch and persisted SNS IDs."""
+    """Reconcile exact durable ingress IDs against persisted provider records.
+
+    CloudWatch's minute buckets can differ from the SNS envelope timestamp
+    even by milliseconds. Published totals are diagnostic context, not an
+    exact source-ID ledger. Transport failures are checked separately.
+    """
     now = now or timezone.now()
     topic_name = topic_name or getattr(settings, "RELAY_SES_EVENTS_TOPIC_NAME", "relay-production-ses-events")
     window_end = (now.astimezone(UTC) - timedelta(minutes=2)).replace(second=0, microsecond=0)
     window_start = window_end - timedelta(minutes=window_minutes)
 
     sns_published = get_sns_published_count(topic_name, window_start, window_end, client=cw_client)
-    if sns_published is None:
-        if require_metrics:
-            raise SNSMetricsUnavailable
-        return None
+    persisted = persisted_sns_notification_ids(topic_name, window_start, window_end)
+    received = received_sns_notification_ids(topic_name, window_start, window_end)
+    missing = received - persisted
 
-    total_persisted = count_persisted_sns_notifications(topic_name, window_start, window_end)
-
-    if sns_published > total_persisted:
+    if missing:
         return {
             "kind": "ses_sns_persisted_gap",
             "window_minutes": window_minutes,
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
             "sns_published": sns_published,
-            "relay_persisted": total_persisted,
+            "relay_persisted": len(persisted),
+            "received_notifications": len(received),
+            "missing_count": len(missing),
+            "missing_notification_ids": sorted(missing)[:50],
+            "comparison_basis": "durable_ingress_sns_ids",
             "topic": topic_name,
         }
+    if sns_published is None and require_metrics:
+        raise SNSMetricsUnavailable
+    logger.info(
+        "relay_ses_ingress_reconciled window_start=%s window_end=%s received=%s persisted=%s sns_published=%s",
+        window_start.isoformat(), window_end.isoformat(), len(received), len(persisted), sns_published,
+    )
     return None
 
 
@@ -261,7 +355,7 @@ def check_ses_delivery_gap(*, now=None, force=False, cw_client=None, test=False)
     if not getattr(settings, "RELAY_SES_MONITOR_ENABLED", True) and not force:
         return []
 
-    alerts = []
+    alerts = check_ses_transport_health(now, cw_client=cw_client)
     sent_alerts = []
     try:
         outcome_gap = report_ses_outcome_gap(now, test=test)
@@ -272,11 +366,13 @@ def check_ses_delivery_gap(*, now=None, force=False, cw_client=None, test=False)
             sent_alerts.append(outcome_gap)
 
     cohort_now = _pending_sns_gap["first_seen"] if _pending_sns_gap and not force else now
+    metrics_available = True
     try:
         sns_gap = check_sns_persisted_gap(cohort_now, cw_client=cw_client, require_metrics=True)
     except SNSMetricsUnavailable:
-        # Preserve both the cohort and its confirmation clock across failures.
-        return sent_alerts
+        # Preserve the cohort, but still dispatch independently proven transport faults.
+        metrics_available = False
+        sns_gap = None
     if sns_gap:
         if force:
             alerts.append(sns_gap)
@@ -302,12 +398,15 @@ def check_ses_delivery_gap(*, now=None, force=False, cw_client=None, test=False)
                     sns_gap["sns_published"],
                     sns_gap["relay_persisted"],
                 )
-    else:
+    elif metrics_available:
         if _pending_sns_gap is not None:
             logger.info("relay_ses_gap_resolved kind=ses_sns_persisted_gap")
         _pending_sns_gap = None
 
     for alert in alerts:
+        alert = {**alert, "monitor_component": os.environ.get("HOSTNAME", "unknown"),
+                 "image_tag": os.environ.get("RELAY_IMAGE_TAG", "unknown"),
+                 "source_sha": os.environ.get("RELAY_SOURCE_SHA", "unknown")}
         kind = alert["kind"]
         last_alert = _last_alert_by_kind.get(kind)
         if not force and last_alert and (now - last_alert) < timedelta(hours=1):

@@ -109,14 +109,16 @@ Relay guards against unconfirmed SES deliveries and dropped event notifications:
    An unexpired `ses.delivery_delay` audit suppresses the gap for that send until
    its `expiration_time` (fallback: 14h from the audit); after expiry with still no
    terminal event, the gap pages again.
-2. **SNS vs. Relay Persisted Gap**: Over a rolling 30-minute window ending two
-   minutes ago (minute-aligned), the number of messages published to the SES
-   SNS topic (`RELAY_SES_EVENTS_TOPIC_NAME`, default:
-   `relay-production-ses-events`) is compared against distinct SNS message IDs in
-   persisted `EmailEvent` and SES `OperatorAudit` records. Cohort membership uses
-   `metadata.sns_timestamp`, not the database creation time, so a row stored just
-   after the window ends still counts for its original publication. Missing or
-   invalid timestamps cannot fill a gap; duplicate audits count only once.
+2. **SNS ingress vs. Relay Persisted Gap**: Over a rolling 30-minute window ending
+   two minutes ago (minute-aligned), exact SNS IDs from durable
+   `mailing.tasks.process_ses_webhook_event` ingress receipts are checked against
+   `EmailEvent` and SES `OperatorAudit` IDs. SQS is acknowledged only after the
+   receipt commits. Both sides use the same `metadata.sns_timestamp` cohort.
+   Late database creation and duplicate deliveries do not create deficits;
+   unrelated persisted IDs cannot hide a missing notification.
+   CloudWatch SNS publication counts are diagnostic context: their minute
+   buckets can differ from the SNS envelope clock even by milliseconds and
+   must not independently page on a cross-clock count difference.
    A first sighting only starts a pending
    window (`relay_ses_gap_pending`); the page fires only if the gap is still
    present after `RELAY_SNS_GAP_CONFIRM_MINUTES` (default: 5). Confirmation
@@ -124,8 +126,16 @@ Relay guards against unconfirmed SES deliveries and dropped event notifications:
    that cohort; later publications cannot mask loss, and loss cannot age out
    during confirmation. Failed CloudWatch reads preserve the pending cohort.
    Pending state is process-local, so a restart starts a fresh confirmation.
+   Task-result retention must exceed the monitoring/confirmation interval.
    `force=True` (manual
    `check_ses_delivery_gap --force`) bypasses the confirmation for verification.
+3. **Transport before ingress**: For the configured SES SQS queue, SNS
+   `NumberOfNotificationsFailed` pages terminal delivery failures, nonempty
+   DLQ depth pages poison/unpersisted messages, and a nonempty source queue with
+   oldest-message age of at least five minutes pages stalled ingestion. These
+   checks do not rely on a provider task existing. Transport query failures are
+   logged explicitly. All SES/SNS pages include the emitting container, image
+   tag, and source SHA.
 
 Both alerts dispatch through the existing ops alert transport (`send_monitor_alert` /
 msmtp SMTP / SES fallback) with repeat throttling (1 hour per kind).

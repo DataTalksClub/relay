@@ -337,11 +337,14 @@ DLQ message before you update a client to use Relay.
 The scheduler's AWS runtime identity needs `cloudwatch:GetMetricStatistics`.
 The additive policy is [deploy/aws/relay-ses-monitor-policy.json](../deploy/aws/relay-ses-monitor-policy.json).
 CloudWatch metric reads require `Resource: "*"`; this grants no write access.
-The SNS guard compares CloudWatch publications with distinct SNS message IDs
-from provider events and SES audits for its configured topic. Both sides use
-the SNS publication timestamp, over a minute-aligned 30-minute window ending
-two minutes ago. Rows persisted after the window end still count for their
-publication cohort; records without valid SNS timestamps cannot fill a gap.
+The SNS guard compares exact IDs from durable provider-ingress tasks with
+provider events and SES audits for its configured topic. Both sides use the
+same SNS envelope timestamp over a minute-aligned 30-minute window ending two
+minutes ago. CloudWatch publication counts remain diagnostic context because
+their service-clock buckets need not match the envelope timestamp. An aggregate
+count difference alone cannot page. Rows persisted after the window end still
+count, and unrelated IDs cannot hide loss. Preserve task-result retention longer
+than the monitoring and confirmation interval.
 A first gap sighting only logs
 `relay_ses_gap_pending`; the page fires only if the gap is still present
 after `RELAY_SNS_GAP_CONFIRM_MINUTES` (default 5, `force` bypasses it).
@@ -349,6 +352,11 @@ Confirmation rechecks the same fixed window, allowing late persistence to
 settle while preventing new traffic or window movement from masking loss.
 Query failures preserve the pending window and are logged as
 `ses_monitor_cloudwatch_query_failed`; a failed query is not a successful guard check.
+Before durable ingress, separate checks page SNS terminal delivery failures,
+nonempty SES DLQ depth, and a source backlog whose oldest-message age is at least
+five minutes. They use the existing runtime `cloudwatch:GetMetricStatistics`
+and `sqs:GetQueueAttributes` permissions; no queue receives/deletes are needed.
+Pages carry the emitting container, immutable image tag, and source SHA.
 
 Outcome gaps use the send timestamp (creation time only for legacy rows) and
 require an SES message ID. Successful alerts create an
