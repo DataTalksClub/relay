@@ -6,7 +6,8 @@ Alerts when:
 """
 import json
 import logging
-from datetime import timedelta
+from datetime import UTC, timedelta
+from itertools import chain
 
 from django.conf import settings
 from django.db import transaction
@@ -178,38 +179,57 @@ def report_ses_outcome_gap(now, *, test=False):
         return alert
 
 
-def check_sns_persisted_gap(now=None, *, cw_client=None, topic_name=None, window_minutes=30):
-    """Check if SNS published events exceed Relay persisted events over window.
+class SNSMetricsUnavailable(Exception):
+    """A failed metric read cannot resolve an outstanding reconciliation."""
 
-    The SNS window ends two minutes ago (minute-aligned) to allow normal
-    ingest to settle. A single boundary-straddling persist (e.g. created
-    0.5s after window_end) still shows as a gap here; callers must confirm
-    persistence before paging (see check_ses_delivery_gap).
+
+def count_persisted_sns_notifications(topic_name, window_start, window_end):
+    """Count distinct SNS publications, including rows persisted after window_end.
+
+    SNS Timestamp is the cohort clock; created_at is only a scan lower bound
+    (with two minutes of clock-skew allowance). Parse timestamps in Python so
+    offsets and malformed legacy metadata behave identically on SQLite/Postgres.
+    Select only IDs/timestamps, never message bodies or recipient metadata.
     """
+    filters = {
+        "metadata__sns_topic_arn__endswith": ":" + topic_name,
+        "created_at__gte": window_start - timedelta(minutes=2),
+    }
+    events = EmailEvent.objects.filter(**filters).exclude(provider_event_id="").order_by().values_list(
+        "provider_event_id", KT("metadata__sns_timestamp"),
+    )
+    audits = OperatorAudit.objects.filter(**filters, action__startswith="ses.").order_by().values_list(
+        Coalesce(KT("metadata__sns_message_id"), KT("metadata__provider_event_id")),
+        KT("metadata__sns_timestamp"),
+    )
+    notification_ids = set()
+    for notification_id, raw in chain(events.iterator(), audits.iterator()):
+        try:
+            published_at = parse_datetime(raw) if isinstance(raw, str) else None
+        except ValueError:
+            published_at = None
+        # Missing/invalid publication evidence must never fill a real gap.
+        if not notification_id or published_at is None or timezone.is_naive(published_at):
+            continue
+        if window_start <= published_at < window_end:
+            notification_ids.add(notification_id)
+    return len(notification_ids)
+
+
+def check_sns_persisted_gap(now=None, *, cw_client=None, topic_name=None, window_minutes=30, require_metrics=False):
+    """Compare the same publication cohort in CloudWatch and persisted SNS IDs."""
     now = now or timezone.now()
     topic_name = topic_name or getattr(settings, "RELAY_SES_EVENTS_TOPIC_NAME", "relay-production-ses-events")
-    window_end = (now - timedelta(minutes=2)).replace(second=0, microsecond=0)
+    window_end = (now.astimezone(UTC) - timedelta(minutes=2)).replace(second=0, microsecond=0)
     window_start = window_end - timedelta(minutes=window_minutes)
 
     sns_published = get_sns_published_count(topic_name, window_start, window_end, client=cw_client)
     if sns_published is None:
-        # CloudWatch metric unavailable or errored; skip gap alert.
+        if require_metrics:
+            raise SNSMetricsUnavailable
         return None
 
-    persisted_events = EmailEvent.objects.filter(
-        created_at__gte=window_start,
-        created_at__lt=window_end,
-        metadata__sns_topic_arn__endswith=":" + topic_name,
-    ).exclude(provider_event_id="").count()
-
-    persisted_audits = OperatorAudit.objects.filter(
-        action__startswith="ses.",
-        metadata__sns_topic_arn__endswith=":" + topic_name,
-        created_at__gte=window_start,
-        created_at__lt=window_end,
-    ).count()
-
-    total_persisted = persisted_events + persisted_audits
+    total_persisted = count_persisted_sns_notifications(topic_name, window_start, window_end)
 
     if sns_published > total_persisted:
         return {
@@ -230,9 +250,9 @@ def check_ses_delivery_gap(*, now=None, force=False, cw_client=None, test=False)
     The SNS persisted gap pages only after confirmation: a first sighting
     starts a pending window (no page) and the alert fires only if the gap
     is still present after RELAY_SNS_GAP_CONFIRM_MINUTES (default 5).
-    Normal ingest lag (including a persist landing just after the
-    minute-aligned window_end) resolves before confirmation; a real loss
-    persists for the full 30-minute window and still pages, only delayed.
+    Recheck the original publication window, rather than successive moving
+    windows. Late rows resolve that cohort; new traffic cannot fill its gap
+    and a loss cannot age out during confirmation.
     force=True bypasses the confirmation for manual verification.
     """
     global _last_alert_by_kind, _pending_sns_gap
@@ -251,7 +271,12 @@ def check_ses_delivery_gap(*, now=None, force=False, cw_client=None, test=False)
         if outcome_gap:
             sent_alerts.append(outcome_gap)
 
-    sns_gap = check_sns_persisted_gap(now, cw_client=cw_client)
+    cohort_now = _pending_sns_gap["first_seen"] if _pending_sns_gap and not force else now
+    try:
+        sns_gap = check_sns_persisted_gap(cohort_now, cw_client=cw_client, require_metrics=True)
+    except SNSMetricsUnavailable:
+        # Preserve both the cohort and its confirmation clock across failures.
+        return sent_alerts
     if sns_gap:
         if force:
             alerts.append(sns_gap)

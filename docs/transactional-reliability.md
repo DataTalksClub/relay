@@ -112,13 +112,19 @@ Relay guards against unconfirmed SES deliveries and dropped event notifications:
 2. **SNS vs. Relay Persisted Gap**: Over a rolling 30-minute window ending two
    minutes ago (minute-aligned), the number of messages published to the SES
    SNS topic (`RELAY_SES_EVENTS_TOPIC_NAME`, default:
-   `relay-production-ses-events`) is compared against persisted `EmailEvent` and
-   SES `OperatorAudit` records in Relay. A first sighting only starts a pending
+   `relay-production-ses-events`) is compared against distinct SNS message IDs in
+   persisted `EmailEvent` and SES `OperatorAudit` records. Cohort membership uses
+   `metadata.sns_timestamp`, not the database creation time, so a row stored just
+   after the window ends still counts for its original publication. Missing or
+   invalid timestamps cannot fill a gap; duplicate audits count only once.
+   A first sighting only starts a pending
    window (`relay_ses_gap_pending`); the page fires only if the gap is still
-   present after `RELAY_SNS_GAP_CONFIRM_MINUTES` (default: 5). Normal ingest lag
-   — including a persist landing just after the minute-aligned window end —
-   resolves before confirmation; a real loss persists for the full 30-minute
-   window and still pages, only delayed. `force=True` (manual
+   present after `RELAY_SNS_GAP_CONFIRM_MINUTES` (default: 5). Confirmation
+   rechecks the original fixed publication window. Late persistence resolves
+   that cohort; later publications cannot mask loss, and loss cannot age out
+   during confirmation. Failed CloudWatch reads preserve the pending cohort.
+   Pending state is process-local, so a restart starts a fresh confirmation.
+   `force=True` (manual
    `check_ses_delivery_gap --force`) bypasses the confirmation for verification.
 
 Both alerts dispatch through the existing ops alert transport (`send_monitor_alert` /

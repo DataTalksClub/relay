@@ -145,12 +145,14 @@ def test_check_ses_outcome_gap_ignores_confirmed_or_young_messages(client_obj, c
 
 @pytest.mark.django_db
 def test_check_sns_persisted_gap_triggers_when_published_exceeds_persisted():
+    published_at = timezone.now()
     # Only 3 events persisted in Relay DB
     for i in range(3):
         EmailEvent.objects.create(
             event_type=EmailEventType.DELIVERED,
             provider_event_id=f"evt-{i}",
-            metadata={"sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events"},
+            metadata={"sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events",
+                      "sns_timestamp": published_at.isoformat()},
         )
 
     now = timezone.now() + timedelta(minutes=3)
@@ -170,12 +172,14 @@ def test_check_sns_persisted_gap_triggers_when_published_exceeds_persisted():
 
 @pytest.mark.django_db
 def test_check_sns_persisted_gap_silent_when_persisted_matches_or_exceeds():
+    published_at = timezone.now()
     # 2 EmailEvents + 2 OperatorAudits for SES
     for i in range(2):
         EmailEvent.objects.create(
             event_type=EmailEventType.DELIVERED,
             provider_event_id=f"evt-match-{i}",
-            metadata={"sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events"},
+            metadata={"sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events",
+                      "sns_timestamp": published_at.isoformat()},
         )
     for i in range(2):
         OperatorAudit.objects.create(
@@ -183,6 +187,7 @@ def test_check_sns_persisted_gap_silent_when_persisted_matches_or_exceeds():
             target_type="ses_notification",
             target_id=0,
             metadata={"provider_event_id": f"delay-{i}",
+                      "sns_timestamp": published_at.isoformat(),
                       "sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events"},
         )
 
@@ -539,3 +544,133 @@ def test_outcome_gap_delay_without_expiration_uses_retry_window(client_obj, cont
     assert alert is not None
     assert old.pk in alert["message_ids"]
     assert recent.pk not in alert["message_ids"]
+
+
+SNS_TOPIC = 'arn:aws:sns:eu-west-1:123:relay-production-ses-events'
+
+
+def _sns_event(notification_id, published_at, *, created_at=None, topic=SNS_TOPIC):
+    row = EmailEvent.objects.create(
+        event_type=EmailEventType.DELIVERED,
+        provider_event_id=notification_id,
+        metadata={'sns_topic_arn': topic, 'sns_message_id': notification_id, 'sns_timestamp': published_at},
+    )
+    if created_at is not None:
+        EmailEvent.objects.filter(pk=row.pk).update(created_at=created_at)
+    return row
+
+
+def _sns_cw(count):
+    cw = MagicMock()
+    cw.get_metric_statistics.return_value = {'Datapoints': [{'Sum': float(count)}]}
+    return cw
+
+
+@pytest.mark.django_db
+def test_sns_publication_cohort_counts_seven_boundary_straddling_events():
+    now = timezone.now().replace(second=0, microsecond=0)
+    end = now - timedelta(minutes=2)
+    for i in range(7):
+        _sns_event(f'late-{i}', (end - timedelta(milliseconds=100+i)).isoformat(),
+                   created_at=end + timedelta(milliseconds=390+i*50))
+    assert check_sns_persisted_gap(now, cw_client=_sns_cw(7)) is None
+
+
+@pytest.mark.django_db
+def test_sns_publication_cohort_deduplicates_events_and_audits_without_masking_loss():
+    now = timezone.now().replace(second=0, microsecond=0)
+    end = now - timedelta(minutes=2)
+    stamp = (end - timedelta(seconds=1)).isoformat()
+    _sns_event('same-id', stamp)
+    for _ in range(2):
+        OperatorAudit.objects.create(action='ses.delivery_delay.unsupported', target_type='ses_notification',
+                                     target_id=0, metadata={'sns_topic_arn': SNS_TOPIC,
+                                                           'sns_timestamp': stamp,
+                                                           'provider_event_id': 'same-id'})
+    alert = check_sns_persisted_gap(now, cw_client=_sns_cw(2))
+    assert alert['relay_persisted'] == 1
+
+
+@pytest.mark.django_db
+def test_sns_publication_cohort_includes_delay_audit_persisted_after_window():
+    now = timezone.now().replace(second=0, microsecond=0)
+    end = now - timedelta(minutes=2)
+    OperatorAudit.objects.create(action='ses.delivery_delay.unsupported', target_type='ses_notification',
+                                 target_id=0, metadata={'sns_topic_arn': SNS_TOPIC,
+                                                       'sns_timestamp': (end-timedelta(seconds=1)).isoformat(),
+                                                       'sns_message_id': 'delay-id'})
+    assert check_sns_persisted_gap(now, cw_client=_sns_cw(1)) is None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize('stamp', [None, '', 'invalid', '2026-99-99T25:99:99Z', 123, '2026-10-25T09:00:00'])
+def test_sns_missing_or_invalid_publication_evidence_never_fills_gap(stamp):
+    now = timezone.now().replace(second=0, microsecond=0)
+    _sns_event('unknown-time', stamp)
+    assert check_sns_persisted_gap(now, cw_client=_sns_cw(1))['relay_persisted'] == 0
+
+
+@pytest.mark.django_db
+def test_sns_publication_window_half_open_utc_boundaries_and_topic_scope():
+    now = timezone.now().replace(second=0, microsecond=0)
+    end = now - timedelta(minutes=2)
+    start = end - timedelta(minutes=30)
+    # Offset strings and Z describe the same instants as CloudWatch UTC times.
+    _sns_event('start', start.isoformat().replace('+00:00', 'Z'))
+    _sns_event('offset', (end-timedelta(seconds=1)).astimezone(
+        timezone.get_fixed_timezone(120)).isoformat())
+    _sns_event('end', end.isoformat())
+    _sns_event('before', (start-timedelta(milliseconds=1)).isoformat())
+    _sns_event('other-topic', start.isoformat(), topic=SNS_TOPIC+'-other')
+    alert = check_sns_persisted_gap(now, cw_client=_sns_cw(3))
+    assert alert['relay_persisted'] == 2
+
+
+@pytest.mark.django_db
+def test_sns_confirmation_rechecks_original_cohort_after_loss_ages_out(monkeypatch):
+    now = timezone.now().replace(second=0, microsecond=0)
+    _reset_sns_gap_state(monkeypatch)
+    monkeypatch.setattr(ses_monitor_module, 'report_ses_outcome_gap', lambda *a, **kw: None)
+    sent = []
+    monkeypatch.setattr(ses_monitor_module, 'send_monitor_alert', lambda payload, **kw: sent.append(payload))
+    cw = _sns_cw(1)
+    assert check_ses_delivery_gap(now=now, cw_client=cw) == []
+    first_query = cw.get_metric_statistics.call_args.kwargs
+    # Even a long scheduler pause must not let loss roll out of the window.
+    _sns_event('new-unrelated-traffic', (now+timedelta(minutes=35)).isoformat())
+    alerts = check_ses_delivery_gap(now=now+timedelta(minutes=40), cw_client=cw)
+    assert cw.get_metric_statistics.call_args.kwargs == first_query
+    assert alerts[0]['relay_persisted'] == 0
+    assert alerts[0]['window_end'] == (now-timedelta(minutes=2)).isoformat()
+    assert len(sent) == 1
+
+
+@pytest.mark.django_db
+def test_sns_late_persist_resolves_fixed_cohort_before_confirmation(monkeypatch):
+    now = timezone.now().replace(second=0, microsecond=0)
+    _reset_sns_gap_state(monkeypatch)
+    monkeypatch.setattr(ses_monitor_module, 'report_ses_outcome_gap', lambda *a, **kw: None)
+    sent = []
+    monkeypatch.setattr(ses_monitor_module, 'send_monitor_alert', lambda payload, **kw: sent.append(payload))
+    cw = _sns_cw(1)
+    assert check_ses_delivery_gap(now=now, cw_client=cw) == []
+    _sns_event('late-cohort-id', (now-timedelta(minutes=2, milliseconds=500)).isoformat())
+    assert check_ses_delivery_gap(now=now+timedelta(minutes=6), cw_client=cw) == []
+    assert ses_monitor_module._pending_sns_gap is None
+    assert sent == []
+
+
+@pytest.mark.django_db
+def test_sns_cloudwatch_failure_preserves_pending_cohort(monkeypatch):
+    now = timezone.now().replace(second=0, microsecond=0)
+    _reset_sns_gap_state(monkeypatch)
+    monkeypatch.setattr(ses_monitor_module, 'report_ses_outcome_gap', lambda *a, **kw: None)
+    monkeypatch.setattr(ses_monitor_module, 'send_monitor_alert', lambda *a, **kw: None)
+    cw = _sns_cw(1)
+    assert check_ses_delivery_gap(now=now, cw_client=cw) == []
+    pending = ses_monitor_module._pending_sns_gap
+    cw.get_metric_statistics.side_effect = RuntimeError('unavailable')
+    assert check_ses_delivery_gap(now=now+timedelta(minutes=6), cw_client=cw) == []
+    assert ses_monitor_module._pending_sns_gap == pending
+    cw.get_metric_statistics.side_effect = None
+    assert len(check_ses_delivery_gap(now=now+timedelta(minutes=7), cw_client=cw)) == 1

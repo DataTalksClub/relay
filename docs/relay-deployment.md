@@ -337,13 +337,17 @@ DLQ message before you update a client to use Relay.
 The scheduler's AWS runtime identity needs `cloudwatch:GetMetricStatistics`.
 The additive policy is [deploy/aws/relay-ses-monitor-policy.json](../deploy/aws/relay-ses-monitor-policy.json).
 CloudWatch metric reads require `Resource: "*"`; this grants no write access.
-The SNS guard compares only provider events and SES audit records for its
-configured topic, over a minute-aligned 30-minute window ending two minutes
-ago to allow ingress to settle. A first gap sighting only logs
+The SNS guard compares CloudWatch publications with distinct SNS message IDs
+from provider events and SES audits for its configured topic. Both sides use
+the SNS publication timestamp, over a minute-aligned 30-minute window ending
+two minutes ago. Rows persisted after the window end still count for their
+publication cohort; records without valid SNS timestamps cannot fill a gap.
+A first gap sighting only logs
 `relay_ses_gap_pending`; the page fires only if the gap is still present
-after `RELAY_SNS_GAP_CONFIRM_MINUTES` (default 5, `force` bypasses it), so
-normal ingest lag never pages while a real loss still pages after a short
-delay. Query failures are logged as
+after `RELAY_SNS_GAP_CONFIRM_MINUTES` (default 5, `force` bypasses it).
+Confirmation rechecks the same fixed window, allowing late persistence to
+settle while preventing new traffic or window movement from masking loss.
+Query failures preserve the pending window and are logged as
 `ses_monitor_cloudwatch_query_failed`; a failed query is not a successful guard check.
 
 Outcome gaps use the send timestamp (creation time only for legacy rows) and
