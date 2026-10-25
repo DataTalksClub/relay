@@ -116,6 +116,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Bake the release identity so /health/ready proves the NEW
+          # release is serving (intake 2f3aed4b: per-app image is Coolify
+          # desired-state and flips instantly, so it cannot prove this).
+          build-args: |
+            RELAY_IMAGE_TAG=${{ steps.identity.outputs.version }}
+            RELAY_SOURCE_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -236,11 +242,19 @@ jobs:
           COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_DEV_SERVICE_UUID }}
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          SOURCE_SHA: ${{ github.sha }}
+          PUBLIC_READY_URL: https://dev.relay.datatalks.club/health/ready
         run: |
           set -euo pipefail
-          # Same root-cause fix as deploy-prod.yml: aggregate service status
-          # stays `running:unknown` (only `web` has a healthcheck), so gate on
-          # per-application image + running state, then /health/ready.
+          # False-positive fix (intake 2f3aed4b, prod run 40152657824):
+          # applications[].image is Coolify DESIRED state -- it flips the
+          # instant the compose PATCH lands, while the old containers still
+          # serve traffic. So Coolify-ready alone passed with elapsed_s=0.
+          # The combined gate polls BOTH halves until both agree: per-app
+          # image+running with fail-fast on exited/dead/unhealthy, AND the
+          # public /health/ready serving this release's image_tag/source_sha
+          # (baked into the image). No fixed sleep; breaks out within
+          # seconds of real health, fails on fatal or deadline expiry.
           python3 - <<'PY'
           import json, os, sys, time, urllib.request
 
@@ -248,6 +262,9 @@ jobs:
           token = os.environ["COOLIFY_TOKEN"]
           uuid = os.environ["COOLIFY_SERVICE_UUID"]
           want = f"{os.environ['IMAGE_REF']}:{os.environ['IMAGE_TAG']}"
+          want_tag = os.environ["IMAGE_TAG"]
+          want_sha = os.environ.get("SOURCE_SHA", "")
+          public_url = os.environ["PUBLIC_READY_URL"]
           FATAL = ("unhealthy", "exited", "dead", "failed")
           deadline = time.time() + 300  # 5 min for pull + boot; success breaks out in seconds
           start = time.time()
@@ -269,7 +286,7 @@ jobs:
                   body = resp.read()
                   return resp.status, (json.loads(body) if body else {})
 
-          def evaluate(apps):
+          def evaluate_coolify(apps):
               problems = []
               fatal = False
               for app in apps or []:
@@ -288,12 +305,32 @@ jobs:
                   return False, "; ".join(problems), fatal
               return True, f"all {len(apps)} apps on {want} and running", False
 
+          def evaluate_release(payload):
+              if not isinstance(payload, dict):
+                  return False, "health payload not a JSON object yet"
+              if str(payload.get("status", "")) != "ready":
+                  return False, f"health status {payload.get('status')!r} != 'ready'"
+              got_tag = payload.get("image_tag", "")
+              if not got_tag:
+                  return False, "health has no image_tag (old container still serving)"
+              if str(got_tag) != str(want_tag):
+                  return False, f"health image_tag {got_tag!r} != {want_tag!r} (old release serving)"
+              got_sha = str(payload.get("source_sha", "") or "")
+              if want_sha and got_sha and got_sha != "unknown" and want_sha != "unknown" and got_sha != want_sha:
+                  return False, f"health source_sha {got_sha!r} != {want_sha!r}"
+              return True, f"public app serves {want_tag}"
+
+          def fetch_release():
+              req = urllib.request.Request(public_url, headers={"Accept": "application/json"})
+              with urllib.request.urlopen(req, timeout=15) as resp:
+                  return json.loads(resp.read() or b"{}")
+
           ready = False
           while time.time() < deadline:
               try:
                   _st, svc = call("GET", f"/api/v1/services/{uuid}")
               except Exception as e:
-                  last = f"transient fetch error: {type(e).__name__}: {e}"
+                  last = f"transient coolify fetch error: {type(e).__name__}: {e}"
                   print(f"coolify verify: {last}", flush=True)
                   time.sleep(5)
                   continue
@@ -302,32 +339,29 @@ jobs:
               summary = "; ".join(
                   f"{a.get('name') or '?'}={a.get('image')}:{a.get('status')}" for a in apps
               ) or "<no applications>"
-              ok, reason, fatal = evaluate(apps)
-              last = f"aggregate={agg} apps=[{summary}] -> {reason}"
+              cool_ok, cool_reason, fatal = evaluate_coolify(apps)
+              try:
+                  payload = fetch_release()
+                  rel_ok, rel_reason = evaluate_release(payload)
+                  rel_summary = f"release={payload.get('status')}/{payload.get('image_tag')}/{payload.get('source_sha')}"
+              except Exception as e:
+                  rel_ok, rel_reason = False, f"transient health fetch: {type(e).__name__}: {e}"
+                  rel_summary = "release=<fetch failed>"
+              last = f"aggregate={agg} apps=[{summary}] -> {cool_reason} | {rel_summary} -> {rel_reason}"
               print(f"coolify verify: {last}", flush=True)
               if fatal:
-                  print(f"::error::Coolify deploy failed fast: {reason}", flush=True)
+                  print(f"::error::Coolify deploy failed fast: {cool_reason}", flush=True)
                   sys.exit(1)
-              if ok:
+              if cool_ok and rel_ok:
                   ready = True
                   break
               time.sleep(5)
           elapsed = int(time.time() - start)
           print(f"coolify verify done ready={ready} elapsed_s={elapsed} last={last}")
           if not ready:
-              print(f"::error::Timed out waiting for {want} (last: {last})", flush=True)
+              print(f"::error::Timed out waiting for {want} + public {want_tag} (last: {last})", flush=True)
               sys.exit(1)
           PY
-          for i in $(seq 1 12); do
-            if curl --fail --silent --show-error https://dev.relay.datatalks.club/health/ready; then
-              echo; echo "dev web health OK"; exit 0
-            fi
-            if [ "$i" -eq 12 ]; then
-              echo "dev web health check FAILED (routing broken by this change?)" >&2
-              exit 1
-            fi
-            sleep 5
-          done
 
       - name: Record the release proven in dev
         # deploy-prod.yml promotes exactly one of these records: the image tag

@@ -12,6 +12,15 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 
 WORKDIR /app
 
+# Release identity baked at build time so /health/ready can prove the NEW
+# release is serving traffic. deploy-dev.yml passes these as build-args;
+# prod promotes the dev-proven image, so the baked values travel with it.
+# Defaults keep local dev/test working without build args.
+ARG RELAY_IMAGE_TAG=unknown
+ARG RELAY_SOURCE_SHA=unknown
+ENV RELAY_IMAGE_TAG=${RELAY_IMAGE_TAG}
+ENV RELAY_SOURCE_SHA=${RELAY_SOURCE_SHA}
+
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 

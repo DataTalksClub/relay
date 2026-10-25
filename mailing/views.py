@@ -212,13 +212,19 @@ def health(request):
 
 
 def readiness(request):
+    import os  # noqa: PLC0415 - read baked release identity without settings plumbing
+
+    release = {
+        "image_tag": os.environ.get("RELAY_IMAGE_TAG", "unknown") or "unknown",
+        "source_sha": os.environ.get("RELAY_SOURCE_SHA", "unknown") or "unknown",
+    }
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
     except Exception:
-        return JsonResponse({"status": "not_ready", "service": "relay"}, status=503)
-    return JsonResponse({"status": "ready", "service": "relay"})
+        return JsonResponse({"status": "not_ready", "service": "relay", **release}, status=503)
+    return JsonResponse({"status": "ready", "service": "relay", **release})
 
 
 def active_operator_client(request):
