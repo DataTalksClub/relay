@@ -62,6 +62,7 @@ from mailing.services.transactional_versions import (
     publish_transactional_template,
     render_source_message_fields,
     resolve_render_source,
+    validate_markdown_layout_context,
     validate_preview_payload,
     validate_template_version_value,
     version_payload,
@@ -113,6 +114,7 @@ def render_transactional_send(payload, template, authenticated_client):
     """
     source = resolve_render_source(template, payload["template_version"])
     validate_context_requirements(source.required_context, payload["context"])
+    validate_markdown_layout_context(source, payload["context"])
     sender = resolve_sender_email(
         authenticated_client,
         sender_id_for_payload(payload, template),
@@ -893,8 +895,10 @@ def get_transactional_template_versions_for_client(template_key, authenticated_c
 
 def preview_transactional_template_for_client(template_key, data, authenticated_client):
     template = get_transactional_template(authenticated_client, template_key)
-    context, version_number = validate_preview_payload(data)
-    return preview_transactional_template(template, context, version_number)
+    context, version_number, draft = validate_preview_payload(data)
+    return preview_transactional_template(
+        template, context, version_number, draft=draft
+    )
 
 
 def test_send_transactional_template_for_client(template_key, data, authenticated_client):

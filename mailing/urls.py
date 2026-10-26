@@ -243,27 +243,27 @@ urlpatterns = [
         name="api_transactional_templates",
     ),
     path(
-        "api/transactional/templates/<slug:template_key>",
+        "api/transactional/templates/<str:template_key>",
         views.api_transactional_template,
         name="api_transactional_template",
     ),
     path(
-        "api/transactional/templates/<slug:template_key>/publish",
+        "api/transactional/templates/<str:template_key>/publish",
         views.api_transactional_template_publish,
         name="api_transactional_template_publish",
     ),
     path(
-        "api/transactional/templates/<slug:template_key>/versions",
+        "api/transactional/templates/<str:template_key>/versions",
         views.api_transactional_template_versions,
         name="api_transactional_template_versions",
     ),
     path(
-        "api/transactional/templates/<slug:template_key>/preview",
+        "api/transactional/templates/<str:template_key>/preview",
         views.api_transactional_template_preview,
         name="api_transactional_template_preview",
     ),
     path(
-        "api/transactional/templates/<slug:template_key>/test-send",
+        "api/transactional/templates/<str:template_key>/test-send",
         views.api_transactional_template_test_send,
         name="api_transactional_template_test_send",
     ),

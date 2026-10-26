@@ -119,7 +119,15 @@ def render_email_markdown(text):
     )
 
 
-def wrap_email_html(subject, body_html, *, footer_note="", client=None, sender_id=""):
+def wrap_email_html(
+    subject,
+    body_html,
+    *,
+    footer_note="",
+    client=None,
+    sender_id="",
+    markdown_layout_context=None,
+):
     """Wrap rendered body HTML in the CLIENT'S OWN layout shell.
 
     ``client`` selects the EmailLayout row (with optional per-sender
@@ -128,15 +136,32 @@ def wrap_email_html(subject, body_html, *, footer_note="", client=None, sender_i
     """
     if client is None:
         from django.template import Context, Template  # noqa: PLC0415
+        from django.utils.safestring import mark_safe  # noqa: PLC0415
 
-        from mailing.services.email_layouts import NEUTRAL_SHELL  # noqa: PLC0415
+        from mailing.services.email_layouts import MARKDOWN_LAYOUT_CONTEXT_KEYS, NEUTRAL_SHELL  # noqa: PLC0415
 
+        layout_context = {name: "" for name in MARKDOWN_LAYOUT_CONTEXT_KEYS}
+        layout_context["footer_note"] = footer_note or ""
+        if markdown_layout_context:
+            layout_context.update(markdown_layout_context)
         return Template(NEUTRAL_SHELL).render(
-            Context({"subject": subject, "body_html": body_html, "footer_note": footer_note}, autoescape=False)
+            Context(
+                {
+                    "subject": subject,
+                    "body_html": mark_safe(body_html),  # noqa: S308 -- rendered Markdown HTML
+                    **layout_context,
+                },
+                autoescape=True,
+            )
         )
     from mailing.services.email_layouts import render_with_layout  # noqa: PLC0415
 
     html, _ = render_with_layout(
-        client=client, subject=subject, body_html=body_html, sender_id=sender_id, footer_note=footer_note
+        client=client,
+        subject=subject,
+        body_html=body_html,
+        sender_id=sender_id,
+        footer_note=footer_note,
+        markdown_layout_context=markdown_layout_context,
     )
     return html

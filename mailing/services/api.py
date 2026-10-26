@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from email.utils import parseaddr
 
@@ -77,6 +78,7 @@ def template_payload(template):
         "html_body": template.html_body,
         "text_body": template.text_body,
         "markdown_body": template.markdown_body,
+        "markdown_layout_context": template.markdown_layout_context,
         "category": template.category,
         "required_context": template.required_context,
         "example_context": template.example_context,
@@ -587,12 +589,17 @@ def update_client_sender_policy_for_client(data, authenticated_client):
     return sender_policy_payload(authenticated_client)
 
 
+TRANSACTIONAL_TEMPLATE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+
 def validate_transactional_template_payload(data, template_key):
     errors = {}
 
-    try:
-        validate_slug(template_key)
-    except ValidationError:
+    if (
+        not isinstance(template_key, str)
+        or len(template_key) > 120
+        or TRANSACTIONAL_TEMPLATE_KEY_RE.fullmatch(template_key) is None
+    ):
         errors["template_key"] = "invalid"
 
     name = data.get("name")
@@ -637,6 +644,15 @@ def validate_transactional_template_payload(data, template_key):
     if not isinstance(is_active, bool):
         errors["is_active"] = "must_be_boolean"
 
+    markdown_layout_context = data.get("markdown_layout_context", False)
+    if not isinstance(markdown_layout_context, bool):
+        errors["markdown_layout_context"] = "must_be_boolean"
+    elif markdown_layout_context and (
+        not isinstance(fields["markdown_body"], str)
+        or not fields["markdown_body"].strip()
+    ):
+        errors["markdown_layout_context"] = "requires_markdown_body"
+
     default_sender_id = data.get("default_sender_id", "")
     if default_sender_id in (None, ""):
         default_sender_id = ""
@@ -659,6 +675,7 @@ def validate_transactional_template_payload(data, template_key):
         "html_body": fields["html_body"],
         "text_body": fields["text_body"],
         "markdown_body": fields["markdown_body"],
+        "markdown_layout_context": markdown_layout_context,
         "category": category,
         "required_context": required_context,
         "example_context": example_context,

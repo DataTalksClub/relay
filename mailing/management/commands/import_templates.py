@@ -70,6 +70,9 @@ class Command(BaseCommand):
         example_context = post.metadata.get("example_context") or {}
         if not isinstance(example_context, dict):
             raise ValueError("example_context must be a mapping")
+        markdown_layout_context = post.metadata.get("markdown_layout_context", False)
+        if not isinstance(markdown_layout_context, bool):
+            raise ValueError("markdown_layout_context must be a boolean")
 
         template, created = EmailTemplate.objects.update_or_create(
             client=client,
@@ -78,6 +81,7 @@ class Command(BaseCommand):
                 "name": str(post.metadata.get("name") or path.stem),
                 "subject": subject,
                 "markdown_body": post.content,
+                "markdown_layout_context": markdown_layout_context,
                 "category": category,
                 "required_context": required_context,
                 "example_context": example_context,

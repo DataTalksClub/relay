@@ -10,6 +10,7 @@ uses a plain neutral shell with no brand text.
 """
 
 from django.template import Context, Template
+from django.utils.safestring import mark_safe
 
 from mailing.models import EmailLayout
 
@@ -302,24 +303,48 @@ def ensure_default_layouts(*, sender_id=""):
     return created, updated
 
 
-def render_with_layout(*, client, subject, body_html, sender_id="", footer_note=""):
+MARKDOWN_LAYOUT_CONTEXT_KEYS = (
+    "footer_note",
+    "verify_email_url",
+    "unsubscribe_url",
+)
+
+
+def render_with_layout(
+    *, client, subject, body_html, sender_id="", footer_note="", markdown_layout_context=None
+):
     """Render body HTML inside the client's own layout shell."""
+    layout_context = {name: "" for name in MARKDOWN_LAYOUT_CONTEXT_KEYS}
+    layout_context["footer_note"] = footer_note or ""
+    if markdown_layout_context:
+        layout_context.update(
+            {
+                name: markdown_layout_context[name]
+                for name in MARKDOWN_LAYOUT_CONTEXT_KEYS
+                if name in markdown_layout_context
+            }
+        )
+
     layout, _ = get_layout_for_client(client, sender_id=sender_id)
     if layout is None:
         template = Template(NEUTRAL_SHELL)
-        context = {"subject": subject, "body_html": body_html, "footer_note": footer_note or ""}
-        return template.render(Context(context, autoescape=False)), None
+        context = {
+            "subject": subject,
+            "body_html": mark_safe(body_html),  # noqa: S308 -- rendered Markdown HTML
+            **layout_context,
+        }
+        return template.render(Context(context, autoescape=True)), None
     template = Template(layout.layout_html)
     context = {
         "subject": subject,
-        "body_html": body_html,
-        "footer_note": footer_note or "",
+        "body_html": mark_safe(body_html),  # noqa: S308 -- rendered Markdown HTML
+        **layout_context,
         "brand_name": layout.brand_name,
         "brand_website_url": layout.website_url,
         "brand_logo_url": layout.logo_url,
         "layout": layout,
     }
-    return template.render(Context(context, autoescape=False)), layout
+    return template.render(Context(context, autoescape=True)), layout
 
 
 def layout_payload(layout):

@@ -592,3 +592,313 @@ def test_markdown_send_wraps_body_in_email_shell_with_footer(
     # Text part carries the substituted markdown source, not HTML.
     assert "# Hi Ada" in message.text_body
     assert "<h1>" not in message.text_body
+
+
+def test_layout_context_opt_in_is_versioned_and_matches_preview_and_dry_run(
+    client,
+    api_client_record,
+    markdown_template,
+):
+    layout = EmailLayout.objects.get(client=api_client_record, sender_id="")
+    layout.layout_html = default_layouts()["aisl"]["layout_html"]
+    layout.brand_name = "AI Shipping Labs"
+    layout.save(update_fields=["layout_html", "brand_name", "updated_at"])
+    markdown_template.markdown_layout_context = True
+    markdown_template.save(update_fields=["markdown_layout_context", "updated_at"])
+    published = publish_template(client, markdown_template.key)
+    assert published.status_code == 201
+    assert published.json()["version"]["markdown_layout_context"] is True
+
+    markdown_template.markdown_body = "# Changed draft"
+    markdown_template.markdown_layout_context = False
+    markdown_template.save(
+        update_fields=["markdown_body", "markdown_layout_context", "updated_at"]
+    )
+    context = CONTEXT | {
+        "footer_note": "Example footer note",
+        "verify_email_url": "https://example.com/verify?token=private",
+        "unsubscribe_url": "https://example.com/unsubscribe?token=private",
+        "unrelated_private_value": "must not reach the layout",
+    }
+    send_payload = {
+        "email": "person@example.com",
+        "template_key": markdown_template.key,
+        "template_version": 1,
+        "idempotency_key": "layout-parity-v1",
+        "context": context,
+        "dry_run": True,
+    }
+    dry_run = post_send(client, send_payload)
+    preview = api(
+        client,
+        "api_transactional_template_preview",
+        payload={"context": context, "template_version": 1},
+        template_key=markdown_template.key,
+    )
+
+    assert dry_run.status_code == 202
+    assert preview.status_code == 200
+    rendered = dry_run.json()["rendered"]
+    assert preview.json()["html_body"] == rendered["html_body"]
+    assert preview.json()["text_body"] == rendered["text_body"]
+    assert preview.json()["template_version"] == 1
+    assert "Changed draft" not in rendered["html_body"]
+    assert "must not reach the layout" not in rendered["html_body"]
+    assert "must not reach the layout" not in rendered["text_body"]
+    for name in ("footer_note", "verify_email_url", "unsubscribe_url"):
+        assert context[name] in rendered["html_body"]
+        assert context[name] in rendered["text_body"]
+    assert "AI Shipping Labs" in rendered["text_body"]
+
+
+def test_layout_context_opt_out_does_not_expose_reserved_context(
+    client,
+    markdown_template,
+):
+    assert publish_template(client, markdown_template.key).status_code == 201
+    response = post_send(
+        client,
+        {
+            "email": "person@example.com",
+            "template_key": markdown_template.key,
+            "template_version": 1,
+            "context": CONTEXT | {
+                "footer_note": "Must remain private",
+                "verify_email_url": "https://example.com/verify",
+                "unsubscribe_url": "https://example.com/unsubscribe",
+            },
+            "dry_run": True,
+        },
+    )
+
+    assert response.status_code == 202
+    rendered = response.json()["rendered"]
+    assert "Must remain private" not in rendered["html_body"]
+    assert "https://example.com/verify" not in rendered["html_body"]
+    assert "https://example.com/unsubscribe" not in rendered["text_body"]
+
+
+@pytest.mark.parametrize(
+    ("context", "expected"),
+    [
+        ({"footer_note": 7}, {"context.footer_note": "must_be_string"}),
+        (
+            {"verify_email_url": "javascript:alert(1)"},
+            {"context.verify_email_url": "invalid_url"},
+        ),
+        (
+            {"unsubscribe_url": "not-a-url"},
+            {"context.unsubscribe_url": "invalid_url"},
+        ),
+    ],
+)
+def test_opted_in_layout_context_rejects_invalid_values_before_send_work(
+    client,
+    markdown_template,
+    context,
+    expected,
+):
+    markdown_template.markdown_layout_context = True
+    markdown_template.save(update_fields=["markdown_layout_context", "updated_at"])
+    assert publish_template(client, markdown_template.key).status_code == 201
+    response = post_send(
+        client,
+        {
+            "email": "person@example.com",
+            "template_key": markdown_template.key,
+            "template_version": 1,
+            "context": CONTEXT | context,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == expected
+    assert Contact.objects.count() == 0
+    assert TransactionalMessage.objects.count() == 0
+
+
+def test_layout_context_html_escapes_footer_text(client, markdown_template):
+    markdown_template.markdown_layout_context = True
+    markdown_template.save(update_fields=["markdown_layout_context", "updated_at"])
+    assert publish_template(client, markdown_template.key).status_code == 201
+    response = post_send(
+        client,
+        {
+            "email": "person@example.com",
+            "template_key": markdown_template.key,
+            "template_version": 1,
+            "context": CONTEXT | {"footer_note": "<script>alert(1)</script>"},
+            "dry_run": True,
+        },
+    )
+
+    assert response.status_code == 202
+    html = response.json()["rendered"]["html_body"]
+    assert "<script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_layout_autoescape_preserves_legacy_plain_body_html(
+    client,
+    api_client_record,
+    markdown_template,
+):
+    layout = EmailLayout.objects.get(client=api_client_record, sender_id="")
+    layout.layout_html = (
+        "<html><body>{{ body_html }}"
+        "<footer>{{ footer_note }}</footer></body></html>"
+    )
+    layout.save(update_fields=["layout_html", "updated_at"])
+    markdown_template.markdown_layout_context = True
+    markdown_template.save(update_fields=["markdown_layout_context", "updated_at"])
+    assert publish_template(client, markdown_template.key).status_code == 201
+
+    response = post_send(
+        client,
+        {
+            "email": "person@example.com",
+            "template_key": markdown_template.key,
+            "template_version": 1,
+            "context": CONTEXT | {"footer_note": "<script>alert(1)</script>"},
+            "dry_run": True,
+        },
+    )
+
+    assert response.status_code == 202
+    html = response.json()["rendered"]["html_body"]
+    assert "<h1>Hi Ada</h1>" in html
+    assert "&lt;h1&gt;Hi Ada&lt;/h1&gt;" not in html
+    assert "<script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_preview_explicit_draft_differs_from_published_version(
+    client,
+    markdown_template,
+):
+    markdown_template.markdown_body = "# Published v1 {{ user_name }}"
+    markdown_template.save(update_fields=["markdown_body", "updated_at"])
+    assert publish_template(client, markdown_template.key).status_code == 201
+    markdown_template.markdown_body = "# Saved draft {{ user_name }}"
+    markdown_template.save(update_fields=["markdown_body", "updated_at"])
+
+    draft = api(
+        client,
+        "api_transactional_template_preview",
+        payload={"context": CONTEXT, "draft": True},
+        template_key=markdown_template.key,
+    )
+    published = api(
+        client,
+        "api_transactional_template_preview",
+        payload={"context": CONTEXT, "template_version": 1},
+        template_key=markdown_template.key,
+    )
+
+    assert draft.status_code == 200
+    assert draft.json()["published"] is False
+    assert draft.json()["template_version"] is None
+    assert "Saved draft Ada" in draft.json()["html_body"]
+    assert "Published v1" not in draft.json()["html_body"]
+    assert published.status_code == 200
+    assert published.json()["published"] is True
+    assert published.json()["template_version"] == 1
+    assert "Published v1 Ada" in published.json()["html_body"]
+    assert "Saved draft" not in published.json()["html_body"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"draft": "true"}, {"draft": "must_be_boolean"}),
+        (
+            {"draft": True, "template_version": 1},
+            {"draft": "conflicts_with_template_version"},
+        ),
+    ],
+)
+def test_preview_rejects_invalid_draft_selection(
+    client,
+    markdown_template,
+    payload,
+    expected,
+):
+    response = api(
+        client,
+        "api_transactional_template_preview",
+        payload=payload,
+        template_key=markdown_template.key,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == expected
+    assert Contact.objects.count() == 0
+    assert TransactionalMessage.objects.count() == 0
+
+
+def test_template_api_validates_layout_opt_in_and_supports_dotted_keys(
+    client,
+    api_client_record,
+):
+    key = "coursework.pool_ready"
+    payload = {
+        "name": "Coursework pool ready",
+        "subject": "Pool ready",
+        "markdown_body": "Your review pool is ready.",
+        "markdown_layout_context": True,
+    }
+    saved = client.put(
+        reverse("mailing:api_transactional_template", args=[key]),
+        data=payload,
+        content_type="application/json",
+        **auth_headers(),
+    )
+    detail = client.get(
+        reverse("mailing:api_transactional_template", args=[key]),
+        **auth_headers(),
+    )
+    published = publish_template(client, key)
+    versions = api(client, "api_transactional_template_versions", template_key=key)
+    preview = api(
+        client,
+        "api_transactional_template_preview",
+        payload={"template_version": 1},
+        template_key=key,
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["template"]["markdown_layout_context"] is True
+    assert detail.status_code == 200
+    assert published.status_code == 201
+    assert versions.status_code == 200
+    assert versions.json()["versions"][0]["markdown_layout_context"] is True
+    assert preview.status_code == 200
+    assert preview.json()["template_key"] == key
+    assert EmailTemplate.objects.get(client=api_client_record, key=key)
+
+    invalid_type = client.put(
+        reverse("mailing:api_transactional_template", args=[key]),
+        data=payload | {"markdown_layout_context": "yes"},
+        content_type="application/json",
+        **auth_headers(),
+    )
+    assert invalid_type.status_code == 400
+    assert invalid_type.json()["error"]["fields"] == {
+        "markdown_layout_context": "must_be_boolean"
+    }
+
+    raw_html = client.put(
+        reverse("mailing:api_transactional_template", args=[key]),
+        data={
+            "name": "Raw HTML",
+            "subject": "Raw",
+            "html_body": "<p>Raw</p>",
+            "markdown_layout_context": True,
+        },
+        content_type="application/json",
+        **auth_headers(),
+    )
+    assert raw_html.status_code == 400
+    assert raw_html.json()["error"]["fields"] == {
+        "markdown_layout_context": "requires_markdown_body"
+    }

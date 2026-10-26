@@ -598,6 +598,7 @@ class EmailTemplate(TimeStampedModel):
     html_body = models.TextField(blank=True)
     text_body = models.TextField(blank=True)
     markdown_body = models.TextField(blank=True)
+    markdown_layout_context = models.BooleanField(default=False)
     category = models.CharField(max_length=80, blank=True)
     required_context = models.JSONField(default=list, blank=True)
     example_context = models.JSONField(default=dict, blank=True)
@@ -633,6 +634,7 @@ class EmailTemplateVersion(TimeStampedModel):
     html_body = models.TextField(blank=True)
     text_body = models.TextField(blank=True)
     markdown_body = models.TextField(blank=True)
+    markdown_layout_context = models.BooleanField(default=False)
     required_context = models.JSONField(default=list, blank=True)
     category = models.CharField(max_length=80, blank=True)
 

@@ -406,6 +406,7 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
   "html_body": "<p>Your homework submission for <strong>{{ homework_title }}</strong> in {{ course_title }} was saved.</p>",
   "text_body": "Your homework submission for {{ homework_title }} in {{ course_title }} was saved.",
   "markdown_body": "",
+  "markdown_layout_context": false,
   "category": "homework",
   "required_context": [
     {"name": "course_title", "description": "Course title."},
@@ -419,7 +420,7 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
 }
 ```
 
-Set `markdown_body` to store a markdown draft instead of raw `html_body`/`text_body`. Markdown drafts are rendered at send and preview time with the shared email shell (header, footer, and external links opened in a new tab); the `text` part carries the substituted markdown source. `category` is a free-form label (for example `events` or `onboarding`). The `GET` response also reports `latest_version`, the newest published version number, or `null` when the template was never published.
+Set `markdown_body` to store a markdown draft instead of raw `html_body`/`text_body`. Markdown drafts are rendered at send and preview time with the shared email shell (header, footer, and external links opened in a new tab); the `text` part carries the substituted markdown source. Set `markdown_layout_context` to `true` only when the template should expose the allowlisted `footer_note`, `verify_email_url`, and `unsubscribe_url` values from its normal render context to the client-owned layout and matching text part. Relay never passes other context values to the layout. This opt-in is valid only for Markdown drafts and is snapshotted into every published version. `category` is a free-form label (for example `events` or `onboarding`). The `GET` response also reports `latest_version`, the newest published version number, or `null` when the template was never published.
 
 CMP transactional templates can be provisioned through the API with:
 
@@ -498,6 +499,7 @@ Publishing snapshots the current draft into a new immutable version numbered `1`
     "html_body": "",
     "text_body": "",
     "markdown_body": "Hi {{ user_name }} ...",
+    "markdown_layout_context": true,
     "required_context": [
       {"name": "user_name", "description": "Recipient name."},
       {"name": "join_url", "description": "Join link."}
@@ -538,11 +540,11 @@ POST /api/transactional/templates/{template_key}/preview
 ```json
 {
   "context": {"user_name": "Ada", "event_title": "Community Lunch", "join_url": "https://example.com/join"},
-  "template_version": 1
+  "draft": true
 }
 ```
 
-`template_version` is optional; omit it to preview the current draft, or name an explicit version. The preview writes nothing and returns the rendered message plus which required context keys would have produced values:
+Set `draft` to `true` to preview the current saved draft, or omit it and name an explicit `template_version` to preview an immutable version. The two selectors are mutually exclusive. With neither selector, Relay keeps send-like resolution (latest published version, or the draft if the template has never been published). The preview writes nothing and returns the rendered message plus which required context keys would have produced values:
 
 ```json
 {
@@ -556,7 +558,7 @@ POST /api/transactional/templates/{template_key}/preview
 }
 ```
 
-Preview rendering matches sends exactly: for the same version and context, `subject`, `html_body`, and `text_body` equal what a send stores. `published` is `false` when the preview rendered the draft of a never-published template. Missing required context keys do not fail a preview; they are listed in `missing_context` (the affected placeholders render empty).
+Preview rendering matches sends exactly: for the same published version and context, `subject`, `html_body`, and `text_body` equal what a send stores. When the selected Markdown draft or version has `markdown_layout_context=true`, preview and send both validate and render the allowlisted `footer_note`, `verify_email_url`, and `unsubscribe_url` values already present in `context`; the request has no second layout-context field. `published` is `false` for an explicit draft preview. Missing required context keys do not fail a preview; they are listed in `missing_context` (the affected placeholders render empty).
 
 ### Test Send a Template
 
@@ -598,7 +600,7 @@ POST /api/transactional/send
 
 `template_version` is optional. With it, the send renders exactly that published version; without it, the send renders the latest published version, or the draft for templates that were never published. An unknown version fails with `404 template_version: not_found`. The created message records the version it rendered, and the queue payload carries the same `template_version`.
 
-Transactional sends validate required template context before Datamailer creates a contact, message, event, or queue payload. Reusing an idempotency key returns the existing message.
+Transactional sends validate required template context before Datamailer creates a contact, message, event, or queue payload. An opted-in Markdown version additionally requires each non-empty layout value to be a string, limits `footer_note` to 500 characters, and accepts only absolute HTTP(S) verify/unsubscribe URLs up to 2048 characters. These values are rendered into both HTML and text, are never logged by validation, and remain part of the ordinary stored message context. Reusing an idempotency key returns the existing message.
 
 Local transactional send examples require the Datamailer server to be started with `SQS_TRANSACTIONAL_EMAIL_QUEUE_URL` configured, for example through LocalStack. With the default empty queue URL, the endpoint is documented but is not runnable because queueing provider work will fail.
 

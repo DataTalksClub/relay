@@ -540,6 +540,7 @@ _TEMPLATE_FIELDS = (
     "html_body",
     "text_body",
     "markdown_body",
+    "markdown_layout_context",
     "category",
     "required_context",
     "example_context",
@@ -582,6 +583,8 @@ class _Templates:
             defaults["required_context"] = []
         if defaults["example_context"] is None:
             defaults["example_context"] = {}
+        if defaults["markdown_layout_context"] is None:
+            defaults["markdown_layout_context"] = False
         if defaults["is_transactional"] is None:
             defaults["is_transactional"] = True
         if defaults["is_active"] is None:
