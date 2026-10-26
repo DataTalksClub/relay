@@ -127,11 +127,24 @@ def sandbox_worker_statuses() -> list[WorkerStatus]:
 
 
 def worker_status_payload() -> dict[str, object]:
+    """Serve the worker table with a short cache.
+
+    Previously every request ran 8 sequential `systemctl show` calls (up to
+    ~12 s worst case) on the request thread. Cache 30 s like the ops status
+    endpoint; backlog counts stay fresh enough for operators.
+    """
+    from django.core.cache import cache  # noqa: PLC0415 - avoid import cost at module load
+
+    cached = cache.get("worker_status_payload_v1")
+    if isinstance(cached, dict):
+        return cached
     workers = sandbox_worker_statuses()
-    return {
+    payload: dict[str, object] = {
         "status": _overall_status(workers),
         "workers": [_serialize_worker_status(worker) for worker in workers],
     }
+    cache.set("worker_status_payload_v1", payload, 30)
+    return payload
 
 
 def systemd_service_properties(service_name: str) -> dict[str, str]:

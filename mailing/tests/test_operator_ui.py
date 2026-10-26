@@ -30,7 +30,7 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
-from mailing.services.campaigns import estimate_campaign_recipients
+from mailing.services.campaigns import estimate_campaign_recipients, queue_campaign
 from mailing.services.operator_ui import (
     ContactExplorerFilters,
     active_contact_filters,
@@ -1926,17 +1926,37 @@ def test_queue_action_snapshots_enqueues_idempotently_and_does_not_call_ses(
     assert campaign.status == "draft"
     assert CampaignRecipient.objects.filter(campaign=campaign).count() == 0
 
-    # Batches are enqueued on commit now rather than immediately, so the
-    # callbacks must be executed for the enqueue to be observable. That
-    # deferral is the point of the change: a rollback leaves nothing queued.
+    # The request returns immediately in SNAPSHOTTING; the worker snapshot
+    # runs afterwards on the default db_worker lane. Capture the request's
+    # on-commit enqueue, then simulate the worker inline.
+    snapshots_queued = []
+    monkeypatch.setattr(
+        "mailing.campaign_queue_tasks.enqueue_campaign_snapshot",
+        lambda campaign_id, **kwargs: snapshots_queued.append((campaign_id, kwargs)),
+    )
     with django_capture_on_commit_callbacks(execute=True):
         first = client.post(reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"})
+    campaign.refresh_from_db()
+    assert first.status_code == 302
+    assert campaign.status == "snapshotting"
+    assert CampaignRecipient.objects.filter(campaign=campaign).count() == 0
+    assert len(enqueued) == 0
+    assert snapshots_queued and snapshots_queued[0][0] == campaign.id
+
     with django_capture_on_commit_callbacks(execute=True):
         second = client.post(reverse("mailing:campaign_queue", args=[campaign.id]), {"confirm": "1"})
 
     campaign.refresh_from_db()
-    assert first.status_code == 302
     assert second.status_code == 302
+    # Idempotent: the second request while SNAPSHOTTING enqueues nothing new.
+    assert campaign.status == "snapshotting"
+    assert len(snapshots_queued) == 1
+
+    # Simulate the background worker completing the snapshot inline.
+    with django_capture_on_commit_callbacks(execute=True):
+        worker_result = queue_campaign(campaign)
+    assert worker_result.queued is True
+    campaign.refresh_from_db()
     assert campaign.status == "queued"
     assert campaign.recipient_count == 1
     assert campaign.skipped_count == 1

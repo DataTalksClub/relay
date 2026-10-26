@@ -98,7 +98,7 @@ from mailing.services.campaigns import (
     CampaignRecipientConflict,
     campaign_send_issues,
     estimate_campaign_recipients,
-    queue_campaign,
+    request_campaign_queue,
 )
 from mailing.services.contact_import_export import (
     bulk_import_contacts_for_client,
@@ -834,7 +834,7 @@ def campaign_queue(request, campaign_id):
         messages.warning(request, "The recipient count changed. Review the updated recipients before sending.")
         return redirect(f"{reverse('mailing:campaign_detail', args=[campaign.id])}?confirm_send=1")
     try:
-        result = queue_campaign(
+        result = request_campaign_queue(
             campaign, expected_revision=request.POST.get("review_revision"), reject_past_schedule=True
         )
     except CampaignNotReady as exc:
@@ -844,12 +844,13 @@ def campaign_queue(request, campaign_id):
         messages.success(
             request, "Campaign scheduled. Eligible recipients will be selected at dispatch time; no email was sent."
         )
-    elif result.queued:
+    elif result.snapshotting:
         messages.success(
             request,
-            f"Campaign queued with {result.recipient_count} recipients, {result.skipped_count} skipped, "
-            f"and {result.batch_count} send batches.",
+            "Queueing started in the background. This page shows live progress; no email was sent yet.",
         )
+    elif result.accepted:
+        messages.success(request, "Campaign queued.")
     else:
         messages.info(request, "Campaign was already queued or locked for sending.")
     return redirect("mailing:campaign_detail", campaign_id=campaign.id)

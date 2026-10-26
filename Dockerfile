@@ -29,4 +29,4 @@ RUN uv run python manage.py collectstatic --noinput
 
 EXPOSE 8000
 ENTRYPOINT ["/bin/sh", "/app/scripts/container-entrypoint.sh"]
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--access-logfile", "-", "relay.wsgi:application"]
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "--bind", "0.0.0.0:8000", "--workers", "3", "--worker-class", "gthread", "--threads", "4", "--timeout", "60", "--access-logfile", "-", "relay.wsgi:application"]

@@ -141,7 +141,7 @@ def test_changed_recipient_count_requires_new_confirmation(client, scope, monkey
     integration, _, audience = scope
     campaign = Campaign.objects.create(client=integration, audience=audience, subject="Announcement", text_body="Hello")
     called = []
-    monkeypatch.setattr("mailing.views.queue_campaign", lambda campaign: called.append(campaign.id))
+    monkeypatch.setattr("mailing.views.request_campaign_queue", lambda campaign, **kwargs: called.append(campaign.id))
     response = client.post(reverse("mailing:campaign_queue", args=[campaign.id]), {
         "confirm": "1", "reviewed_recipient_count": "999",
     })

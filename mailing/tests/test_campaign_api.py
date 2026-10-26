@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 from django.urls import reverse
 from django.utils import timezone
@@ -22,7 +24,7 @@ from mailing.models import (
 from mailing.services.api import isoformat
 from mailing.services.auth import create_client_api_key
 from mailing.services.campaign_sender import send_campaign_batch
-from mailing.services.campaigns import estimate_campaign_recipients
+from mailing.services.campaigns import estimate_campaign_recipients, queue_campaign
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -286,11 +288,27 @@ def test_campaign_api_queue_snapshots_and_enqueues_pending_recipients(
 
     assert response.status_code == 202
     body = response.json()
+    # Async: the request returns immediately in SNAPSHOTTING; the worker
+    # snapshot runs afterwards on the default db_worker lane.
     assert body["queued"] is True
-    assert body["batch_count"] == 1
-    assert body["recipient_count"] == 1
-    assert body["skipped_count"] == 0
-    assert body["campaign"]["status"] == CampaignStatus.QUEUED
+    assert body["snapshotting"] is True
+    assert body["scheduled"] is False
+    assert body["batch_count"] == 0
+    assert body["campaign"]["status"] == CampaignStatus.SNAPSHOTTING
+    assert len(enqueued) == 0
+    assert CampaignRecipient.objects.filter(
+        campaign__client=api_client_record, campaign__external_key="cmp-course-start-2026"
+    ).count() == 0
+
+    # Simulate the background worker completing the snapshot inline.
+    campaign = Campaign.objects.get(client=api_client_record, external_key="cmp-course-start-2026")
+    worker_result = queue_campaign(campaign)
+    assert worker_result.queued is True
+    assert worker_result.batch_count == 1
+    campaign.refresh_from_db()
+    assert campaign.status == CampaignStatus.QUEUED
+    assert campaign.recipient_count == 1
+    assert campaign.skipped_count == 0
     assert len(enqueued) == 1
     assert enqueued[0]["contract"] == "campaign-email"
     assert enqueued[0]["campaign_recipient_ids"]
@@ -304,9 +322,8 @@ def test_campaign_api_queue_snapshots_and_enqueues_pending_recipients(
     assert replay.status_code == 202
     replay_body = replay.json()
     assert replay_body["queued"] is False
+    assert replay_body["already_queued"] is True
     assert replay_body["batch_count"] == 0
-    assert replay_body["recipient_count"] == 1
-    assert replay_body["skipped_count"] == 0
     assert replay_body["campaign"]["status"] == CampaignStatus.QUEUED
     assert len(enqueued) == 1
 
@@ -439,11 +456,11 @@ def test_campaign_api_test_send_sends_explicit_recipients_without_campaign_recip
 ):
     sent = []
 
-    def fake_send(campaign, email):
-        sent.append((campaign.external_key, email))
-        return f"message-{len(sent)}"
+    def fake_enqueue(campaign, emails):
+        sent.append((campaign.external_key, emails))
+        return MagicMock(id="task-123")
 
-    monkeypatch.setattr("mailing.services.api.send_campaign_test_message", fake_send)
+    monkeypatch.setattr("mailing.campaign_test_tasks.enqueue_campaign_test", fake_enqueue)
     put = put_campaign(client, "test-send-campaign", campaign_payload(audience, api_client_record))
     assert put.status_code == 201
 
@@ -459,15 +476,11 @@ def test_campaign_api_test_send_sends_explicit_recipients_without_campaign_recip
 
     assert response.status_code == 202
     body = response.json()
-    assert body["sent_count"] == 2
-    assert body["recipients"] == [
-        {"email": "a@example.com", "message_id": "message-1"},
-        {"email": "b@example.com", "message_id": "message-2"},
-    ]
-    assert sent == [
-        ("test-send-campaign", "a@example.com"),
-        ("test-send-campaign", "b@example.com"),
-    ]
+    # Async: provider calls run on the worker; the request only enqueues.
+    assert body["queued"] is True
+    assert body["recipient_count"] == 2
+    assert body["task_id"] == "task-123"
+    assert sent == [( "test-send-campaign", ["a@example.com", "b@example.com"])]
     assert CampaignRecipient.objects.count() == 0
 
 

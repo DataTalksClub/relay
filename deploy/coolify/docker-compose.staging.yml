@@ -36,10 +36,18 @@ services:
       ALLOWED_HOSTS: relay.datatalks.club,origin.relay.datatalks.club,localhost,127.0.0.1,169.58.124.141
     command:
       - gunicorn
+      - -c
+      - gunicorn.conf.py
       - --bind
       - 0.0.0.0:8000
       - --workers
-      - "2"
+      - "3"
+      - --worker-class
+      - gthread
+      - --threads
+      - "4"
+      - --timeout
+      - "60"
       - --access-logfile
       - "-"
       - relay.wsgi:application
@@ -64,12 +72,24 @@ services:
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "db_worker", "--queue-name", "default", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "default"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   provider-events-worker:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "provider-events"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   scheduler:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
@@ -81,18 +101,36 @@ services:
       # Reuse the existing host ops transport; never copy SMTP secrets into git/env.
       - /etc/msmtprc:/run/relay-ops-msmtprc:ro
     command: ["python", "manage.py", "run_relay_scheduler", "--interval", "15"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   ses-ingress:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "drain_sqs_ingress", "ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   cmp-callbacks:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   aisl-ses-ingress:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
@@ -100,6 +138,12 @@ services:
     restart: unless-stopped
     # AISHL is the sole mutation owner; acknowledge only after its HTTP 200.
     command: ["python", "manage.py", "drain_sqs_ingress", "aisl-ses-webhooks", "--batch-size", "1", "--wait-time", "20"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   sandbox-ses-ingress:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
@@ -111,24 +155,48 @@ services:
       AWS_REGION: eu-west-1
       SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL: https://sqs.eu-west-1.amazonaws.com/817685572750/relay-sandbox-ses-webhooks
     command: ["python", "manage.py", "drain_sqs_ingress", "sandbox-ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   client-callbacks:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "process_client_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   recipient-imports:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   inbound-deliveries:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
     command: ["python", "manage.py", "process_inbound_deliveries"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   inbound-ingress:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
@@ -136,3 +204,9 @@ services:
     restart: unless-stopped
     # Stage code before receipt cutover; absence of queue is intentional standby.
     command: ["sh", "-ec", 'if [ -n "$${SQS_INBOUND_EMAIL_QUEUE_URL:-}" ]; then exec python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20; else echo "inbound ingress standby: no queue configured"; exec sleep infinity; fi']
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

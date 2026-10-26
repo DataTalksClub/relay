@@ -35,12 +35,12 @@ from mailing.models import (
     normalize_category_tag as normalize_campaign_category_tag,
 )
 from mailing.services.api_errors import ApiValidationError
-from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
+from mailing.services.campaign_sender import render_campaign_message
 from mailing.services.campaigns import (
     CampaignNotReady,
     CampaignRecipientConflict,
-    queue_campaign,
     recount_campaign_audience,
+    request_campaign_queue,
     retry_campaign_recipient,
 )
 from mailing.services.categories import TRANSACTIONAL_CATEGORY, category_label, validate_canonical_category
@@ -389,17 +389,19 @@ def upsert_campaign_for_client(external_key, data, authenticated_client):
 def queue_campaign_for_client(external_key, data, authenticated_client):
     campaign = campaign_for_client(external_key, data, authenticated_client)
     try:
-        result = queue_campaign(campaign)
+        result = request_campaign_queue(campaign)
     except CampaignNotReady as exc:
         raise ApiValidationError({"campaign": str(exc)}, status_code=409) from exc
     campaign.refresh_from_db()
     return {
         "campaign": campaign_payload(campaign),
-        "queued": result.queued,
+        "queued": result.accepted,
+        "already_queued": result.already_queued,
+        "snapshotting": result.snapshotting,
         "scheduled": result.scheduled,
-        "batch_count": result.batch_count,
-        "recipient_count": result.recipient_count,
-        "skipped_count": result.skipped_count,
+        "batch_count": 0,
+        "recipient_count": campaign.recipient_count,
+        "skipped_count": campaign.skipped_count,
     }
 
 
@@ -474,20 +476,24 @@ def validate_test_recipient_emails(value):
 
 
 def test_send_campaign_for_client(external_key, data, authenticated_client):
+    """Enqueue a campaign test send; provider calls run on the worker.
+
+    Previously this looped over up to 25 synchronous SES calls on the request
+    thread (8-50 s). Now it mirrors the operator UI: enqueue via
+    campaign_test_tasks and return immediately with progress visible in
+    taskdeck/admin.
+    """
+    from mailing.campaign_test_tasks import enqueue_campaign_test  # noqa: PLC0415 - avoid cycle
+
     campaign = campaign_for_client(external_key, data, authenticated_client)
     emails = validate_test_recipient_emails(data.get("emails"))
-    sent = []
-    for email in emails:
-        sent.append(
-            {
-                "email": email,
-                "message_id": send_campaign_test_message(campaign, email),
-            }
-        )
+    result = enqueue_campaign_test(campaign, emails)
+    campaign.refresh_from_db()
     return {
         "campaign": campaign_payload(campaign),
-        "sent_count": len(sent),
-        "recipients": sent,
+        "queued": True,
+        "recipient_count": len(emails),
+        "task_id": str(getattr(result, "id", "")),
     }
 
 

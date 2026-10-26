@@ -78,6 +78,17 @@ class QueueCampaignResult:
     recipient_count: int
     skipped_count: int
     scheduled: bool = False
+    snapshotting: bool = False
+
+
+@dataclass(frozen=True)
+class QueueRequestResult:
+    campaign_id: int
+    accepted: bool
+    already_queued: bool
+    scheduled: bool
+    snapshotting: bool
+    status: str
 
 
 class CampaignRecipientConflict(Exception):
@@ -191,21 +202,31 @@ def snapshot_campaign_recipients(campaign):
     )
     include_tags = normalize_tag_filter(campaign.include_tags)
     exclude_tags = normalize_tag_filter(campaign.exclude_tags)
-    candidate_contacts = _candidate_contacts(campaign, include_tags, exclude_tags)
+    candidate_contacts = list(_candidate_contacts(campaign, include_tags, exclude_tags))
+    bulk = _bulk_skip_context(campaign, [c.pk for c in candidate_contacts])
 
-    created_count = 0
+    existing_ids = set(
+        CampaignRecipient.objects.filter(campaign=campaign).values_list("contact_id", flat=True)
+    )
+    to_create = []
     for contact in candidate_contacts:
-        _, created = CampaignRecipient.objects.get_or_create(
-            campaign=campaign,
-            contact=contact,
-            defaults={
-                "email": contact.email,
-                "status": _recipient_status(contact, campaign),
-                "skip_reason": _skip_reason(contact, campaign),
-            },
+        if contact.pk in existing_ids:
+            continue
+        skip_reason = _skip_reason_bulk(contact, campaign, bulk)
+        to_create.append(
+            CampaignRecipient(
+                campaign=campaign,
+                contact=contact,
+                email=contact.email,
+                status=(
+                    CampaignRecipientStatus.SKIPPED if skip_reason else CampaignRecipientStatus.PENDING
+                ),
+                skip_reason=skip_reason,
+            )
         )
-        if created:
-            created_count += 1
+    if to_create:
+        CampaignRecipient.objects.bulk_create(to_create, batch_size=1000, ignore_conflicts=True)
+    created_count = len(to_create)
 
     counts = _refresh_campaign_counts(campaign)
     return SnapshotResult(
@@ -220,15 +241,16 @@ def estimate_campaign_recipients(campaign, *, preview_limit=25):
     include_tags = normalize_tag_filter(campaign.include_tags)
     exclude_tags = normalize_tag_filter(campaign.exclude_tags)
     total_candidates = _base_candidate_contacts(campaign).count()
-    candidate_contacts = _candidate_contacts(campaign, include_tags, exclude_tags)
-    tag_filtered_count = total_candidates - candidate_contacts.count()
+    candidate_contacts = list(_candidate_contacts(campaign, include_tags, exclude_tags))
+    tag_filtered_count = total_candidates - len(candidate_contacts)
+    bulk = _bulk_skip_context(campaign, [c.pk for c in candidate_contacts])
     recipient_count = 0
     skipped_count = 0
     skip_reason_counts = {reason: 0 for reason, _label in CampaignRecipientSkipReason.choices}
     preview_rows = []
 
     for contact in candidate_contacts:
-        skip_reason = _skip_reason(contact, campaign)
+        skip_reason = _skip_reason_bulk(contact, campaign, bulk)
         if skip_reason:
             skipped_count += 1
             skip_reason_counts[skip_reason] += 1
@@ -254,6 +276,77 @@ def estimate_campaign_recipients(campaign, *, preview_limit=25):
         skip_reason_counts={reason: count for reason, count in skip_reason_counts.items() if count},
         preview_rows=preview_rows,
     )
+
+
+def _bulk_skip_context(campaign, contact_ids):
+    """Fetch per-contact eligibility inputs in bulk (3 queries, not 3N).
+
+    Returns (audience_subs, client_subs, disabled_category_ids) keyed by
+    contact id. Keeps estimate/detail pages under 2 s for large audiences.
+    """
+    contact_ids = list(dict.fromkeys(contact_ids))
+    if not contact_ids:
+        return ({}, {}, set())
+    audience_subs = {
+        row["contact_id"]: row
+        for row in Subscription.objects.filter(
+            contact_id__in=contact_ids, audience=campaign.audience, client__isnull=True
+        ).values("contact_id", "status", "verified_at")
+    }
+    client_subs = {
+        row["contact_id"]: row
+        for row in Subscription.objects.filter(
+            contact_id__in=contact_ids, audience=campaign.audience, client=campaign.client
+        ).values("contact_id", "status", "verified_at")
+    }
+    disabled = set()
+    if campaign.category_tag:
+        disabled = set(
+            CategoryPreference.objects.filter(
+                contact_id__in=contact_ids,
+                audience=campaign.audience,
+                client=campaign.client,
+                tag=campaign.category_tag,
+                enabled=False,
+            ).values_list("contact_id", flat=True)
+        )
+    return (audience_subs, client_subs, disabled)
+
+
+def _skip_reason_bulk(contact, campaign, bulk):
+    if contact.hard_bounced_at is not None:
+        return CampaignRecipientSkipReason.HARD_BOUNCE
+    if contact.complained_at is not None:
+        return CampaignRecipientSkipReason.COMPLAINT
+    if contact.global_unsubscribed_at is not None:
+        return CampaignRecipientSkipReason.GLOBAL_UNSUBSCRIBE
+    if has_invalid_email_validation(contact):
+        return CampaignRecipientSkipReason.INVALID_EMAIL
+    audience_subs, client_subs, disabled = bulk
+    audience_subscription = audience_subs.get(contact.pk)
+    client_subscription = client_subs.get(contact.pk)
+
+    if not _is_verified_bulk(contact, audience_subscription, client_subscription):
+        return CampaignRecipientSkipReason.UNVERIFIED
+    if audience_subscription and audience_subscription["status"] == SubscriptionStatus.UNSUBSCRIBED:
+        return CampaignRecipientSkipReason.AUDIENCE_UNSUBSCRIBE
+    if client_subscription and client_subscription["status"] == SubscriptionStatus.UNSUBSCRIBED:
+        return CampaignRecipientSkipReason.CLIENT_UNSUBSCRIBE
+    if not client_subscription or client_subscription["status"] != SubscriptionStatus.SUBSCRIBED:
+        return CampaignRecipientSkipReason.SUPPRESSED
+    if campaign.category_tag and contact.pk in disabled:
+        return CampaignRecipientSkipReason.CLIENT_UNSUBSCRIBE
+    return ""
+
+
+def _is_verified_bulk(contact, audience_subscription, client_subscription):
+    """Mirror contacts.is_verified_for_marketing without per-row queries."""
+    if contact.verified_at is not None:
+        return True
+    for sub in (audience_subscription, client_subscription):
+        if sub and sub.get("verified_at") is not None:
+            return True
+    return False
 
 
 def _enqueue_campaign_batch(correlation_id, payload):
@@ -287,7 +380,11 @@ def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
         locked_campaign = Campaign.objects.select_for_update().get(pk=campaign.pk)
         now = now or timezone.now()
         dispatching = dispatch_due and locked_campaign.status == CampaignStatus.SCHEDULED
-        if locked_campaign.status != CampaignStatus.DRAFT and not dispatching:
+        # The background snapshot worker resumes from SNAPSHOTTING; any other
+        # non-draft state (QUEUED/SENDING/SENT/...) is an idempotent no-op so
+        # retries never double-enqueue batches.
+        resumable = locked_campaign.status == CampaignStatus.SNAPSHOTTING and not dispatch_due
+        if locked_campaign.status != CampaignStatus.DRAFT and not dispatching and not resumable:
             return QueueCampaignResult(
                 campaign_id=locked_campaign.id,
                 queued=False,
@@ -368,6 +465,57 @@ def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
 
 
 logger = logging.getLogger(__name__)
+
+
+def request_campaign_queue(campaign, *, expected_revision=None, reject_past_schedule=False,
+                           batch_size=None):
+    """Start a campaign queue without doing the slow snapshot on the request.
+
+    Validates fast (send issues, revision, schedule), flips DRAFT -> SNAPSHOTTING,
+    and enqueues the background snapshot task on commit. Returns immediately.
+    Idempotent: repeated calls while SNAPSHOTTING/QUEUED/SENDING return
+    already_queued without enqueueing again. Progress is visible on the campaign
+    detail page (SNAPSHOTTING banner + recipient counts).
+    """
+    from mailing.campaign_queue_tasks import enqueue_campaign_snapshot  # noqa: PLC0415 - avoid cycle
+
+    with transaction.atomic():
+        locked = Campaign.objects.select_for_update().select_related("audience", "client").get(pk=campaign.pk)
+        now = timezone.now()
+        if locked.status in {
+            CampaignStatus.SNAPSHOTTING, CampaignStatus.QUEUED,
+            CampaignStatus.SENDING, CampaignStatus.SENT,
+        }:
+            return QueueRequestResult(locked.id, False, True, False, locked.status == CampaignStatus.SNAPSHOTTING, locked.status)
+        if locked.status != CampaignStatus.DRAFT and not (
+            locked.status == CampaignStatus.SCHEDULED
+        ):
+            return QueueRequestResult(locked.id, False, True, locked.status == CampaignStatus.SCHEDULED, False, locked.status)
+        if expected_revision is not None and str(expected_revision) != locked.updated_at.isoformat():
+            raise CampaignNotReady("This campaign changed after review. Review the updated message and send time before confirming.")
+        if (reject_past_schedule and locked.status == CampaignStatus.DRAFT
+                and locked.scheduled_at is not None and locked.scheduled_at <= now):
+            raise CampaignNotReady("The scheduled time has passed. Choose a future time or explicitly choose Send now before confirming.")
+        issues = campaign_send_issues(locked)
+        if issues:
+            raise CampaignNotReady(" ".join(issues))
+        if locked.scheduled_at and locked.scheduled_at > now:
+            if locked.status == CampaignStatus.DRAFT:
+                locked.status = CampaignStatus.SCHEDULED
+                locked.save(update_fields=["status", "updated_at"])
+                return QueueRequestResult(locked.id, True, False, True, False, locked.status)
+            return QueueRequestResult(locked.id, False, True, True, False, locked.status)
+        locked.status = CampaignStatus.SNAPSHOTTING
+        locked.save(update_fields=["status", "updated_at"])
+        revision = locked.updated_at.isoformat()
+        transaction.on_commit(
+            lambda: enqueue_campaign_snapshot(
+                locked.pk, expected_revision=revision if expected_revision is not None else None,
+                batch_size=batch_size,
+            ),
+            robust=True,
+        )
+        return QueueRequestResult(locked.id, True, False, False, True, CampaignStatus.SNAPSHOTTING)
 
 
 def _enqueue_scheduled_dispatch(dispatch_id):

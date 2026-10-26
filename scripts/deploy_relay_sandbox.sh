@@ -418,7 +418,7 @@ app_container_args=(
 
 set_memory_args relay-web
 replace_container relay-web "${app_container_args[@]}" \
-  gunicorn --bind "$web_bind" --workers 2 --timeout 60 --access-logfile - relay.wsgi:application
+  gunicorn -c gunicorn.conf.py --bind "$web_bind" --workers 3 --worker-class gthread --threads 4 --timeout 60 --access-logfile - relay.wsgi:application
 set_memory_args relay-worker
 replace_container relay-worker "${app_container_args[@]}" \
   python manage.py db_worker --queue-name default --interval 1

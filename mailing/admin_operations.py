@@ -18,7 +18,7 @@ from mailing.services.campaigns import (
     CampaignNotReady,
     CampaignRecipientConflict,
     estimate_campaign_recipients,
-    queue_campaign,
+    request_campaign_queue,
 )
 from mailing.services.inbound_email import load_body_text
 from mailing.services.inbound_views import BLOCK_ORIGIN_BUTTON, block_sender, mark_read, unblock_sender
@@ -224,11 +224,21 @@ def campaign_queue(request, campaign_id):
     if body(request, {"confirm"}).get("confirm") is not True:
         raise ApiError("confirmation_required")
     try:
-        result = queue_campaign(campaign)
+        result = request_campaign_queue(campaign)
     except CampaignNotReady as exc:
         raise ApiError("campaign_not_ready", 409, fields={"campaign": str(exc)}) from None
     record_audit(request, "admin.campaign.queue", campaign)
-    return JsonResponse(result.__dict__)
+    campaign.refresh_from_db()
+    return JsonResponse(
+        {
+            "campaign_id": result.campaign_id,
+            "queued": result.accepted,
+            "already_queued": result.already_queued,
+            "snapshotting": result.snapshotting,
+            "scheduled": result.scheduled,
+            "status": result.status,
+        }
+    )
 
 
 @admin_endpoint(["POST"])
@@ -562,7 +572,27 @@ def transactional_bulk_retry(request):
     total = qs.count()
     if total > MAX_BULK_RETRY and not dry_run:
         raise ApiError("batch_too_large", 400, fields={"total": total, "max": MAX_BULK_RETRY})
-    result = bulk_retry_transactional_messages(
-        qs, actor=request.admin_key.user, reason=reason, force=force, limit=limit, dry_run=dry_run
+    if dry_run:
+        result = bulk_retry_transactional_messages(
+            qs, actor=request.admin_key.user, reason=reason, force=force, limit=limit, dry_run=True
+        )
+        return JsonResponse({"total_matching": total, **result.to_dict()})
+    # Write path runs on the worker; the request returns immediately with the
+    # task to follow in taskdeck/admin. Dry-run above stays synchronous (read-only).
+    from mailing.transactional_retry_tasks import enqueue_bulk_retry  # noqa: PLC0415 - avoid cycle
+
+    task_result = enqueue_bulk_retry(
+        actor_id=getattr(request.admin_key.user, "pk", None),
+        reason=reason, force=force, limit=limit,
+        client_id=client.pk if client is not None else None,
+        client_slug=(client_slug or "").strip(), status=status,
+        created_after=created_after, created_before=created_before,
+        error_contains=(data.get("error_contains") or "").strip(),
+        template_key=(data.get("template_key") or "").strip(),
     )
-    return JsonResponse({"total_matching": total, **result.to_dict()})
+    record_audit(request, "admin.transactional.bulk_retry_queued", client or request.admin_key)
+    return JsonResponse(
+        {"total_matching": total, "queued": True, "task_id": str(getattr(task_result, "id", "")),
+         "status": "queued"},
+        status=202,
+    )
