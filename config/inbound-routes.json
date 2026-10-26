@@ -99,6 +99,17 @@
           "kind": "discard"
         }
       ]
+    },
+    {
+      "name": "datatalks.club",
+      "client": "dtc-website",
+      "from_email": "dmarc-archive@datatalks.club",
+      "mailboxes": [
+        {
+          "local_part": "*",
+          "kind": "discard"
+        }
+      ]
     }
   ]
 }
