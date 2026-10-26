@@ -9,12 +9,33 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 TARGETS = {
     "development": ("t9uudl5ik40webxrzamrm8qy", "relay_dev", "relay_dev"),
     "production": ("fjnzwomg8n42lztloo34just", "relay", "relay_app"),
 }
+
+
+def inspect_runtime(environment, run=subprocess.run):
+    """Read-only, environment-scoped evidence; never return container env."""
+    uuid = TARGETS[environment][0]
+    names = run(["docker", "ps", "-a", "--format", "{{.Names}}"],
+                check=True, capture_output=True, text=True).stdout.splitlines()
+    names = [name for name in names if name.endswith(f"-{uuid}")]
+    containers = []
+    if names:
+        result = run(["docker", "inspect", *names], check=True, capture_output=True, text=True)
+        for item in json.loads(result.stdout):
+            state = item["State"]
+            containers.append({
+                "name": item["Name"].lstrip("/").removesuffix(f"-{uuid}"),
+                "id": item["Id"], "image": item["Config"]["Image"],
+                "image_id": item["Image"], "created": item["Created"],
+                "status": state["Status"], "health": state.get("Health", {}).get("Status"),
+            })
+    return {"observed_at": datetime.now(timezone.utc).isoformat(), "containers": containers}
 
 
 def run_preflight(selection, credentials, run=subprocess.run):
@@ -65,7 +86,10 @@ if __name__ == "__main__":
         allowed_environment, selection = sys.argv[1:]
         if allowed_environment not in TARGETS or not selection.startswith(allowed_environment + " "):
             raise ValueError("SSH key is restricted to one environment")
-        run_preflight(selection, json.loads(sys.stdin.read(16384)))
+        if selection == f"{allowed_environment} inspect":
+            print(json.dumps(inspect_runtime(allowed_environment)))
+        else:
+            run_preflight(selection, json.loads(sys.stdin.read(16384)))
     except (ValueError, KeyError, IndexError, subprocess.SubprocessError):
         print("Candidate DB preflight FAILED; serving containers were not changed.", file=sys.stderr)
         sys.exit(1)

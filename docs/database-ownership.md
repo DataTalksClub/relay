@@ -131,6 +131,23 @@ It permits only immutable Relay release tags, uses a private temporary Docker
 configuration for registry login, and removes temporary credentials on exit.
 It never stops or restarts a container.
 
+The same restricted runner accepts `ENVIRONMENT inspect` for deployment
+verification. This read-only command returns the host observation time and
+the actual Docker container IDs, creation times, images and states for only
+that environment's Relay compose services. It omits container environment
+variables and all other services. Install the updated runner before deploying
+workflows that call `scripts/run_runtime_verify.sh`.
+
+Before the Coolify PATCH/deploy, the workflow records a baseline through this
+command. The shared verifier requires every service in the compose template
+to have a new container ID, a creation time after that baseline, the exact
+pinned image, a running state and a healthy healthcheck when one exists.
+It also requires Coolify's settled service status and the public readiness
+endpoint to return the exact baked tag and source SHA. This prevents desired
+image metadata, old workers, an empty API application list or a same-tag
+redeploy from reporting success before replacement. Polling uses a 300-second
+monotonic deadline and five-second intervals; public polls bypass caches.
+
 Use a separate ed25519 SSH key for each GitHub environment. Install its public
 key in the deploy user's authorized_keys with this forced command (replace
 ENVIRONMENT with development or production):
