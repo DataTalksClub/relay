@@ -2,16 +2,17 @@ import gzip
 import io
 import json
 import os
-import sys
 import tempfile
-import types
 import zipfile
+from datetime import timedelta
 from email.message import EmailMessage
 
 import pytest
 from django.core.management import call_command
 from django.test import Client as HttpClient
+from django.utils import timezone
 
+from mailing import aws
 from mailing.models import DmarcArchive, DmarcRecord, DmarcReport, InboundDomain
 from mailing.services.admin_auth import create_admin_api_key
 from mailing.tests.test_dmarc import XML, domain, report_mail  # noqa: F401,F811
@@ -93,9 +94,7 @@ def test_import_s3_branch_with_stubbed_boto3(domain, tmp_path, monkeypatch):  # 
 
             return {"Body": Body()}
 
-    fake_boto3 = types.ModuleType("boto3")
-    fake_boto3.client = lambda service, **kwargs: FakeS3()  # noqa: ARG005
-    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+    monkeypatch.setattr(aws.boto3, "client", lambda service, **kwargs: FakeS3())
     stats = run_import("--bucket=dmarc-test")
     assert (stats["scanned"], stats["imported"]) == (1, 1), stats
     assert DmarcReport.objects.filter(report_id="ac16-s3").exists()
@@ -107,6 +106,100 @@ def test_import_dry_run_writes_nothing(domain, tmp_path):  # noqa: F811
     write_local(tmp_path, "a.xml", XML)
     stats = run_import(f"--local-dir={tmp_path}", "--dry-run")
     assert stats["imported"] == 1 and DmarcReport.objects.count() == 0, stats
+
+
+@pytest.mark.parametrize("cli_role", [None, "arn:aws:iam::123456789012:role/override-reader"])
+def test_import_s3_assumes_role_and_defaults_to_allowed_prefixes(domain, monkeypatch, settings, cli_role):  # noqa: F811
+    settings.DMARC_READER_ROLE_ARN = "arn:aws:iam::123456789012:role/configured-reader"
+    settings.AWS_REGION = "eu-west-1"
+    settings.AWS_ENDPOINT_URL = ""
+    calls = []
+    lists = []
+
+    class Sts:
+        def assume_role(self, **kwargs):
+            calls.append(("assume_role", kwargs))
+            return {"Credentials": {
+                "AccessKeyId": "scoped-access",
+                "SecretAccessKey": "scoped-secret",
+                "SessionToken": "scoped-token",
+                "Expiration": timezone.now() + timedelta(hours=1),
+            }}
+
+    class S3:
+        def list_objects_v2(self, **kwargs):
+            lists.append(kwargs)
+            assert kwargs["Prefix"] in ("dmarc/", "dmarc-zips/")
+            if "ContinuationToken" not in kwargs:
+                return {"IsTruncated": True, "NextContinuationToken": "page-two"}
+            return {"Contents": [{"Key": kwargs["Prefix"] + "report.xml"}]}
+
+        def get_object(self, Bucket, Key):  # noqa: N803
+            assert Bucket == "dmarc-test"
+            return {"Body": io.BytesIO(XML.replace(b"ac16-test", Key.encode()))}
+
+    def fake_client(service, **kwargs):
+        calls.append((service, kwargs))
+        return Sts() if service == "sts" else S3()
+
+    monkeypatch.setattr(aws, "_credential_cache", {})
+    monkeypatch.setattr(aws.boto3, "client", fake_client)
+    args = ["--bucket=dmarc-test", "--s3-endpoint-url=http://s3.test"]
+    if cli_role:
+        args.append(f"--role-arn={cli_role}")
+    first = run_import(*args)
+    assert first == {"scanned": 2, "imported": 2, "duplicates": 0, "skipped": 0, "errors": {}}
+    assert calls[0] == ("sts", {"region_name": "eu-west-1", "endpoint_url": None})
+    assert calls[1][1]["RoleArn"] == (cli_role or settings.DMARC_READER_ROLE_ARN)
+    assert calls[2] == ("s3", {
+        "region_name": "eu-west-1", "endpoint_url": "http://s3.test",
+        "aws_access_key_id": "scoped-access", "aws_secret_access_key": "scoped-secret",
+        "aws_session_token": "scoped-token",
+    })
+    assert lists == [
+        {"Bucket": "dmarc-test", "Prefix": prefix, "MaxKeys": 1000, **extra}
+        for prefix in ("dmarc/", "dmarc-zips/")
+        for extra in ({}, {"ContinuationToken": "page-two"})
+    ]
+    second = run_import(*args)
+    assert (second["imported"], second["duplicates"]) == (0, 2)
+    assert sum(service == "assume_role" for service, _ in calls) == 1
+
+
+@pytest.mark.parametrize("role, prefixes, expected", [
+    ("", [], [""]),
+    ("", ["custom/", "other/"], ["custom/", "other/"]),
+    ("configured-role", ["dmarc/sub/"], ["dmarc/sub/"]),
+])
+def test_import_s3_preserves_explicit_prefixes_and_unscoped_root(monkeypatch, settings, role, prefixes, expected):
+    settings.DMARC_READER_ROLE_ARN = role
+    seen = []
+
+    class S3:
+        def list_objects_v2(self, **kwargs):
+            seen.append(kwargs["Prefix"])
+            return {}
+
+    def fake_client(service, **kwargs):
+        assert service == "s3"
+        assert kwargs == {"role_arn": role, "endpoint_url": None}
+        return S3()
+
+    monkeypatch.setattr("mailing.management.commands.import_dmarc_reports.aws_client", fake_client)
+    stats = run_import("--bucket=dmarc-test", *(f"--prefix={prefix}" for prefix in prefixes))
+    assert stats["scanned"] == 0
+    assert seen == expected
+
+
+def test_import_local_does_not_assume_configured_role(domain, tmp_path, monkeypatch, settings):  # noqa: F811
+    settings.DMARC_READER_ROLE_ARN = "configured-role"
+
+    def fail(*args, **kwargs):
+        pytest.fail("Local imports must not create AWS clients")
+
+    monkeypatch.setattr(aws.boto3, "client", fail)
+    write_local(tmp_path, "a.xml", XML)
+    assert run_import(f"--local-dir={tmp_path}")["imported"] == 1
 
 
 def test_import_parse_errors_recorded_not_fatal(domain, tmp_path):  # noqa: F811

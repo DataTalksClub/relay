@@ -17,9 +17,12 @@ import os
 from datetime import timedelta
 from xml.etree import ElementTree
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
+
+from mailing.aws import aws_client
 
 ALLOWED_SUFFIXES = (".eml", ".xml", ".xml.gz", ".gz", ".zip")
 
@@ -62,6 +65,7 @@ class Command(BaseCommand):
         parser.add_argument("--dry-run", action="store_true", help="Scan and report without writing.")
         parser.add_argument("--limit", type=int, default=0, help="Stop after N objects (0 = no limit).")
         parser.add_argument("--s3-endpoint-url", default="", help="Override S3 endpoint (tests).")
+        parser.add_argument("--role-arn", help="Override DMARC_READER_ROLE_ARN for S3 reads.")
 
     def handle(self, *args, **options):
         from mailing.models import DmarcReport, InboundDomain  # noqa: PLC0415
@@ -83,7 +87,9 @@ class Command(BaseCommand):
                     with open(path, "rb") as handle:
                         candidates.append((os.path.relpath(path, local_dir), name, handle.read()))
         if bucket:
-            candidates.extend(self._list_s3(bucket, options["prefix"], options["s3_endpoint_url"]))
+            role_arn = options["role_arn"] or settings.DMARC_READER_ROLE_ARN
+            prefixes = options["prefix"] or (["dmarc/", "dmarc-zips/"] if role_arn else [""])
+            candidates.extend(self._list_s3(bucket, prefixes, options["s3_endpoint_url"], role_arn))
         candidates.sort(key=lambda item: item[0])
         if options["limit"] and options["limit"] > 0:
             candidates = candidates[: options["limit"]]
@@ -120,11 +126,8 @@ class Command(BaseCommand):
                 stats["errors"][key] = type(exc).__name__
         self.stdout.write(json.dumps(stats))
 
-    def _list_s3(self, bucket, prefixes, endpoint_url):
-        import boto3  # noqa: PLC0415
-
-        kwargs = {"endpoint_url": endpoint_url} if endpoint_url else {}
-        client = boto3.client("s3", **kwargs)
+    def _list_s3(self, bucket, prefixes, endpoint_url, role_arn):
+        client = aws_client("s3", role_arn=role_arn, endpoint_url=endpoint_url or None)
         found = []
         work = list(prefixes) or [""]
         for prefix in work:

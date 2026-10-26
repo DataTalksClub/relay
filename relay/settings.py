@@ -243,6 +243,7 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "newsletter@example.co
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 AWS_SES_REGION = os.environ.get("AWS_SES_REGION", AWS_REGION)
 AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "")
+DMARC_READER_ROLE_ARN = os.environ.get("DMARC_READER_ROLE_ARN", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
 API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).rstrip("/")
 # Public base URL of the client site page that receives double opt-in confirm
