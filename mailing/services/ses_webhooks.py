@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import re
+import urllib.error
 from dataclasses import dataclass
 from time import monotonic
 from urllib.parse import parse_qs, urlparse
@@ -203,9 +204,14 @@ def fetch_signing_certificate(cert_url):
             return cert_bytes
         _CERT_CACHE.pop(key, None)
     # urlopen is safe here: _is_allowed_sns_cert_url pinned scheme, host
-    # (no userinfo), port and .pem path before any network I/O.
-    with urlopen(cert_url, timeout=5) as response:
-        cert_bytes = response.read(_MAX_CERT_BYTES + 1)
+    # (no userinfo), port and .pem path before any network I/O. Network
+    # failures (DNS, 404 cert path, timeout) mean the signature cannot be
+    # checked, so they are 403s, never 500s.
+    try:
+        with urlopen(cert_url, timeout=5) as response:
+            cert_bytes = response.read(_MAX_CERT_BYTES + 1)
+    except urllib.error.URLError as exc:
+        raise SnsSignatureError("SNS signing certificate unreachable") from exc
     if len(cert_bytes) > _MAX_CERT_BYTES:
         raise SnsSignatureError("SNS signing certificate too large")
     return cert_bytes
@@ -319,8 +325,11 @@ def confirm_subscription(payload):
     payload_topic = payload.get("TopicArn", "")
     if not query_topic or query_topic != payload_topic:
         raise SnsSignatureError("subscription topic mismatch")
-    with urlopen(subscribe_url, timeout=5):
-        return True
+    try:
+        with urlopen(subscribe_url, timeout=5):
+            return True
+    except urllib.error.URLError as exc:
+        raise SnsSignatureError("subscription confirmation failed") from exc
 
 
 def normalize_ses_notification(sns_payload, *, received_at=None):

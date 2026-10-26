@@ -1,5 +1,6 @@
 import base64
 import json
+import urllib.error
 from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
 
@@ -1193,3 +1194,20 @@ def test_f3_reject_falls_back_to_mail_time(recipient):
 
     event_row = EmailEvent.objects.get()
     assert "event_timestamp" not in event_row.metadata
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_unreachable_cert_url_is_403_not_500(client, monkeypatch):
+    def explode(url, timeout):
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(ses_webhooks_service, "urlopen", explode)
+    payload = sns_payload(ses_payload("Delivery", "ses-404cert-1"), message_id="sns-404cert-1") | {
+        "SignatureVersion": "2",
+        "SigningCertURL": "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-missing.pem",
+    }
+    payload["Signature"] = base64.b64encode(b"0" * 256).decode()
+
+    response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+
+    assert response.status_code == 403
