@@ -34,6 +34,13 @@ def float_env(name, *, default):
     return float(value)
 
 
+def int_env(name, *, default):
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    return int(value)
+
+
 DEBUG = bool_env("DEBUG", default=True)
 TESTING = "test" in sys.argv or "pytest" in sys.argv[0]
 
@@ -349,6 +356,16 @@ SES_WEBHOOKS_SIGNATURE_MODE = os.environ.get(
     "mock" if DEBUG or TESTING else "strict",
 )
 SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION = bool_env("SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION", default=False)
+# F4: harden the public HTTP fallback. Bodies over this size are rejected
+# before Django buffers them or any SNS signature work (cert fetch + verify),
+# with HTTP 413. SNS always sends Content-Length; missing values are rejected.
+SES_WEBHOOKS_MAX_BODY_BYTES = int_env("SES_WEBHOOKS_MAX_BODY_BYTES", default=256 * 1024)
+# F4: optional TopicArn allowlist for the HTTP fallback. Empty allows any
+# topic once the SNS signature verifies (backwards compatible); set this in
+# production to the SES configuration-set topic ARN(s) so events from other
+# AWS accounts' topics are rejected with 403.
+SES_WEBHOOKS_ALLOWED_TOPIC_ARNS = csv_env("SES_WEBHOOKS_ALLOWED_TOPIC_ARNS", "", allow_empty=True)
+SES_WEBHOOKS_CERT_CACHE_TTL_SECONDS = float_env("SES_WEBHOOKS_CERT_CACHE_TTL_SECONDS", default=3600.0)
 
 # Transactional template test sends go only to these addresses (R1.3).
 # Empty disables test-send entirely.

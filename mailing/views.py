@@ -174,7 +174,12 @@ from mailing.services.recipient_lists import (
     upsert_recipient_list_for_client,
     upsert_recipient_list_member_for_client,
 )
-from mailing.services.ses_webhooks import SesWebhookError, SnsSignatureError, ingest_sns_webhook
+from mailing.services.ses_webhooks import (
+    SesWebhookError,
+    SnsSignatureError,
+    check_sns_body_size,
+    ingest_sns_webhook,
+)
 from mailing.services.tokens import get_recipient_by_unsubscribe_token
 from mailing.services.tracking import TRANSPARENT_GIF, apply_unsubscribe, record_click, record_open
 from mailing.services.transactional import (
@@ -2535,6 +2540,8 @@ def api_client_mailchimp_tag_mappings(request):
 @require_POST
 def ses_webhook(request):
     try:
+        # F4: Content-Length gate runs before Django buffers the body.
+        check_sns_body_size(request)
         payload = json_request_body(request)
         result = ingest_sns_webhook(payload)
     except SnsSignatureError as exc:

@@ -1,7 +1,10 @@
 import base64
 import json
+import logging
+import re
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from time import monotonic
+from urllib.parse import parse_qs, urlparse
 from urllib.request import urlopen
 
 from cryptography import x509
@@ -46,6 +49,30 @@ SES_EVENT_TYPES = {
     "DeliveryDelay": "delivery_delay",
 }
 
+# In-process cache of SNS signing certificates by URL. SNS rotates these
+# rarely, so a second webhook with the same cert URL must not pay for another
+# network fetch (F4: DoS amplifier on the public fallback endpoint).
+# Bounded: keys are normalized (no query string) and only certs that
+# verified a signature are stored, so hostile unique URLs cannot grow it.
+_CERT_CACHE: dict = {}
+_CERT_CACHE_MAX_ENTRIES = 16
+_MAX_CERT_BYTES = 64 * 1024
+_DEFAULT_CERT_CACHE_TTL_SECONDS = 3600.0
+_SNS_CERT_HOST_RE = re.compile(r"^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$")
+
+
+def _cert_cache_ttl_seconds():
+    # relay.settings coerces this with float_env already; fall back only if
+    # an override supplies something unexpected.
+    try:
+        return float(getattr(settings, "SES_WEBHOOKS_CERT_CACHE_TTL_SECONDS", _DEFAULT_CERT_CACHE_TTL_SECONDS))
+    except (TypeError, ValueError):
+        return _DEFAULT_CERT_CACHE_TTL_SECONDS
+
+
+def clear_signing_certificate_cache():
+    _CERT_CACHE.clear()
+
 EVENT_TYPE_BY_NOTIFICATION = {
     "send": EmailEventType.SENT,
     "reject": EmailEventType.FAILED,
@@ -63,6 +90,11 @@ class SesWebhookError(ValueError):
 
 class SnsSignatureError(SesWebhookError):
     status_code = 403
+
+
+logger = logging.getLogger(__name__)
+
+_WARNED_EMPTY_TOPIC_ALLOWLIST = False
 
 
 @dataclass(frozen=True)
@@ -91,11 +123,34 @@ def ingest_sns_webhook(payload):
     return IngressResult(message_type=message_type, enqueued=True)
 
 
+class SnsPayloadTooLargeError(SesWebhookError):
+    status_code = 413
+
+
+def check_sns_body_size(request):
+    """Reject oversized SNS bodies before Django buffers them (F4).
+
+    Checks the Content-Length header first so a hostile body is never read
+    into memory. SNS always sends Content-Length; missing or unparseable
+    values are rejected.
+    """
+    max_body_bytes = getattr(settings, "SES_WEBHOOKS_MAX_BODY_BYTES", 256 * 1024)
+    try:
+        content_length = int(request.META.get("CONTENT_LENGTH") or 0)
+    except (TypeError, ValueError):
+        content_length = 0
+    if content_length <= 0 or content_length > max_body_bytes:
+        raise SnsPayloadTooLargeError("SNS payload too large")
+    return True
+
+
 def validate_sns_signature(payload):
     mode = getattr(settings, "SES_WEBHOOKS_SIGNATURE_MODE", "strict")
     if mode == "disabled":
         return True
     if mode == "mock":
+        # Test-only short-circuit: the TopicArn allowlist is enforced in
+        # strict mode only. Never run mock/disabled outside tests.
         if payload.get("Signature") == SNS_MOCK_SIGNATURE:
             return True
         raise SnsSignatureError("invalid mock SNS signature")
@@ -108,7 +163,13 @@ def validate_sns_signature(payload):
     if not cert_url or not signature or version not in {"1", "2"}:
         raise SnsSignatureError("missing SNS signature fields")
 
-    cert = x509.load_pem_x509_certificate(fetch_signing_certificate(cert_url))
+    validate_topic_arn(payload)
+
+    cert_bytes = fetch_signing_certificate(cert_url)
+    try:
+        cert = x509.load_pem_x509_certificate(cert_bytes)
+    except Exception as exc:
+        raise SnsSignatureError("invalid SNS signing certificate") from exc
     algorithm = SHA256() if version == "2" else SHA1()
     try:
         cert.public_key().verify(
@@ -119,15 +180,101 @@ def validate_sns_signature(payload):
         )
     except Exception as exc:
         raise SnsSignatureError("invalid SNS signature") from exc
+    # Cache only certs that actually verified a signature.
+    _store_signing_certificate(cert_url, cert_bytes)
     return True
 
 
 def fetch_signing_certificate(cert_url):
-    parsed = urlparse(cert_url)
-    if parsed.scheme != "https" or not _is_allowed_sns_cert_host(parsed.netloc):
+    """Return the PEM bytes for an SNS signing certificate URL.
+
+    Serves previously verified certs from a small bounded in-process cache.
+    Newly fetched certs are NOT stored here; validate_sns_signature stores
+    them only after they verify a signature.
+    """
+    if not isinstance(cert_url, str) or not _is_allowed_sns_cert_url(cert_url):
         raise SnsSignatureError("invalid SNS signing certificate URL")
+    key = _signing_certificate_cache_key(cert_url)
+    now = monotonic()
+    cached = _CERT_CACHE.get(key)
+    if cached is not None:
+        expires_at, cert_bytes = cached
+        if now < expires_at:
+            return cert_bytes
+        _CERT_CACHE.pop(key, None)
+    # urlopen is safe here: _is_allowed_sns_cert_url pinned scheme, host
+    # (no userinfo), port and .pem path before any network I/O.
     with urlopen(cert_url, timeout=5) as response:
-        return response.read()
+        cert_bytes = response.read(_MAX_CERT_BYTES + 1)
+    if len(cert_bytes) > _MAX_CERT_BYTES:
+        raise SnsSignatureError("SNS signing certificate too large")
+    return cert_bytes
+
+
+def _store_signing_certificate(cert_url, cert_bytes):
+    key = _signing_certificate_cache_key(cert_url)
+    while len(_CERT_CACHE) >= _CERT_CACHE_MAX_ENTRIES:
+        _CERT_CACHE.pop(next(iter(_CERT_CACHE)))
+    _CERT_CACHE[key] = (monotonic() + _cert_cache_ttl_seconds(), cert_bytes)
+
+
+def _signing_certificate_cache_key(cert_url):
+    """Normalize the cache key so query-string variants share one entry."""
+    parsed = urlparse(cert_url)
+    return f"{parsed.scheme}://{(parsed.hostname or '').lower()}{parsed.path}"
+
+
+def _is_allowed_sns_cert_url(cert_url):
+    return _is_allowed_sns_url(cert_url, require_pem=True)
+
+
+def _is_allowed_sns_subscription_url(subscribe_url):
+    return _is_allowed_sns_url(subscribe_url, require_pem=False)
+
+
+def _is_allowed_sns_url(url, *, require_pem):
+    """Pin an SNS URL to real SNS hosts.
+
+    Parses hostname (not netloc: netloc admits `sns.x@evil-host` userinfo
+    tricks) and rejects ports, userinfo and (for certs) non-.pem paths.
+    """
+    try:
+        parsed = urlparse(url)
+        username, password, port = parsed.username, parsed.password, parsed.port
+    except (TypeError, ValueError):
+        return False
+    if parsed.scheme != "https":
+        return False
+    if username or password:
+        return False
+    if port not in (None, 443):
+        return False
+    if not _is_allowed_sns_cert_host(parsed.hostname or ""):
+        return False
+    if require_pem and not parsed.path.endswith(".pem"):
+        return False
+    return True
+
+
+def validate_topic_arn(payload):
+    allowed = getattr(settings, "SES_WEBHOOKS_ALLOWED_TOPIC_ARNS", ())
+    if not allowed:
+        # Backwards compatible: deployments without an allowlist accept any
+        # topic once the SNS signature verifies. Production should set
+        # SES_WEBHOOKS_ALLOWED_TOPIC_ARNS; rogue topics still cannot
+        # subscribe while SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION is off.
+        global _WARNED_EMPTY_TOPIC_ALLOWLIST
+        if not _WARNED_EMPTY_TOPIC_ALLOWLIST:
+            _WARNED_EMPTY_TOPIC_ALLOWLIST = True
+            logger.warning(
+                "SES_WEBHOOKS_ALLOWED_TOPIC_ARNS is empty: any SNS topic with a valid "
+                "signature is accepted. Set the allowlist in production."
+            )
+        return True
+    topic_arn = payload.get("TopicArn", "")
+    if not isinstance(topic_arn, str) or topic_arn not in tuple(allowed):
+        raise SnsSignatureError("unknown SNS topic")
+    return True
 
 
 def canonical_sns_message(payload):
@@ -153,9 +300,25 @@ def canonical_sns_message(payload):
 def confirm_subscription(payload):
     if not getattr(settings, "SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION", False):
         return False
+    if not getattr(settings, "SES_WEBHOOKS_ALLOWED_TOPIC_ARNS", ()):
+        # Fail closed: confirming without an allowlist would subscribe any
+        # AWS account's topic. Set SES_WEBHOOKS_ALLOWED_TOPIC_ARNS first.
+        raise SnsSignatureError("subscription confirmation requires a topic allowlist")
     subscribe_url = payload.get("SubscribeURL", "")
     if not subscribe_url:
         raise SesWebhookError("missing SubscribeURL")
+    # The confirmation GET leaves our network: pin it to SNS over HTTPS and
+    # to the topic being confirmed, so a signed-but-hostile payload cannot
+    # turn the endpoint into an SSRF probe.
+    if not isinstance(subscribe_url, str) or not _is_allowed_sns_subscription_url(subscribe_url):
+        raise SnsSignatureError("invalid subscription confirmation URL")
+    try:
+        query_topic = parse_qs(urlparse(subscribe_url).query).get("TopicArn", [""])[0]
+    except (TypeError, ValueError):
+        query_topic = ""
+    payload_topic = payload.get("TopicArn", "")
+    if not query_topic or query_topic != payload_topic:
+        raise SnsSignatureError("subscription topic mismatch")
     with urlopen(subscribe_url, timeout=5):
         return True
 
@@ -241,6 +404,12 @@ def build_ses_metadata(ses_payload, sns_payload):
         "sns_message_id": sns_payload.get("MessageId"),
         "sns_topic_arn": sns_payload.get("TopicArn"),
         "sns_timestamp": sns_payload.get("Timestamp"),
+        # F3: per-type SES event time (delivery/bounce/complaint/open/click/
+        # delivery_delay carry their own `timestamp`). event_timestamp() reads
+        # this first so delivered/opened/clicked_at are stamped with the event
+        # time, not the send (mail) time. Types without one (send, reject)
+        # keep the mail_timestamp fallback.
+        "event_timestamp": detail.get("timestamp") if isinstance(detail, dict) else None,
         "mail_timestamp": mail.get("timestamp"),
         "mail_source": mail.get("source"),
     }
@@ -560,4 +729,11 @@ def webhook_event_metadata(payload):
 
 
 def _is_allowed_sns_cert_host(host):
-    return host.startswith("sns.") and (host.endswith(".amazonaws.com") or host.endswith(".amazonaws.com.cn"))
+    """Match real SNS cert hosts only: sns.<region>.amazonaws.com(.cn).
+
+    Single region label on purpose: attacker-controlled subdomains such as
+    sns.evil.<account>.s3.<region>.amazonaws.com must not match.
+    """
+    if not isinstance(host, str):
+        return False
+    return bool(_SNS_CERT_HOST_RE.fullmatch(host.lower()))

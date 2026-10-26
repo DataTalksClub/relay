@@ -38,6 +38,8 @@ def run(monkeypatch, payload=None, status="ok", error=None):
     client.receive_message.return_value = {"Messages": [{
         "MessageId": "sqs-id", "ReceiptHandle": "receipt", "Body": json.dumps(payload or envelope()),
     }]}
+    # SqsWorker deletes via delete_message_batch; the mock answers success.
+    client.delete_message_batch.return_value = {"Successful": [{"Id": "msg-0"}], "Failed": []}
     opener = MagicMock()
     if error:
         opener.open.side_effect = error
@@ -59,7 +61,11 @@ def test_acknowledge_only_after_aisl_accepts_original_signed_envelope(monkeypatc
     assert request.get_header("X-ses-webhook-secret") == "test-shared-secret"
     assert opener.open.call_args.kwargs["timeout"] == 15
     assert result.deleted == 1
-    client.delete_message.assert_called_once_with(QueueUrl="https://sqs.example/aisl", ReceiptHandle="receipt")
+    client.delete_message_batch.assert_called_once_with(
+        QueueUrl="https://sqs.example/aisl",
+        Entries=[{"Id": "msg-0", "ReceiptHandle": "receipt"}],
+    )
+    client.delete_message.assert_not_called()
 
 
 @pytest.mark.parametrize("error", [

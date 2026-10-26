@@ -9,11 +9,13 @@ from pathlib import Path
 import pytest
 import yaml
 from django.core.exceptions import ImproperlyConfigured
+from django.core.management import call_command
 from django_tasks_db.models import DBTaskResult
 
+import mailing.management.commands.drain_sqs_ingress as drain_module
 from mailing.ingress import INGRESS_WORKER_NAMES, get_ingress_config
 from mailing.models import EmailEvent
-from mailing.sqs_worker import SqsWorker
+from mailing.sqs_worker import SqsWorker, WorkerConfig, WorkerResult
 from mailing.tasks import process_ses_webhook_event
 from mailing.tests.test_ses_webhooks import ses_payload, sns_payload
 from taskdeck.models import TaskRun
@@ -242,3 +244,54 @@ def test_every_active_ingress_worker_has_coolify_consumer():
         f"deploy/coolify/docker-compose.staging.yml to prevent unconsumed backlogs."
     )
 
+
+
+def test_drain_heartbeat_logs_every_n_idle_polls(monkeypatch, capsys):
+    """F5: a silent-but-alive drain must be distinguishable from a stuck one."""
+    idle_results = [WorkerResult(received=0, deleted=0, failed=0)] * 7
+    active_results = [WorkerResult(received=1, deleted=1, failed=0)]
+
+    class FakeWorker:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_forever(self, *, should_stop, idle_sleep=0):
+            for result in idle_results[:3] + active_results + idle_results[3:]:
+                yield result
+
+    monkeypatch.setattr(drain_module, "SqsWorker", FakeWorker)
+    monkeypatch.setattr(
+        drain_module,
+        "get_ingress_config",
+        lambda name: WorkerConfig(name="test-ingress", queue_url="https://sqs.example/test", handler=lambda e, c: {}),
+    )
+
+    call_command("drain_sqs_ingress", "ses-webhooks", heartbeat_every=3)
+
+    out = capsys.readouterr().out
+    assert "Starting ses-webhooks ingress drain" in out
+    assert "received=1 deleted=1 failed=0" in out
+    assert out.count("heartbeat ses-webhooks idle_polls=3 received=0 deleted=0 failed=0") == 2
+    assert "idle_polls=6" not in out, "counter must reset after an active poll"
+    assert "Stopped ses-webhooks ingress drain" in out
+
+
+def test_drain_once_reports_batch_result(monkeypatch, capsys):
+    class FakeWorker:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_once(self):
+            return WorkerResult(received=2, deleted=2, failed=0)
+
+    monkeypatch.setattr(drain_module, "SqsWorker", FakeWorker)
+    monkeypatch.setattr(
+        drain_module,
+        "get_ingress_config",
+        lambda name: WorkerConfig(name="test-ingress", queue_url="https://sqs.example/test", handler=lambda e, c: {}),
+    )
+
+    call_command("drain_sqs_ingress", "ses-webhooks", once=True)
+
+    out = capsys.readouterr().out
+    assert "received=2 deleted=2 failed=0" in out

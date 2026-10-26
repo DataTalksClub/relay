@@ -29,6 +29,7 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
+from mailing.services import ses_webhooks as ses_webhooks_service
 from mailing.services.client_callbacks import process_due_client_callbacks
 from mailing.services.contacts import is_marketing_email_allowed, is_transactional_email_allowed
 from mailing.services.ses_webhooks import SNS_MOCK_SIGNATURE, canonical_sns_message
@@ -162,13 +163,16 @@ def test_webhook_endpoint_handles_subscription_confirmation_only_when_allowed(cl
 
     monkeypatch.setattr("mailing.services.ses_webhooks.urlopen", lambda url, timeout: FakeResponse())
     payload = sns_payload({}, message_type="SubscriptionConfirmation") | {
-        "SubscribeURL": "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription",
+        "SubscribeURL": "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=arn:aws:sns:us-east-1:123456789012:ses",
         "Token": "token-1",
     }
 
     skipped = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
 
-    with override_settings(SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION=True):
+    with override_settings(
+        SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION=True,
+        SES_WEBHOOKS_ALLOWED_TOPIC_ARNS=("arn:aws:sns:us-east-1:123456789012:ses",),
+    ):
         confirmed = client.post(
             reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json"
         )
@@ -178,6 +182,18 @@ def test_webhook_endpoint_handles_subscription_confirmation_only_when_allowed(cl
     assert confirmed.status_code == 200
     assert confirmed.json()["confirmed"] is True
     assert calls == ["confirmed"]
+
+
+@override_settings(SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION=True, SES_WEBHOOKS_ALLOWED_TOPIC_ARNS=())
+def test_subscription_confirmation_refused_without_topic_allowlist(client):
+    payload = sns_payload({}, message_type="SubscriptionConfirmation") | {
+        "SubscribeURL": "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=arn:aws:sns:us-east-1:123456789012:ses",
+        "Token": "token-1",
+    }
+
+    response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+
+    assert response.status_code == 403
 
 
 @override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
@@ -774,3 +790,406 @@ def test_transactional_transient_bounce_is_terminal_without_contact_suppression(
     assert transactional_message.last_error == "soft_bounce"
     assert transactional_message.contact.hard_bounced_at is None
     assert transactional_message.events.filter(provider_event_id="sns-retry-expired").count() == 1
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_caches_signing_certificate(client, monkeypatch):
+    ses_webhooks_service.clear_signing_certificate_cache()
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    cert_bytes = build_test_certificate(key)
+    fetch_calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            fetch_calls.append(1)
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, limit=None):
+            return cert_bytes
+
+    monkeypatch.setattr(ses_webhooks_service, "urlopen", lambda url, timeout: FakeResponse())
+    enqueued = []
+    monkeypatch.setattr(ses_webhooks_service, "enqueue_ses_webhook", lambda payload: enqueued.append(payload))
+
+    first = sns_payload(ses_payload("Delivery", "ses-cache-1"), message_id="sns-cache-1") | {
+        "SignatureVersion": "2",
+        "SigningCertURL": "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-cache.pem",
+    }
+    signature = key.sign(
+        canonical_sns_message(first).encode(), padding.PKCS1v15(), hashes.SHA256()
+    )
+    first["Signature"] = base64.b64encode(signature).decode()
+    second = dict(first) | {"MessageId": "sns-cache-2"}
+    signature2 = key.sign(
+        canonical_sns_message(second).encode(), padding.PKCS1v15(), hashes.SHA256()
+    )
+    second["Signature"] = base64.b64encode(signature2).decode()
+
+    try:
+        response1 = client.post(reverse("mailing:ses_webhook"), data=json.dumps(first), content_type="application/json")
+        response2 = client.post(reverse("mailing:ses_webhook"), data=json.dumps(second), content_type="application/json")
+    finally:
+        ses_webhooks_service.clear_signing_certificate_cache()
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+    assert len(enqueued) == 2
+    assert len(fetch_calls) == 1, "second request with the same cert URL must not fetch again"
+
+
+@override_settings(
+    SES_WEBHOOKS_SIGNATURE_MODE="strict",
+    SES_WEBHOOKS_ALLOWED_TOPIC_ARNS=("arn:aws:sns:us-east-1:123456789012:allowed",),
+)
+def test_http_fallback_rejects_unknown_topic_arn(client, monkeypatch):
+    ses_webhooks_service.clear_signing_certificate_cache()
+    fetch_calls = []
+    monkeypatch.setattr(
+        ses_webhooks_service, "urlopen", lambda url, timeout: (_ for _ in ()).throw(AssertionError("must not fetch"))
+    )
+    payload = sns_payload(ses_payload("Delivery", "ses-unknown-topic"), message_id="sns-topic-1")
+
+    response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+
+    ses_webhooks_service.clear_signing_certificate_cache()
+    assert response.status_code == 403
+    assert fetch_calls == []
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict", SES_WEBHOOKS_ALLOWED_TOPIC_ARNS=())
+def test_http_fallback_empty_topic_allowlist_allows_any_topic(client, monkeypatch):
+    ses_webhooks_service.clear_signing_certificate_cache()
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    cert_bytes = build_test_certificate(key)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, limit=None):
+            return cert_bytes
+
+    monkeypatch.setattr(ses_webhooks_service, "urlopen", lambda url, timeout: FakeResponse())
+    enqueued = []
+    monkeypatch.setattr(ses_webhooks_service, "enqueue_ses_webhook", lambda payload: enqueued.append(payload))
+    payload = sns_payload(ses_payload("Delivery", "ses-any-topic"), message_id="sns-any-topic") | {
+        "SignatureVersion": "2",
+        "SigningCertURL": "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-any.pem",
+    }
+    signature = key.sign(canonical_sns_message(payload).encode(), padding.PKCS1v15(), hashes.SHA256())
+    payload["Signature"] = base64.b64encode(signature).decode()
+
+    try:
+        response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+    finally:
+        ses_webhooks_service.clear_signing_certificate_cache()
+
+    assert response.status_code == 200
+    assert len(enqueued) == 1
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict", SES_WEBHOOKS_MAX_BODY_BYTES=64)
+def test_http_fallback_rejects_oversized_body_before_signature_work(client, monkeypatch):
+    monkeypatch.setattr(
+        ses_webhooks_service, "urlopen", lambda url, timeout: (_ for _ in ()).throw(AssertionError("must not fetch"))
+    )
+    payload = sns_payload(ses_payload("Delivery", "ses-big-1"), message_id="sns-big-1")
+    assert len(json.dumps(payload).encode()) > 64
+
+    response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+
+    assert response.status_code == 413
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_rejects_missing_content_length(client):
+    payload = sns_payload(ses_payload("Delivery", "ses-nocl-1"), message_id="sns-nocl-1")
+
+    response = client.generic(
+        "POST",
+        reverse("mailing:ses_webhook"),
+        data=json.dumps(payload),
+        content_type="application/json",
+        CONTENT_LENGTH="",
+    )
+
+    assert response.status_code == 413
+
+
+# F3: per-type SES event times must stamp *_at fields, not the send time.
+# Mail (send) time in the fixtures below is 2026-05-24T12:00:00Z; the event
+# time is 2026-05-24T12:05:00Z. Before the fix, delivered/first_opened_at
+# were stamped with the mail time because build_ses_metadata never set
+# event_timestamp.
+
+F3_SEND_TIME = "2026-05-24T12:00:00Z"
+F3_EVENT_TIME = "2026-05-24T12:05:00Z"
+
+
+def ses_payload_with_event_time(event_type, ses_message_id, *, detail_extra=None):
+    detail = {"timestamp": F3_EVENT_TIME}
+    detail.update(detail_extra or {})
+    payload = ses_payload(event_type, ses_message_id, detail=detail)
+    payload["mail"]["timestamp"] = F3_SEND_TIME
+    return payload
+
+
+def test_f3_delivery_stamps_event_time_not_send_time(recipient):
+    event = records_from_payloads(
+        [("message-1", sns_payload(ses_payload_with_event_time("Delivery", "ses-campaign-1"), message_id="sns-f3-delivery"))]
+    )
+
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+
+    recipient.refresh_from_db()
+    assert recipient.delivered_at == timezone.datetime(2026, 5, 24, 12, 5, tzinfo=dt_timezone.utc)
+    metadata = EmailEvent.objects.get().metadata
+    assert metadata["event_timestamp"] == F3_EVENT_TIME
+    assert metadata["mail_timestamp"] == F3_SEND_TIME
+
+
+def test_f3_open_and_click_stamp_event_times(recipient):
+    payloads = [
+        ("open-1", sns_payload(ses_payload_with_event_time("Open", "ses-campaign-1"), message_id="sns-f3-open")),
+        (
+            "click-1",
+            sns_payload(
+                ses_payload_with_event_time("Click", "ses-campaign-1", detail_extra={"link": "https://example.com"}),
+                message_id="sns-f3-click",
+            ),
+        ),
+    ]
+
+    assert ses_webhooks_handler(records_from_payloads(payloads), None) == {"batchItemFailures": []}
+
+    recipient.refresh_from_db()
+    assert recipient.first_opened_at == timezone.datetime(2026, 5, 24, 12, 5, tzinfo=dt_timezone.utc)
+    assert recipient.first_clicked_at == timezone.datetime(2026, 5, 24, 12, 5, tzinfo=dt_timezone.utc)
+
+
+def test_f3_hard_bounce_and_complaint_stamp_event_times(recipient, transactional_message):
+    bounce = sns_payload(
+        ses_payload_with_event_time(
+            "Bounce", "ses-campaign-1", detail_extra={"bounceType": "Permanent", "bounceSubType": "General"}
+        ),
+        message_id="sns-f3-bounce",
+    )
+    complaint = sns_payload(
+        ses_payload_with_event_time("Complaint", "ses-tx-1"),
+        message_id="sns-f3-complaint",
+    )
+
+    assert ses_webhooks_handler(records_from_payloads([("b", bounce), ("c", complaint)]), None) == {
+        "batchItemFailures": []
+    }
+
+    recipient.contact.refresh_from_db()
+    transactional_message.contact.refresh_from_db()
+    assert recipient.contact.hard_bounced_at == timezone.datetime(2026, 5, 24, 12, 5, tzinfo=dt_timezone.utc)
+    assert transactional_message.contact.complained_at == timezone.datetime(
+        2026, 5, 24, 12, 5, tzinfo=dt_timezone.utc
+    )
+
+
+def test_f3_transactional_delivery_stamps_event_time(transactional_message):
+    event = records_from_payloads(
+        [("message-1", sns_payload(ses_payload_with_event_time("Delivery", "ses-tx-1"), message_id="sns-f3-tx"))]
+    )
+
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+
+    transactional_message.refresh_from_db()
+    assert transactional_message.delivered_at == timezone.datetime(2026, 5, 24, 12, 5, tzinfo=dt_timezone.utc)
+
+
+def test_f3_send_without_event_time_falls_back_to_mail_time(recipient):
+    payload = ses_payload("Send", "ses-campaign-1")
+    payload["mail"]["timestamp"] = F3_SEND_TIME
+    event = records_from_payloads([("message-1", sns_payload(payload, message_id="sns-f3-send"))])
+
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+
+    metadata = EmailEvent.objects.get().metadata
+    assert "event_timestamp" not in metadata
+    assert metadata["mail_timestamp"] == F3_SEND_TIME
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_rejects_cert_url_with_userinfo(client, monkeypatch):
+    """netloc `sns.x@host` tricks must not pass the SNS host check."""
+    fetch_calls = []
+    monkeypatch.setattr(
+        ses_webhooks_service, "urlopen", lambda url, timeout: fetch_calls.append(url) or (_ for _ in ()).throw(
+            AssertionError("must not fetch")
+        )
+    )
+    payload = sns_payload(ses_payload("Delivery", "ses-userinfo-1"), message_id="sns-userinfo-1")
+    payload["SigningCertURL"] = "https://sns.us-east-1@sns.us-east-1.amazonaws.com.evil.example/cert.pem"
+
+    response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+
+    assert response.status_code == 403
+    assert fetch_calls == []
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_rejects_attacker_subdomain_cert_host(client, monkeypatch):
+    """sns.<anything-with-dots>.amazonaws.com is not a real SNS cert host."""
+    monkeypatch.setattr(
+        ses_webhooks_service, "urlopen", lambda url, timeout: (_ for _ in ()).throw(AssertionError("must not fetch"))
+    )
+    payload = sns_payload(ses_payload("Delivery", "ses-sub-1"), message_id="sns-sub-1")
+    payload["SigningCertURL"] = "https://sns.evil.acc.s3.us-east-1.amazonaws.com/cert.pem"
+
+    response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+
+    assert response.status_code == 403
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_rejects_non_string_cert_url_without_500(client):
+    payload = sns_payload(ses_payload("Delivery", "ses-nonstr-1"), message_id="sns-nonstr-1")
+    payload["SigningCertURL"] = ["https://sns.us-east-1.amazonaws.com/cert.pem"]
+
+    response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+
+    assert response.status_code == 403
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_cert_cache_expires_after_ttl(client, monkeypatch):
+    ses_webhooks_service.clear_signing_certificate_cache()
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    cert_bytes = build_test_certificate(key)
+    fetch_calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            fetch_calls.append(1)
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, limit=None):
+            return cert_bytes
+
+    monkeypatch.setattr(ses_webhooks_service, "urlopen", lambda url, timeout: FakeResponse())
+    enqueued = []
+    monkeypatch.setattr(ses_webhooks_service, "enqueue_ses_webhook", lambda payload: enqueued.append(payload))
+    now = [1000.0]
+    monkeypatch.setattr(ses_webhooks_service, "monotonic", lambda: now[0])
+
+    def signed(member_id, cert_url):
+        member = sns_payload(ses_payload("Delivery", "ses-ttl-1"), message_id=member_id) | {
+            "SignatureVersion": "2",
+            "SigningCertURL": cert_url,
+        }
+        signature = key.sign(
+            canonical_sns_message(member).encode(), padding.PKCS1v15(), hashes.SHA256()
+        )
+        member["Signature"] = base64.b64encode(signature).decode()
+        return member
+
+    cert_url = "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-ttl.pem"
+    try:
+        first = client.post(
+            reverse("mailing:ses_webhook"), data=json.dumps(signed("sns-ttl-1", cert_url)), content_type="application/json"
+        )
+        second = client.post(
+            reverse("mailing:ses_webhook"),
+            data=json.dumps(signed("sns-ttl-2", cert_url + "?x=1")),
+            content_type="application/json",
+        )
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert len(fetch_calls) == 1, "query-string variants must share one cache entry"
+        now[0] += 3600.0 + 1.0
+        third = client.post(
+            reverse("mailing:ses_webhook"), data=json.dumps(signed("sns-ttl-3", cert_url)), content_type="application/json"
+        )
+        assert third.status_code == 200
+        assert len(fetch_calls) == 2, "expired entries must be refetched"
+    finally:
+        ses_webhooks_service.clear_signing_certificate_cache()
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_rejects_oversized_certificate(client, monkeypatch):
+    ses_webhooks_service.clear_signing_certificate_cache()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, limit=None):
+            return b"x" * (ses_webhooks_service._MAX_CERT_BYTES + 1)
+
+    monkeypatch.setattr(ses_webhooks_service, "urlopen", lambda url, timeout: FakeResponse())
+    payload = sns_payload(ses_payload("Delivery", "ses-bigcert-1"), message_id="sns-bigcert-1") | {
+        "SignatureVersion": "2",
+        "SigningCertURL": "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-big.pem",
+    }
+    payload["Signature"] = base64.b64encode(b"0" * 256).decode()
+
+    try:
+        response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+    finally:
+        ses_webhooks_service.clear_signing_certificate_cache()
+
+    assert response.status_code == 403
+
+
+def test_f3_delivery_delay_stamps_event_time(recipient):
+    event_time = "2026-10-24T10:38:18.805Z"
+    message_payload = {
+        "eventType": "DeliveryDelay",
+        "mail": {
+            "timestamp": "2026-10-24T10:37:00.000Z",
+            "source": "newsletter@example.com",
+            "messageId": "ses-campaign-1",
+        },
+        "deliveryDelay": {
+            "timestamp": event_time,
+            "delayType": "TransientCommunicationFailure",
+            "expirationTime": "2026-10-24T18:07:05.177Z",
+            "delayedRecipients": [{"emailAddress": "x@example.com", "status": "4.4.1"}],
+        },
+    }
+    event = records_from_payloads([("msg-delay", sns_payload(message_payload, message_id="sns-f3-delay"))])
+
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+
+    audit_entry = OperatorAudit.objects.get(metadata__provider_event_id="sns-f3-delay")
+    assert audit_entry.metadata["event_timestamp"] == event_time
+
+
+def test_f3_unparseable_event_time_falls_back_to_mail_time(recipient):
+    payload = ses_payload_with_event_time("Delivery", "ses-campaign-1")
+    payload["delivery"]["timestamp"] = "not-a-timestamp"
+    event = records_from_payloads([("message-1", sns_payload(payload, message_id="sns-f3-badts"))])
+
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+
+    recipient.refresh_from_db()
+    assert recipient.delivered_at == timezone.datetime(2026, 5, 24, 12, 0, tzinfo=dt_timezone.utc)
+
+
+def test_f3_reject_falls_back_to_mail_time(recipient):
+    payload = ses_payload("Reject", "ses-campaign-1", detail={"reason": "BadDomain"})
+    payload["mail"]["timestamp"] = F3_SEND_TIME
+    event = records_from_payloads([("message-1", sns_payload(payload, message_id="sns-f3-reject"))])
+
+    assert ses_webhooks_handler(event, None) == {"batchItemFailures": []}
+
+    event_row = EmailEvent.objects.get()
+    assert "event_timestamp" not in event_row.metadata
