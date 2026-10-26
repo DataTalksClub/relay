@@ -162,6 +162,50 @@ def test_webhook_origin_must_be_registered(client, auth):
     assert response.json()["error"]["fields"]["url"] == "origin_not_allowed"
 
 
+def test_webhook_with_unconfigured_origins_reports_not_configured(client, relay_client):
+    # Regression cover for the 2026-10-26 client-1 page: a client whose
+    # webhook origins were never provisioned (empty allowlist) gets an
+    # actionable configuration error instead of a misleading bad-URL error.
+    relay_client.relay_webhook_allowed_origins = []
+    relay_client.save(update_fields=["relay_webhook_allowed_origins"])
+    _, raw_key = create_client_api_key(client=relay_client, name="unconfigured")
+    response = client.post(
+        "/api/tasks",
+        data={
+            "type": "webhook",
+            "idempotency_key": "unconfigured-origins",
+            "url": "https://client.example.com/work",
+            "params": {},
+        },
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {raw_key}",
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"]["url"] == "origin_not_configured"
+
+
+def test_webhook_with_unconfigured_origins_and_secret_reports_both(client, relay_client):
+    relay_client.relay_webhook_allowed_origins = []
+    relay_client.relay_webhook_signing_secret = ""
+    relay_client.save(update_fields=["relay_webhook_allowed_origins", "relay_webhook_signing_secret"])
+    _, raw_key = create_client_api_key(client=relay_client, name="bare")
+    response = client.post(
+        "/api/tasks",
+        data={
+            "type": "webhook",
+            "idempotency_key": "bare-contract",
+            "url": "https://client.example.com/work",
+            "params": {},
+        },
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {raw_key}",
+    )
+    assert response.status_code == 400
+    fields = response.json()["error"]["fields"]
+    assert fields["url"] == "origin_not_configured"
+    assert fields["type"] == "webhook_signing_secret_not_configured"
+
+
 def test_retryable_webhook_failure_is_rescheduled(monkeypatch, relay_client):
     def fail_urlopen(_request, _timeout):
         raise TimeoutError("slow client")

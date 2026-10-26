@@ -164,7 +164,9 @@ def _normalize_task_payload(task_type, data, client, errors):
             str(value).rstrip("/").lower()
             for value in (client.relay_webhook_allowed_origins or [])
         }
-        if parsed.scheme != "https" or not parsed.netloc or origin not in allowed_origins:
+        if not allowed_origins:
+            errors["url"] = "origin_not_configured"
+        elif parsed.scheme != "https" or not parsed.netloc or origin not in allowed_origins:
             errors["url"] = "origin_not_allowed"
 
     if not client.relay_webhook_signing_secret:

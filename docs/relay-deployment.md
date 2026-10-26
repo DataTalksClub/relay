@@ -202,8 +202,11 @@ printed, committed, or pasted into chat:
    equal the website's `RELAY_WEBHOOK_SECRET`.
 3. Verify in-VPC before touching the website deploy:
    `GET http://relay-dev.website.internal:8000/api/schedules` with the
-   website key answers `200` (any `origin_not_allowed`/`401` here is a
-   client-row problem, not a host problem).
+   website key answers `200` (any `origin_not_allowed` /
+   `origin_not_configured` / `401` here is a client-row problem, not a
+   host problem: `origin_not_configured` means the client's webhook
+   origin allowlist was never provisioned, `origin_not_allowed` means
+   the URL's origin is not on the provisioned list).
 4. Only then run the website `Deploy Dev` with an empty
    `confirm_dev_schema_reset` — its `sync_relay_schedules` gate must stay
    enabled and green; never skip it silently.
