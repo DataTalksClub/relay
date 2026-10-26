@@ -126,6 +126,18 @@ def test_4xx_flood_at_volume_pages(client_record):
     assert monitor.client_alerts(client_record, now)[0]["kind"] == "api_errors"
 
 
+@pytest.mark.parametrize("errors,expected", [(3, False), (4, True)])
+def test_mixed_4xx_and_5xx_use_combined_error_threshold(client_record, errors, expected):
+    now = datetime(2026, 10, 24, 12, tzinfo=UTC)
+    TransactionalRequestMinute.objects.create(
+        client=client_record, minute=now, total=20, errors=errors, server_errors=2)
+    alerts = monitor.client_alerts(client_record, now)
+    assert bool(alerts) is expected
+    if expected:
+        assert alerts[0]["kind"] == "api_errors"
+        assert alerts[0]["error_percent"] == 20
+
+
 def test_full_4xx_at_low_volume_does_not_page(client_record):
     # Even 100% 4xx stays silent below the flood volume: a total stoppage with
     # zero acceptances is covered by the acceptance-gap check instead.

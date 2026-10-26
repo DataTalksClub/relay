@@ -57,8 +57,10 @@ full active hour has elapsed. With a healthy scheduler, detection is at the
 Use `enabled:false` for a client to disable its checks. Relay-side HTTP 5xx page
 at >=20% over the last 15 minutes with at least 5 requests, including at night,
 so a real server outage is never muted. Client-side HTTP 4xx (bad input, bad or
-revoked key, operator auth probes) page only as a flood: >=20% 4xx with at
-least 20 requests in 15 minutes. A single 4xx probe at low traffic does not
+revoked key, operator auth probes) contribute to a combined 4xx/5xx check:
+>=20% errors with at least 20 requests in 15 minutes (`min_requests_4xx`).
+Mixed failures therefore count even when neither class alone reaches 20%.
+A single 4xx probe at low traffic does not
 page (2026-10-24: one 401 probe among 5 requests for client 2 paged before this
 split and would stay silent now). A total 4xx stoppage with zero acceptances is
 still covered by the acceptance-gap check. Minute counters expire after a day.

@@ -53,16 +53,14 @@ def client_alerts(client, now):
     ).aggregate(total=Sum("total"), errors=Sum("errors"), server_errors=Sum("server_errors"))
     total, errors = counts["total"] or 0, counts["errors"] or 0
     server_errors = counts["server_errors"] or 0
-    client_errors = errors - server_errors
     # Relay-side 5xx page at low volume: a real outage must never be muted.
     server_alarm = (total >= max(1, policy["min_requests"])
                     and server_errors * 100 >= total * policy["error_percent"])
-    # Client-side 4xx (bad input, bad key, operator probes) page only as a
-    # flood at meaningful volume. A total 4xx stoppage with zero acceptances
-    # is still covered by the acceptance-gap check above.
-    client_alarm = (total >= max(1, policy["min_requests_4xx"])
-                    and client_errors * 100 >= total * policy["error_percent"])
-    if server_alarm or client_alarm:
+    # Include 4xx at meaningful volume, preserving isolated auth-probe silence.
+    # Combine both classes so a mixed failure cannot fall below each threshold.
+    combined_alarm = (total >= max(1, policy["min_requests_4xx"])
+                      and errors * 100 >= total * policy["error_percent"])
+    if server_alarm or combined_alarm:
         alerts.append({"kind": "api_errors", "client_id": client.pk,
                        "requests": total, "errors": errors, "server_errors": server_errors,
                        "error_percent": round(errors * 100 / total, 1)})
