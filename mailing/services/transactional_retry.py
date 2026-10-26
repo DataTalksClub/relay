@@ -186,14 +186,16 @@ def retry_transactional_message(message_or_id, *, actor=None, reason="", force=F
     )
 
     if isinstance(message_or_id, TransactionalMessage):
+        # Lock only the message row: locking the joined contact row as well
+        # deadlocks concurrent sends touching the same contact (2026-10-26).
         message = (
-            TransactionalMessage.objects.select_for_update()
+            TransactionalMessage.objects.select_for_update(of=("self",))
             .select_related("client", "contact", "template")
             .get(pk=message_or_id.pk)
         )
     else:
         message = (
-            TransactionalMessage.objects.select_for_update()
+            TransactionalMessage.objects.select_for_update(of=("self",))
             .select_related("client", "contact", "template")
             .get(pk=message_or_id)
         )

@@ -4,6 +4,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from mailing.aws import ses_client_for_source
+from mailing.db_retry import run_with_db_retry
 from mailing.dry_run import DryRunSuppressed
 from mailing.models import EmailEvent, EmailEventType, TransactionalMessage, TransactionalMessageStatus
 from mailing.services.client_callbacks import emit_client_callback
@@ -111,88 +112,119 @@ def _is_permanent_client_error(exc):
     return exc.response.get("Error", {}).get("Code", "") in PERMANENT_SES_ERROR_CODES
 
 
+def _locked_messages():
+    """TransactionalMessage rows locked without pinning related rows.
+
+    ``select_related`` joins client/contact for use after the lock, but the
+    ``FOR UPDATE`` clause must cover only the message table
+    (``of=("self",)``). Locking the joined contact row as well deadlocks
+    when two concurrent sends touch the same contact: each holds its own
+    message lock and waits on the other's contact lock (2026-10-26 prod).
+    """
+    return TransactionalMessage.objects.select_for_update(of=("self",)).select_related("client", "contact")
+
+
 def _claim_message_for_send(payload):
-    with transaction.atomic():
-        message = (
-            TransactionalMessage.objects.select_for_update()
-            .select_related("client", "contact")
-            .get(id=payload["transactional_message_id"])
-        )
+    def _attempt():
+        with transaction.atomic():
+            message = _locked_messages().get(id=payload["transactional_message_id"])
 
-        if message.status in TERMINAL_ACK_STATUSES:
+            if message.status in TERMINAL_ACK_STATUSES:
+                return message
+
+            if message.client_id != payload["client_id"] or message.idempotency_key != payload["idempotency_key"]:
+                return _mark_failed(
+                    message.id,
+                    "queue payload does not match transactional message client_id/idempotency_key",
+                    metadata={
+                        "reason": "queue_payload_mismatch",
+                        "queued_client_id": payload["client_id"],
+                        "queued_idempotency_key": payload["idempotency_key"],
+                    },
+                )
+
+            if message.status == TransactionalMessageStatus.SENDING:
+                return message
+
+            if message.status != TransactionalMessageStatus.QUEUED:
+                _record_retryable_error(
+                    message.id,
+                    f"transactional message status is not sendable: {message.status}",
+                )
+                raise TransientSendFailure(f"transactional message status is not sendable: {message.status}")
+
+            message.status = TransactionalMessageStatus.SENDING
+            message.last_error = ""
+            message.save(update_fields=["status", "last_error", "updated_at"])
+            message._claimed_for_send = True
             return message
 
-        if message.client_id != payload["client_id"] or message.idempotency_key != payload["idempotency_key"]:
-            return _mark_failed(
-                message.id,
-                "queue payload does not match transactional message client_id/idempotency_key",
-                metadata={
-                    "reason": "queue_payload_mismatch",
-                    "queued_client_id": payload["client_id"],
-                    "queued_idempotency_key": payload["idempotency_key"],
-                },
-            )
-
-        if message.status == TransactionalMessageStatus.SENDING:
-            return message
-
-        if message.status != TransactionalMessageStatus.QUEUED:
-            _record_retryable_error(
-                message.id,
-                f"transactional message status is not sendable: {message.status}",
-            )
-            raise TransientSendFailure(f"transactional message status is not sendable: {message.status}")
-
-        message.status = TransactionalMessageStatus.SENDING
-        message.last_error = ""
-        message.save(update_fields=["status", "last_error", "updated_at"])
-        message._claimed_for_send = True
-        return message
+    return run_with_db_retry(
+        _attempt,
+        action=f"claim transactional message {payload['transactional_message_id']}",
+        attempts=3,
+        base_delay_seconds=0.2,
+        max_delay_seconds=2.0,
+    )
 
 
 def _mark_sent(message_id, ses_message_id, metadata):
-    with transaction.atomic():
-        message = (
-            TransactionalMessage.objects.select_for_update().select_related("client", "contact").get(id=message_id)
-        )
-        if message.status in TERMINAL_ACK_STATUSES:
+    def _attempt():
+        with transaction.atomic():
+            message = _locked_messages().get(id=message_id)
+            if message.status in TERMINAL_ACK_STATUSES:
+                return message
+
+            sent_at = timezone.now()
+            message.status = TransactionalMessageStatus.SENT
+            message.ses_message_id = ses_message_id
+            message.sent_at = sent_at
+            message.last_error = ""
+            message.save(update_fields=["status", "ses_message_id", "sent_at", "last_error", "updated_at"])
+            _append_event(message, EmailEventType.SENT, metadata)
             return message
 
-        sent_at = timezone.now()
-        message.status = TransactionalMessageStatus.SENT
-        message.ses_message_id = ses_message_id
-        message.sent_at = sent_at
-        message.last_error = ""
-        message.save(update_fields=["status", "ses_message_id", "sent_at", "last_error", "updated_at"])
-        _append_event(message, EmailEventType.SENT, metadata)
-        return message
+    # The SES send already happened above; a deadlock or DNS blip here must
+    # not fail the task (and trip the host watchdog) when a retry succeeds.
+    return run_with_db_retry(
+        _attempt,
+        action=f"mark transactional message {message_id} sent",
+        attempts=3,
+        base_delay_seconds=0.2,
+        max_delay_seconds=2.0,
+    )
 
 
 def _mark_skipped_dry_run(message_id, reason):
-    with transaction.atomic():
-        message = (
-            TransactionalMessage.objects.select_for_update().select_related("client", "contact").get(id=message_id)
-        )
-        if message.status in TERMINAL_ACK_STATUSES:
+    def _attempt():
+        with transaction.atomic():
+            message = _locked_messages().get(id=message_id)
+            if message.status in TERMINAL_ACK_STATUSES:
+                return message
+
+            metadata = dict(message.metadata or {})
+            metadata["dry_run"] = True
+            metadata["skip_reason"] = "dry_run"
+            message.metadata = metadata
+            message.status = TransactionalMessageStatus.SKIPPED
+            # ses_message_id stays empty: dry run never contacts SES, so there is
+            # no message id to record and the status must not claim a send.
+            message.save(update_fields=["status", "metadata", "updated_at"])
+            _append_event(message, EmailEventType.SKIPPED, {"reason": "dry_run", "error": reason})
             return message
 
-        metadata = dict(message.metadata or {})
-        metadata["dry_run"] = True
-        metadata["skip_reason"] = "dry_run"
-        message.metadata = metadata
-        message.status = TransactionalMessageStatus.SKIPPED
-        # ses_message_id stays empty: dry run never contacts SES, so there is
-        # no message id to record and the status must not claim a send.
-        message.save(update_fields=["status", "metadata", "updated_at"])
-        _append_event(message, EmailEventType.SKIPPED, {"reason": "dry_run", "error": reason})
-        return message
+    return run_with_db_retry(
+        _attempt,
+        action=f"mark transactional message {message_id} skipped (dry run)",
+        attempts=3,
+        base_delay_seconds=0.2,
+        max_delay_seconds=2.0,
+    )
 
 
 def _mark_failed(message_id, error, *, metadata):
     with transaction.atomic():
-        message = (
-            TransactionalMessage.objects.select_for_update().select_related("client", "contact").get(id=message_id)
-        )
+        message = _locked_messages().get(id=message_id)
         if message.status in TERMINAL_ACK_STATUSES:
             return message
 
