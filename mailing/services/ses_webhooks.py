@@ -1,4 +1,5 @@
 import base64
+import http.client
 import json
 import logging
 import re
@@ -203,14 +204,14 @@ def fetch_signing_certificate(cert_url):
         if now < expires_at:
             return cert_bytes
         _CERT_CACHE.pop(key, None)
-    # urlopen is safe here: _is_allowed_sns_cert_url pinned scheme, host
-    # (no userinfo), port and .pem path before any network I/O. Network
-    # failures (DNS, 404 cert path, timeout) mean the signature cannot be
-    # checked, so they are 403s, never 500s.
+    # Network failures (DNS, 404 cert path, connect/read timeouts, reset or
+    # truncated responses) mean the signature cannot be checked, so they are
+    # 403s, never 500s. URLError covers HTTPError/DNS/connect; TimeoutError
+    # and HTTPException cover mid-read failures outside urlopen's wrapper.
     try:
         with urlopen(cert_url, timeout=5) as response:
             cert_bytes = response.read(_MAX_CERT_BYTES + 1)
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, TimeoutError, http.client.HTTPException) as exc:
         raise SnsSignatureError("SNS signing certificate unreachable") from exc
     if len(cert_bytes) > _MAX_CERT_BYTES:
         raise SnsSignatureError("SNS signing certificate too large")
@@ -328,7 +329,7 @@ def confirm_subscription(payload):
     try:
         with urlopen(subscribe_url, timeout=5):
             return True
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, TimeoutError, http.client.HTTPException) as exc:
         raise SnsSignatureError("subscription confirmation failed") from exc
 
 

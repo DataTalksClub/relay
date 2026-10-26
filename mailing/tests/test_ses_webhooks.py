@@ -1,4 +1,5 @@
 import base64
+import http.client
 import json
 import urllib.error
 from datetime import datetime, timedelta
@@ -1205,6 +1206,30 @@ def test_http_fallback_unreachable_cert_url_is_403_not_500(client, monkeypatch):
     payload = sns_payload(ses_payload("Delivery", "ses-404cert-1"), message_id="sns-404cert-1") | {
         "SignatureVersion": "2",
         "SigningCertURL": "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-missing.pem",
+    }
+    payload["Signature"] = base64.b64encode(b"0" * 256).decode()
+
+    response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
+
+    assert response.status_code == 403
+
+
+@override_settings(SES_WEBHOOKS_SIGNATURE_MODE="strict")
+def test_http_fallback_mid_read_timeout_is_403_not_500(client, monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, limit=None):
+            raise http.client.IncompleteRead(b"partial", 64 * 1024)
+
+    monkeypatch.setattr(ses_webhooks_service, "urlopen", lambda url, timeout: FakeResponse())
+    payload = sns_payload(ses_payload("Delivery", "ses-trunc-1"), message_id="sns-trunc-1") | {
+        "SignatureVersion": "2",
+        "SigningCertURL": "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-trunc.pem",
     }
     payload["Signature"] = base64.b64encode(b"0" * 256).decode()
 
