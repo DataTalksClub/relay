@@ -23,10 +23,11 @@ Guardrails:
   enforcement downstream still applies; callers surface whether it is on.
 """
 
+import json
 from dataclasses import dataclass, field
 
 from django.db import transaction
-from django.db.models import Case, JSONField, Value, When
+from django.db.models import Case, Value, When
 from django.utils import timezone
 
 from mailing.dry_run import dry_run_enforced
@@ -380,11 +381,18 @@ def bulk_retry_transactional_messages(
         return result
     # One set-based UPDATE, with per-row sender and metadata values; the locks
     # above keep competing retry requests from releasing the same row twice.
-    fields = {name: Case(*[
-        When(pk=message.pk, then=Value(getattr(message, name), output_field=JSONField() if name == "metadata" else None))
-        for message in accepted
-    ], output_field=TransactionalMessage._meta.get_field(name))
-        for name in ("metadata", "from_email", "from_email_id")}
+    fields = {}
+    for name in ("metadata", "from_email", "from_email_id"):
+        field_type = TransactionalMessage._meta.get_field(name)
+        groups = {}
+        for message in accepted:
+            value = getattr(message, name)
+            key = json.dumps(value, sort_keys=True)
+            groups.setdefault(key, (value, []))[1].append(message.pk)
+        values = [(Value(value, output_field=field_type), ids) for value, ids in groups.values()]
+        fields[name] = values[0][0] if len(values) == 1 else Case(*[
+            When(pk__in=ids, then=value) for value, ids in values
+        ], output_field=field_type)
     TransactionalMessage.objects.filter(pk__in=[message.pk for message in accepted]).update(
         status=TransactionalMessageStatus.QUEUED, last_error="", updated_at=timezone.now(), **fields,
     )

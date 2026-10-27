@@ -322,3 +322,19 @@ def test_bulk_retry_1000_uses_one_message_update(client_record, contact, templat
     assert EmailEvent.objects.filter(event_type=EmailEventType.QUEUED).count() == 1000
     assert OperatorAudit.objects.filter(action="transactional_message.retry").count() == 1000
     assert DBTaskResult.objects.filter(task_path="mailing.tasks.send_transactional_email").count() == 1000
+
+
+def test_bulk_retry_preserves_distinct_metadata_and_counts(failed_message, client_record, contact, template):
+    other = TransactionalMessage.objects.create(
+        client=client_record, contact=contact, template=template, template_key=template.key,
+        email=contact.email, status="failed", idempotency_key="distinct-retry",
+        metadata={"retry_count": "invalid", "keep": "second"},
+    )
+    failed_message.metadata = {"retry_count": 7, "keep": "first"}
+    failed_message.save()
+    result = bulk_retry_transactional_messages(collect_retry_candidates(client=client_record), reason="fixed")
+    assert len(result.retried) == 2
+    failed_message.refresh_from_db()
+    other.refresh_from_db()
+    assert failed_message.metadata == {"retry_count": 8, "keep": "first", "last_retry_reason": "fixed"}
+    assert other.metadata == {"retry_count": 1, "keep": "second", "last_retry_reason": "fixed"}

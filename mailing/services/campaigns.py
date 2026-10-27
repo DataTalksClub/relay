@@ -386,7 +386,7 @@ def campaign_send_issues(campaign):
 
 def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
                    expected_revision=None, reject_past_schedule=False):
-    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 10)
+    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 100)
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
 
