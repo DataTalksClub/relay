@@ -94,7 +94,8 @@ def test_dispatcher_survives_a_dropped_connection_and_continues(sleeps):
 
     assert process.call_count == 3
     assert close_all.called  # the dead socket was dropped before the retry
-    assert sleeps == [1.0]
+    # Loop retry base step with up to +25% jitter.
+    assert 1.0 <= sleeps[0] <= 1.25
 
 
 def test_dispatcher_waits_out_a_longer_outage_instead_of_exiting(sleeps, settings):
@@ -106,7 +107,10 @@ def test_dispatcher_waits_out_a_longer_outage_instead_of_exiting(sleeps, setting
         with pytest.raises(_StopLoop):
             call_command("process_recipient_list_imports", "--idle-sleep", "0")
 
-    assert sleeps == [1.0, 2.0, 8.0]
+    # Two jittered exponential retry steps, then the outage pause (un jittered).
+    assert 1.0 <= sleeps[0] <= 1.25
+    assert 2.0 <= sleeps[1] <= 2.5
+    assert sleeps[2] == db_retry.LOOP_OUTAGE_SLEEP_SECONDS
     assert os.path.exists(settings.RELAY_DB_HEARTBEAT_FILE)
 
 
@@ -190,7 +194,8 @@ def test_db_worker_survives_a_transient_error_while_polling(sleeps, settings):
         worker.run()
 
     assert len(calls) == 2
-    assert sleeps == [1.0]
+    # Loop retry base step with up to +25% jitter.
+    assert 1.0 <= sleeps[0] <= 1.25
     assert DBTaskResult.objects.get(pk=result.id).status == TaskResultStatus.SUCCESSFUL
     assert os.path.exists(settings.RELAY_DB_HEARTBEAT_FILE)
 

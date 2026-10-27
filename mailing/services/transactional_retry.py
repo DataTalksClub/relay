@@ -285,10 +285,13 @@ def collect_retry_candidates(
     error_contains="",
     template_key="",
 ):
-    """Build the bulk-retry queryset (oldest first, capped by the caller)."""
-    qs = TransactionalMessage.objects.select_related("client", "contact", "template").order_by(
-        "created_at", "id"
-    )
+    """Build the bulk-retry queryset (oldest first, capped by the caller).
+
+    Ordered strictly by id: the bulk lock below takes ``FOR UPDATE`` on many
+    message rows, and the erase flow locks the same rows in id order, so both
+    multi-row lockers must walk the rows in the same order.
+    """
+    qs = TransactionalMessage.objects.select_related("client", "contact", "template").order_by("id")
     if client is not None:
         qs = qs.filter(client=client)
     if client_slug:

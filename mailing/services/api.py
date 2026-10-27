@@ -1306,11 +1306,42 @@ def delete_count(result):
     return deleted_count
 
 
+def _lock_contact_children_for_erase(contact):
+    """Take the child row locks an erase will update, before the Contact lock.
+
+    Lock order contract for contact rows: child rows first, Contact last.
+    Every other writer already follows it -- SES webhook correlation locks
+    the ``TransactionalMessage``/``CampaignRecipient`` row and only later
+    updates the contact (hard bounce/complaint), the transactional sender
+    locks the message row and its committed ``EmailEvent`` insert takes
+    ``FOR KEY SHARE`` on the contact, tracking locks Campaign then recipient.
+    Erasing parent-first held ``FOR UPDATE`` on the contact and waited for a
+    child row while the provider-events worker held that child row and
+    waited on the contact -- the 2026-10-27 provider-events-worker deadlock.
+
+    Within each table the rows are locked in id order (matching the bulk
+    transactional retry), ``EmailEvent`` before the message tables so a
+    webhook redelivery holding the ``provider_event_id`` dedup lock cannot
+    close a cycle, and ``FOR NO KEY UPDATE`` because erasure only touches
+    non-key columns.
+    """
+    for model in (EmailEvent, TransactionalMessage, CampaignRecipient):
+        list(
+            model.objects.select_for_update(no_key=True, of=("self",))
+            .filter(contact=contact)
+            .order_by("id")
+            .values_list("pk", flat=True)
+        )
+
+
 @transaction.atomic
 def erase_contact_for_client(data, authenticated_client):
     scope = validate_contact_scope(data, authenticated_client)
     normalized_email = normalize_email(scope.email)
-    contact = Contact.objects.select_for_update().filter(normalized_email=normalized_email).first()
+    # Located without a lock: the row locks are taken child-first below, in
+    # the order every other contact writer uses (see
+    # _lock_contact_children_for_erase).
+    contact = Contact.objects.filter(normalized_email=normalized_email).first()
     if contact is None:
         return {
             "email": normalized_email,
@@ -1320,6 +1351,22 @@ def erase_contact_for_client(data, authenticated_client):
         }
 
     if not contact_has_scoped_relationship(contact, scope):
+        return {
+            "email": normalized_email,
+            "erased": False,
+            "contact_id": None,
+            "counts": empty_erasure_counts(),
+        }
+
+    _lock_contact_children_for_erase(contact)
+
+    # The parent lock comes last. normalized_email only changes when a
+    # concurrent erase wins the race, in which case the contact is already
+    # anonymous and there is nothing left to erase.
+    contact = Contact.objects.select_for_update().filter(
+        pk=contact.pk, normalized_email=normalized_email
+    ).first()
+    if contact is None:
         return {
             "email": normalized_email,
             "erased": False,

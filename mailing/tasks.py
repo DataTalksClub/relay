@@ -18,7 +18,7 @@ from django.tasks import task
 from django.utils import timezone
 
 import taskdeck
-from mailing.db_retry import is_transient_db_error, run_with_db_retry
+from mailing.db_retry import deadlock_diag_lines, is_transient_db_error, jittered_backoff_seconds, run_with_db_retry
 from mailing.queue_contracts import (
     validate_campaign_email_message,
     validate_email_event_message,
@@ -193,8 +193,11 @@ def _run_provider_event(task_obj, work, payload, attempt):
     except (DatabaseError, InterfaceError) as exc:
         if not is_transient_db_error(exc) or attempt >= settings.RELAY_PROVIDER_EVENT_MAX_ATTEMPTS:
             raise
-        delay = min(
-            settings.RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS * 2 ** (attempt - 1),
+        # Jittered so two provider-event tasks that deadlocked on the same
+        # rows do not wake up together and deadlock again.
+        delay = jittered_backoff_seconds(
+            settings.RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS,
+            attempt,
             settings.RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS,
         )
         try:
@@ -210,13 +213,15 @@ def _run_provider_event(task_obj, work, payload, attempt):
         except (DatabaseError, InterfaceError):
             raise exc from None
         first_line = (str(exc).strip().splitlines() or [exc.__class__.__name__])[0]
+        detail = " | ".join(deadlock_diag_lines(exc))
         logger.warning(
-            "%s: retrying transient DB error as a delayed task (next attempt %d/%d in %ds): %s",
+            "%s: retrying transient DB error as a delayed task (next attempt %d/%d in %ds): %s%s",
             action,
             attempt + 1,
             settings.RELAY_PROVIDER_EVENT_MAX_ATTEMPTS,
             delay,
             first_line,
+            f"; {detail}" if detail else "",
         )
         return {"deferred": True, "next_attempt": attempt + 1, "retry_in_seconds": delay}
 

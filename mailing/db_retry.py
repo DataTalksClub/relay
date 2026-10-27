@@ -17,6 +17,7 @@ after an SES send should succeed on an immediate retry, and loops such as
 
 import logging
 import os
+import random
 from collections.abc import Callable
 from time import sleep
 from typing import TypeVar
@@ -67,6 +68,48 @@ def is_transient_db_error(exc: BaseException) -> bool:
 
 T = TypeVar("T")
 
+RETRY_JITTER_FRACTION = 0.25
+
+DEADLOCK_SNIPPET = "deadlock detected"
+
+
+def jittered_backoff_seconds(base_delay_seconds: float, attempt: int, max_delay_seconds: float) -> float:
+    """Exponential backoff with random jitter for one retry schedule step.
+
+    Two transactions that just deadlocked retrying on the same fixed schedule
+    meet again and can deadlock a second time; the random +0..25% fraction
+    breaks the lockstep. The cap applies after the jitter so the delay stays
+    bounded even when the raw step already exceeds it.
+    """
+    delay = min(base_delay_seconds * 2 ** (attempt - 1), max_delay_seconds)
+    return min(delay * (1 + random.random() * RETRY_JITTER_FRACTION), max_delay_seconds)
+
+
+def deadlock_diag_lines(exc: BaseException) -> list[str]:
+    """psycopg diag fields naming both parties of a detected deadlock.
+
+    ``str(exc)`` carries the primary message and Postgres' DETAIL line, but
+    task-layer logs keep only the first line. DETAIL is the part that says
+    which process blocks which ("Process N waits for ShareLock on
+    transaction M; blocked by process ..."), so it is re-attached here at
+    WARNING for the next occurrence. Works for psycopg2 (``exc.__cause__``
+    exposes ``.diag``); degrades to an empty list when the driver does not
+    provide diagnostics.
+    """
+    lines: list[str] = []
+    seen = set()
+    cause = getattr(exc, "__cause__", None)
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        diag = getattr(cause, "diag", None)
+        if diag is not None:
+            for field in ("message_primary", "message_detail", "message_hint"):
+                value = getattr(diag, field, None)
+                if value and value not in lines:
+                    lines.append(value)
+        cause = getattr(cause, "__cause__", None)
+    return lines
+
 
 def _in_atomic_block() -> bool:
     return any(conn.in_atomic_block for conn in connections.all(initialized_only=True))
@@ -98,15 +141,26 @@ def run_with_db_retry(
         except (DatabaseError, InterfaceError) as exc:
             if not is_transient_db_error(exc) or attempt == attempts or _in_atomic_block():
                 raise
-            delay = min(base_delay_seconds * 2 ** (attempt - 1), max_delay_seconds)
-            logger.warning(
-                "%s hit a transient DB error (attempt %d/%d); retrying in %.1fs: %s",
-                action,
-                attempt,
-                attempts,
-                delay,
-                exc,
-            )
+            delay = jittered_backoff_seconds(base_delay_seconds, attempt, max_delay_seconds)
+            if DEADLOCK_SNIPPET in str(exc).lower():
+                detail = " | ".join(deadlock_diag_lines(exc)) or str(exc)
+                logger.warning(
+                    "%s hit a deadlock (attempt %d/%d); retrying in %.2fs: %s",
+                    action,
+                    attempt,
+                    attempts,
+                    delay,
+                    detail,
+                )
+            else:
+                logger.warning(
+                    "%s hit a transient DB error (attempt %d/%d); retrying in %.1fs: %s",
+                    action,
+                    attempt,
+                    attempts,
+                    delay,
+                    exc,
+                )
             connections.close_all()
             sleep(delay)
     raise AssertionError("unreachable: retry loop always returns or raises")

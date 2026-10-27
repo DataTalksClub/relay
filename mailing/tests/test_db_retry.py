@@ -7,11 +7,14 @@ transaction (or a seconds-long DNS miss) from failing a task or stopping
 a loop.
 """
 
+import logging
+from types import SimpleNamespace
+
 import pytest
 from django.db import DatabaseError, InterfaceError, OperationalError
 
 from mailing import db_retry
-from mailing.db_retry import is_transient_db_error, run_with_db_retry
+from mailing.db_retry import deadlock_diag_lines, is_transient_db_error, run_with_db_retry
 
 
 @pytest.mark.parametrize(
@@ -73,7 +76,9 @@ def test_retry_recovers_after_transient_failures(monkeypatch):
 
     assert run_with_db_retry(flaky, base_delay_seconds=0.2, max_delay_seconds=2.0) == "recovered"
     assert len(attempts) == 3
-    assert sleeps == [0.2, 0.4]
+    # Exponential with up to +25% jitter, so the exact sleep varies per run.
+    assert 0.2 <= sleeps[0] <= 0.25
+    assert 0.4 <= sleeps[1] <= 0.5
     assert len(closes) == 2
 
 
@@ -87,7 +92,8 @@ def test_retry_gives_up_after_the_last_attempt(monkeypatch):
             attempts=3,
             base_delay_seconds=1.0,
         )
-    assert sleeps == [1.0, 2.0]
+    assert 1.0 <= sleeps[0] <= 1.25
+    assert 2.0 <= sleeps[1] <= 2.5
 
 
 def test_retry_raises_permanent_errors_immediately(monkeypatch):
@@ -103,6 +109,43 @@ def test_retry_raises_permanent_errors_immediately(monkeypatch):
         run_with_db_retry(broken)
     assert calls == [1]
     assert sleeps == []
+
+
+def _deadlocked(attempt_box):
+    """A wrapped deadlock like Django raises it: driver error as ``__cause__``."""
+    inner = OperationalError("deadlock detected")
+    inner.diag = SimpleNamespace(
+        message_primary="deadlock detected",
+        message_detail="Process 261 waits for ShareLock on transaction 2558; blocked by process 264.",
+        message_hint="See server log for query details.",
+    )
+    exc = OperationalError("deadlock detected")
+    exc.__cause__ = inner
+    attempt_box.append(1)
+    return exc
+
+
+def test_deadlock_warning_names_both_parties_from_driver_diag(monkeypatch, caplog):
+    monkeypatch.setattr(db_retry, "sleep", lambda seconds: None)
+    attempts = []
+
+    def flaky():
+        raise _deadlocked(attempts)
+
+    with caplog.at_level(logging.WARNING, logger="mailing.db_retry"):
+        with pytest.raises(OperationalError, match="deadlock detected"):
+            run_with_db_retry(flaky, attempts=2, base_delay_seconds=0.1)
+
+    deadlock_logs = [record.getMessage() for record in caplog.records if "hit a deadlock" in record.getMessage()]
+    assert len(deadlock_logs) == 1
+    assert "Process 261 waits for ShareLock on transaction 2558; blocked by process 264." in deadlock_logs[0]
+    assert "See server log for query details." in deadlock_logs[0]
+
+
+def test_deadlock_diag_lines_without_driver_diag_degrade_to_empty():
+    exc = OperationalError("deadlock detected")
+    assert deadlock_diag_lines(exc) == []
+    assert deadlock_diag_lines(ValueError("not a db error")) == []
 
 
 def test_non_database_errors_are_never_retried(monkeypatch):
@@ -144,7 +187,7 @@ def test_interface_error_retries_through_the_loop(monkeypatch):
 
     assert run_with_db_retry(flaky, base_delay_seconds=0.5) == "recovered"
     assert len(attempts) == 2
-    assert sleeps == [0.5]
+    assert 0.5 <= sleeps[0] <= 0.625
 
 
 @pytest.mark.django_db

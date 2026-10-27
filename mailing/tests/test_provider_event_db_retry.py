@@ -104,7 +104,9 @@ def test_a_deadlock_is_retried_in_process_and_applied_once(monkeypatch, message,
 
     event = EmailEvent.objects.get(provider_event_id="sns-retry-delivery-1")
     assert result == {"email_event_id": event.pk, "event_type": EmailEventType.DELIVERED}
-    assert no_sleep == [0.5]
+    # 0.5s base step with up to +25% jitter.
+    assert len(no_sleep) == 1
+    assert 0.5 <= no_sleep[0] <= 0.625
     message.refresh_from_db()
     assert message.delivered_at is not None
     assert not DBTaskResult.objects.exists()
@@ -118,7 +120,10 @@ def test_a_persistent_transient_error_defers_to_a_delayed_task(monkeypatch, mess
     with caplog.at_level(logging.WARNING, logger="mailing"):
         result = mailing_tasks.process_ses_webhook_event.call(_payload())
 
-    assert result == {"deferred": True, "next_attempt": 2, "retry_in_seconds": 30}
+    # 30s base step with up to +25% jitter.
+    assert 30 <= result["retry_in_seconds"] <= 37.5
+    assert result["deferred"] is True
+    assert result["next_attempt"] == 2
     assert not EmailEvent.objects.exists()
     retry = DBTaskResult.objects.get()
     assert retry.task_path == "mailing.tasks.process_ses_webhook_event"
@@ -130,7 +135,8 @@ def test_a_persistent_transient_error_defers_to_a_delayed_task(monkeypatch, mess
     deferral = [r.getMessage() for r in caplog.records if "as a delayed task" in r.getMessage()]
     assert deferral == [
         "process_ses_webhook_event: retrying transient DB error as a delayed task "
-        '(next attempt 2/7 in 30s): could not translate host name "mqimefrti7ratmaliirnikov" to address'
+        f'(next attempt 2/7 in {int(result["retry_in_seconds"])}s): '
+        'could not translate host name "mqimefrti7ratmaliirnikov" to address'
     ]
     # The watchdog restarts on these class paths in worker logs; a handled
     # transient error must not print them.
@@ -144,7 +150,9 @@ def test_the_delayed_attempt_applies_the_event_through_the_worker(monkeypatch, m
     call_command("db_worker", "--queue-name", "provider-events", "--batch", "--interval", "0", "--verbosity", "0")
     first = DBTaskResult.objects.get(args_kwargs__kwargs={})
     assert first.status == TaskResultStatus.SUCCESSFUL
-    assert first.return_value == {"deferred": True, "next_attempt": 2, "retry_in_seconds": 30}
+    assert first.return_value["deferred"] is True
+    assert first.return_value["next_attempt"] == 2
+    assert 30 <= first.return_value["retry_in_seconds"] <= 900
 
     DBTaskResult.objects.filter(status=TaskResultStatus.READY).update(run_after=timezone.now())
     call_command("db_worker", "--queue-name", "provider-events", "--batch", "--interval", "0", "--verbosity", "0")
@@ -164,7 +172,7 @@ def test_backoff_is_bounded_and_the_last_attempt_fails_loudly(monkeypatch, messa
     assert not DBTaskResult.objects.exists()
 
     _fail_correlation(monkeypatch, [OperationalError(DEADLOCK)] * 4)
-    assert mailing_tasks.process_ses_webhook_event.call(_payload(), attempt=2)["retry_in_seconds"] == 60
+    assert mailing_tasks.process_ses_webhook_event.call(_payload(), attempt=2)["retry_in_seconds"] <= 75
     settings.RELAY_PROVIDER_EVENT_MAX_ATTEMPTS = 20
     _fail_correlation(monkeypatch, [OperationalError(DEADLOCK)] * 4)
     assert mailing_tasks.process_ses_webhook_event.call(_payload(), attempt=10)["retry_in_seconds"] == 900
