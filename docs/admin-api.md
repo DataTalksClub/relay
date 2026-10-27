@@ -187,4 +187,4 @@ schedules describe Relay task submissions.
 
 Campaign queue actions complete the audience snapshot synchronously and return the final queue result. Client `campaigns/{key}/test-send` accepts at most two distinct explicit test addresses and returns HTTP 200 with `sent_count` and provider message IDs in `recipients`; provider acceptance does not confirm delivery. Admin transactional bulk retry completes synchronously, returns retried/skipped rows, and accepts at most 1000 matching messages per confirmed request. Import (200) and CSV export (2000) limits remain unchanged; use their management commands for larger files.
 
-Campaign sends default to 100 recipients per existing send task (override `CAMPAIGN_EMAIL_BATCH_SIZE` in Django settings). Snapshotting and task creation finish within the request; only delivery uses the existing send worker.
+Campaign sends default to 1000 recipients per existing send task (override `CAMPAIGN_EMAIL_BATCH_SIZE` in Django settings). Snapshotting and task creation finish within the request; only delivery uses the existing send worker.

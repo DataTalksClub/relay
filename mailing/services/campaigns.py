@@ -393,7 +393,12 @@ def campaign_send_issues(campaign):
 
 def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
                    expected_revision=None, reject_past_schedule=False):
-    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 100)
+    # Each send task is one django.tasks enqueue plus a TaskRun projection row,
+    # both per-batch INSERTs on the synchronous queue path. 1000 recipients per
+    # task keeps that overhead at ~36 rows for a 36k audience instead of ~360,
+    # without changing delivery semantics: recipients are still sent one by one
+    # and per-recipient status checks keep requeued batches idempotent.
+    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 1000)
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
 
@@ -621,7 +626,13 @@ def _campaign_email_payloads(campaign_id, recipient_ids, batch_size):
 def _append_queue_audit_events(campaign, recipient_ids, batch_count):
     if not recipient_ids:
         return
-    insert_select(EmailEvent, CampaignRecipient.objects.filter(id__in=recipient_ids), {
+    # recipient_ids is exactly the campaign's pending rows as of the snapshot
+    # (the campaign row is locked and nothing enqueues before commit), so
+    # select them back by campaign scope instead of splicing a 36k-element
+    # IN list into the INSERT ... SELECT.
+    insert_select(EmailEvent, CampaignRecipient.objects.filter(
+        campaign_id=campaign.pk, status=CampaignRecipientStatus.PENDING,
+    ), {
         "campaign_id": campaign.pk, "campaign_recipient_id": F("pk"), "contact_id": F("contact_id"),
         "client_id": campaign.client_id, "audience_id": campaign.audience_id,
         "event_type": EmailEventType.QUEUED, "metadata": {"batch_count": batch_count},
