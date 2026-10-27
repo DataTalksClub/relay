@@ -5,6 +5,14 @@ block health checks or other users. Tuned via env with safe defaults:
 
   GUNICORN_WORKERS (default 3), GUNICORN_THREADS (default 4),
   GUNICORN_TIMEOUT (default 60), GUNICORN_BIND (default 0.0.0.0:8000).
+
+Gunicorn auto-loads this file from the image WORKDIR (/app), so the Coolify
+web command is intentionally left untouched: the dev/prod deploy workflows
+refuse to overwrite the live web service when it differs from the template,
+and CLI flags override this file. Effective Coolify runtime is therefore
+CLI `--workers 2` + this file's gthread/threads/timeout (verified with
+`gunicorn --print-config`: workers=2, gthread, threads=4). Dockerfile and the
+sandbox deploy pin the same values explicitly.
 """
 
 import os
