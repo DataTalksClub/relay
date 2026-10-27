@@ -19,9 +19,6 @@
 # relay-production-ses-webhooks queue. SES/SQS dual-run proving (t1272u) lands
 # here only after a dedicated DEV queue + config set exist.
 # DEV database is relay_dev on the shared pg-relay host — never relay (prod).
-# RELAY_DRY_RUN=1 on every service: DEV has no AWS send keys, so transport
-# actions are suppressed at the canonical gate instead of stalling on boto
-# credential resolution. Reads (SES/S3 monitoring, DMARC) are not gated.
 services:
   web:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
@@ -29,7 +26,6 @@ services:
     restart: unless-stopped
     environment:
       DEBUG: "0"
-      RELAY_DRY_RUN: "1"
       EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
       ALLOWED_HOSTS: dev.relay.datatalks.club,origin.dev.relay.datatalks.club,localhost,127.0.0.1,169.58.124.141
     command:
@@ -58,8 +54,6 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    environment:
-      RELAY_DRY_RUN: "1"
     command: ["python", "manage.py", "db_worker", "--queue-name", "default", "--interval", "1"]
     healthcheck:
       test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "default"]
@@ -72,8 +66,6 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    environment:
-      RELAY_DRY_RUN: "1"
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
       test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "provider-events"]
@@ -86,8 +78,6 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    environment:
-      RELAY_DRY_RUN: "1"
     command: ["python", "manage.py", "run_relay_scheduler", "--interval", "15"]
     healthcheck:
       test: ["CMD", "python", "manage.py", "worker_healthcheck"]
@@ -100,8 +90,6 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    environment:
-      RELAY_DRY_RUN: "1"
     command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
     healthcheck:
       test: ["CMD", "python", "manage.py", "worker_healthcheck"]
@@ -114,8 +102,6 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    environment:
-      RELAY_DRY_RUN: "1"
     command: ["python", "manage.py", "process_client_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
     healthcheck:
       test: ["CMD", "python", "manage.py", "worker_healthcheck"]
@@ -128,8 +114,6 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    environment:
-      RELAY_DRY_RUN: "1"
     command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
     healthcheck:
       test: ["CMD", "python", "manage.py", "worker_healthcheck"]
@@ -142,8 +126,6 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    environment:
-      RELAY_DRY_RUN: "1"
     command: ["python", "manage.py", "process_inbound_deliveries"]
     healthcheck:
       test: ["CMD", "python", "manage.py", "worker_healthcheck"]
