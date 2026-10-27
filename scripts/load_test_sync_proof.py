@@ -1,10 +1,7 @@
-"""Load-test proof for the async request-path move (intake 014946da).
+"""Local synchronous snapshot/health smoke benchmark; this is not deployed dev proof.
 
-Simulates the heaviest former-sync action (campaign queue snapshot over a
-500-contact audience) running on the worker while parallel read traffic hits
-the health endpoint and a normal operator page. Reports p95 and 5xx counts.
-
-Run: uv run python scripts/load_test_async_proof.py [--contacts N] [--parallel P]
+Use a dedicated DATABASE_URL and PYTHONPATH=. uv run python
+scripts/load_test_sync_proof.py --contacts 10000. Seed data is retained.
 """
 
 import argparse
@@ -69,7 +66,7 @@ def percentile(values, pct):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--contacts", type=int, default=500)
+    ap.add_argument("--contacts", type=int, default=10000)
     ap.add_argument("--parallel", type=int, default=20)
     ap.add_argument("--requests", type=int, default=100)
     args = ap.parse_args()
@@ -85,15 +82,6 @@ def main():
     estimate = estimate_campaign_recipients(campaign)
     estimate_ms = (time.perf_counter() - t0) * 1000
 
-    # Async request timing (what the operator POST now does).
-    t0 = time.perf_counter()
-    result = request_campaign_queue(campaign)
-    request_ms = (time.perf_counter() - t0) * 1000
-    assert result.snapshotting
-
-    # Reset to DRAFT-adjacent so the background run below does the real work:
-    # the request above already flipped to SNAPSHOTTING, which is exactly the
-    # state the worker resumes from — keep it and run the worker in background.
     latencies = []
     errors_5xx = 0
     lock = threading.Lock()
@@ -114,17 +102,20 @@ def main():
                 latencies.append((time.perf_counter() - start) * 1000)
                 errors_5xx += 1
 
-    def worker():
+    request_timings = []
+
+    def queue_request():
         from django.db import connection  # noqa: PLC0415
 
         connection.close()
-        from mailing.services.campaigns import queue_campaign  # noqa: PLC0415
+        start = time.perf_counter()
+        result = request_campaign_queue(campaign)
+        request_timings.append((time.perf_counter() - start) * 1000)
+        assert result.accepted and not result.snapshotting
 
-        queue_campaign(campaign)
-
-    wt = threading.Thread(target=worker, name="worker-snapshot")
+    wt = threading.Thread(target=queue_request, name="sync-request")
     wt.start()
-    time.sleep(0.05)  # let the snapshot take the write lock first
+    time.sleep(0.05)  # overlap health requests with the synchronous action
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
         list(pool.map(hit, range(args.requests)))
     wt.join()
@@ -136,8 +127,8 @@ def main():
         "requests": args.requests,
         "estimate_ms": round(estimate_ms, 1),
         "estimate_recipients": estimate.recipient_count,
-        "async_request_ms": round(request_ms, 1),
-        "campaign_status_after_worker": campaign.status,
+        "sync_request_ms": round(request_timings[0], 1),
+        "campaign_status_after_request": campaign.status,
         "health_p50_ms": round(percentile(latencies, 50), 1),
         "health_p95_ms": round(percentile(latencies, 95), 1),
         "health_max_ms": round(max(latencies) if latencies else 0, 1),

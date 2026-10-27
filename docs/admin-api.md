@@ -184,3 +184,5 @@ Pausing stops future submissions; queued or running jobs continue. Resuming sets
 the next future cron occurrence without submitting work immediately or replaying
 missed occurrences. Automatic campaign scheduling remains unavailable; these
 schedules describe Relay task submissions.
+
+Campaign queue actions complete the audience snapshot synchronously and return the final queue result. Client `campaigns/{key}/test-send` accepts at most two distinct explicit test addresses and returns HTTP 200 with `sent_count` and provider message IDs in `recipients`; provider acceptance does not confirm delivery. Admin transactional bulk retry completes synchronously, returns retried/skipped rows, and accepts at most 1000 matching messages per confirmed request. Import (200) and CSV export (2000) limits remain unchanged; use their management commands for larger files.

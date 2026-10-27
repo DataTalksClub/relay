@@ -760,6 +760,7 @@ class TransactionalMessage(TimeStampedModel):
         ]
         indexes = [
             models.Index(fields=["contact", "created_at"], name="tx_msg_contact_created_idx"),
+            models.Index(fields=["status", "created_at", "id"], name="tx_msg_status_created_id_idx"),
             models.Index(fields=["client", "status", "created_at"], name="tx_msg_cli_status_created_idx"),
             models.Index(fields=["client", "created_at"], name="tx_msg_client_created_idx"),
         ]

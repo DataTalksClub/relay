@@ -1,4 +1,3 @@
-from unittest.mock import MagicMock
 
 import pytest
 from django.urls import reverse
@@ -24,7 +23,7 @@ from mailing.models import (
 from mailing.services.api import isoformat
 from mailing.services.auth import create_client_api_key
 from mailing.services.campaign_sender import send_campaign_batch
-from mailing.services.campaigns import estimate_campaign_recipients, queue_campaign
+from mailing.services.campaigns import estimate_campaign_recipients
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -286,29 +285,13 @@ def test_campaign_api_queue_snapshots_and_enqueues_pending_recipients(
         {"audience": audience.slug, "client": api_client_record.slug},
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 200
     body = response.json()
-    # Async: the request returns immediately in SNAPSHOTTING; the worker
-    # snapshot runs afterwards on the default db_worker lane.
     assert body["queued"] is True
-    assert body["snapshotting"] is True
-    assert body["scheduled"] is False
-    assert body["batch_count"] == 0
-    assert body["campaign"]["status"] == CampaignStatus.SNAPSHOTTING
-    assert len(enqueued) == 0
-    assert CampaignRecipient.objects.filter(
-        campaign__client=api_client_record, campaign__external_key="cmp-course-start-2026"
-    ).count() == 0
-
-    # Simulate the background worker completing the snapshot inline.
-    campaign = Campaign.objects.get(client=api_client_record, external_key="cmp-course-start-2026")
-    worker_result = queue_campaign(campaign)
-    assert worker_result.queued is True
-    assert worker_result.batch_count == 1
-    campaign.refresh_from_db()
-    assert campaign.status == CampaignStatus.QUEUED
-    assert campaign.recipient_count == 1
-    assert campaign.skipped_count == 0
+    assert body["batch_count"] == 1
+    assert body["recipient_count"] == 1
+    assert body["skipped_count"] == 0
+    assert body["campaign"]["status"] == CampaignStatus.QUEUED
     assert len(enqueued) == 1
     assert enqueued[0]["contract"] == "campaign-email"
     assert enqueued[0]["campaign_recipient_ids"]
@@ -319,11 +302,12 @@ def test_campaign_api_queue_snapshots_and_enqueues_pending_recipients(
         {"audience": audience.slug, "client": api_client_record.slug},
     )
 
-    assert replay.status_code == 202
+    assert replay.status_code == 200
     replay_body = replay.json()
     assert replay_body["queued"] is False
-    assert replay_body["already_queued"] is True
     assert replay_body["batch_count"] == 0
+    assert replay_body["recipient_count"] == 1
+    assert replay_body["skipped_count"] == 0
     assert replay_body["campaign"]["status"] == CampaignStatus.QUEUED
     assert len(enqueued) == 1
 
@@ -456,11 +440,11 @@ def test_campaign_api_test_send_sends_explicit_recipients_without_campaign_recip
 ):
     sent = []
 
-    def fake_enqueue(campaign, emails):
-        sent.append((campaign.external_key, emails))
-        return MagicMock(id="task-123")
+    def fake_send(campaign, email):
+        sent.append((campaign.external_key, email))
+        return f"message-{len(sent)}"
 
-    monkeypatch.setattr("mailing.campaign_test_tasks.enqueue_campaign_test", fake_enqueue)
+    monkeypatch.setattr("mailing.services.api.send_campaign_test_message", fake_send)
     put = put_campaign(client, "test-send-campaign", campaign_payload(audience, api_client_record))
     assert put.status_code == 201
 
@@ -474,13 +458,17 @@ def test_campaign_api_test_send_sends_explicit_recipients_without_campaign_recip
         },
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 200
     body = response.json()
-    # Async: provider calls run on the worker; the request only enqueues.
-    assert body["queued"] is True
-    assert body["recipient_count"] == 2
-    assert body["task_id"] == "task-123"
-    assert sent == [( "test-send-campaign", ["a@example.com", "b@example.com"])]
+    assert body["sent_count"] == 2
+    assert body["recipients"] == [
+        {"email": "a@example.com", "message_id": "message-1"},
+        {"email": "b@example.com", "message_id": "message-2"},
+    ]
+    assert sent == [
+        ("test-send-campaign", "a@example.com"),
+        ("test-send-campaign", "b@example.com"),
+    ]
     assert CampaignRecipient.objects.count() == 0
 
 
@@ -865,3 +853,40 @@ def test_campaign_api_retry_rejects_recipient_from_another_campaign(
 class _FailingIfCalledSes:
     def send_email(self, **params):
         raise AssertionError("SES should not be called")
+
+
+def test_client_test_send_fanout_cap_precedes_provider_calls(client, audience, api_client_record, monkeypatch):
+    calls = []
+    monkeypatch.setattr("mailing.services.api.send_campaign_test_message", lambda *args: calls.append(args))
+    put_campaign(client, "capped-test", campaign_payload(audience, api_client_record))
+    response = post_campaign_test_send(client, "capped-test", {
+        "audience": audience.slug, "client": api_client_record.slug,
+        "emails": ["a@example.com", "b@example.com", "c@example.com"],
+    })
+    assert response.status_code == 400
+    assert not calls
+
+
+def test_client_test_send_returns_partial_provider_outcome(client, audience, api_client_record, monkeypatch):
+    from botocore.exceptions import BotoCoreError  # noqa: PLC0415
+    from django.db import connection  # noqa: PLC0415
+    from django.test.utils import CaptureQueriesContext  # noqa: PLC0415
+
+    calls = []
+    def send(campaign, email):
+        calls.append(email)
+        if len(calls) == 2:
+            raise BotoCoreError()
+        return "accepted-id"
+    monkeypatch.setattr("mailing.services.api.send_campaign_test_message", send)
+    put_campaign(client, "partial-test", campaign_payload(audience, api_client_record))
+    with CaptureQueriesContext(connection) as queries:
+        response = post_campaign_test_send(client, "partial-test", {
+            "audience": audience.slug, "client": api_client_record.slug,
+            "emails": ["a@example.com", "b@example.com"],
+        })
+    assert response.status_code == 200
+    assert response.json()["sent_count"] == 1
+    assert response.json()["unconfirmed_email"] == "b@example.com"
+    assert len(queries) < 20
+    assert len(calls) == 2

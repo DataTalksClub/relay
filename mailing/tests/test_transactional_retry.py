@@ -299,3 +299,26 @@ def test_ui_retry_action_only_failed(operator, client_record, failed_message, mo
     assert response.status_code == 302
     failed_message.refresh_from_db()
     assert failed_message.status == TransactionalMessageStatus.QUEUED
+
+
+def test_bulk_retry_1000_uses_one_message_update(client_record, contact, template, django_capture_on_commit_callbacks):
+    from django.db import connection  # noqa: PLC0415
+    from django.test.utils import CaptureQueriesContext  # noqa: PLC0415
+    from django_tasks_db.models import DBTaskResult  # noqa: PLC0415
+
+    TransactionalMessage.objects.bulk_create([
+        TransactionalMessage(client=client_record, contact=contact, template=template,
+                             email=contact.email, from_email_id="alerts", template_key=template.key,
+                             status=TransactionalMessageStatus.FAILED, idempotency_key=f"bulk-{i}")
+        for i in range(1000)
+    ])
+    with CaptureQueriesContext(connection) as queries, django_capture_on_commit_callbacks(execute=True):
+        result = bulk_retry_transactional_messages(collect_retry_candidates(client=client_record), reason="route repaired")
+    assert len(result.retried) == 1000
+    updates = [query for query in queries if query["sql"].startswith('UPDATE "transactional_messages"')]
+    assert len(updates) == 1
+    assert len(queries) < 80
+    assert TransactionalMessage.objects.filter(status="queued").count() == 1000
+    assert EmailEvent.objects.filter(event_type=EmailEventType.QUEUED).count() == 1000
+    assert OperatorAudit.objects.filter(action="transactional_message.retry").count() == 1000
+    assert DBTaskResult.objects.filter(task_path="mailing.tasks.send_transactional_email").count() == 1000

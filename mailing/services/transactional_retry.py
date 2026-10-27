@@ -26,18 +26,23 @@ Guardrails:
 from dataclasses import dataclass, field
 
 from django.db import transaction
+from django.db.models import Case, JSONField, Value, When
+from django.utils import timezone
 
 from mailing.dry_run import dry_run_enforced
 from mailing.models import (
     BlockedSender,
+    CallbackEndpoint,
+    EmailEvent,
     EmailEventType,
+    OperatorAudit,
     TransactionalMessage,
     TransactionalMessageStatus,
 )
 from mailing.services.contacts import is_transactional_email_allowed, normalize_email
 from mailing.services.operator_management import audit
 
-MAX_BULK_RETRY = 100
+MAX_BULK_RETRY = 1000
 
 RETRY_ACTION = "transactional_message.retry"
 
@@ -300,6 +305,7 @@ def collect_retry_candidates(
     return qs
 
 
+@transaction.atomic
 def bulk_retry_transactional_messages(
     queryset, *, actor=None, reason="", force=False, limit=MAX_BULK_RETRY, dry_run=False
 ):
@@ -323,13 +329,78 @@ def bulk_retry_transactional_messages(
                 }
             )
         return result
-    for message in queryset[:limit]:
-        try:
-            retry = retry_transactional_message(message.pk, actor=actor, reason=reason, force=force)
-        except TransactionalRetryError as exc:
-            result.skipped.append({"id": message.id, "email": message.email, "code": exc.code})
-        else:
-            result.retried.append(
-                {"id": retry.message_id, "email": message.email, "retry_count": retry.retry_count}
-            )
+    from mailing.enqueue import enqueue_transactional_email  # noqa: PLC0415
+    from mailing.services.bulk_enqueue import enqueue_send_tasks  # noqa: PLC0415
+    from mailing.services.client_callbacks import emit_client_callback  # noqa: PLC0415
+    from mailing.services.cmp_callbacks import emit_cmp_contact_event  # noqa: PLC0415
+    from mailing.services.transactional import build_transactional_queue_payload  # noqa: PLC0415
+    from mailing.tasks import send_transactional_email  # noqa: PLC0415
+
+    messages = list(queryset.select_for_update(of=("self",))[:limit])
+    blocked_addresses = set()
+    blocked_domains = set()
+    for scope, value in BlockedSender.objects.values_list("scope", "value"):
+        (blocked_addresses if scope == BlockedSender.Scope.ADDRESS else blocked_domains).add(value.lower())
+    accepted, events, audits, payloads = [], [], [], []
+    for message in messages:
+        code = ""
+        if message.status not in NON_FORCE_RETRYABLE_STATUSES and not force:
+            code = "message_not_retryable"
+        elif force and not reason.strip():
+            code = "reason_required"
+        elif ((message.contact is not None and not is_transactional_email_allowed(message.contact))
+              or normalize_email(message.email) in blocked_addresses
+              or normalize_email(message.email).partition("@")[2] in blocked_domains):
+            code = "recipient_suppressed"
+        if code:
+            result.skipped.append({"id": message.pk, "email": message.email, "code": code})
+            continue
+        prior_status, prior_error = message.status, message.last_error or ""
+        sender_id, sender_email, changed = resolve_retry_sender(message)
+        count = _next_retry_count(message)
+        message.from_email_id, message.from_email = sender_id, sender_email
+        message.metadata = dict(message.metadata or {}) | {"retry_count": count}
+        if reason.strip():
+            message.metadata["last_retry_reason"] = reason.strip()[:500]
+        message.status, message.last_error = TransactionalMessageStatus.QUEUED, ""
+        details = {"retry": True, "retry_count": count, "prior_status": prior_status,
+                   "prior_error": prior_error[:2000], "reason": reason.strip()[:500], "sender_changed": changed}
+        events.append(EmailEvent(transactional_message=message, contact=message.contact,
+                                 client=message.client, event_type=EmailEventType.QUEUED, metadata=details))
+        audits.append(OperatorAudit(
+            actor=actor if getattr(actor, "is_authenticated", False) else None,
+            action=RETRY_ACTION, target_type="transactionalmessage", target_id=message.pk,
+            metadata=details | {"prior_error": prior_error[:500], "force": force,
+                                "from_email": sender_email, "dry_run_enforced": enforced},
+        ))
+        accepted.append(message)
+        payloads.append(build_transactional_queue_payload(message))
+        result.retried.append({"id": message.pk, "email": message.email, "retry_count": count})
+    if not accepted:
+        return result
+    # One set-based UPDATE, with per-row sender and metadata values; the locks
+    # above keep competing retry requests from releasing the same row twice.
+    fields = {name: Case(*[
+        When(pk=message.pk, then=Value(getattr(message, name), output_field=JSONField() if name == "metadata" else None))
+        for message in accepted
+    ], output_field=TransactionalMessage._meta.get_field(name))
+        for name in ("metadata", "from_email", "from_email_id")}
+    TransactionalMessage.objects.filter(pk__in=[message.pk for message in accepted]).update(
+        status=TransactionalMessageStatus.QUEUED, last_error="", updated_at=timezone.now(), **fields,
+    )
+    EmailEvent.objects.bulk_create(events, batch_size=500)
+    OperatorAudit.objects.bulk_create(audits, batch_size=500)
+    callback_clients = set(CallbackEndpoint.objects.filter(
+        client_id__in={message.client_id for message in accepted}, enabled=True,
+    ).values_list("client_id", flat=True))
+    for event in events:
+        emit_cmp_contact_event(event)
+        if event.client_id in callback_clients:
+            emit_client_callback(event)
+
+    def enqueue():
+        if not enqueue_send_tasks(send_transactional_email, payloads, entity_type="transactional_message"):
+            for payload in payloads:
+                enqueue_transactional_email(payload)
+    transaction.on_commit(enqueue)
     return result

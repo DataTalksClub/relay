@@ -2350,7 +2350,7 @@ def api_campaign_queue(request, external_key):
     except ApiValidationError as exc:
         return validation_error_response(exc)
 
-    return JsonResponse(payload, status=202)
+    return JsonResponse(payload, status=200)
 
 
 @csrf_exempt
@@ -2413,7 +2413,7 @@ def api_campaign_test_send(request, external_key):
     except ApiValidationError as exc:
         return validation_error_response(exc)
 
-    return JsonResponse(payload, status=202)
+    return JsonResponse(payload, status=200)
 
 
 @csrf_exempt

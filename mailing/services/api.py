@@ -2,6 +2,7 @@ import re
 from dataclasses import dataclass
 from email.utils import parseaddr
 
+from botocore.exceptions import BotoCoreError, ClientError
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email, validate_slug
 from django.db import transaction
@@ -9,6 +10,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from mailing.dry_run import DryRunSuppressed
 from mailing.models import (
     Audience,
     Campaign,
@@ -35,7 +37,7 @@ from mailing.models import (
     normalize_category_tag as normalize_campaign_category_tag,
 )
 from mailing.services.api_errors import ApiValidationError
-from mailing.services.campaign_sender import render_campaign_message
+from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
 from mailing.services.campaigns import (
     CampaignNotReady,
     CampaignRecipientConflict,
@@ -399,7 +401,7 @@ def queue_campaign_for_client(external_key, data, authenticated_client):
         "already_queued": result.already_queued,
         "snapshotting": result.snapshotting,
         "scheduled": result.scheduled,
-        "batch_count": 0,
+        "batch_count": result.batch_count,
         "recipient_count": campaign.recipient_count,
         "skipped_count": campaign.skipped_count,
     }
@@ -476,25 +478,27 @@ def validate_test_recipient_emails(value):
 
 
 def test_send_campaign_for_client(external_key, data, authenticated_client):
-    """Enqueue a campaign test send; provider calls run on the worker.
-
-    Previously this looped over up to 25 synchronous SES calls on the request
-    thread (8-50 s). Now it mirrors the operator UI: enqueue via
-    campaign_test_tasks and return immediately with progress visible in
-    taskdeck/admin.
-    """
-    from mailing.campaign_test_tasks import enqueue_campaign_test  # noqa: PLC0415 - avoid cycle
-
+    """Send only explicitly supplied test addresses and return final outcomes."""
     campaign = campaign_for_client(external_key, data, authenticated_client)
     emails = validate_test_recipient_emails(data.get("emails"))
-    result = enqueue_campaign_test(campaign, emails)
-    campaign.refresh_from_db()
-    return {
-        "campaign": campaign_payload(campaign),
-        "queued": True,
-        "recipient_count": len(emails),
-        "task_id": str(getattr(result, "id", "")),
-    }
+    if len(emails) > 2:
+        raise ApiValidationError({"emails": "too_many", "max": 2})
+    accepted = []
+    for index, email in enumerate(emails):
+        try:
+            message_id = send_campaign_test_message(campaign, email)
+        except DryRunSuppressed:
+            return {"campaign": campaign_payload(campaign), "sent_count": len(accepted),
+                    "recipients": accepted, "status": "dry_run_suppressed", "not_attempted": emails[index:]}
+        except (BotoCoreError, ClientError):
+            # An uncertain provider outcome must never trigger an automatic
+            # replay of this address or hide earlier acceptances from callers.
+            return {"campaign": campaign_payload(campaign), "sent_count": len(accepted),
+                    "recipients": accepted, "status": "unconfirmed", "unconfirmed_email": email,
+                    "not_attempted": emails[index + 1:]}
+        accepted.append({"email": email, "message_id": message_id})
+    return {"campaign": campaign_payload(campaign), "sent_count": len(accepted),
+            "recipients": accepted, "status": "provider_accepted"}
 
 
 def campaign_recipient_payload(recipient):
