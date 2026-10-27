@@ -108,6 +108,15 @@ RELAY_TRANSACTIONAL_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_TRANSA
 RELAY_TRANSACTIONAL_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_RETRY_MAX_SECONDS", "900")))
 RELAY_TRANSACTIONAL_QUEUED_ALERT_MINUTES = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_QUEUED_ALERT_MINUTES", "15")))
 RELAY_TRANSACTIONAL_ALERT_REPEAT_SECONDS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_ALERT_REPEAT_SECONDS", "300")))
+# Provider-events tasks (SES webhook, inbound mail) retry transient DB errors
+# (deadlock, serialization failure, refused/closed connection, DNS miss):
+# first in-process, then as delayed tasks with bounded exponential backoff
+# (30s, 60s, ... capped at 15 min; ~30 min in total) so a transient error never
+# leaves an event permanently FAILED. Attempts include the first one.
+RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS", "4")))
+RELAY_PROVIDER_EVENT_MAX_ATTEMPTS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_MAX_ATTEMPTS", "7")))
+RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS", "30")))
+RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS", "900")))
 RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL = os.environ.get("RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL", "").strip()
 
 # Identifies this project in the taskdeck status contract and in TaskRun rows.

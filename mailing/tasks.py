@@ -13,10 +13,12 @@ import logging
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import DatabaseError, InterfaceError
 from django.tasks import task
 from django.utils import timezone
 
 import taskdeck
+from mailing.db_retry import is_transient_db_error, run_with_db_retry
 from mailing.queue_contracts import (
     validate_campaign_email_message,
     validate_email_event_message,
@@ -163,8 +165,64 @@ def _batch_message(template_key, count):
     return f"{template_key}: {recipients}" if template_key else recipients
 
 
+def _run_provider_event(task_obj, work, payload, attempt):
+    """Run one provider-events task body, surviving transient DB errors.
+
+    A deadlock, serialization failure, refused/closed connection or DNS miss
+    aborts only the current transaction, and the provider-event services are
+    idempotent (SES events dedup on ``EmailEvent.provider_event_id``, inbound
+    mail on ``InboundMessage.message_id``) and transactional, so running them
+    again is safe. Immediate retries (``run_with_db_retry``) absorb a single
+    aborted transaction; if the error outlasts them, a delayed attempt is
+    enqueued with bounded exponential backoff instead of leaving the event
+    permanently FAILED -- django-tasks-db never retries a FAILED task. The
+    current task then returns a ``deferred`` summary rather than raising, so a
+    handled transient error does not log a traceback. After
+    ``RELAY_PROVIDER_EVENT_MAX_ATTEMPTS`` delayed attempts, or when the delayed
+    attempt cannot be enqueued, the error is raised and the task is FAILED.
+    """
+    action = task_obj.name
+    try:
+        return run_with_db_retry(
+            work,
+            action=action,
+            attempts=settings.RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS,
+            base_delay_seconds=0.5,
+            max_delay_seconds=4.0,
+        )
+    except (DatabaseError, InterfaceError) as exc:
+        if not is_transient_db_error(exc) or attempt >= settings.RELAY_PROVIDER_EVENT_MAX_ATTEMPTS:
+            raise
+        delay = min(
+            settings.RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS * 2 ** (attempt - 1),
+            settings.RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS,
+        )
+        try:
+            run_with_db_retry(
+                lambda: task_obj.using(run_after=timezone.now() + timedelta(seconds=delay)).enqueue(
+                    payload, attempt=attempt + 1
+                ),
+                action=f"{action} delayed retry enqueue",
+                attempts=settings.RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS,
+                base_delay_seconds=0.5,
+                max_delay_seconds=4.0,
+            )
+        except (DatabaseError, InterfaceError):
+            raise exc from None
+        first_line = (str(exc).strip().splitlines() or [exc.__class__.__name__])[0]
+        logger.warning(
+            "%s: retrying transient DB error as a delayed task (next attempt %d/%d in %ds): %s",
+            action,
+            attempt + 1,
+            settings.RELAY_PROVIDER_EVENT_MAX_ATTEMPTS,
+            delay,
+            first_line,
+        )
+        return {"deferred": True, "next_attempt": attempt + 1, "retry_in_seconds": delay}
+
+
 @task(queue_name="provider-events")
-def process_ses_webhook_event(payload):
+def process_ses_webhook_event(payload, *, attempt=1):
     """Apply one SES delivery/bounce/complaint notification.
 
     Imported inside the body deliberately: ``services.ses_webhooks`` imports
@@ -177,7 +235,15 @@ def process_ses_webhook_event(payload):
         process_ses_webhook,
     )
 
-    result = process_ses_webhook(normalize_ses_webhook_worker_payload(payload))
+    return _run_provider_event(
+        process_ses_webhook_event,
+        lambda: _summarise_ses_result(process_ses_webhook(normalize_ses_webhook_worker_payload(payload))),
+        payload,
+        attempt,
+    )
+
+
+def _summarise_ses_result(result):
     if result is None:
         return None
     if hasattr(result, "action"):
@@ -192,9 +258,14 @@ def process_ses_webhook_event(payload):
 
 
 @task(queue_name="provider-events")
-def process_inbound_email(payload):
+def process_inbound_email(payload, *, attempt=1):
     """Handle one inbound-mail object-storage notification."""
-    return process_inbound_s3_notification(payload)
+    return _run_provider_event(
+        process_inbound_email,
+        lambda: process_inbound_s3_notification(payload),
+        payload,
+        attempt,
+    )
 
 
 @task()
