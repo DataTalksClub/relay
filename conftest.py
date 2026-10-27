@@ -86,3 +86,15 @@ def _forbid_unscoped_joined_row_locks(monkeypatch):
 def _isolated_db_heartbeat_file(settings, tmp_path):
     """Keep loop heartbeats out of the shared /tmp default during tests."""
     settings.RELAY_DB_HEARTBEAT_FILE = str(tmp_path / "relay-db-heartbeat")
+
+
+@pytest.fixture(autouse=True)
+def _clear_aws_client_caches():
+    """Keep the process-wide AWS client/credential caches out of test state."""
+    from mailing import aws  # noqa: PLC0415 - imports require Django app registry
+
+    aws._client_cache.clear()
+    aws._credential_cache.clear()
+    yield
+    aws._client_cache.clear()
+    aws._credential_cache.clear()

@@ -12,6 +12,8 @@ from mailing.ses_routes import route_for_source
 
 _credential_cache = {}
 _credential_cache_lock = threading.Lock()
+_client_cache = {}
+_client_cache_lock = threading.Lock()
 
 
 def _assume_role(role_arn):
@@ -60,7 +62,23 @@ def aws_client(service_name, *, endpoint_url=None, task_type=None, role_arn=None
             "aws_secret_access_key": credentials["SecretAccessKey"],
             "aws_session_token": credentials["SessionToken"],
         }
-    return boto3.client(service_name, **kwargs)
+        return boto3.client(service_name, **kwargs)
+
+    # Default-chain clients (no injected credentials) pay botocore's eager
+    # instance-metadata credential probes at construction; on hosts without a
+    # metadata service that is seconds of dead connect timeouts per build
+    # before the eventual NoCredentialsError. Build one client per process
+    # instead. Deployments that provide explicit credentials keep building
+    # fresh, uncached clients, so no assumed-role credentials are ever frozen
+    # into a cached object.
+    cache_key = (service_name, kwargs["region_name"], kwargs["endpoint_url"])
+    with _client_cache_lock:
+        cached = _client_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    client = boto3.client(service_name, **kwargs)
+    with _client_cache_lock:
+        return _client_cache.setdefault(cache_key, client)
 
 
 def sqs_client(*, endpoint_url=None):
