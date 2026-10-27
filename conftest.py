@@ -80,3 +80,9 @@ def _forbid_unscoped_joined_row_locks(monkeypatch):
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(SQLCompiler, "as_sql", as_sql)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db_heartbeat_file(settings, tmp_path):
+    """Keep loop heartbeats out of the shared /tmp default during tests."""
+    settings.RELAY_DB_HEARTBEAT_FILE = str(tmp_path / "relay-db-heartbeat")
