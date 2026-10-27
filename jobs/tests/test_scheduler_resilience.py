@@ -83,7 +83,11 @@ def test_continuous_mode_survives_an_outage_longer_than_one_pass(monkeypatch):
         _run_patched(patches, interval=15.0)
 
     assert SchedulerHeartbeat.objects.count() == 1
-    assert sleeps == [1.0, 2.0, 8.0, 15.0]
+    # Two jittered exponential retry steps, then the outage pause and the
+    # scheduler's own idle interval (both un jittered).
+    assert 1.0 <= sleeps[0] <= 1.25
+    assert 2.0 <= sleeps[1] <= 2.5
+    assert sleeps[2:] == [8.0, 15.0]
 
 
 def test_a_persistent_dns_miss_fails_loudly_with_once(monkeypatch):
@@ -99,7 +103,9 @@ def test_a_persistent_dns_miss_fails_loudly_with_once(monkeypatch):
     with pytest.raises(OperationalError, match="could not translate host name"):
         _run_patched(patches, once=True)
     assert SchedulerHeartbeat.objects.count() == 0
-    assert sleeps == [1.0, 2.0]
+    # Two jittered exponential retry steps, then once-mode re-raises.
+    assert 1.0 <= sleeps[0] <= 1.25
+    assert 2.0 <= sleeps[1] <= 2.5
 
 
 def test_a_permanent_error_raises_without_retry(monkeypatch):
