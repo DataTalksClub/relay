@@ -253,24 +253,33 @@ def file_blocked(message, rule, *, bucket, key, size_bytes):
     sender is not worth reading, and a blocklist that accumulates every pitch
     ever received is a spam archive rather than a filter.
     """
-    with transaction.atomic():
-        row = InboundMessage.objects.create(
-            message_id=message.message_id,
-            state=InboundMessageState.BLOCKED,
-            subject=message.subject[:998],
-            snippet=snippet(message.text.preview, limit=BLOCKED_SNIPPET_CHARS),
-            from_header=message.from_[:998],
-            sender_address=(message.sender_addresses[0] if message.sender_addresses else "")[:320],
-            sender_domain=sender_domain(message.sender_addresses),
-            to_header=message.to[:998],
-            cc_header=message.cc[:998],
-            recipient_address=(message.recipient_addresses[0] if message.recipient_addresses else "")[:320],
-            size_bytes=size_bytes,
-            raw_bucket=bucket,
-            raw_key=key,
-            blocked_rule=rule,
-            spam_verdict=verdict(message, "x-ses-spam-verdict"),
-        )
+    try:
+        with transaction.atomic():
+            row = InboundMessage.objects.create(
+                message_id=message.message_id,
+                state=InboundMessageState.BLOCKED,
+                subject=message.subject[:998],
+                snippet=snippet(message.text.preview, limit=BLOCKED_SNIPPET_CHARS),
+                from_header=message.from_[:998],
+                sender_address=(message.sender_addresses[0] if message.sender_addresses else "")[:320],
+                sender_domain=sender_domain(message.sender_addresses),
+                to_header=message.to[:998],
+                cc_header=message.cc[:998],
+                recipient_address=(message.recipient_addresses[0] if message.recipient_addresses else "")[:320],
+                size_bytes=size_bytes,
+                raw_bucket=bucket,
+                raw_key=key,
+                blocked_rule=rule,
+                spam_verdict=verdict(message, "x-ses-spam-verdict"),
+            )
+    except IntegrityError:
+        # Already filed: a redelivered notification, or a retry of a
+        # multi-record notification whose earlier records committed.
+        existing = InboundMessage.objects.filter(message_id=message.message_id).first()
+        if existing is None:
+            raise
+        logger.info("inbound message %s was already filed; treating as replay", message.message_id)
+        return {"message_id": existing.message_id, "inbound_message_id": existing.id, "state": existing.state, "replay": True}
     return {"message_id": row.message_id, "inbound_message_id": row.id, "state": row.state, "replay": False}
 
 

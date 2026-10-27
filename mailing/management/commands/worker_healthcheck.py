@@ -54,16 +54,10 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         queue_name = (options.get("queue_name") or "").strip()
         timeout = max(1, options["timeout"])
-        self._check_round_trip(timeout)
+        pending = self._check_round_trip(timeout)
         heartbeat_age = self._check_heartbeat(options["max_heartbeat_age"])
         heartbeat = "none" if heartbeat_age is None else f"{heartbeat_age}s"
-        try:
-            # The real table name: the old hard-coded "django_tasks_dbtaskresult"
-            # never existed, so every probe reported "migrations pending".
-            with connection.cursor() as cursor:
-                cursor.execute(f"SELECT COUNT(*) FROM {connection.ops.quote_name(DBTaskResult._meta.db_table)}")
-                pending = cursor.fetchone()[0]
-        except DatabaseError:
+        if pending is None:
             # Table missing (e.g. migrations not yet applied at first start):
             # the container-entrypoint migration gate owns that case, so
             # report degraded-but-alive rather than failing the healthcheck.
@@ -73,6 +67,13 @@ class Command(BaseCommand):
         self.stdout.write(f"worker_healthcheck: alive scope={scope} task_rows={pending} heartbeat_age={heartbeat}")
 
     def _check_round_trip(self, timeout):
+        """SELECT 1 and the task-row count, both under one statement timeout.
+
+        Returns the row count, or None when the tasks table is missing (or the
+        count alone did not finish in time). The real table name: the old
+        hard-coded "django_tasks_dbtaskresult" never existed, so every probe
+        reported "migrations pending".
+        """
         if connection.vendor == "postgresql":
             options = connection.settings_dict.setdefault("OPTIONS", {})
             options["connect_timeout"] = min(int(options.get("connect_timeout") or timeout), timeout)
@@ -82,10 +83,19 @@ class Command(BaseCommand):
                     cursor.execute("SET LOCAL statement_timeout = %s", [f"{timeout}s"])
                 cursor.execute("SELECT 1")
                 row = cursor.fetchone()
+                if not row or row[0] != 1:
+                    raise CommandError("database round trip returned an unexpected result")
+                try:
+                    with transaction.atomic():
+                        table = connection.ops.quote_name(DBTaskResult._meta.db_table)
+                        cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                        return cursor.fetchone()[0]
+                except DatabaseError:
+                    return None
+        except CommandError:
+            raise
         except Exception as exc:
             raise CommandError(f"database unreachable: {exc.__class__.__name__}") from exc
-        if not row or row[0] != 1:
-            raise CommandError("database round trip returned an unexpected result")
 
     def _check_heartbeat(self, max_age):
         path = getattr(settings, "RELAY_DB_HEARTBEAT_FILE", "")

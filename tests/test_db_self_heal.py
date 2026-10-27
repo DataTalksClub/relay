@@ -202,6 +202,37 @@ def test_db_worker_batch_mode_fails_loudly_on_an_outage(sleeps):
         worker.run()
 
 
+def test_db_worker_keeps_max_tasks_when_recording_a_task_fails(sleeps):
+    heal_probe.enqueue()
+    heal_probe.enqueue()
+    worker = _worker(max_tasks=1)
+    ran = []
+
+    def run_task(db_task_result):
+        ran.append(db_task_result.id)
+        worker._run_tasks += 1  # upstream counts in ``finally`` even on failure
+        raise OperationalError("server closed the connection unexpectedly")
+
+    worker.run_task = run_task
+    with patch.object(connections, "close_all"):
+        worker.run()
+
+    assert len(ran) == 1
+    assert sleeps == [db_retry.LOOP_OUTAGE_SLEEP_SECONDS]
+
+
+def test_a_loop_stuck_in_its_first_iteration_still_leaves_a_heartbeat(monkeypatch, settings):
+    monkeypatch.setattr(db_retry, "_loop_started", False)
+    seen = []
+
+    def first_iteration():
+        seen.append(os.path.exists(settings.RELAY_DB_HEARTBEAT_FILE))
+        return "done"
+
+    assert db_retry.run_loop_iteration(first_iteration, action="test loop") == (True, "done")
+    assert seen == [True]
+
+
 @postgres_only
 def test_db_worker_reconnects_after_postgres_kills_its_connection():
     result = heal_probe.enqueue()

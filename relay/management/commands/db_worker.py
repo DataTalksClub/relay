@@ -97,7 +97,8 @@ class ResilientWorker(upstream.Worker):
                     )
                     connections.close_all()
                     db_retry.sleep(db_retry.LOOP_OUTAGE_SLEEP_SECONDS)
-                    continue
+                    # No ``continue``: upstream's run_task already counted the
+                    # task, so the --max-tasks check below must still run.
 
             if self.batch and task_result is None:
                 logger.info(

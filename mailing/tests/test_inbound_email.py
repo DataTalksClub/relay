@@ -275,6 +275,21 @@ def test_blocked_sender_is_discarded_and_recorded_without_a_body():
 
 
 @override_settings(INBOUND_EMAIL_ROUTES={}, INBOUND_EMAIL_ARTIFACT_PREFIX="processed/")
+def test_a_redelivered_blocked_message_is_a_replay_not_an_error():
+    """The provider-events task retries a whole notification after a
+    transient DB error; records already filed must not fail the retry."""
+    managed_address()
+    BlockedSender.objects.create(scope=BlockedSender.Scope.ADDRESS, value="billing@example.com")
+
+    first = deliver(s3=FakeS3(raw_message()))
+    again = deliver(s3=FakeS3(raw_message()))
+
+    assert first["replay"] is False
+    assert again == first | {"replay": True}
+    assert InboundMessage.objects.count() == 1
+
+
+@override_settings(INBOUND_EMAIL_ROUTES={}, INBOUND_EMAIL_ARTIFACT_PREFIX="processed/")
 def test_a_domain_block_catches_every_sender_on_it():
     managed_address()
     BlockedSender.objects.create(scope=BlockedSender.Scope.DOMAIN, value="example.com")

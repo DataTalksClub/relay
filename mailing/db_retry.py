@@ -68,6 +68,10 @@ def is_transient_db_error(exc: BaseException) -> bool:
 T = TypeVar("T")
 
 
+def _in_atomic_block() -> bool:
+    return any(conn.in_atomic_block for conn in connections.all(initialized_only=True))
+
+
 def run_with_db_retry(
     func: Callable[[], T],
     *,
@@ -83,12 +87,16 @@ def run_with_db_retry(
     table, a constraint violation, a programming error) raises immediately.
     Stale pooled connections are dropped before each retry so the next
     attempt reconnects instead of reusing the broken socket.
+
+    Inside an enclosing ``atomic`` block nothing is retried: the outer
+    transaction is already aborted (and closing its connection would poison
+    it), so the error goes to whoever owns that transaction.
     """
     for attempt in range(1, attempts + 1):
         try:
             return func()
         except (DatabaseError, InterfaceError) as exc:
-            if not is_transient_db_error(exc) or attempt == attempts:
+            if not is_transient_db_error(exc) or attempt == attempts or _in_atomic_block():
                 raise
             delay = min(base_delay_seconds * 2 ** (attempt - 1), max_delay_seconds)
             logger.warning(
@@ -119,6 +127,8 @@ LOOP_RETRY_ATTEMPTS = 3
 LOOP_RETRY_BASE_SECONDS = 1.0
 LOOP_RETRY_MAX_SECONDS = 8.0
 LOOP_OUTAGE_SLEEP_SECONDS = 8.0
+
+_loop_started = False
 
 
 def drop_unusable_connections() -> None:
@@ -168,6 +178,12 @@ def run_loop_iteration(func: Callable[[], T], *, action: str, once: bool = False
     iteration). Returns ``(True, result)`` after a successful iteration and
     ``(False, None)`` after a waited-out outage. Non-transient errors raise.
     """
+    global _loop_started
+    if not _loop_started:
+        # Mark the process start, so a loop stuck in its very first
+        # iteration also goes stale (a missing file only skips the check).
+        _loop_started = True
+        record_db_heartbeat()
     drop_unusable_connections()
     try:
         result = run_with_db_retry(

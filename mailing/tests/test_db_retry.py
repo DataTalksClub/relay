@@ -145,3 +145,24 @@ def test_interface_error_retries_through_the_loop(monkeypatch):
     assert run_with_db_retry(flaky, base_delay_seconds=0.5) == "recovered"
     assert len(attempts) == 2
     assert sleeps == [0.5]
+
+
+@pytest.mark.django_db
+def test_nothing_is_retried_inside_an_enclosing_transaction(monkeypatch):
+    """Retrying (and closing the connection) inside an outer atomic block
+    would poison that transaction; its owner has to retry instead."""
+    from django.db import transaction  # noqa: PLC0415
+
+    sleeps = []
+    monkeypatch.setattr(db_retry, "sleep", sleeps.append)
+    calls = []
+
+    def deadlock():
+        calls.append(1)
+        raise OperationalError("deadlock detected")
+
+    with transaction.atomic():
+        with pytest.raises(OperationalError, match="deadlock"):
+            run_with_db_retry(deadlock, attempts=3)
+    assert calls == [1]
+    assert sleeps == []
