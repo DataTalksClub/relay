@@ -339,8 +339,15 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
         .order_by("work_priority", "-updated_at", "-id")[:5]
     ]
     integration_clients = [
-        DashboardClient(scope_client, scope_client.active_api_key_count)
-        for scope_client in client_scope.select_related("organization").order_by("organization__slug", "slug")[:4]
+        DashboardClient(
+            scope_client,
+            scope_client.active_key_count
+            if hasattr(scope_client, "active_key_count")
+            else scope_client.active_api_key_count,
+        )
+        for scope_client in client_scope.select_related("organization")
+        .annotate(active_key_count=Count("api_keys", filter=Q(api_keys__revoked_at__isnull=True)))
+        .order_by("organization__slug", "slug")[:4]
     ]
 
     return DashboardContext(
@@ -410,10 +417,12 @@ def campaign_timing(campaign: Campaign) -> tuple[str, object | None]:
 
 
 def campaign_list_rows(campaigns) -> list[CampaignListRow]:
+    campaigns = list(campaigns)
+    progress_by_id = campaign_progress_map([campaign.pk for campaign in campaigns])
     rows = []
     for campaign in campaigns:
         timing_label, timing_value = campaign_timing(campaign)
-        progress = campaign_send_progress(campaign)
+        progress = progress_by_id.get(campaign.pk) or campaign_send_progress(campaign)
         rows.append(
             CampaignListRow(
                 campaign=campaign,
@@ -426,18 +435,10 @@ def campaign_list_rows(campaigns) -> list[CampaignListRow]:
     return rows
 
 
-def campaign_send_progress(campaign: Campaign) -> CampaignSendProgress:
-    recipients = CampaignRecipient.objects.filter(campaign=campaign)
-    queued_count = recipients.filter(status=CampaignRecipientStatus.PENDING).count()
-    processed_count = recipients.filter(status__in=PROCESSED_RECIPIENT_STATUSES).count()
-    sent_window = recipients.filter(sent_at__isnull=False).aggregate(
-        sent_count=Count("id"),
-        started_at=Min("sent_at"),
-        ended_at=Max("sent_at"),
-    )
-    sent_count = sent_window["sent_count"] or 0
-    started_at = sent_window["started_at"]
-    ended_at = sent_window["ended_at"]
+def _progress_from_row(row) -> CampaignSendProgress:
+    sent_count = row["sent_count"] or 0
+    started_at = row["started_at"]
+    ended_at = row["ended_at"]
     duration_seconds = None
     per_second = ""
     per_minute = ""
@@ -447,8 +448,8 @@ def campaign_send_progress(campaign: Campaign) -> CampaignSendProgress:
         per_minute = f"{(sent_count / duration_seconds) * 60:.1f}/min"
 
     return CampaignSendProgress(
-        queued_count=queued_count,
-        processed_count=processed_count,
+        queued_count=row["queued_count"] or 0,
+        processed_count=row["processed_count"] or 0,
         sent_count=sent_count,
         started_at=started_at,
         ended_at=ended_at,
@@ -457,6 +458,39 @@ def campaign_send_progress(campaign: Campaign) -> CampaignSendProgress:
         per_second=per_second,
         per_minute=per_minute,
     )
+
+
+def campaign_progress_map(campaign_ids) -> dict:
+    """One grouped query for every campaign on the page (was 3 queries/row)."""
+    ids = [pk for pk in dict.fromkeys(campaign_ids) if pk is not None]
+    if not ids:
+        return {}
+    rows = (
+        CampaignRecipient.objects.filter(campaign_id__in=ids)
+        .values("campaign_id")
+        .annotate(
+            queued_count=Count("id", filter=Q(status=CampaignRecipientStatus.PENDING)),
+            processed_count=Count("id", filter=Q(status__in=PROCESSED_RECIPIENT_STATUSES)),
+            sent_count=Count("id", filter=Q(sent_at__isnull=False)),
+            started_at=Min("sent_at"),
+            ended_at=Max("sent_at"),
+        )
+    )
+    return {row["campaign_id"]: _progress_from_row(row) for row in rows}
+
+
+def campaign_send_progress(campaign: Campaign) -> CampaignSendProgress:
+    row = (
+        CampaignRecipient.objects.filter(campaign=campaign)
+        .aggregate(
+            queued_count=Count("id", filter=Q(status=CampaignRecipientStatus.PENDING)),
+            processed_count=Count("id", filter=Q(status__in=PROCESSED_RECIPIENT_STATUSES)),
+            sent_count=Count("id", filter=Q(sent_at__isnull=False)),
+            started_at=Min("sent_at"),
+            ended_at=Max("sent_at"),
+        )
+    )
+    return _progress_from_row(row)
 
 
 def format_duration(seconds: int | None) -> str:
@@ -474,14 +508,14 @@ def format_duration(seconds: int | None) -> str:
     return " ".join(parts)
 
 
-def campaign_stats(campaign: Campaign) -> list[Stat]:
+def campaign_stats(campaign: Campaign, progress: CampaignSendProgress | None = None) -> list[Stat]:
     failed_count = CampaignRecipient.objects.filter(
         campaign=campaign,
         status=CampaignRecipientStatus.FAILED,
     ).count()
     recipient_count = campaign.recipient_count
     sent_count = campaign.sent_count
-    progress = campaign_send_progress(campaign)
+    progress = progress or campaign_send_progress(campaign)
 
     return [
         Stat("recipients", "Recipients", recipient_count),
@@ -506,8 +540,8 @@ def campaign_stats(campaign: Campaign) -> list[Stat]:
     ]
 
 
-def campaign_stat_groups(campaign: Campaign) -> dict[str, list[Stat]]:
-    stats_by_key = {stat.key: stat for stat in campaign_stats(campaign)}
+def campaign_stat_groups(campaign: Campaign, progress: CampaignSendProgress | None = None) -> dict[str, list[Stat]]:
+    stats_by_key = {stat.key: stat for stat in campaign_stats(campaign, progress)}
     return {
         "delivery": [stats_by_key[key] for key in ("sent", "delivered", "bounces", "complaints", "failures")],
         "engagement": [stats_by_key[key] for key in ("unique_opens", "unique_clicks", "unsubscribes")],
@@ -1068,53 +1102,50 @@ def contact_metrics(contact: Contact, client: Client | None = None) -> list[Cont
         campaign_rows = campaign_rows.filter(campaign__client=client)
         transactional_rows = transactional_rows.filter(client=client)
         event_rows = event_rows.filter(client=client)
+    campaign_marks = campaign_rows.aggregate(
+        sent=Max("sent_at"),
+        opened=Max("first_opened_at"),
+        clicked=Max("first_clicked_at"),
+    )
+    transactional_marks = transactional_rows.aggregate(
+        sent=Max("sent_at"),
+        opened=Max("first_opened_at"),
+        clicked=Max("first_clicked_at"),
+    )
+    event_marks = event_rows.aggregate(
+        bounce=Max("created_at", filter=Q(event_type=EmailEventType.BOUNCE)),
+        complaint=Max("created_at", filter=Q(event_type=EmailEventType.COMPLAINT)),
+        unsubscribe=Max("created_at", filter=Q(event_type=EmailEventType.UNSUBSCRIBE)),
+    )
     return [
         ContactMetric(
             "Last sent",
-            latest_datetime(
-                campaign_rows.aggregate(value=Max("sent_at"))["value"],
-                transactional_rows.aggregate(value=Max("sent_at"))["value"],
-            ),
+            latest_datetime(campaign_marks["sent"], transactional_marks["sent"]),
             "success",
         ),
         ContactMetric(
             "Last opened",
-            latest_datetime(
-                campaign_rows.aggregate(value=Max("first_opened_at"))["value"],
-                transactional_rows.aggregate(value=Max("first_opened_at"))["value"],
-            ),
+            latest_datetime(campaign_marks["opened"], transactional_marks["opened"]),
             "success",
         ),
         ContactMetric(
             "Last clicked",
-            latest_datetime(
-                campaign_rows.aggregate(value=Max("first_clicked_at"))["value"],
-                transactional_rows.aggregate(value=Max("first_clicked_at"))["value"],
-            ),
+            latest_datetime(campaign_marks["clicked"], transactional_marks["clicked"]),
             "success",
         ),
         ContactMetric(
             "Last bounce",
-            latest_datetime(
-                contact.hard_bounced_at,
-                event_rows.filter(event_type=EmailEventType.BOUNCE).aggregate(value=Max("created_at"))["value"],
-            ),
+            latest_datetime(contact.hard_bounced_at, event_marks["bounce"]),
             "danger",
         ),
         ContactMetric(
             "Last complaint",
-            latest_datetime(
-                contact.complained_at,
-                event_rows.filter(event_type=EmailEventType.COMPLAINT).aggregate(value=Max("created_at"))["value"],
-            ),
+            latest_datetime(contact.complained_at, event_marks["complaint"]),
             "danger",
         ),
         ContactMetric(
             "Last unsubscribe",
-            latest_datetime(
-                contact.global_unsubscribed_at,
-                event_rows.filter(event_type=EmailEventType.UNSUBSCRIBE).aggregate(value=Max("created_at"))["value"],
-            ),
+            latest_datetime(contact.global_unsubscribed_at, event_marks["unsubscribe"]),
             "danger",
         ),
     ]
@@ -1396,6 +1427,9 @@ def audience_detail_queryset() -> QuerySet[Audience]:
 
 
 def audience_list_rows(audiences, client: Client | None = None) -> list[AudienceListRow]:
+    audiences = list(audiences)
+    campaigns_by_audience = _latest_campaign_by_audience([audience.pk for audience in audiences], client)
+    events_by_audience = _latest_event_by_audience([audience.pk for audience in audiences], client)
     return [
         AudienceListRow(
             audience=audience,
@@ -1404,15 +1438,65 @@ def audience_list_rows(audiences, client: Client | None = None) -> list[Audience
             inactive_count=audience_inactive_count(audience),
             suppressed_count=audience_suppressed_count(audience),
             campaign_count=audience.campaign_count,
-            recent_campaign=campaign_queryset(client).filter(audience=audience).order_by("-updated_at", "-id").first(),
-            recent_event=(
-                EmailEvent.objects.filter(audience=audience, client=client).order_by("-created_at", "-id").first()
-                if client is not None
-                else EmailEvent.objects.filter(audience=audience).order_by("-created_at", "-id").first()
-            ),
+            recent_campaign=campaigns_by_audience.get(audience.pk),
+            recent_event=events_by_audience.get(audience.pk),
         )
         for audience in audiences
     ]
+
+
+def _latest_campaign_by_audience(audience_ids, client: Client | None = None) -> dict:
+    """Latest campaign per audience in 2 bounded queries (was 1 query/row)."""
+    ids = [pk for pk in dict.fromkeys(audience_ids) if pk is not None]
+    if not ids:
+        return {}
+    scope = Campaign.objects.filter(audience_id__in=ids)
+    if client is not None:
+        scope = scope.filter(client=client)
+    latest_marks = dict(
+        scope.values("audience_id").annotate(mark=Max("updated_at")).values_list("audience_id", "mark")
+    )
+    if not latest_marks:
+        return {}
+    candidates = scope.filter(
+        audience_id__in=list(latest_marks),
+        updated_at__in=[mark for mark in latest_marks.values() if mark is not None],
+    ).select_related("client", "audience")
+    best: dict = {}
+    for campaign in candidates:
+        if campaign.updated_at != latest_marks.get(campaign.audience_id):
+            continue
+        current = best.get(campaign.audience_id)
+        if current is None or campaign.pk > current.pk:
+            best[campaign.audience_id] = campaign
+    return best
+
+
+def _latest_event_by_audience(audience_ids, client: Client | None = None) -> dict:
+    """Latest event per audience in 2 bounded queries (was 1 query/row)."""
+    ids = [pk for pk in dict.fromkeys(audience_ids) if pk is not None]
+    if not ids:
+        return {}
+    scope = EmailEvent.objects.filter(audience_id__in=ids)
+    if client is not None:
+        scope = scope.filter(client=client)
+    latest_marks = dict(
+        scope.values("audience_id").annotate(mark=Max("created_at")).values_list("audience_id", "mark")
+    )
+    if not latest_marks:
+        return {}
+    candidates = scope.filter(
+        audience_id__in=list(latest_marks),
+        created_at__in=[mark for mark in latest_marks.values() if mark is not None],
+    ).select_related("contact", "campaign", "client", "audience")
+    best: dict = {}
+    for event in candidates:
+        if event.created_at != latest_marks.get(event.audience_id):
+            continue
+        current = best.get(event.audience_id)
+        if current is None or event.pk > current.pk:
+            best[event.audience_id] = event
+    return best
 
 
 def audience_contacts(audience: Audience) -> QuerySet[Contact]:

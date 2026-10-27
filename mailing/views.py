@@ -444,10 +444,10 @@ def transactional_message_detail(request, message_id):
     ]
     callback_rows = ClientCallback.objects.filter(
         transactional_message=message,
-    ).order_by("sequence")
+    ).select_related("endpoint", "email_event", "transactional_message").order_by("sequence")
     cmp_callback_rows = CmpCallback.objects.filter(
         email_event__transactional_message=message,
-    ).order_by("-created_at", "-id")
+    ).select_related("email_event", "contact", "client", "audience").order_by("-created_at", "-id")
     badge = Badge(message.get_status_display(), delivery_tone(message.status))
     if message.status == TransactionalMessageStatus.SENT:
         badge = Badge("Delivered", "success") if message.delivered_at else Badge("Sent to provider", "neutral")
@@ -777,7 +777,8 @@ def campaign_detail(request, campaign_id):
         for row in (estimate.preview_rows if estimate else [])
     ]
     confirm_queue = request.GET.get("confirm_send") == "1" and campaign.status == CampaignStatus.DRAFT
-    stat_groups = campaign_stat_groups(campaign)
+    send_progress = campaign_send_progress(campaign)
+    stat_groups = campaign_stat_groups(campaign, send_progress)
     send_issues = campaign_send_issues(campaign)
     preview_error = ""
     try:
@@ -807,7 +808,7 @@ def campaign_detail(request, campaign_id):
             "confirm_queue": confirm_queue,
             "estimate": estimate,
             "stat_groups": stat_groups,
-            "send_progress": campaign_send_progress(campaign),
+            "send_progress": send_progress,
             "recipients": recipients,
             "recipient_rows": recipient_rows,
             "preview_rows": preview_rows,

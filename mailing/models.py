@@ -495,6 +495,7 @@ class Campaign(TimeStampedModel):
         indexes = [
             models.Index(fields=["client", "audience", "status"], name="campaign_client_aud_status_idx"),
             models.Index(fields=["scheduled_at"], name="campaign_scheduled_at_idx"),
+            models.Index(fields=["client", "status", "updated_at"], name="campaign_cli_status_upd_idx"),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -583,6 +584,7 @@ class CampaignRecipient(TimeStampedModel):
         indexes = [
             models.Index(fields=["campaign", "status"], name="campaign_recip_status_idx"),
             models.Index(fields=["contact", "sent_at"], name="camp_recip_contact_sent_idx"),
+            models.Index(fields=["campaign", "sent_at"], name="camp_recip_sent_idx"),
         ]
 
     def __str__(self):
@@ -813,6 +815,8 @@ class EmailEvent(models.Model):
             models.Index(fields=["campaign", "event_type", "created_at"], name="email_events_campaign_type_idx"),
             models.Index(fields=["campaign_recipient", "event_type"], name="email_evt_recipient_type_idx"),
             models.Index(fields=["client", "created_at"], name="email_evt_client_created_idx"),
+            models.Index(fields=["audience", "client", "created_at"], name="email_evt_aud_cli_created_idx"),
+            models.Index(fields=["audience", "event_type", "created_at"], name="email_evt_aud_type_created_idx"),
             models.Index(fields=["provider_event_id"], name="email_events_provider_evt_idx"),
         ]
         constraints = [

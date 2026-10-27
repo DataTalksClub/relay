@@ -168,6 +168,15 @@ if TESTING:
 
 ROOT_URLCONF = "relay.urls"
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "relay-default",
+        "TIMEOUT": 300,
+        "OPTIONS": {"MAX_ENTRIES": 2000},
+    }
+}
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
