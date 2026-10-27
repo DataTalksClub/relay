@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Case, CharField, Count, Exists, F, OuterRef, Q, Sum, Value, When
+from django.db.models import Case, CharField, Count, Exists, F, FilteredRelation, OuterRef, Q, Sum, Value, When
 from django.utils import timezone
 
 import taskdeck
@@ -205,28 +205,35 @@ def snapshot_campaign_recipients(campaign):
     )
     include_tags = normalize_tag_filter(campaign.include_tags)
     exclude_tags = normalize_tag_filter(campaign.exclude_tags)
-    subscriptions = Subscription.objects.filter(contact_id=OuterRef("pk"), audience_id=campaign.audience_id)
-    audience_subs = subscriptions.filter(client__isnull=True)
-    client_subs = subscriptions.filter(client_id=campaign.client_id)
+    candidates = _candidate_contacts(campaign, include_tags, exclude_tags).annotate(
+        snapshot_audience=FilteredRelation("subscriptions", condition=Q(
+            subscriptions__audience_id=campaign.audience_id, subscriptions__client__isnull=True,
+        )),
+        snapshot_client=FilteredRelation("subscriptions", condition=Q(
+            subscriptions__audience_id=campaign.audience_id, subscriptions__client_id=campaign.client_id,
+        )),
+    )
     reason = CampaignRecipientSkipReason
     rules = [
         When(hard_bounced_at__isnull=False, then=Value(reason.HARD_BOUNCE)),
         When(complained_at__isnull=False, then=Value(reason.COMPLAINT)),
         When(global_unsubscribed_at__isnull=False, then=Value(reason.GLOBAL_UNSUBSCRIBE)),
         When(email_validation_status__in=NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES, then=Value(reason.INVALID_EMAIL)),
-        When(Q(verified_at__isnull=True)
-             & ~Exists(audience_subs.filter(verified_at__isnull=False))
-             & ~Exists(client_subs.filter(verified_at__isnull=False)), then=Value(reason.UNVERIFIED)),
-        When(Exists(audience_subs.filter(status=SubscriptionStatus.UNSUBSCRIBED)), then=Value(reason.AUDIENCE_UNSUBSCRIBE)),
-        When(Exists(client_subs.filter(status=SubscriptionStatus.UNSUBSCRIBED)), then=Value(reason.CLIENT_UNSUBSCRIBE)),
-        When(~Exists(client_subs.filter(status=SubscriptionStatus.SUBSCRIBED)), then=Value(reason.SUPPRESSED)),
+        When(verified_at__isnull=True, snapshot_audience__verified_at__isnull=True,
+             snapshot_client__verified_at__isnull=True, then=Value(reason.UNVERIFIED)),
+        When(snapshot_audience__status=SubscriptionStatus.UNSUBSCRIBED, then=Value(reason.AUDIENCE_UNSUBSCRIBE)),
+        When(snapshot_client__status=SubscriptionStatus.UNSUBSCRIBED, then=Value(reason.CLIENT_UNSUBSCRIBE)),
+        When(Q(snapshot_client__status__isnull=True) | ~Q(snapshot_client__status=SubscriptionStatus.SUBSCRIBED),
+             then=Value(reason.SUPPRESSED)),
     ]
     if campaign.category_tag:
-        rules.append(When(Exists(CategoryPreference.objects.filter(
-            contact_id=OuterRef("pk"), audience_id=campaign.audience_id, client_id=campaign.client_id,
-            tag=campaign.category_tag, enabled=False,
-        )), then=Value(reason.CLIENT_UNSUBSCRIBE)))
-    candidates = _candidate_contacts(campaign, include_tags, exclude_tags).filter(
+        candidates = candidates.annotate(snapshot_category=FilteredRelation("category_preferences", condition=Q(
+            category_preferences__audience_id=campaign.audience_id,
+            category_preferences__client_id=campaign.client_id,
+            category_preferences__tag=campaign.category_tag, category_preferences__enabled=False,
+        )))
+        rules.append(When(snapshot_category__pk__isnull=False, then=Value(reason.CLIENT_UNSUBSCRIBE)))
+    candidates = candidates.filter(
         ~Exists(CampaignRecipient.objects.filter(campaign_id=campaign.pk, contact_id=OuterRef("pk")))
     ).annotate(snapshot_skip=Case(*rules, default=Value(""), output_field=CharField()))
     created_count = insert_select(CampaignRecipient, candidates, {
