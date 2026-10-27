@@ -2,6 +2,7 @@ from time import sleep
 
 from django.core.management.base import BaseCommand
 
+from mailing.db_retry import run_loop_iteration
 from mailing.services.mailchimp import process_due_mailchimp_syncs
 
 
@@ -35,7 +36,11 @@ class Command(BaseCommand):
 
         self.stdout.write("Starting Mailchimp sync dispatcher")
         while True:
-            result = process_due_mailchimp_syncs(limit=batch_size)
+            completed, result = run_loop_iteration(
+                lambda: process_due_mailchimp_syncs(limit=batch_size), action="Mailchimp sync dispatcher", once=options["once"]
+            )
+            if not completed:
+                continue
             self.stdout.write("processed={processed} delivered={delivered} failed={failed}".format(**result))
             if options["once"]:
                 return

@@ -1,7 +1,4 @@
-import logging
-
 from django.core.management.base import BaseCommand
-from django.db import DatabaseError, InterfaceError
 
 from jobs.scheduling import run_due_schedules
 from jobs.services import (
@@ -11,21 +8,16 @@ from jobs.services import (
     recover_unenqueued_jobs,
 )
 from mailing import db_retry
-from mailing.db_retry import is_transient_db_error
 from mailing.services.campaigns import dispatch_due_campaigns
 from mailing.services.ses_monitor import check_ses_delivery_gap
 from mailing.services.transactional_monitor import check_transactional_health
 from mailing.services.transactional_reliability import alert_stuck_transactional_messages
 
-logger = logging.getLogger(__name__)
-
 # One pass retries a short outage (a Coolify network reattach or a Postgres
 # IP churn costs seconds, not minutes) instead of killing the loop: an
 # exited scheduler leaves a stale heartbeat while the container looks
 # healthy, which is exactly the invisible stall the watchdog watches for.
-PASS_RETRY_ATTEMPTS = 3
-PASS_RETRY_BASE_SECONDS = 1.0
-PASS_RETRY_MAX_SECONDS = 8.0
+# Retry/backoff policy: mailing.db_retry.run_loop_iteration.
 
 
 class Command(BaseCommand):
@@ -64,26 +56,15 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         while True:
-            try:
-                db_retry.run_with_db_retry(
-                    self._run_single_pass,
-                    action="relay scheduler pass",
-                    attempts=PASS_RETRY_ATTEMPTS,
-                    base_delay_seconds=PASS_RETRY_BASE_SECONDS,
-                    max_delay_seconds=PASS_RETRY_MAX_SECONDS,
-                )
-            except (DatabaseError, InterfaceError) as exc:
-                if not is_transient_db_error(exc):
-                    raise
-                # Still failing after the pass-level retries: a longer outage
-                # than one pass can absorb. In continuous mode wait out the
-                # outage instead of exiting; with --once there is no next
-                # pass, so fail loudly. Both sleeps go through db_retry.sleep
-                # so tests can freeze them.
-                if options["once"]:
-                    raise
-                logger.warning("relay scheduler pass still failing; waiting out the outage: %s", exc)
-                db_retry.sleep(PASS_RETRY_MAX_SECONDS)
+            # Drops a connection that broke or aged out since the last pass,
+            # retries transient DB errors (1s, 2s), and waits out a longer
+            # outage instead of exiting; with --once there is no next pass,
+            # so it fails loudly. All sleeps go through db_retry.sleep so
+            # tests can freeze them.
+            completed, _ = db_retry.run_loop_iteration(
+                self._run_single_pass, action="relay scheduler pass", once=options["once"]
+            )
+            if not completed:
                 continue
             if options["once"]:
                 return

@@ -2,6 +2,7 @@ import time
 
 from django.core.management.base import BaseCommand
 
+from mailing.db_retry import run_loop_iteration
 from mailing.services.inbound_routing import process_due_deliveries
 
 
@@ -13,7 +14,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         while True:
-            process_due_deliveries()
+            completed, _ = run_loop_iteration(
+                process_due_deliveries, action="inbound delivery dispatcher", once=options['once']
+            )
+            if not completed:
+                continue
             if options['once']:
                 return
             time.sleep(2)

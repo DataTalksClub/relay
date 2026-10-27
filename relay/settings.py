@@ -81,6 +81,9 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django_tasks",
+    # Before django_tasks_db: relay's db_worker command overrides upstream's
+    # with database self-healing (relay/management/commands/db_worker.py).
+    "relay",
     "django_tasks_db",
     "taskdeck",
     "mailing",
@@ -211,6 +214,26 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
+
+if DATABASES["default"]["ENGINE"].endswith("postgresql"):
+    # Fail fast and detect dead peers instead of hanging on a stale socket.
+    # On 2026-10-22/23 Coolify recreated Postgres with a new IP; long-lived
+    # workers kept sockets to the old one. connect_timeout bounds a connect to
+    # an address that no longer answers; TCP keepalives make the kernel notice
+    # an idle connection whose peer vanished (30s idle + 3 x 10s probes), so the
+    # next health check reconnects through fresh DNS. No IP is ever pinned.
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"] = {
+        "connect_timeout": int(os.environ.get("RELAY_DB_CONNECT_TIMEOUT_SECONDS", "5")),
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+    } | DATABASES["default"]["OPTIONS"]
+
+# Long-running loops touch this after every iteration that reached the
+# database; worker_healthcheck fails when it goes stale (see mailing/db_retry.py).
+RELAY_DB_HEARTBEAT_FILE = os.environ.get("RELAY_DB_HEARTBEAT_FILE", "/tmp/relay-db-heartbeat")
 
 if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
     # On a single host this database has many writers: two gunicorn workers,

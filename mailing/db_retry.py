@@ -16,6 +16,7 @@ after an SES send should succeed on an immediate retry, and loops such as
 """
 
 import logging
+import os
 from collections.abc import Callable
 from time import sleep
 from typing import TypeVar
@@ -101,3 +102,92 @@ def run_with_db_retry(
             connections.close_all()
             sleep(delay)
     raise AssertionError("unreachable: retry loop always returns or raises")
+
+
+# --- Long-running loops ------------------------------------------------------
+#
+# The 2026-10-22/23 incident: Coolify recreated the Postgres container with a
+# new IP, and the long-lived workers kept their persistent connections
+# (CONN_MAX_AGE=600) to the old one. Request/response code gets
+# ``close_old_connections`` for free from Django's request signals; a bare
+# ``while True`` loop never does, so a dead socket was never dropped and DNS was
+# never re-resolved. Every loop iteration now drops connections that errored or
+# aged out; with ``CONN_HEALTH_CHECKS`` the next query also pings a reused
+# connection first, and a reconnect resolves the host name afresh.
+
+LOOP_RETRY_ATTEMPTS = 3
+LOOP_RETRY_BASE_SECONDS = 1.0
+LOOP_RETRY_MAX_SECONDS = 8.0
+LOOP_OUTAGE_SLEEP_SECONDS = 8.0
+
+
+def drop_unusable_connections() -> None:
+    """``close_old_connections`` for loops: drop broken or expired connections.
+
+    Skips a connection inside an atomic block (only a test wraps a loop in
+    one; closing there would poison the surrounding transaction).
+    """
+    for conn in connections.all(initialized_only=True):
+        if not conn.in_atomic_block:
+            conn.close_if_unusable_or_obsolete()
+
+
+def record_db_heartbeat() -> None:
+    """Touch the heartbeat file after an iteration that reached the database.
+
+    ``worker_healthcheck`` (the container healthcheck, run inside the same
+    container) fails when this file goes stale, so a worker whose own
+    connection is stuck turns the container unhealthy even though a fresh
+    ``docker exec`` process can still reach Postgres.
+    """
+    from django.conf import settings  # noqa: PLC0415 - keep this module importable without settings
+
+    path = getattr(settings, "RELAY_DB_HEARTBEAT_FILE", "")
+    if not path:
+        return
+    try:
+        with open(path, "a"):
+            pass
+        os.utime(path, None)
+    except OSError as exc:
+        logger.warning("could not write DB heartbeat file %s: %s", path, exc)
+
+
+def first_line(exc: BaseException) -> str:
+    """The first line of a DB error (psycopg2 appends DETAIL/HINT lines)."""
+    lines = str(exc).strip().splitlines()
+    return lines[0] if lines else exc.__class__.__name__
+
+
+def run_loop_iteration(func: Callable[[], T], *, action: str, once: bool = False) -> tuple[bool, T | None]:
+    """Run one iteration of a long-running loop with DB self-healing.
+
+    Drops unusable connections first, retries transient DB errors with
+    backoff, and if the outage outlasts the retries waits it out instead of
+    letting the loop die (``once`` mode re-raises: there is no next
+    iteration). Returns ``(True, result)`` after a successful iteration and
+    ``(False, None)`` after a waited-out outage. Non-transient errors raise.
+    """
+    drop_unusable_connections()
+    try:
+        result = run_with_db_retry(
+            func,
+            action=action,
+            attempts=LOOP_RETRY_ATTEMPTS,
+            base_delay_seconds=LOOP_RETRY_BASE_SECONDS,
+            max_delay_seconds=LOOP_RETRY_MAX_SECONDS,
+        )
+    except (DatabaseError, InterfaceError) as exc:
+        if once or not is_transient_db_error(exc):
+            raise
+        logger.warning(
+            "%s: retrying transient DB error after an outage pause of %.0fs: %s",
+            action,
+            LOOP_OUTAGE_SLEEP_SECONDS,
+            first_line(exc),
+        )
+        connections.close_all()
+        sleep(LOOP_OUTAGE_SLEEP_SECONDS)
+        return False, None
+    record_db_heartbeat()
+    return True, result

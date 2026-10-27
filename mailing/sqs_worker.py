@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from time import sleep
 
 from mailing.aws import sqs_client
+from mailing.db_retry import drop_unusable_connections
 from mailing.sqs import records_from_messages
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,11 @@ class SqsWorker:
 
     def run_forever(self, *, should_stop, idle_sleep=0):
         while not should_stop():
+            # A long-lived drain never sees Django's request signals: drop a
+            # connection that broke (e.g. Postgres moved to a new IP) or aged
+            # out, so the next enqueue reconnects through fresh DNS instead of
+            # failing every batch on a dead socket.
+            drop_unusable_connections()
             result = self.run_once()
             yield result
             if result.received == 0 and idle_sleep:

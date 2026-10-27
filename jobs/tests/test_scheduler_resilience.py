@@ -15,7 +15,9 @@ from django.db import OperationalError
 from jobs.models import SchedulerHeartbeat
 from mailing import db_retry
 
-pytestmark = pytest.mark.django_db
+# transaction=True: the retry path closes connections, which a wrapping
+# test transaction would not survive on PostgreSQL.
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def _patched_pass(**overrides):
