@@ -136,7 +136,7 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
     # in-flight provider call and claim no message was sent.
     campaign = Campaign.objects.select_for_update().get(pk=campaign_id)
     recipient = (
-        CampaignRecipient.objects.select_for_update()
+        CampaignRecipient.objects.select_for_update(of=("self",))
         .select_related("campaign", "campaign__client", "campaign__audience", "contact")
         .get(pk=recipient_id, campaign_id=campaign_id)
     )

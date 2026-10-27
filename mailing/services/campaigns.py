@@ -144,12 +144,12 @@ def retry_campaign_recipient(campaign, recipient_id):
     queueing, the batch is dispatched only after the transaction commits.
     """
     campaign = (
-        Campaign.objects.select_for_update()
+        Campaign.objects.select_for_update(of=("self",))
         .select_related("audience", "client")
         .get(pk=campaign.pk)
     )
     recipient = (
-        CampaignRecipient.objects.select_for_update()
+        CampaignRecipient.objects.select_for_update(of=("self",))
         .select_related("contact")
         .get(pk=recipient_id, campaign=campaign)
     )
@@ -199,7 +199,7 @@ def retry_campaign_recipient(campaign, recipient_id):
 @transaction.atomic
 def snapshot_campaign_recipients(campaign):
     campaign = (
-        Campaign.objects.select_for_update()
+        Campaign.objects.select_for_update(of=("self",))
         .select_related("audience", "client")
         .get(pk=campaign.pk)
     )
@@ -505,7 +505,7 @@ def _enqueue_scheduled_dispatch(dispatch_id):
     """
     try:
         with transaction.atomic():
-            dispatch = CampaignDispatch.objects.select_for_update().select_related("campaign").get(pk=dispatch_id)
+            dispatch = CampaignDispatch.objects.select_for_update(of=("self", "campaign")).select_related("campaign").get(pk=dispatch_id)
             if dispatch.enqueued_at is not None:
                 return False
             if dispatch.campaign.status != CampaignStatus.CANCELLED:

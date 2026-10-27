@@ -35,7 +35,7 @@ def record_open(raw_token):
     # Match sender/cancellation lock order before updating campaign counters.
     Campaign.objects.select_for_update().get(pk=recipient.campaign_id)
     recipient = (
-        CampaignRecipient.objects.select_for_update()
+        CampaignRecipient.objects.select_for_update(of=("self",))
         .select_related(
             "campaign",
             "campaign__client",
@@ -69,7 +69,7 @@ def record_click(raw_token, destination_url):
     # Match sender/cancellation lock order before updating campaign counters.
     Campaign.objects.select_for_update().get(pk=recipient.campaign_id)
     recipient = (
-        CampaignRecipient.objects.select_for_update()
+        CampaignRecipient.objects.select_for_update(of=("self",))
         .select_related(
             "campaign",
             "campaign__client",
@@ -103,7 +103,7 @@ def apply_unsubscribe(raw_token, scope):
     # Match sender/cancellation lock order before updating campaign counters.
     Campaign.objects.select_for_update().get(pk=recipient.campaign_id)
     recipient = (
-        CampaignRecipient.objects.select_for_update()
+        CampaignRecipient.objects.select_for_update(of=("self",))
         .select_related(
             "campaign",
             "campaign__client",

@@ -534,14 +534,14 @@ def correlate_ses_message(ses_message_id):
     candidates = list(CampaignRecipient.objects.filter(ses_message_id=ses_message_id)
                       .values("pk", "campaign_id")[:2])
     transactional_messages = (
-        TransactionalMessage.objects.select_for_update()
+        TransactionalMessage.objects.select_for_update(of=("self",))
         .select_related("client", "contact")
         .filter(ses_message_id=ses_message_id)
     )
     if len(candidates) == 1 and not transactional_messages.exists():
         candidate = candidates[0]
         Campaign.objects.select_for_update().get(pk=candidate["campaign_id"])
-        return (CampaignRecipient.objects.select_for_update()
+        return (CampaignRecipient.objects.select_for_update(of=("self",))
                 .select_related("campaign", "campaign__client", "campaign__audience", "contact")
                 .filter(pk=candidate["pk"], ses_message_id=ses_message_id).first())
     if transactional_messages.count() == 1 and not candidates:

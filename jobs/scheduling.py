@@ -163,7 +163,7 @@ def run_due_schedules(*, limit=100, now=None):
     for _ in range(limit):
         with transaction.atomic():
             schedule = (
-                Schedule.objects.select_for_update(skip_locked=True)
+                Schedule.objects.select_for_update(skip_locked=True, of=("self",))
                 .select_related("client")
                 .filter(enabled=True, next_run_at__lte=now)
                 .order_by("next_run_at")

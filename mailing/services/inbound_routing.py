@@ -182,7 +182,7 @@ def process_due_deliveries(*, limit=25):
     ids = list(InboundDelivery.objects.filter(status=InboundDelivery.Status.PENDING, next_attempt_at__lte=timezone.now()).order_by('pk').values_list('pk', flat=True)[:limit])
     for pk in ids:
         with transaction.atomic():
-            row = InboundDelivery.objects.select_for_update(skip_locked=True).select_related('mailbox__domain__client', 'message').filter(pk=pk, status=InboundDelivery.Status.PENDING, next_attempt_at__lte=timezone.now()).first()
+            row = InboundDelivery.objects.select_for_update(skip_locked=True, of=("self",)).select_related('mailbox__domain__client', 'message').filter(pk=pk, status=InboundDelivery.Status.PENDING, next_attempt_at__lte=timezone.now()).first()
             if row is None:
                 continue
             if not row.mailbox.enabled or not row.mailbox.domain.enabled:

@@ -792,7 +792,7 @@ def parse_import_members(content):
 
 @transaction.atomic
 def apply_import_members(job_id, parsed_members, *, content_sha256):
-    job = RecipientListImportJob.objects.select_for_update().select_related("client", "audience").get(pk=job_id)
+    job = RecipientListImportJob.objects.select_for_update(of=("self",)).select_related("client", "audience").get(pk=job_id)
     recipient_list, _ = RecipientList.objects.update_or_create(
         client=job.client,
         audience=job.audience,

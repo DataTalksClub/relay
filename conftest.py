@@ -55,3 +55,28 @@ def _host_port_from_endpoint(endpoint):
         return host_port, 443 if endpoint.startswith("https://") else 80
     host, port = host_port.rsplit(":", 1)
     return host, int(port)
+
+
+@pytest.fixture(autouse=True)
+def _forbid_unscoped_joined_row_locks(monkeypatch):
+    """Fail any query that joins with select_related and locks without ``of=``.
+
+    Runtime half of ``tests/test_select_for_update_guard.py``: it catches
+    querysets assembled over several statements, which the AST walk cannot
+    follow. On PostgreSQL such a query locks every joined row (contacts,
+    clients, ...) and deadlocked concurrent sends in production.
+    """
+    from django.db.models.sql.compiler import SQLCompiler  # noqa: PLC0415 - Django must be configured first
+
+    original = SQLCompiler.as_sql
+
+    def as_sql(self, *args, **kwargs):
+        query = self.query
+        if query.select_for_update and query.select_related and not query.select_for_update_of:
+            raise AssertionError(
+                f"select_for_update() on {query.model.__name__} joins select_related rows without of=; "
+                "pass of=('self',) so only the intended rows are locked"
+            )
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(SQLCompiler, "as_sql", as_sql)
