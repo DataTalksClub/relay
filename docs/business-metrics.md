@@ -22,6 +22,13 @@ event rows, not distinct messages. A day without sent events has an undefined
 rate and produces no stored row or VM sample. A stream with sends and no
 bounces/complaints produces a zero rate. A campaign day without recipients
 also produces no row; missing data must not be presented as a measured rate.
+While the `campaign_recipients` table has no rows at all,
+`relay_campaign_recipients` is **expected-empty**: it yields no `metric_daily`
+rows and no `biz_relay_campaign_recipients` VM series, and this state is the
+accepted baseline (developer decision, 2026-10-26). The SQL is a plain
+aggregate over the source, so the series reappears automatically on the next
+collection that covers a UTC day with qualifying recipients — non-pending
+rows counted by the day rules above — with no collector change needed.
 
 Labels contain only the dimensions above. Email addresses, user IDs, contact
 IDs, IPs and message/campaign identifiers are never labels. There are no alert
@@ -75,7 +82,9 @@ For an instant query, use yesterday at 00:01 UTC because imported samples
 have midnight timestamps. Check the source's campaign counts and scoped sent
 events when a series is absent. Do not create sample campaign recipients or
 send events to satisfy a visibility check. Record missing observations as an
-acceptance blocker if all four series are required.
+acceptance blocker if all four series are required, except
+`biz_relay_campaign_recipients` while `campaign_recipients` is empty: that
+absence is the expected-empty baseline above, not a blocker.
 
 The shared suite is `biz-metrics/tests/` in coolify-observability. Set
 `BIZMETRICS_TEST_DSN` to an isolated PostgreSQL test database to exercise the
