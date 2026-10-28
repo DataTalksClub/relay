@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 
 EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 SECRET_PATTERN = re.compile(
-    r"(?i)\b(api_key|token|secret|password|signature|authorization|access_key|private_key)\b\s*[:=]\s*['\"]?[^\s,'\"]+['\"]?"
+    r"(?i)\b(api_key|token|secret|password|signature|authorization|access_key|private_key)\b"
+    r"['\"]?\s*[:=]\s*"
+    r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:Bearer|Basic)\s+[^\s,'";]+|[^\s,'";]+)'''
 )
 
 

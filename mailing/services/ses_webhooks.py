@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import http.client
 import json
 import logging
@@ -13,7 +14,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.hashes import SHA1, SHA256
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -466,6 +467,16 @@ def record_unsupported_ses_event(payload):
         return existing
 
     with transaction.atomic():
+        if connection.vendor == "postgresql":
+            # An absent audit row cannot be row-locked. Serialize retries by
+            # event ID, including events without a correlated message. The
+            # transaction lock releases automatically on commit or rollback.
+            lock_id = int.from_bytes(
+                hashlib.sha256(f"ses-unsupported:{provider_event_id}".encode()).digest()[:8],
+                signed=True,
+            )
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_id])
         existing = OperatorAudit.objects.select_for_update().filter(
             action__endswith="unsupported",
             metadata__provider_event_id=provider_event_id,

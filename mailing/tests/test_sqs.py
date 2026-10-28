@@ -1,3 +1,5 @@
+import pytest
+
 from mailing.sqs import json_body, partial_batch_response, process_sqs_event, records_from_messages
 
 
@@ -109,3 +111,29 @@ def test_process_sqs_event_preserves_messages_on_unidentified_failure():
     response = process_sqs_event(event, handler)
     # When an unidentifiable failure occurs, all messages must be reported failed to avoid deleting
     assert response == {"batchItemFailures": [{"itemIdentifier": "msg-1"}]}
+
+
+@pytest.mark.parametrize("reason", [
+    "Authorization: Bearer synthetic-secret",
+    "authorization=Basic synthetic-secret",
+    '{"token": "synthetic-secret"}',
+    "{'password': 'synthetic-secret with spaces'}",
+    '{"private_key": "synthetic-secret\\nwith\\nlines"}',
+    '{"secret": "synthetic-secret with \\"escaped\\" quotes"}',
+    'api_key=synthetic-secret; retry later',
+])
+def test_failure_logs_redact_headers_and_quoted_secret_values(caplog, reason):
+    event = {"Records": [{"messageId": "secret-failure", "body": "{}"}]}
+
+    def fail(body, record):
+        raise ValueError(f"Request failed: {reason}")
+
+    with caplog.at_level("ERROR"):
+        assert process_sqs_event(event, fail) == {
+            "batchItemFailures": [{"itemIdentifier": "secret-failure"}],
+        }
+    assert "synthetic-secret" not in caplog.text
+    assert "[redacted]" in caplog.text
+    assert "Request failed" in caplog.text
+    assert "secret-failure" in caplog.text
+    assert "ValueError" in caplog.text
