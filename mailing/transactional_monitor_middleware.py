@@ -29,8 +29,13 @@ class TransactionalMonitorMiddleware:
             if client_id is not None:
                 row, _ = TransactionalRequestMinute.objects.get_or_create(
                     client_id=client_id, minute=timezone.now().replace(second=0, microsecond=0))
+                expected_missing = (
+                    response.status_code == 404
+                    and getattr(response, "_transactional_monitor_expected_template_missing", False)
+                )
                 TransactionalRequestMinute.objects.filter(pk=row.pk).update(
-                    total=F("total") + 1, errors=F("errors") + int(response.status_code >= 400),
+                    total=F("total") + 1,
+                    errors=F("errors") + int(response.status_code >= 400 and not expected_missing),
                     server_errors=F("server_errors") + int(response.status_code >= 500))
         except Exception as exc:
             logger.error("relay_transactional_api_metric_failed error_type=%s", type(exc).__name__)

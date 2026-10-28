@@ -158,7 +158,7 @@ def test_persisted_repeat_limit_and_delivery_failure_retry(client_record):
     assert monitor.send_monitor_alert.call_count == 2
 
 
-@pytest.mark.parametrize("status", [200, 400, 401, 403, 429, 500, 503])
+@pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 429, 500, 503])
 def test_api_metrics_include_auth_failures_without_storing_token(client_record, status):
     key, raw = create_client_api_key(client=client_record, name="test")
     request = RequestFactory().post("/api/transactional/send", HTTP_AUTHORIZATION=f"Bearer {raw}")
@@ -168,6 +168,51 @@ def test_api_metrics_include_auth_failures_without_storing_token(client_record, 
     assert (metric.total, metric.errors) == (1, int(status >= 400))
     assert metric.server_errors == int(status >= 500)
     assert raw not in str(metric.__dict__)
+
+
+@pytest.mark.parametrize("missing", ["key", "inactive", "version", "lookup"])
+def test_template_missing_404_keeps_http_contract_without_api_error(client, client_record, missing):
+    _, raw = create_client_api_key(client=client_record, name="reminders")
+    key = "registration-confirmation-reminder-1"
+    if missing in {"inactive", "version"}:
+        EmailTemplate.objects.create(
+            client=client_record, key=key, name="Reminder", subject="Confirm",
+            is_active=missing != "inactive",
+        )
+    headers = {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
+    payload = {"email": "test@example.invalid", "template_key": key}
+    if missing == "version":
+        payload["template_version"] = 1
+    if missing == "lookup":
+        response = client.get(f"/api/transactional/templates/{key}", **headers)
+    else:
+        response = client.post("/api/transactional/send", payload, content_type="application/json", **headers)
+    field = "template_version" if missing == "version" else "template_key"
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "validation_error", "fields": {field: "not_found"}}}
+    metric = TransactionalRequestMinute.objects.get(client=client_record)
+    assert (metric.total, metric.errors, metric.server_errors) == (1, 0, 0)
+    assert not TransactionalMessage.objects.exists()
+
+
+def test_missing_template_flood_does_not_page_but_other_4xx_still_do(client, client_record):
+    _, raw = create_client_api_key(client=client_record, name="reminders")
+    headers = {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
+    for _ in range(20):
+        response = client.post(
+            "/api/transactional/send",
+            {"email": "test@example.invalid", "template_key": "registration-confirmation-reminder-2"},
+            content_type="application/json", **headers,
+        )
+        assert response.status_code == 404
+    now = datetime.now(UTC)
+    assert monitor.client_alerts(client_record, now) == []
+    for _ in range(5):
+        response = client.get("/api/transactional/messages/999999", **headers)
+        assert response.status_code == 404
+    alert = monitor.client_alerts(client_record, datetime.now(UTC))[0]
+    assert (alert["requests"], alert["errors"], alert["server_errors"]) == (25, 5, 0)
+    assert alert["error_percent"] == 20
 
 
 def test_test_command_has_fixed_recipient(monkeypatch, settings):

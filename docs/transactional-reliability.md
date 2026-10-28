@@ -60,6 +60,13 @@ so a real server outage is never muted. Client-side HTTP 4xx (bad input, bad or
 revoked key, operator auth probes) contribute to a combined 4xx/5xx check:
 >=20% errors with at least 20 requests in 15 minutes (`min_requests_4xx`).
 Mixed failures therefore count even when neither class alone reaches 20%.
+Expected template-missing 404s (`template_key: not_found` or
+`template_version: not_found`) remain in the request total but do not increment
+the error count. Other 404s, validation failures, authentication failures and
+all 5xx still count. The HTTP response contract is unchanged. Missing templates
+must still be provisioned by the integration owner; this exemption does not
+make a failed reminder deliver. A template with no published versions falls
+back to its draft unless the caller explicitly requests a version.
 A single 4xx probe at low traffic does not
 page (2026-10-24: one 401 probe among 5 requests for client 2 paged before this
 split and would stay silent now). A total 4xx stoppage with zero acceptances is

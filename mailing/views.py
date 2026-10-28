@@ -1516,7 +1516,7 @@ def json_request_body(request):
 
 
 def validation_error_response(exc):
-    return JsonResponse(
+    response = JsonResponse(
         {
             "error": {
                 "code": "validation_error",
@@ -1525,6 +1525,13 @@ def validation_error_response(exc):
         },
         status=exc.status_code,
     )
+    # Missing templates/versions are expected integration outcomes.
+    # Keep the HTTP contract, but do not page the API failure monitor for them.
+    response._transactional_monitor_expected_template_missing = (
+        exc.status_code == 404
+        and exc.errors in ({"template_key": "not_found"}, {"template_version": "not_found"})
+    )
+    return response
 
 
 def method_not_allowed_response(allowed_methods):
