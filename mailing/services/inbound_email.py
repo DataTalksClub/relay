@@ -111,7 +111,7 @@ def process_inbound_object(bucket, key, *, s3, publisher=None, recipients=None):
         logger.info("inbound message %s matched no Relay address; discarded", message.message_id)
         return {"discarded": "no_matching_address", "message_id": message.message_id}
 
-    blocked = find_blocked_sender(message.sender_addresses)
+    blocked = find_blocked_sender([*message.sender_addresses, *message.reply_to_addresses])
     if blocked is not None and not (matches and is_dmarc_report(mime_message(raw))):
         return file_blocked(message, blocked, bucket=bucket, key=key, size_bytes=len(raw))
 

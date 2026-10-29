@@ -43,6 +43,49 @@ verified address with the original display name; Reply-To is the original
 sender. Date/Message-ID/References/In-Reply-To/Subject are retained as
 X-Original-*; stale transport/authentication headers and Bcc are removed.
 
+### Blocking a sender from a forwarded message
+
+The blocklist (`BlockedSender`, address or domain scope) is checked at ingest
+against the original From **and** Reply-To addresses. A blocked message is
+filed as a `blocked` row with no stored body, creates no deliveries and is
+never forwarded. A FORWARD delivery still pending when a rule is added is
+suppressed with reason `blocked_sender` instead of being sent.
+
+Every forward ends with a short footer (appended to the first inline
+text/plain and text/html parts; signed/encrypted or body-less mail gets a
+separate inline part instead) with two links:
+
+- **Block this sender**: the original Reply-To address, else From.
+- **Block domain <domain>**: omitted for shared mail providers (gmail.com,
+  outlook.com, yahoo.com, icloud.com, proton.me, ...; see
+  `FREEMAIL_DOMAINS` in `mailing/services/block_links.py`), where only the
+  address can be blocked.
+
+No footer is added when the sender is at one of our own domains
+(datatalks.club, aishippinglabs.com, dtcdev.click, every InboundDomain,
+SendingDomain and client From domain, and their subdomains); those can never be
+blocked from a link at either scope.
+
+Links are Django `TimestampSigner` tokens (keyed by `SECRET_KEY`) over the
+inbound message id, value and scope, valid for 30 days. No login is needed.
+`GET /inbound/block/<token>/` only shows a confirmation page, so mail scanners
+and link prefetchers cannot block anyone; the page's POST creates the rule
+with `origin=email_link`, `reason=<original Message-ID>` and the source
+message. Repeating it is a no-op ("already blocked"). The result page shows
+the rule and a signed **Unblock** link (`/inbound/unblock/<token>/`, also
+GET-confirm then POST), which deletes the rule. Tampered, foreign-salt or
+expired tokens get a 404 page and change nothing.
+
+Links point at `INBOUND_BLOCK_LINK_BASE_URL`, defaulting to the console host
+from `AUTH_CALLBACK_URL` (relay.datatalks.club in production), not
+`PUBLIC_BASE_URL`, because the public mail host only proxies the tracking and
+unsubscribe paths. Rules created this way are also visible and removable in
+the operator console's blocked-senders list.
+
+There is no paid filter or classifier on this path, and no honeypot: no AISHL
+web form feeds these mailboxes (the pitches are direct mail to
+alexey@/team@/welcome@aishippinglabs.com).
+
 Loop controls reject X-Loop/X-Relay-Inbound, automatic replies, Relay-originated
 message IDs and domain senders, bounces and calendar replies. Auto-generated
 alert emails can pass the allowlist once; forwarded mail is marked auto-forwarded

@@ -1,3 +1,5 @@
+import logging
+
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 from django.db import transaction
@@ -11,6 +13,8 @@ from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.ses import send_email
 from mailing.ses_routes import configuration_set_for_source
+
+logger = logging.getLogger(__name__)
 
 TERMINAL_ACK_STATUSES = {
     TransactionalMessageStatus.SENT,
@@ -59,8 +63,14 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
         try:
             forward_options = {}
             if message.inbound_source_id:
+                from mailing.services.block_links import forward_footer  # noqa: PLC0415
                 from mailing.services.inbound_routing import load_forward_mime  # noqa: PLC0415
                 forward_options["original_mime"] = load_forward_mime(message)
+                try:
+                    forward_options["forward_footer"] = forward_footer(message.inbound_source, forward_options["original_mime"])
+                except Exception as exc:
+                    # Forward without block links rather than fail the forward.
+                    logger.warning("forward footer unavailable message_id=%s error_type=%s", message.id, type(exc).__name__)
             ses_message_id = send_email(
                 ses_client=client,
                 configuration_set=configuration_set,

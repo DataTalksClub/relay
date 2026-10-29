@@ -1,0 +1,93 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Block sender | Relay</title>
+    <script>
+      (function () {
+        try {
+          let stored = localStorage.getItem("dakit-theme");
+          if (stored !== "dark" && stored !== "light") {
+            const legacy = localStorage.getItem("datamailer.theme");
+            if (legacy === "dark" || legacy === "light") {
+              stored = legacy;
+              localStorage.setItem("dakit-theme", legacy);
+            }
+          }
+          document.documentElement.dataset.theme =
+            stored === "dark" || stored === "light"
+              ? stored
+              : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        } catch (error) {
+          return;
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="{% static 'dakit/dakit.css' %}">
+    <link rel="stylesheet" href="{% static 'mailing/css/app.css' %}">
+  </head>
+  <body class="unsubscribe-page">
+    <main class="unsubscribe-main">
+      <section class="unsubscribe-panel" aria-labelledby="block-title">
+        <p class="unsubscribe-kicker">Relay forwarded mail</p>
+
+        {% if invalid %}
+          <div class="unsubscribe-state">
+            <span class="badge neutral">Link unavailable</span>
+            <h1 id="block-title">This link is no longer valid</h1>
+            <p>It may have expired (links last 30 days) or been altered. Nothing was changed.</p>
+          </div>
+        {% elif refused %}
+          <div class="unsubscribe-state">
+            <span class="badge neutral">Not blocked</span>
+            <h1 id="block-title">{{ value }} cannot be blocked from a link</h1>
+            {% if refused == "shared_domain" %}
+              <p>{{ value }} is a shared mail provider, so blocking it would block unrelated people. Block the sender's address instead.</p>
+            {% elif refused == "own_domain" %}
+              <p>{{ value }} belongs to one of our own domains. Our own mail is never blocked from a link.</p>
+            {% else %}
+              <p>This is not a sender that can be blocked.</p>
+            {% endif %}
+          </div>
+        {% elif confirm_block %}
+          <div class="unsubscribe-state">
+            <span class="badge warning">Confirm</span>
+            <h1 id="block-title">Block {% if scope == "domain" %}every sender at {{ value }}{% else %}{{ value }}{% endif %}?</h1>
+            <p>Future mail from {% if scope == "domain" %}any address at {{ value }}{% else %}this address{% endif %} will be dropped before it is forwarded to you.</p>
+          </div>
+          <form method="post" class="unsubscribe-form">
+            <button class="primary" type="submit">Block {% if scope == "domain" %}domain {{ value }}{% else %}{{ value }}{% endif %}</button>
+          </form>
+        {% elif blocked %}
+          <div class="unsubscribe-state">
+            <span class="badge success">Blocked</span>
+            <h1 id="block-title">{% if scope == "domain" %}Domain {{ value }}{% else %}{{ value }}{% endif %} is blocked</h1>
+            <p>{% if created %}Future mail from {% if scope == "domain" %}any address at {{ value }}{% else %}this address{% endif %} will be dropped and not forwarded.{% else %}This was already blocked; nothing changed.{% endif %}</p>
+          </div>
+          <dl class="unsubscribe-context" aria-label="Block rule">
+            <div><dt>Scope</dt><dd>{% if scope == "domain" %}Whole domain{% else %}Exact address{% endif %}</dd></div>
+            <div><dt>Value</dt><dd>{{ value }}</dd></div>
+          </dl>
+          <p class="unsubscribe-note">Blocked by mistake? <a href="{{ unblock_link }}">Unblock {{ value }}</a></p>
+        {% elif confirm_unblock %}
+          <div class="unsubscribe-state">
+            <span class="badge warning">Confirm</span>
+            <h1 id="block-title">Unblock {{ value }}?</h1>
+            <p>Mail from {% if scope == "domain" %}any address at {{ value }}{% else %}this address{% endif %} will be forwarded again.</p>
+          </div>
+          <form method="post" class="unsubscribe-form">
+            <button class="primary" type="submit">Unblock {{ value }}</button>
+          </form>
+        {% elif unblocked %}
+          <div class="unsubscribe-state">
+            <span class="badge success">Unblocked</span>
+            <h1 id="block-title">{{ value }} is no longer blocked</h1>
+            <p>{% if removed %}Future mail will be forwarded again.{% else %}There was no block rule for it; nothing changed.{% endif %}</p>
+          </div>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

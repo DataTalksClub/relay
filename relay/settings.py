@@ -299,6 +299,9 @@ API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).r
 SUBSCRIPTION_CONFIRM_BASE_URL = (
     os.environ.get("SUBSCRIPTION_CONFIRM_BASE_URL", "").strip().rstrip("/") or PUBLIC_BASE_URL
 )
+# Where "Block this sender" links in forwarded mail point. Empty means the
+# console host from AUTH_CALLBACK_URL, which serves every Relay path.
+INBOUND_BLOCK_LINK_BASE_URL = os.environ.get("INBOUND_BLOCK_LINK_BASE_URL", "").strip().rstrip("/")
 # Static sites call these lists without a client API key. The value is parsed
 # by mailing.services.public_lists. Empty disables the public routes' lists.
 RELAY_PUBLIC_LISTS = os.environ.get("RELAY_PUBLIC_LISTS", "")

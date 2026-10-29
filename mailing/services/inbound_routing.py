@@ -178,6 +178,11 @@ def queue_forward(delivery):
         delivery.next_attempt_at = timezone.now() + timedelta(seconds=30)
 
 
+def sender_blocked(message):
+    from mailing.services.inbound_email import find_blocked_sender  # noqa: PLC0415 (imports this module)
+    return find_blocked_sender([message.sender_address]) is not None
+
+
 def process_due_deliveries(*, limit=25):
     ids = list(InboundDelivery.objects.filter(status=InboundDelivery.Status.PENDING, next_attempt_at__lte=timezone.now()).order_by('pk').values_list('pk', flat=True)[:limit])
     for pk in ids:
@@ -193,6 +198,9 @@ def process_due_deliveries(*, limit=25):
                 row.status, row.reason = InboundDelivery.Status.SUPPRESSED, 'sender_not_allowed'
             elif row.kind == InboundMailbox.Kind.FORWARD and row.destination not in row.mailbox.destinations:
                 row.status, row.reason = InboundDelivery.Status.SUPPRESSED, 'destination_removed'
+            elif row.kind == InboundMailbox.Kind.FORWARD and row.outbound_message_id is None and sender_blocked(row.message):
+                # Blocked between ingest and dispatch, e.g. from an earlier forward's link.
+                row.status, row.reason = InboundDelivery.Status.SUPPRESSED, 'blocked_sender'
             else:
                 try:
                     if row.mailbox.kind == InboundMailbox.Kind.BOT:

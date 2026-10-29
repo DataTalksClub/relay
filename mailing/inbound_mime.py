@@ -1,6 +1,6 @@
 import html
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email import policy
 from email.parser import BytesParser
 from email.utils import getaddresses
@@ -53,6 +53,9 @@ class EmailSummary:
     body_text: str
     body_html: str
     attachments: list[Attachment]
+    # The forwarded-mail block link and the blocklist both act on Reply-To:
+    # contact forms and "via" relays put the real sender there, not in From.
+    reply_to_addresses: list[str] = field(default_factory=list)
 
 
 def normalize_preview(value, limit=240):
@@ -165,4 +168,5 @@ def parse_mime(raw):
         body_text=body_text,
         body_html=body_html,
         attachments=attachments,
+        reply_to_addresses=address_values(str(message["reply-to"] or "")),
     )

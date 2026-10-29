@@ -3,6 +3,7 @@ from django.urls import path
 from mailing import (
     activity_ui_views,
     admin_key_views,
+    block_link_views,
     campaign_ui_views,
     contact_ui_views,
     documentation_views,
@@ -111,6 +112,8 @@ urlpatterns = [
         views.blocked_sender_delete,
         name="blocked_sender_delete",
     ),
+    path("inbound/block/<str:token>/", block_link_views.inbound_block_link, name="inbound_block_link"),
+    path("inbound/unblock/<str:token>/", block_link_views.inbound_unblock_link, name="inbound_unblock_link"),
     path("dmarc/", views.dmarc_report_list, name="dmarc_report_list"),
     path("dmarc/summary/", views.dmarc_summary, name="dmarc_summary"),
     path("dmarc/<int:report_id>/", views.dmarc_report_detail, name="dmarc_report_detail"),

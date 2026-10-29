@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from django.conf import settings
 
 from mailing.calendar_mime import add_calendar_alternative, validate_calendar_alternative
 from mailing.dry_run import ensure_transport_allowed
+
+logger = logging.getLogger(__name__)
 
 _rate_limit_lock = threading.Lock()
 _last_ses_send_monotonic = None
@@ -51,13 +54,14 @@ def send_email(
     configuration_set=None,
     calendar_alternative=None,
     original_mime=None,
+    forward_footer=None,
 ):
     calendar = validate_calendar_alternative(calendar_alternative, text_body, html_body, message_parts, headers)
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
     content = _Content(subject, html_body, text_body, headers, message_parts, calendar)
     raw = bool(headers or message_parts or calendar is not None)
     if original_mime is not None:
-        forwarded = _forward_message(envelope, original_mime)
+        forwarded = _forward_message(envelope, original_mime, footer=forward_footer)
         parameters = {"Source": source, "Destinations": [to_email], "RawMessage": {"Data": forwarded.as_bytes()}}
         _configuration(parameters, configuration_set)
         raw = True
@@ -201,7 +205,7 @@ def throttle_ses_send():
         _last_ses_send_monotonic = now
 
 
-def _forward_message(envelope, raw):
+def _forward_message(envelope, raw, footer=None):
     # Keep the original MIME tree intact, including inline parts, charsets,
     # nested multipart, calendar data, and binary attachments.
     message = BytesParser(policy=policy.SMTP).parsebytes(raw)
@@ -220,4 +224,50 @@ def _forward_message(envelope, raw):
     message["X-Relay-Inbound"] = "forward"
     for name, value in originals.items():
         message["X-Original-" + name] = value
+    if footer:
+        # Edited on a copy: the footer is a convenience, and a body it cannot
+        # handle must still be forwarded unchanged rather than failed or retried.
+        candidate = BytesParser(policy=policy.SMTP).parsebytes(message.as_bytes())
+        try:
+            _append_footer(candidate, *footer)
+            message = candidate
+        except Exception as exc:
+            logger.warning("forward footer skipped error_type=%s", type(exc).__name__)
     return message
+
+
+def _append_footer(message, text, markup):
+    """Add the block-link footer to the readable body without touching attachments.
+
+    Appends to the first inline text/plain and text/html parts. A signed or
+    encrypted body cannot be edited without breaking it, and a body with no
+    readable part has nothing to append to, so both get a separate inline part.
+    """
+    done = set()
+    if message.get_content_type() not in {"multipart/signed", "multipart/encrypted"}:
+        for part in message.walk():
+            subtype = part.get_content_subtype()
+            if (
+                part.get_content_maintype() != "text"
+                or subtype not in {"plain", "html"}
+                or subtype in done
+                or part.get_content_disposition() == "attachment"
+                or part.get_filename()
+            ):
+                continue
+            try:
+                body = part.get_content()
+            except (LookupError, ValueError):
+                continue
+            if subtype == "plain":
+                body = body.rstrip("\n") + text
+            else:
+                index = body.lower().rfind("</body>")
+                body = body[:index] + markup + body[index:] if index >= 0 else body + markup
+            part.set_content(body, subtype=subtype, charset="utf-8")
+            done.add(subtype)
+        if done:
+            return
+    if message.get_content_type() != "multipart/mixed":
+        message.make_mixed()
+    message.add_attachment(text.lstrip(), disposition="inline")
