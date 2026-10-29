@@ -303,6 +303,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
     )
 
     queued_message_ids = []
+    skipped = []
     created_count = 0
     enqueued_count = 0
     skipped_count = 0
@@ -344,6 +345,8 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
                 if existing.campaign_id is None:
                     existing.campaign = campaign
                     existing.save(update_fields=["campaign"])
+                if existing.status == TransactionalMessageStatus.SKIPPED:
+                    skipped.append(skipped_recipient_item(existing, member.source_object_key))
                 idempotent_replay_count += 1
                 continue
 
@@ -416,6 +419,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
                     "recipient_list_key": recipient_list.key,
                 },
             )
+            skipped.append(skipped_recipient_item(message, member.source_object_key))
             created_count += 1
             skipped_count += 1
 
@@ -442,6 +446,7 @@ def send_transactional_email_to_recipient_list_for_client(list_key, data, authen
         "enqueued_count": enqueued_count,
         "skipped_count": skipped_count,
         "idempotent_replay_count": idempotent_replay_count,
+        "skipped": skipped,
     }
     if member_sync_result is not None:
         response["member_sync"] = member_sync_result
@@ -466,6 +471,7 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
         validate_context_requirements(source.required_context, context)
 
     queued_message_ids = []
+    skipped = []
     created_count = 0
     enqueued_count = 0
     skipped_count = 0
@@ -476,6 +482,8 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
             idempotency_key = f"{payload['idempotency_key']}:{member['source_object_key']}"
             existing = find_existing_message(authenticated_client, idempotency_key)
             if existing is not None:
+                if existing.status == TransactionalMessageStatus.SKIPPED:
+                    skipped.append(skipped_recipient_item(existing, member["source_object_key"]))
                 idempotent_replay_count += 1
                 continue
 
@@ -544,6 +552,7 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
                     "transient_recipient_list_key": payload["list_key"],
                 },
             )
+            skipped.append(skipped_recipient_item(message, member["source_object_key"]))
             created_count += 1
             skipped_count += 1
 
@@ -571,6 +580,7 @@ def send_transactional_email_to_transient_recipient_list_for_client(data, authen
         "enqueued_count": enqueued_count,
         "skipped_count": skipped_count,
         "idempotent_replay_count": idempotent_replay_count,
+        "skipped": skipped,
     }
 
 
@@ -1077,6 +1087,17 @@ def build_transactional_queue_payload(message):
     if message.template_version is not None:
         payload["template_version"] = message.template_version
     return validate_transactional_email_message(payload)
+
+
+def skipped_recipient_item(message, source_object_key):
+    """Per-member skip detail for recipient-list send responses."""
+    return {
+        "message_id": message.id,
+        "contact_id": message.contact_id,
+        "email": message.email,
+        "source_object_key": source_object_key,
+        "reason": message.last_error,
+    }
 
 
 def suppression_reason(contact):

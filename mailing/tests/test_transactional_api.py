@@ -913,6 +913,30 @@ def test_transactional_send_to_recipient_list_creates_per_member_messages(
     assert messages[1].last_error == "hard_bounce"
     assert len(enqueued) == 0
     assert CmpCallback.objects.filter(status=CmpCallbackStatus.PENDING).count() == 2
+    expected_skipped = [
+        {
+            "message_id": messages[0].id,
+            "contact_id": allowed_contact.id,
+            "email": "allowed@example.com",
+            "source_object_key": "homework-submission:1",
+            "reason": "category_unsubscribe",
+        },
+        {
+            "message_id": messages[1].id,
+            "contact_id": suppressed_contact.id,
+            "email": "suppressed@example.com",
+            "source_object_key": "homework-submission:2",
+            "reason": "hard_bounce",
+        },
+    ]
+    assert body["skipped"] == expected_skipped
+
+    # An idempotent replay still reports why those members were skipped.
+    replay = post_recipient_list_transactional(client, recipient_list.key, payload)
+    assert replay.status_code == 202
+    replay_body = replay.json()
+    assert replay_body["idempotent_replay_count"] == 2
+    assert replay_body["skipped"] == expected_skipped
     assert ClientCallback.objects.filter(status=ClientCallbackStatus.PENDING).count() == 2
     process_due_cmp_callbacks()
     process_due_client_callbacks()
@@ -1155,6 +1179,15 @@ def test_transient_recipient_list_send_renders_members_without_persisting_list(
     assert messages[0].metadata["category_tag"] == "deadline-reminders"
     assert messages[1].status == TransactionalMessageStatus.SKIPPED
     assert messages[1].last_error == "category_unsubscribe"
+    assert body["skipped"] == [
+        {
+            "message_id": messages[1].id,
+            "contact_id": messages[1].contact_id,
+            "email": "opted-out@example.com",
+            "source_object_key": "enrollment:2",
+            "reason": "category_unsubscribe",
+        }
+    ]
     # One batch, carrying only the queued message -- the skipped one must not
     # be handed to the sender.
     assert enqueued == []

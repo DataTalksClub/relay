@@ -349,6 +349,17 @@ Reconcile uses the provided member array as the current desired list. With `remo
 
 List transactional send creates one transactional message per active list member using a shared template and context. The caller must provide a base `idempotency_key`; Datamailer appends each member `source_object_key` so retrying the same list send does not duplicate per-member email.
 
+The response reports `created_count`, `enqueued_count`, `skipped_count`, and
+`idempotent_replay_count`, plus a `skipped` array with one item per member
+that was not sent. Each item has `message_id`, `contact_id`, `email`,
+`source_object_key`, and a machine-readable `reason`. The reason is the
+stored message `last_error`, for example `category_unsubscribe`,
+`global_unsubscribe`, `hard_bounce`, `complaint`, or `suppressed`. Members
+skipped by an earlier send of the same `idempotency_key` are reported again
+on replay. The transient list send
+(`POST /api/transient-recipient-lists/transactional-send`) returns the same
+array.
+
 The request can include `list` and `members`. When `members` is present, Datamailer syncs the recipient list before sending. The default `member_sync` mode is `reconcile`, which marks existing active members absent from the request as removed. Use `member_sync=upsert` to only add or update the provided members. Each member's metadata is merged into that recipient's template context and is also available under `member`.
 
 ```json
