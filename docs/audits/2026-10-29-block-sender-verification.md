@@ -22,10 +22,23 @@ and unblock. No paid service or classifier is introduced. The earlier intake
 reports no contact form feeding this route; that external fact was not
 independently verified here.
 
-Additional limitation: `inbound_routing.sender_blocked()` rechecks only the
-persisted From address for a pending delivery. A Reply-To-only block added
-after ingest is not covered by that recheck. Initial ingest does check both.
-This finding was sent to the session holding the implementation edit scopes.
+The initial review found that `inbound_routing.sender_blocked()` rechecked
+only the persisted From address for a pending delivery. After coordination
+with the implementation session, this continuation fixes that gap by reading
+the original From and Reply-To headers when block rules exist. A storage
+failure logs only its exception type and preserves dispatch; initial ingest
+already checked both headers. This is a best-effort recheck before creating
+the outbound row, not cancellation of already queued outbound mail.
+
+The block-link tests now pass **16 cases**, including late address/domain
+Reply-To blocks and storage failure with log redaction. Ruff passes on both
+changed Python files. The original implementation author independently
+reviewed the diff, approved it, and reported **39 passing tests** across
+block links and inbound routing (aplexer message
+`01a187fe-b96e-76b0-9021-410976459d71`).
+
+Full validation after the fix: `uv run pytest -q` completed with
+**1764 passed, 13 skipped in 396.36 seconds**.
 
 ## Live read-only evidence
 

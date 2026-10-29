@@ -5,6 +5,7 @@ import os
 from datetime import timedelta
 from email import policy
 from email.parser import BytesParser
+from email.utils import getaddresses
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -16,6 +17,7 @@ from django.utils import timezone
 from mailing.aws import s3_client
 from mailing.enqueue import enqueue_transactional_email
 from mailing.models import (
+    BlockedSender,
     Contact,
     EmailEventType,
     EmailTemplate,
@@ -180,7 +182,24 @@ def queue_forward(delivery):
 
 def sender_blocked(message):
     from mailing.services.inbound_email import find_blocked_sender  # noqa: PLC0415 (imports this module)
-    return find_blocked_sender([message.sender_address]) is not None
+    if find_blocked_sender([message.sender_address]) is not None:
+        return True
+    if not BlockedSender.objects.exists():
+        return False
+    # Reply-To is not persisted on InboundMessage. Re-read the original
+    # headers so a rule added after ingest also suppresses pending forwards.
+    try:
+        raw = s3_client().get_object(Bucket=message.raw_bucket, Key=message.raw_key)['Body'].read()
+        headers = BytesParser(policy=policy.default).parsebytes(raw, headersonly=True)
+        addresses = [address.lower() for _, address in getaddresses(
+            [str(value) for name in ('From', 'Reply-To') for value in headers.get_all(name, [])]
+        ) if address]
+    except Exception as exc:
+        # A best-effort recheck must not turn a storage outage into a new
+        # dispatch failure. Ingest already checked both sender headers.
+        logger.warning('inbound_block_recheck_unavailable message_id=%s error_type=%s', message.pk, type(exc).__name__)
+        return False
+    return find_blocked_sender(addresses) is not None
 
 
 def process_due_deliveries(*, limit=25):

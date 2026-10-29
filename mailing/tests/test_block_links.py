@@ -81,6 +81,41 @@ def test_block_added_after_ingest_suppresses_pending_forward(domain):  # noqa: F
     enqueue.assert_not_called()
 
 
+@pytest.mark.parametrize('scope,value', [
+    ('address', 'stefan.s@leads.example'),
+    ('domain', 'leads.example'),
+])
+def test_reply_to_block_added_after_ingest_suppresses_pending_forward(domain, scope, value):  # noqa: F811
+    box = mailbox(domain, kind='forward', destinations=['destination@example.org'])
+    raw = mime(to='bot@example.com', headers=PITCH)
+    ingest(raw)
+    BlockedSender.objects.create(scope=scope, value=value)
+    with patch('mailing.services.inbound_routing.s3_client') as s3, patch(
+        'mailing.services.inbound_routing.enqueue_transactional_email'
+    ) as enqueue:
+        s3.return_value.get_object.return_value = {'Body': io.BytesIO(raw)}
+        process_due_deliveries()
+    row = InboundDelivery.objects.get(mailbox=box)
+    assert (row.status, row.reason, row.outbound_message) == ('suppressed', 'blocked_sender', None)
+    enqueue.assert_not_called()
+
+
+def test_pending_block_recheck_storage_failure_does_not_fail_dispatch(domain, caplog):  # noqa: F811
+    box = mailbox(domain, kind='forward', destinations=['destination@example.org'])
+    ingest(mime(to='bot@example.com', headers=PITCH))
+    BlockedSender.objects.create(scope='address', value='unrelated@leads.example')
+    with patch('mailing.services.inbound_routing.s3_client') as s3, patch(
+        'mailing.services.inbound_routing.enqueue_transactional_email'
+    ):
+        s3.return_value.get_object.side_effect = RuntimeError('secret-storage-detail')
+        process_due_deliveries()
+    row = InboundDelivery.objects.get(mailbox=box)
+    assert row.outbound_message is not None and row.status == 'pending'
+    assert row.attempt_count == 0
+    assert 'inbound_block_recheck_unavailable' in caplog.text
+    assert 'secret-storage-detail' not in caplog.text
+
+
 # AC2/AC3: footer links, guards.
 
 def test_forward_footer_links_reply_to_and_domain_and_keeps_attachments(domain):  # noqa: F811
