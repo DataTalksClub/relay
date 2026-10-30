@@ -173,7 +173,7 @@ def test_summary_query_count_does_not_grow_with_members(audience_scope, django_a
     audience, integration = audience_scope
     for index in range(40):
         add_member(audience, integration, f"scale-{index}@example.com", verified_at=timezone.now())
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(1):
         counts, eligible, excluded = eligibility_summary(audience, integration)
     assert counts == {"total": 40, "eligible": 40, "excluded": 0}
     # Returning subqueries keeps page filtering in SQL instead of loading every ID.
