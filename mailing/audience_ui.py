@@ -1,7 +1,7 @@
 """Audience task screens with scope-preserving links and policy-based summaries."""
 
 from django.core.paginator import Paginator
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Count, Q
 from django.urls import reverse
 
 from mailing.filter_navigation import removable_contact_filters
@@ -94,20 +94,20 @@ def eligibility_summary(audience, client):
     This is an unsegmented member count. Campaign category preferences and tag
     filters apply later; it is deliberately not presented as a campaign estimate.
     """
-    subscriptions = Subscription.objects.filter(contact_id=OuterRef("pk"), audience=audience)
+    subscriptions = Subscription.objects.filter(audience=audience).order_by()
     client_subscriptions = subscriptions.filter(client=client)
     audience_subscriptions = subscriptions.filter(client__isnull=True)
-    contacts = Contact.objects.filter(Exists(client_subscriptions))
+    contacts = Contact.objects.filter(id__in=client_subscriptions.values("contact_id"))
     eligible_q = (
-        Q(Exists(client_subscriptions.filter(status="subscribed")))
+        Q(id__in=client_subscriptions.filter(status="subscribed").values("contact_id"))
         & (
             Q(verified_at__isnull=False)
-            | Q(Exists(client_subscriptions.filter(verified_at__isnull=False)))
-            | Q(Exists(audience_subscriptions.filter(verified_at__isnull=False)))
+            | Q(id__in=client_subscriptions.filter(verified_at__isnull=False).values("contact_id"))
+            | Q(id__in=audience_subscriptions.filter(verified_at__isnull=False).values("contact_id"))
         )
         & Q(global_unsubscribed_at__isnull=True, hard_bounced_at__isnull=True, complained_at__isnull=True)
         & ~Q(email_validation_status__in=NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES)
-        & ~Q(Exists(audience_subscriptions.filter(status="unsubscribed")))
+        & ~Q(id__in=audience_subscriptions.filter(status="unsubscribed").values("contact_id"))
     )
     eligible = contacts.filter(eligible_q)
     counts = contacts.aggregate(total=Count("pk"), eligible=Count("pk", filter=eligible_q))
@@ -184,8 +184,8 @@ def scoped_health_summary(audience, client):
 
 
 def scoped_member_contacts(audience, client):
-    membership = Subscription.objects.filter(contact_id=OuterRef("pk"), audience=audience, client=client)
-    return Contact.objects.filter(Exists(membership))
+    membership = Subscription.objects.filter(audience=audience, client=client).order_by().values("contact_id")
+    return Contact.objects.filter(id__in=membership)
 
 
 def scoped_tags(audience, client):

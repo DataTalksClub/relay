@@ -250,7 +250,18 @@ def test_contact_search_query_budget(client, staff_user, client_record, seeded):
 def test_contact_detail_query_budget(client, staff_user, client_record, seeded):
     login_staff(client, staff_user, client_record)
     contact = seeded["recipients"][0].contact
-    with django_assert_num_queries(30):
+    template = seeded["message"].template
+    for idx in range(5):
+        TransactionalMessage.objects.create(
+            client=client_record,
+            contact=contact,
+            email=contact.email,
+            template=template,
+            template_key=template.key,
+            subject=f"Tx {idx}",
+            status=TransactionalMessageStatus.SENT,
+        )
+    with django_assert_num_queries(24):
         response = client.get(reverse("mailing:contact_detail", args=[contact.normalized_email]))
     assert response.status_code == 200
 
@@ -424,6 +435,32 @@ def test_explorer_and_audience_count_strip_subquery_annotations(client_record, a
     aud_count_sql = aud_ctx.captured_queries[0]["sql"].upper()
     assert "SUBSCRIPTIONS" not in aud_count_sql
     assert "CAMPAIGNS" not in aud_count_sql
+
+
+def test_recent_contact_issues_single_query_returns_latest(client_record, audience, seeded):
+    from mailing.services.operator_ui import recent_contact_issues  # noqa: PLC0415
+
+    contact = seeded["recipients"][0].contact
+    older_campaign = Campaign.objects.create(audience=audience, client=client_record, subject="Older issue")
+    newer_campaign = Campaign.objects.create(audience=audience, client=client_record, subject="Newer issue")
+    same_time = timezone.now()
+    r1 = CampaignRecipient.objects.create(
+        campaign=older_campaign,
+        contact=contact,
+        email=contact.email,
+        status=CampaignRecipientStatus.BOUNCED,
+    )
+    r2 = CampaignRecipient.objects.create(
+        campaign=newer_campaign,
+        contact=contact,
+        email=contact.email,
+        status=CampaignRecipientStatus.SKIPPED,
+        skip_reason="hard_bounce",
+    )
+    CampaignRecipient.objects.filter(pk__in=[r1.pk, r2.pk]).update(created_at=same_time)
+    with django_assert_num_queries(1):
+        issues = recent_contact_issues([contact.id], audience=audience, client=client_record)
+    assert issues[contact.id] == "Hard bounce: Newer issue"
 
 
 class django_assert_num_queries:

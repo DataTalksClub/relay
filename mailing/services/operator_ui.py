@@ -4,7 +4,20 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, time
 
-from django.db.models import Case, Count, Exists, IntegerField, Max, Min, OuterRef, Q, QuerySet, Subquery, When
+from django.db.models import (
+    Case,
+    Count,
+    Exists,
+    IntegerField,
+    Max,
+    Min,
+    OuterRef,
+    Prefetch,
+    Q,
+    QuerySet,
+    Subquery,
+    When,
+)
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -578,7 +591,7 @@ def campaign_recipient_queryset(campaign: Campaign, filter_key: str = "") -> Que
     queryset = (
         CampaignRecipient.objects.filter(campaign=campaign)
         .select_related("contact")
-        .order_by("contact__normalized_email", "id")
+        .order_by("email", "id")
     )
     filter_condition = RECIPIENT_FILTERS.get(filter_key)
     if filter_condition is not None:
@@ -945,26 +958,50 @@ def recent_contact_issues(
         CampaignRecipientStatus.COMPLAINED,
         CampaignRecipientStatus.UNSUBSCRIBED,
     ]
-    issues = CampaignRecipient.objects.filter(contact_id__in=contact_ids, status__in=issue_statuses)
+    issues = CampaignRecipient.objects.filter(status__in=issue_statuses)
     if audience is not None:
         issues = issues.filter(campaign__audience=audience)
     if client is not None:
         issues = issues.filter(campaign__client=client)
-    issues = issues.select_related("campaign").order_by("contact_id", "-created_at", "-id")
+    latest_issue_ids = (
+        Contact.objects.filter(pk__in=contact_ids)
+        .order_by()
+        .annotate(
+            latest_issue_id=Subquery(
+                issues.filter(contact_id=OuterRef("pk"))
+                .order_by("-created_at", "-id")
+                .values("id")[:1]
+            )
+        )
+        .values_list("latest_issue_id", flat=True)
+    )
+    skip_labels = dict(CampaignRecipientSkipReason.choices)
+    status_labels = dict(CampaignRecipientStatus.choices)
     result = {}
-    for recipient in issues:
-        if recipient.contact_id in result:
-            continue
-        label = recipient.get_skip_reason_display() if recipient.skip_reason else recipient.get_status_display()
-        result[recipient.contact_id] = f"{label}: {recipient.campaign.subject}"
+    for contact_id, skip_reason, status, subject in (
+        CampaignRecipient.objects.filter(id__in=latest_issue_ids)
+        .order_by()
+        .values_list("contact_id", "skip_reason", "status", "campaign__subject")
+    ):
+        label = skip_labels.get(skip_reason, skip_reason) if skip_reason else status_labels.get(status, status)
+        result[contact_id] = f"{label}: {subject}"
     return result
 
 
 def contact_detail_queryset() -> QuerySet[Contact]:
     return Contact.objects.prefetch_related(
-        "subscriptions__audience__organization",
-        "subscriptions__client",
-        "contact_tags__tag__audience",
+        Prefetch(
+            "subscriptions",
+            queryset=Subscription.objects.select_related("audience", "audience__organization", "client").order_by(
+                "audience__slug", "client__slug", "id"
+            ),
+        ),
+        Prefetch(
+            "contact_tags",
+            queryset=ContactTag.objects.select_related("tag", "tag__audience").order_by(
+                "tag__audience__slug", "tag__slug"
+            ),
+        ),
     )
 
 
@@ -985,6 +1022,7 @@ def contact_transactional_history(contact: Contact, client: Client | None = None
         queryset = queryset.filter(client=client)
     return queryset.order_by("-created_at", "-id").only(
         "id",
+        "contact_id",
         "client__name",
         "client__slug",
         "template_id",
@@ -1013,26 +1051,38 @@ def contact_detail_context(
     campaign_history=None,
     transactional_history=None,
 ) -> ContactDetailContext:
-    all_subscriptions = list(
-        contact.subscriptions.select_related("audience", "client").order_by(
-            "audience__slug",
-            "client__slug",
-            "id",
+    prefetched = getattr(contact, "_prefetched_objects_cache", {})
+    if "subscriptions" in prefetched:
+        all_subscriptions = list(prefetched["subscriptions"])
+    else:
+        all_subscriptions = list(
+            contact.subscriptions.select_related("audience", "client").order_by(
+                "audience__slug",
+                "client__slug",
+                "id",
+            )
         )
-    )
     subscriptions = (
         [sub for sub in all_subscriptions if sub.client_id == client.id]
         if client is not None
         else all_subscriptions
     )
     eligibility = eligibility_items(contact, subscriptions, all_subscriptions=all_subscriptions)
-    contact_tags_qs = contact.contact_tags.select_related("tag", "tag__audience").order_by(
-        "tag__audience__slug",
-        "tag__slug",
-    )
-    if client is not None:
-        contact_tags_qs = contact_tags_qs.filter(tag__audience__organization=client.organization)
-    contact_tags = list(contact_tags_qs)
+    if "contact_tags" in prefetched:
+        all_tags = list(prefetched["contact_tags"])
+        contact_tags = (
+            [ct for ct in all_tags if ct.tag.audience.organization_id == client.organization_id]
+            if client is not None
+            else all_tags
+        )
+    else:
+        contact_tags_qs = contact.contact_tags.select_related("tag", "tag__audience").order_by(
+            "tag__audience__slug",
+            "tag__slug",
+        )
+        if client is not None:
+            contact_tags_qs = contact_tags_qs.filter(tag__audience__organization=client.organization)
+        contact_tags = list(contact_tags_qs)
     return ContactDetailContext(
         eligibility=eligibility,
         subscriptions=subscriptions,
