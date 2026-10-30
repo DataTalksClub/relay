@@ -86,7 +86,7 @@ def test_audience_loading_stays_page_bounded_at_1000_members(scale_scope, record
 def test_health_and_eligibility_aggregate_without_loading_member_rows(scale_scope, django_assert_num_queries):
     integration, audience = scale_scope
     add_members(integration, audience, 0, 1000)
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(1):
         counts, _eligible, _excluded = eligibility_summary(audience, integration)
     assert counts["total"] == counts["eligible"] == 1000
     with django_assert_num_queries(1):

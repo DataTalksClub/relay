@@ -123,7 +123,13 @@ WORKER_DEFINITIONS = (
 
 
 def sandbox_worker_statuses() -> list[WorkerStatus]:
-    return [_worker_status(definition) for definition in WORKER_DEFINITIONS]
+    systemd_by_service: dict[str, dict[str, str]] = {}
+    statuses = []
+    for definition in WORKER_DEFINITIONS:
+        if definition.service_name not in systemd_by_service:
+            systemd_by_service[definition.service_name] = systemd_service_properties(definition.service_name)
+        statuses.append(_worker_status(definition, systemd=systemd_by_service[definition.service_name]))
+    return statuses
 
 
 def worker_status_payload() -> dict[str, object]:
@@ -179,8 +185,8 @@ def systemd_service_properties(service_name: str) -> dict[str, str]:
     return properties
 
 
-def _worker_status(definition: WorkerDefinition) -> WorkerStatus:
-    systemd = systemd_service_properties(definition.service_name)
+def _worker_status(definition: WorkerDefinition, *, systemd: dict[str, str] | None = None) -> WorkerStatus:
+    systemd = systemd if systemd is not None else systemd_service_properties(definition.service_name)
     badge_label, badge_tone, detail = _badge_for_systemd(systemd)
     return WorkerStatus(
         key=definition.key,

@@ -583,7 +583,10 @@ class CampaignRecipient(TimeStampedModel):
         ]
         indexes = [
             models.Index(fields=["campaign", "status"], name="campaign_recip_status_idx"),
+            models.Index(fields=["campaign", "status", "contact"], name="camp_recip_camp_st_cnt_idx"),
+            models.Index(fields=["campaign", "skip_reason", "contact"], name="camp_recip_camp_skip_cnt_idx"),
             models.Index(fields=["contact", "sent_at"], name="camp_recip_contact_sent_idx"),
+            models.Index(fields=["contact", "created_at"], name="camp_recip_contact_created_idx"),
             models.Index(fields=["campaign", "sent_at"], name="camp_recip_sent_idx"),
         ]
 
@@ -813,9 +816,13 @@ class EmailEvent(models.Model):
         ordering = ["-created_at", "-id"]
         indexes = [
             models.Index(fields=["contact", "created_at"], name="email_evt_contact_created_idx"),
+            models.Index(fields=["contact", "client", "created_at"], name="email_evt_cnt_cli_created_idx"),
+            models.Index(fields=["campaign", "created_at"], name="email_evt_camp_created_idx"),
             models.Index(fields=["campaign", "event_type", "created_at"], name="email_events_campaign_type_idx"),
             models.Index(fields=["campaign_recipient", "event_type"], name="email_evt_recipient_type_idx"),
             models.Index(fields=["client", "created_at"], name="email_evt_client_created_idx"),
+            models.Index(fields=["client", "event_type", "created_at"], name="email_evt_cli_type_created_idx"),
+            models.Index(fields=["event_type", "created_at"], name="email_evt_type_created_idx"),
             models.Index(fields=["audience", "client", "created_at"], name="email_evt_aud_cli_created_idx"),
             models.Index(fields=["audience", "event_type", "created_at"], name="email_evt_aud_type_created_idx"),
             models.Index(fields=["provider_event_id"], name="email_events_provider_evt_idx"),

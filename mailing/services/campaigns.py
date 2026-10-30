@@ -18,6 +18,7 @@ from mailing.models import (
     CampaignStatus,
     CategoryPreference,
     Contact,
+    ContactTag,
     EmailEvent,
     EmailEventType,
     RecipientListMember,
@@ -196,16 +197,8 @@ def retry_campaign_recipient(campaign, recipient_id):
     return RetryRecipientResult(campaign_id=campaign.id, recipient_id=recipient.id, retried=True)
 
 
-@transaction.atomic
-def snapshot_campaign_recipients(campaign):
-    campaign = (
-        Campaign.objects.select_for_update(of=("self",))
-        .select_related("audience", "client")
-        .get(pk=campaign.pk)
-    )
-    include_tags = normalize_tag_filter(campaign.include_tags)
-    exclude_tags = normalize_tag_filter(campaign.exclude_tags)
-    candidates = _candidate_contacts(campaign, include_tags, exclude_tags).annotate(
+def _annotate_snapshot_skip(campaign, queryset):
+    candidates = queryset.annotate(
         snapshot_audience=FilteredRelation("subscriptions", condition=Q(
             subscriptions__audience_id=campaign.audience_id, subscriptions__client__isnull=True,
         )),
@@ -233,9 +226,24 @@ def snapshot_campaign_recipients(campaign):
             category_preferences__tag=campaign.category_tag, category_preferences__enabled=False,
         )))
         rules.append(When(snapshot_category__pk__isnull=False, then=Value(reason.CLIENT_UNSUBSCRIBE)))
-    candidates = candidates.filter(
-        ~Exists(CampaignRecipient.objects.filter(campaign_id=campaign.pk, contact_id=OuterRef("pk")))
-    ).annotate(snapshot_skip=Case(*rules, default=Value(""), output_field=CharField()))
+    return candidates.annotate(snapshot_skip=Case(*rules, default=Value(""), output_field=CharField()))
+
+
+@transaction.atomic
+def snapshot_campaign_recipients(campaign):
+    campaign = (
+        Campaign.objects.select_for_update(of=("self",))
+        .select_related("audience", "client")
+        .get(pk=campaign.pk)
+    )
+    include_tags = normalize_tag_filter(campaign.include_tags)
+    exclude_tags = normalize_tag_filter(campaign.exclude_tags)
+    candidates = _annotate_snapshot_skip(
+        campaign,
+        _candidate_contacts(campaign, include_tags, exclude_tags).filter(
+            ~Exists(CampaignRecipient.objects.filter(campaign_id=campaign.pk, contact_id=OuterRef("pk")))
+        ),
+    )
     created_count = insert_select(CampaignRecipient, candidates, {
         "campaign_id": campaign.pk, "contact_id": F("pk"), "email": F("email"),
         "skip_reason": F("snapshot_skip"),
@@ -255,30 +263,27 @@ def snapshot_campaign_recipients(campaign):
 def estimate_campaign_recipients(campaign, *, preview_limit=25):
     include_tags = normalize_tag_filter(campaign.include_tags)
     exclude_tags = normalize_tag_filter(campaign.exclude_tags)
-    total_candidates = _base_candidate_contacts(campaign).count()
-    candidate_contacts = list(_candidate_contacts(campaign, include_tags, exclude_tags))
-    tag_filtered_count = total_candidates - len(candidate_contacts)
-    bulk = _bulk_skip_context(campaign, [c.pk for c in candidate_contacts])
-    recipient_count = 0
-    skipped_count = 0
-    skip_reason_counts = {reason: 0 for reason, _label in CampaignRecipientSkipReason.choices}
+    candidates = _annotate_snapshot_skip(campaign, _candidate_contacts(campaign, include_tags, exclude_tags))
+    grouped = dict(candidates.order_by().values_list("snapshot_skip").annotate(count=Count("pk")))
+    candidate_count = sum(grouped.values())
+    total_candidates = (
+        _base_candidate_contacts(campaign).count() if (include_tags or exclude_tags) else candidate_count
+    )
+    tag_filtered_count = total_candidates - candidate_count
+    recipient_count = grouped.get("", 0)
+    skip_reason_counts = {
+        reason: grouped[reason]
+        for reason, _label in CampaignRecipientSkipReason.choices
+        if grouped.get(reason)
+    }
+    skipped_count = candidate_count - recipient_count
     preview_rows = []
-
-    for contact in candidate_contacts:
-        skip_reason = _skip_reason_bulk(contact, campaign, bulk)
-        if skip_reason:
-            skipped_count += 1
-            skip_reason_counts[skip_reason] += 1
-            status = CampaignRecipientStatus.SKIPPED
-        else:
-            recipient_count += 1
-            status = CampaignRecipientStatus.PENDING
-
-        if len(preview_rows) < preview_limit:
+    if preview_limit > 0:
+        for email, skip_reason in candidates.values_list("email", "snapshot_skip")[:preview_limit]:
             preview_rows.append(
                 RecipientPreviewRow(
-                    email=contact.email,
-                    status=status,
+                    email=email,
+                    status=CampaignRecipientStatus.SKIPPED if skip_reason else CampaignRecipientStatus.PENDING,
                     skip_reason=skip_reason,
                 )
             )
@@ -288,7 +293,7 @@ def estimate_campaign_recipients(campaign, *, preview_limit=25):
         tag_filtered_count=tag_filtered_count,
         recipient_count=recipient_count,
         skipped_count=skipped_count,
-        skip_reason_counts={reason: count for reason, count in skip_reason_counts.items() if count},
+        skip_reason_counts=skip_reason_counts,
         preview_rows=preview_rows,
     )
 
@@ -561,20 +566,26 @@ def dispatch_due_campaigns(*, now=None, limit=100):
 def _candidate_contacts(campaign, include_tags, exclude_tags):
     queryset = _base_candidate_contacts(campaign)
 
-    if include_tags:
-        queryset = queryset.filter(contact_tags__tag__audience=campaign.audience, contact_tags__tag__slug__in=include_tags)
-        queryset = queryset.annotate(
-            matched_include_tag_count=Count(
-                "contact_tags__tag__slug",
-                filter=Q(contact_tags__tag__audience=campaign.audience, contact_tags__tag__slug__in=include_tags),
-                distinct=True,
+    for tag_slug in include_tags:
+        queryset = queryset.filter(
+            Exists(
+                ContactTag.objects.filter(
+                    contact_id=OuterRef("pk"),
+                    tag__audience=campaign.audience,
+                    tag__slug=tag_slug,
+                )
             )
-        ).filter(matched_include_tag_count=len(include_tags))
+        )
 
     if exclude_tags:
         queryset = queryset.exclude(
-            contact_tags__tag__audience=campaign.audience,
-            contact_tags__tag__slug__in=exclude_tags,
+            Exists(
+                ContactTag.objects.filter(
+                    contact_id=OuterRef("pk"),
+                    tag__audience=campaign.audience,
+                    tag__slug__in=exclude_tags,
+                )
+            )
         )
 
     return queryset
@@ -589,19 +600,16 @@ def _base_candidate_contacts(campaign):
                 recipient_list__key=campaign.recipient_list_key,
                 active=True,
             )
-            .order_by("contact__normalized_email", "contact_id")
-            .distinct()
-            .values_list("contact", flat=True)
+            .order_by()
+            .values_list("contact_id", flat=True)
         )
         return Contact.objects.filter(id__in=contacts).order_by("normalized_email", "id")
 
     contacts = (
         Subscription.objects.filter(audience=campaign.audience)
         .filter(Q(client=campaign.client) | Q(client__isnull=True))
-        .select_related("contact")
-        .order_by("contact__normalized_email", "contact_id")
-        .distinct()
-        .values_list("contact", flat=True)
+        .order_by()
+        .values_list("contact_id", flat=True)
     )
     return Contact.objects.filter(id__in=contacts).order_by("normalized_email", "id")
 

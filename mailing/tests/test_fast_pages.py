@@ -40,7 +40,14 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
-from mailing.services.operator_ui import campaign_progress_map, campaign_send_progress
+from mailing.services.operator_ui import (
+    ContactExplorerFilters,
+    _latest_event_by_audience,
+    audience_queryset,
+    campaign_progress_map,
+    campaign_send_progress,
+    contact_explorer_queryset,
+)
 from mailing.services.tokens import ensure_campaign_recipient_tokens
 
 pytestmark = pytest.mark.django_db
@@ -172,7 +179,7 @@ def test_dashboard_query_budget(client, staff_user, client_record, seeded):
 
 def test_campaign_list_query_budget(client, staff_user, client_record, seeded):
     login_staff(client, staff_user, client_record)
-    with django_assert_num_queries(12):
+    with django_assert_num_queries(10):
         response = client.get(reverse("mailing:campaign_list"))
     assert response.status_code == 200
 
@@ -194,7 +201,7 @@ def test_campaign_detail_draft_estimate_query_budget(client, staff_user, client_
     Subscription.objects.create(
         contact=contact, audience=audience, client=client_record, status=SubscriptionStatus.SUBSCRIBED
     )
-    with django_assert_num_queries(20):
+    with django_assert_num_queries(16):
         response = client.get(reverse("mailing:campaign_detail", args=[campaign.pk]))
     assert response.status_code == 200
 
@@ -228,7 +235,7 @@ def test_audience_list_query_budget(client, staff_user, client_record, seeded):
 
 def test_audience_detail_query_budget(client, staff_user, client_record, audience):
     login_staff(client, staff_user, client_record)
-    with django_assert_num_queries(20):
+    with django_assert_num_queries(16):
         response = client.get(reverse("mailing:audience_detail", args=[audience.id]))
     assert response.status_code == 200
 
@@ -243,7 +250,7 @@ def test_contact_search_query_budget(client, staff_user, client_record, seeded):
 def test_contact_detail_query_budget(client, staff_user, client_record, seeded):
     login_staff(client, staff_user, client_record)
     contact = seeded["recipients"][0].contact
-    with django_assert_num_queries(36):
+    with django_assert_num_queries(30):
         response = client.get(reverse("mailing:contact_detail", args=[contact.normalized_email]))
     assert response.status_code == 200
 
@@ -378,6 +385,45 @@ def test_oidc_callback_server_side_budget_under_300ms(client):
         elapsed_ms = (time.perf_counter() - started) * 1000
     assert response.status_code in (302, 303)
     assert elapsed_ms < 300, f"callback server-side took {elapsed_ms:.1f} ms"
+
+
+def test_latest_event_by_audience_breaks_timestamp_ties_without_full_hydration(client_record, audience):
+    contact = Contact.objects.create(email="tie-break@example.com")
+    campaign = Campaign.objects.create(audience=audience, client=client_record, subject="Tie break")
+    same_time = timezone.now()
+    events = EmailEvent.objects.bulk_create(
+        [
+            EmailEvent(
+                campaign=campaign,
+                contact=contact,
+                client=client_record,
+                audience=audience,
+                event_type=EmailEventType.QUEUED,
+            )
+            for _ in range(10)
+        ]
+    )
+    EmailEvent.objects.filter(pk__in=[e.pk for e in events]).update(created_at=same_time)
+    with django_assert_num_queries(2) as ctx:
+        result = _latest_event_by_audience([audience.pk], client_record)
+    assert result[audience.pk].pk == max(e.pk for e in events)
+    assert f"IN ({result[audience.pk].pk})" in ctx.captured_queries[1]["sql"]
+
+
+def test_explorer_and_audience_count_strip_subquery_annotations(client_record, audience, seeded):
+    filters = ContactExplorerFilters(client_id=client_record.id, audience_id=audience.id)
+    with django_assert_num_queries(1) as ctx:
+        count = contact_explorer_queryset(filters).count()
+    assert count == 16
+    count_sql = ctx.captured_queries[0]["sql"].upper()
+    assert "CAMPAIGN_RECIPIENTS" not in count_sql
+    assert "TRANSACTIONAL_MESSAGES" not in count_sql
+
+    with django_assert_num_queries(1) as aud_ctx:
+        assert audience_queryset(client_record).count() == 1
+    aud_count_sql = aud_ctx.captured_queries[0]["sql"].upper()
+    assert "SUBSCRIPTIONS" not in aud_count_sql
+    assert "CAMPAIGNS" not in aud_count_sql
 
 
 class django_assert_num_queries:

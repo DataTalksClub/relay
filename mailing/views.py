@@ -908,7 +908,6 @@ def contact_detail(request, contact_email, *, bound_forms=None):
     if active_client is None:
         return redirect("mailing:dashboard")
     contact = get_object_or_404(contact_detail_queryset(), normalized_email=contact_email.casefold())
-    detail_context = contact_detail_context(contact, active_client)
     events = paginate(request, contact_event_timeline(contact, active_client), per_page=50)
     event_rows = [
         {"event": event, "context": event_context(event), "metadata_summary": metadata_summary(event.metadata)}
@@ -916,6 +915,13 @@ def contact_detail(request, contact_email, *, bound_forms=None):
     ]
     campaign_history = paginate(request, contact_campaign_history(contact, active_client), per_page=25)
     transactional_history = paginate(request, contact_transactional_history(contact, active_client), per_page=25)
+    detail_context = contact_detail_context(
+        contact,
+        active_client,
+        events=events.object_list if events.number == 1 else None,
+        campaign_history=campaign_history.object_list if campaign_history.number == 1 else None,
+        transactional_history=transactional_history.object_list if transactional_history.number == 1 else None,
+    )
     transactional_rows = [
         {"message": message, "metadata_summary": metadata_summary(message.metadata)}
         for message in transactional_history.object_list

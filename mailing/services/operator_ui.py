@@ -4,7 +4,8 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, time
 
-from django.db.models import Case, Count, Exists, IntegerField, Max, Min, OuterRef, Q, QuerySet, When
+from django.db.models import Case, Count, Exists, IntegerField, Max, Min, OuterRef, Q, QuerySet, Subquery, When
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
@@ -200,7 +201,7 @@ class CampaignListRow:
     badge: Badge
     timing_label: str
     timing_value: object | None
-    progress: "CampaignSendProgress"
+    progress: "CampaignSendProgress | None" = None
 
 
 @dataclass(frozen=True)
@@ -324,10 +325,17 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
         campaign_scope = campaign_scope.filter(client=client)
         client_scope = client_scope.filter(pk=client.pk)
 
-    transactional_backlog_scope = TransactionalMessage.objects.filter(status=TransactionalMessageStatus.QUEUED)
     if client is not None:
-        transactional_backlog_scope = transactional_backlog_scope.filter(client=client)
-    transactional_backlog_count = transactional_backlog_scope.count()
+        transactional_backlog_count = TransactionalMessage.objects.filter(
+            status=TransactionalMessageStatus.QUEUED, client=client
+        ).count()
+    else:
+        tx_worker = next((w for w in worker_statuses if w.key == "transactional"), None)
+        transactional_backlog_count = (
+            tx_worker.backlog_count
+            if tx_worker is not None and tx_worker.backlog_count is not None
+            else TransactionalMessage.objects.filter(status=TransactionalMessageStatus.QUEUED).count()
+        )
 
     recent_campaigns = [
         DashboardCampaign(campaign, campaign_status_badge(campaign.status))
@@ -416,13 +424,13 @@ def campaign_timing(campaign: Campaign) -> tuple[str, object | None]:
     return "Updated", campaign.updated_at
 
 
-def campaign_list_rows(campaigns) -> list[CampaignListRow]:
+def campaign_list_rows(campaigns, *, include_progress: bool = False) -> list[CampaignListRow]:
     campaigns = list(campaigns)
-    progress_by_id = campaign_progress_map([campaign.pk for campaign in campaigns])
+    progress_by_id = campaign_progress_map([campaign.pk for campaign in campaigns]) if include_progress else {}
     rows = []
     for campaign in campaigns:
         timing_label, timing_value = campaign_timing(campaign)
-        progress = progress_by_id.get(campaign.pk) or campaign_send_progress(campaign)
+        progress = (progress_by_id.get(campaign.pk) or campaign_send_progress(campaign)) if include_progress else None
         rows.append(
             CampaignListRow(
                 campaign=campaign,
@@ -467,6 +475,7 @@ def campaign_progress_map(campaign_ids) -> dict:
         return {}
     rows = (
         CampaignRecipient.objects.filter(campaign_id__in=ids)
+        .order_by()
         .values("campaign_id")
         .annotate(
             queued_count=Count("id", filter=Q(status=CampaignRecipientStatus.PENDING)),
@@ -482,6 +491,7 @@ def campaign_progress_map(campaign_ids) -> dict:
 def campaign_send_progress(campaign: Campaign) -> CampaignSendProgress:
     row = (
         CampaignRecipient.objects.filter(campaign=campaign)
+        .order_by()
         .aggregate(
             queued_count=Count("id", filter=Q(status=CampaignRecipientStatus.PENDING)),
             processed_count=Count("id", filter=Q(status__in=PROCESSED_RECIPIENT_STATUSES)),
@@ -715,13 +725,10 @@ def contact_explorer_queryset(filters: ContactExplorerFilters) -> QuerySet[Conta
         queryset = queryset.filter(Exists(matching_recipients))
 
     queryset = apply_engagement_filter(queryset, filters)
-    campaign_activity_scope = Q()
-    transactional_activity_scope = Q()
-    if filters.client_id:
-        campaign_activity_scope &= Q(campaign_recipients__campaign__client_id=filters.client_id)
-        transactional_activity_scope &= Q(transactional_messages__client_id=filters.client_id)
-    if filters.audience_id:
-        campaign_activity_scope &= Q(campaign_recipients__campaign__audience_id=filters.audience_id)
+    recipient_activity = CampaignRecipient.objects.filter(**campaign_scope_filter(filters)).order_by().values("contact_id")
+    transactional_activity = (
+        TransactionalMessage.objects.filter(**transactional_scope_filter(filters)).order_by().values("contact_id")
+    )
 
     return (
         queryset.prefetch_related(
@@ -730,16 +737,25 @@ def contact_explorer_queryset(filters: ContactExplorerFilters) -> QuerySet[Conta
             "contact_tags__tag__audience",
         )
         .annotate(
-            campaign_recipient_count=Count("campaign_recipients", filter=campaign_activity_scope, distinct=True),
-            transactional_message_count=Count("transactional_messages", filter=transactional_activity_scope, distinct=True),
-            last_campaign_sent_at=Max("campaign_recipients__sent_at", filter=campaign_activity_scope),
-            last_transactional_sent_at=Max("transactional_messages__sent_at", filter=transactional_activity_scope),
-            last_campaign_opened_at=Max("campaign_recipients__first_opened_at", filter=campaign_activity_scope),
-            last_transactional_opened_at=Max("transactional_messages__first_opened_at", filter=transactional_activity_scope),
-            last_campaign_clicked_at=Max("campaign_recipients__first_clicked_at", filter=campaign_activity_scope),
-            last_transactional_clicked_at=Max("transactional_messages__first_clicked_at", filter=transactional_activity_scope),
+            campaign_recipient_count=Coalesce(
+                Subquery(recipient_activity.annotate(c=Count("id")).values("c")[:1], output_field=IntegerField()),
+                0,
+            ),
+            transactional_message_count=Coalesce(
+                Subquery(transactional_activity.annotate(c=Count("id")).values("c")[:1], output_field=IntegerField()),
+                0,
+            ),
+            last_campaign_sent_at=Subquery(recipient_activity.annotate(m=Max("sent_at")).values("m")[:1]),
+            last_transactional_sent_at=Subquery(transactional_activity.annotate(m=Max("sent_at")).values("m")[:1]),
+            last_campaign_opened_at=Subquery(recipient_activity.annotate(m=Max("first_opened_at")).values("m")[:1]),
+            last_transactional_opened_at=Subquery(
+                transactional_activity.annotate(m=Max("first_opened_at")).values("m")[:1]
+            ),
+            last_campaign_clicked_at=Subquery(recipient_activity.annotate(m=Max("first_clicked_at")).values("m")[:1]),
+            last_transactional_clicked_at=Subquery(
+                transactional_activity.annotate(m=Max("first_clicked_at")).values("m")[:1]
+            ),
         )
-        .distinct()
         .order_by("normalized_email", "id")
     )
 
@@ -989,23 +1005,34 @@ def contact_transactional_history(contact: Contact, client: Client | None = None
     )
 
 
-def contact_detail_context(contact: Contact, client: Client | None = None) -> ContactDetailContext:
-    subscriptions = contact.subscriptions.select_related("audience", "client").order_by(
-        "audience__slug",
-        "client__slug",
-        "id",
+def contact_detail_context(
+    contact: Contact,
+    client: Client | None = None,
+    *,
+    events=None,
+    campaign_history=None,
+    transactional_history=None,
+) -> ContactDetailContext:
+    all_subscriptions = list(
+        contact.subscriptions.select_related("audience", "client").order_by(
+            "audience__slug",
+            "client__slug",
+            "id",
+        )
     )
-    if client is not None:
-        subscriptions = subscriptions.filter(client=client)
-    eligibility = eligibility_items(
-        contact, subscriptions, all_subscriptions=list(contact.subscriptions.select_related("audience", "client"))
+    subscriptions = (
+        [sub for sub in all_subscriptions if sub.client_id == client.id]
+        if client is not None
+        else all_subscriptions
     )
-    contact_tags = contact.contact_tags.select_related("tag", "tag__audience").order_by(
+    eligibility = eligibility_items(contact, subscriptions, all_subscriptions=all_subscriptions)
+    contact_tags_qs = contact.contact_tags.select_related("tag", "tag__audience").order_by(
         "tag__audience__slug",
         "tag__slug",
     )
     if client is not None:
-        contact_tags = contact_tags.filter(tag__audience__organization=client.organization)
+        contact_tags_qs = contact_tags_qs.filter(tag__audience__organization=client.organization)
+    contact_tags = list(contact_tags_qs)
     return ContactDetailContext(
         eligibility=eligibility,
         subscriptions=subscriptions,
@@ -1015,7 +1042,13 @@ def contact_detail_context(contact: Contact, client: Client | None = None) -> Co
         subscription_badge=subscription_badge(contact, subscriptions),
         sendability=sendability_summary(eligibility),
         metrics=contact_metrics(contact, client),
-        recent_activity=recent_contact_activity(contact, client),
+        recent_activity=recent_contact_activity(
+            contact,
+            client,
+            events=events,
+            campaign_history=campaign_history,
+            transactional_history=transactional_history,
+        ),
     )
 
 
@@ -1095,9 +1128,9 @@ def unique_reasons(reasons) -> tuple[str, ...]:
 
 
 def contact_metrics(contact: Contact, client: Client | None = None) -> list[ContactMetric]:
-    campaign_rows = CampaignRecipient.objects.filter(contact=contact)
-    transactional_rows = contact.transactional_messages.all()
-    event_rows = EmailEvent.objects.filter(contact=contact)
+    campaign_rows = CampaignRecipient.objects.filter(contact=contact).order_by()
+    transactional_rows = contact.transactional_messages.order_by()
+    event_rows = EmailEvent.objects.filter(contact=contact).order_by()
     if client is not None:
         campaign_rows = campaign_rows.filter(campaign__client=client)
         transactional_rows = transactional_rows.filter(client=client)
@@ -1156,9 +1189,17 @@ def latest_datetime(*values):
     return max(present) if present else None
 
 
-def recent_contact_activity(contact: Contact, client: Client | None = None) -> list[ContactActivity]:
+def recent_contact_activity(
+    contact: Contact,
+    client: Client | None = None,
+    *,
+    events=None,
+    campaign_history=None,
+    transactional_history=None,
+) -> list[ContactActivity]:
     rows: list[ContactActivity] = []
-    for event in contact_event_timeline(contact, client)[:8]:
+    event_items = list(events)[:8] if events is not None else contact_event_timeline(contact, client)[:8]
+    for event in event_items:
         rows.append(
             ContactActivity(
                 event.created_at,
@@ -1167,7 +1208,10 @@ def recent_contact_activity(contact: Contact, client: Client | None = None) -> l
                 event.url or "Email event recorded",
             )
         )
-    for recipient in contact_campaign_history(contact, client)[:5]:
+    campaign_items = (
+        list(campaign_history)[:5] if campaign_history is not None else contact_campaign_history(contact, client)[:5]
+    )
+    for recipient in campaign_items:
         rows.append(
             ContactActivity(
                 recipient.sent_at or recipient.created_at,
@@ -1178,7 +1222,12 @@ def recent_contact_activity(contact: Contact, client: Client | None = None) -> l
                 metadata=recipient.last_error or recipient.get_skip_reason_display(),
             )
         )
-    for message in contact_transactional_history(contact, client)[:5]:
+    tx_items = (
+        list(transactional_history)[:5]
+        if transactional_history is not None
+        else contact_transactional_history(contact, client)[:5]
+    )
+    for message in tx_items:
         rows.append(
             ContactActivity(
                 message.sent_at or message.created_at,
@@ -1410,14 +1459,27 @@ def audience_queryset(client: Client | None = None) -> QuerySet[Audience]:
     queryset = Audience.objects.select_related("organization")
     if client is not None:
         queryset = queryset.filter(organization=client.organization)
+    subs = Subscription.objects.filter(audience_id=OuterRef("pk")).order_by().values("audience_id")
+    campaigns = Campaign.objects.filter(audience_id=OuterRef("pk")).order_by().values("audience_id")
     return queryset.annotate(
-        subscription_count=Count("subscriptions", distinct=True),
-        contact_count=Count("subscriptions__contact", distinct=True),
-        campaign_count=Count("campaigns", distinct=True),
-        subscribed_count=Count(
-            "subscriptions",
-            filter=Q(subscriptions__status=SubscriptionStatus.SUBSCRIBED),
-            distinct=True,
+        subscription_count=Coalesce(
+            Subquery(subs.annotate(c=Count("id")).values("c")[:1], output_field=IntegerField()),
+            0,
+        ),
+        contact_count=Coalesce(
+            Subquery(subs.annotate(c=Count("contact_id", distinct=True)).values("c")[:1], output_field=IntegerField()),
+            0,
+        ),
+        campaign_count=Coalesce(
+            Subquery(campaigns.annotate(c=Count("id")).values("c")[:1], output_field=IntegerField()),
+            0,
+        ),
+        subscribed_count=Coalesce(
+            Subquery(
+                subs.filter(status=SubscriptionStatus.SUBSCRIBED).annotate(c=Count("id")).values("c")[:1],
+                output_field=IntegerField(),
+            ),
+            0,
         ),
     ).order_by("organization__slug", "slug")
 
@@ -1450,26 +1512,23 @@ def _latest_campaign_by_audience(audience_ids, client: Client | None = None) -> 
     ids = [pk for pk in dict.fromkeys(audience_ids) if pk is not None]
     if not ids:
         return {}
-    scope = Campaign.objects.filter(audience_id__in=ids)
+    scope = Campaign.objects.filter(audience_id=OuterRef("pk"))
     if client is not None:
         scope = scope.filter(client=client)
-    latest_marks = dict(
-        scope.values("audience_id").annotate(mark=Max("updated_at")).values_list("audience_id", "mark")
-    )
-    if not latest_marks:
+    latest_ids = [
+        pk
+        for pk in Audience.objects.filter(pk__in=ids)
+        .order_by()
+        .annotate(latest_id=Subquery(scope.order_by("-updated_at", "-id").values("id")[:1]))
+        .values_list("latest_id", flat=True)
+        if pk is not None
+    ]
+    if not latest_ids:
         return {}
-    candidates = scope.filter(
-        audience_id__in=list(latest_marks),
-        updated_at__in=[mark for mark in latest_marks.values() if mark is not None],
-    ).select_related("client", "audience")
-    best: dict = {}
-    for campaign in candidates:
-        if campaign.updated_at != latest_marks.get(campaign.audience_id):
-            continue
-        current = best.get(campaign.audience_id)
-        if current is None or campaign.pk > current.pk:
-            best[campaign.audience_id] = campaign
-    return best
+    return {
+        campaign.audience_id: campaign
+        for campaign in Campaign.objects.filter(pk__in=latest_ids).select_related("client", "audience")
+    }
 
 
 def _latest_event_by_audience(audience_ids, client: Client | None = None) -> dict:
@@ -1477,56 +1536,61 @@ def _latest_event_by_audience(audience_ids, client: Client | None = None) -> dic
     ids = [pk for pk in dict.fromkeys(audience_ids) if pk is not None]
     if not ids:
         return {}
-    scope = EmailEvent.objects.filter(audience_id__in=ids)
+    scope = EmailEvent.objects.filter(audience_id=OuterRef("pk"))
     if client is not None:
         scope = scope.filter(client=client)
-    latest_marks = dict(
-        scope.values("audience_id").annotate(mark=Max("created_at")).values_list("audience_id", "mark")
-    )
-    if not latest_marks:
+    latest_ids = [
+        pk
+        for pk in Audience.objects.filter(pk__in=ids)
+        .order_by()
+        .annotate(latest_id=Subquery(scope.order_by("-created_at", "-id").values("id")[:1]))
+        .values_list("latest_id", flat=True)
+        if pk is not None
+    ]
+    if not latest_ids:
         return {}
-    candidates = scope.filter(
-        audience_id__in=list(latest_marks),
-        created_at__in=[mark for mark in latest_marks.values() if mark is not None],
-    ).select_related("contact", "campaign", "client", "audience")
-    best: dict = {}
-    for event in candidates:
-        if event.created_at != latest_marks.get(event.audience_id):
-            continue
-        current = best.get(event.audience_id)
-        if current is None or event.pk > current.pk:
-            best[event.audience_id] = event
-    return best
+    return {
+        event.audience_id: event
+        for event in EmailEvent.objects.filter(pk__in=latest_ids).select_related(
+            "contact", "campaign", "client", "audience"
+        )
+    }
 
 
 def audience_contacts(audience: Audience) -> QuerySet[Contact]:
-    return Contact.objects.filter(subscriptions__audience=audience).distinct()
+    return Contact.objects.filter(
+        id__in=Subscription.objects.filter(audience=audience).order_by().values("contact_id")
+    )
 
 
 def audience_inactive_count(audience: Audience) -> int:
-    contacts = audience_contacts(audience)
-    sent_contacts = contacts.filter(
-        Q(campaign_recipients__campaign__audience=audience, campaign_recipients__sent_at__isnull=False)
-        | Q(campaign_recipients__campaign__audience=audience, campaign_recipients__status=CampaignRecipientStatus.SENT)
+    rec_scope = CampaignRecipient.objects.filter(campaign__audience=audience).order_by()
+    evt_scope = EmailEvent.objects.filter(audience=audience).order_by()
+    sent_q = Q(id__in=rec_scope.filter(sent_at__isnull=False).values("contact_id")) | Q(
+        id__in=rec_scope.filter(status=CampaignRecipientStatus.SENT).values("contact_id")
     )
-    engaged_contacts = contacts.filter(
-        Q(campaign_recipients__campaign__audience=audience, campaign_recipients__first_opened_at__isnull=False)
-        | Q(campaign_recipients__campaign__audience=audience, campaign_recipients__first_clicked_at__isnull=False)
-        | Q(email_events__audience=audience, email_events__event_type__in=[EmailEventType.OPEN, EmailEventType.CLICK])
+    engaged_q = (
+        Q(id__in=rec_scope.filter(first_opened_at__isnull=False).values("contact_id"))
+        | Q(id__in=rec_scope.filter(first_clicked_at__isnull=False).values("contact_id"))
+        | Q(id__in=evt_scope.filter(event_type__in=[EmailEventType.OPEN, EmailEventType.CLICK]).values("contact_id"))
     )
-    return sent_contacts.exclude(pk__in=engaged_contacts.values("pk")).distinct().count()
+    return audience_contacts(audience).filter(sent_q).exclude(engaged_q).count()
 
 
 def audience_suppressed_count(audience: Audience) -> int:
+    unsubscribed_ids = (
+        Subscription.objects.filter(audience=audience, status=SubscriptionStatus.UNSUBSCRIBED)
+        .order_by()
+        .values("contact_id")
+    )
     return (
         audience_contacts(audience)
         .filter(
             Q(global_unsubscribed_at__isnull=False)
             | Q(hard_bounced_at__isnull=False)
             | Q(complained_at__isnull=False)
-            | Q(subscriptions__audience=audience, subscriptions__status=SubscriptionStatus.UNSUBSCRIBED)
+            | Q(id__in=unsubscribed_ids)
         )
-        .distinct()
         .count()
     )
 
@@ -1534,7 +1598,11 @@ def audience_suppressed_count(audience: Audience) -> int:
 def audience_summary(audience: Audience, client: Client | None = None) -> list[Stat]:
     contacts = audience_contacts(audience)
     if client is not None:
-        contacts = contacts.filter(subscriptions__client=client).distinct()
+        contacts = Contact.objects.filter(
+            id__in=Subscription.objects.filter(audience=audience, client=client).order_by().values("contact_id")
+        )
+    rec_scope = CampaignRecipient.objects.filter(campaign__audience=audience).order_by()
+    evt_scope = EmailEvent.objects.filter(audience=audience).order_by()
     client_id = client.id if client is not None else None
     anchor = "#audience-members"
 
@@ -1599,27 +1667,23 @@ def audience_summary(audience: Audience, client: Client | None = None) -> list[S
             "opened",
             "Opened",
             contacts.filter(
-                Q(campaign_recipients__campaign__audience=audience, campaign_recipients__first_opened_at__isnull=False)
-                | Q(email_events__audience=audience, email_events__event_type=EmailEventType.OPEN)
-            )
-            .distinct()
-            .count(),
+                Q(id__in=rec_scope.filter(first_opened_at__isnull=False).values("contact_id"))
+                | Q(id__in=evt_scope.filter(event_type=EmailEventType.OPEN).values("contact_id"))
+            ).count(),
         ),
         Stat(
             "clicked",
             "Clicked",
             contacts.filter(
-                Q(campaign_recipients__campaign__audience=audience, campaign_recipients__first_clicked_at__isnull=False)
-                | Q(email_events__audience=audience, email_events__event_type=EmailEventType.CLICK)
-            )
-            .distinct()
-            .count(),
+                Q(id__in=rec_scope.filter(first_clicked_at__isnull=False).values("contact_id"))
+                | Q(id__in=evt_scope.filter(event_type=EmailEventType.CLICK).values("contact_id"))
+            ).count(),
         ),
     ]
 
 
 def count_by_field(queryset, field, *, choices=None):
-    raw_counts = dict(queryset.values_list(field).annotate(count=Count("id")))
+    raw_counts = dict(queryset.order_by().values_list(field).annotate(count=Count("id")))
     if choices:
         return [(label, count) for value, label in choices if (count := raw_counts.get(value, 0)) > 0]
     return sorted(raw_counts.items())
@@ -1641,9 +1705,11 @@ def email_validation_label(value) -> str:
 
 def audience_breakdowns(audience: Audience, client: Client | None = None):
     contacts = audience_contacts(audience)
-    campaign_recipients = CampaignRecipient.objects.filter(campaign__audience=audience)
+    campaign_recipients = CampaignRecipient.objects.filter(campaign__audience=audience).order_by()
     if client is not None:
-        contacts = contacts.filter(subscriptions__client=client).distinct()
+        contacts = Contact.objects.filter(
+            id__in=Subscription.objects.filter(audience=audience, client=client).order_by().values("contact_id")
+        )
         campaign_recipients = campaign_recipients.filter(campaign__client=client)
     return {
         "validation": count_by_field(
