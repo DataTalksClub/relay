@@ -1,6 +1,7 @@
 """Privacy-preserving acceptance and API failure monitoring; never resends mail."""
 import json
 import logging
+import math
 import subprocess
 from datetime import timedelta
 from email.message import EmailMessage
@@ -28,26 +29,57 @@ def policy_for(client_id):
     }
 
 
-def normal_hour(now, policy):
+def acceptance_gap(client, now, policy):
+    """Return a gap payload when this local weekday/hour is overdue.
+
+    The matching hour in the previous weekly cycle estimates the client's
+    expected rate for this weekday and hour. An empty historical slot is
+    expected silence, so it cannot open an incident.
+    """
+    if policy.get("enabled", True) is False:
+        return None
     zone = ZoneInfo(policy["timezone"])
-    # Require an entire active hour, avoiding a page immediately after quiet hours.
-    return all((now - timedelta(minutes=m)).astimezone(zone).hour not in policy["quiet_hours"]
-               for m in range(61))
+    local_now = now.astimezone(zone)
+    if local_now.hour in policy["quiet_hours"]:
+        return None
+
+    this_hour = local_now.replace(minute=0, second=0, microsecond=0)
+    reference_hour = this_hour - timedelta(days=7)
+    expected_count = TransactionalMessage.objects.filter(
+        client=client,
+        created_at__gte=reference_hour,
+        created_at__lt=reference_hour + timedelta(hours=1),
+    ).count()
+    if expected_count == 0:
+        return None
+
+    # Allow three expected inter-arrival periods, with a 15-minute floor.
+    # The threshold grows for sparse hours and shrinks as the expected rate rises.
+    threshold_minutes = max(15, math.ceil(180 / expected_count))
+    cutoff = now - timedelta(minutes=threshold_minutes)
+    messages = TransactionalMessage.objects.filter(client=client, created_at__lte=now)
+    latest = messages.aggregate(latest=Max("created_at"))["latest"]
+    if latest is None or latest > cutoff:
+        return None
+    baseline = messages.filter(created_at__gte=now - timedelta(days=7)).count()
+    if baseline < max(1, policy["min_daily"] * 7):
+        return None
+    return {
+        "kind": "acceptance_gap", "client_id": client.pk,
+        "baseline_count": baseline, "expected_hour_count": expected_count,
+        "threshold_minutes": threshold_minutes,
+        "gap_minutes": int((now - latest).total_seconds() / 60),
+    }
 
 
 def client_alerts(client, now):
     policy = policy_for(client.pk)
     if policy.get("enabled", True) is False:
         return []
-    cutoff = now - timedelta(hours=1)
-    messages = TransactionalMessage.objects.filter(client=client, created_at__lte=now)
-    baseline = messages.filter(created_at__gte=now - timedelta(days=7), created_at__lte=cutoff).count()
-    latest = messages.aggregate(latest=Max("created_at"))["latest"]
     alerts = []
-    if (baseline >= max(1, policy["min_daily"] * 7) and latest is not None
-            and latest <= cutoff and normal_hour(now, policy)):
-        alerts.append({"kind": "acceptance_gap", "client_id": client.pk,
-                       "baseline_count": baseline, "gap_minutes": int((now - latest).total_seconds() / 60)})
+    gap = acceptance_gap(client, now, policy)
+    if gap is not None:
+        alerts.append(gap)
     counts = TransactionalRequestMinute.objects.filter(
         client=client, minute__gt=now - timedelta(minutes=15), minute__lte=now,
     ).aggregate(total=Sum("total"), errors=Sum("errors"), server_errors=Sum("server_errors"))
@@ -110,9 +142,11 @@ def check_transactional_health(*, now=None, force=False):
     found = []
     try:
         for client in Client.objects.filter(is_active=True).only("id"):
-            for payload in client_alerts(client, now):
-                found.append(payload)
+            payloads = client_alerts(client, now)
+            for payload in payloads:
                 state, _ = TransactionalMonitorState.objects.get_or_create(client=client, kind=payload["kind"])
+                if payload["kind"] == "acceptance_gap" and state.last_alert_at:
+                    continue
                 if state.last_alert_at and now - state.last_alert_at < timedelta(hours=1):
                     continue
                 logger.error("relay_transactional_alert %s", json.dumps(payload, sort_keys=True))
@@ -124,6 +158,25 @@ def check_transactional_health(*, now=None, force=False):
                 else:
                     state.last_alert_at = now
                     state.save(update_fields=["last_alert_at"])
+                    found.append(payload)
+
+            gap_state = TransactionalMonitorState.objects.filter(client=client, kind="acceptance_gap").first()
+            latest_acceptance = TransactionalMessage.objects.filter(
+                client=client, created_at__lte=now,
+            ).aggregate(latest=Max("created_at"))["latest"]
+            if (gap_state and gap_state.last_alert_at and latest_acceptance
+                    and latest_acceptance > gap_state.last_alert_at):
+                resolved = {"kind": "acceptance_gap_resolved", "client_id": client.pk,
+                            "resolved_at": now.isoformat()}
+                try:
+                    send_monitor_alert(resolved)
+                except Exception as exc:
+                    logger.error("relay_transactional_alert_delivery_failed client_id=%s error_type=%s",
+                                 client.pk, type(exc).__name__)
+                else:
+                    gap_state.last_alert_at = None
+                    gap_state.save(update_fields=["last_alert_at"])
+                    found.append(resolved)
         TransactionalRequestMinute.objects.filter(minute__lt=now - timedelta(days=1)).delete()
         logger.info("relay_transactional_monitor_heartbeat checked_at=%s alerts=%s", now.isoformat(), len(found))
     except Exception as exc:

@@ -1,6 +1,7 @@
 import subprocess
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.core.management import call_command
@@ -40,6 +41,23 @@ def seed_history(client, last):
     TransactionalMessage.objects.filter(pk=messages[-1].pk).update(created_at=last)
 
 
+def seed_expected_hour(client, at, count=3):
+    """Record the prior week's same local weekday/hour rate sample."""
+    local_hour = at.astimezone(ZoneInfo("Europe/Berlin")).replace(
+        minute=0, second=0, microsecond=0) - timedelta(days=7)
+    contact = Contact.objects.filter(email="test@example.invalid").first()
+    template = EmailTemplate.objects.get(client=client, key="confirmation")
+    created = TransactionalMessage.objects.bulk_create([
+        TransactionalMessage(
+            client=client, contact=contact, email=contact.email, template=template,
+            template_key=template.key, subject="Test",
+            created_at=local_hour + timedelta(minutes=5),
+        ) for index in range(count)
+    ])
+    TransactionalMessage.objects.filter(pk__in=[message.pk for message in created]).update(
+        created_at=local_hour + timedelta(minutes=5))
+
+
 @pytest.fixture(autouse=True)
 def isolate_monitor(monkeypatch, settings):
     monkeypatch.setattr(monitor, "_last_check", None)
@@ -48,23 +66,55 @@ def isolate_monitor(monkeypatch, settings):
     monkeypatch.setattr(monitor, "send_monitor_alert", Mock())
 
 
-def test_incident_replay_pages_at_one_hour_and_through_outage(client_record):
+def test_low_volume_night_silence_does_not_page(client_record):
     last = datetime(2026, 10, 22, 2, 21, 16, tzinfo=UTC)
     seed_history(client_record, last)
-    assert monitor.check_transactional_health(now=last + timedelta(minutes=59), force=True) == []
-    for hours in (1, 12, 24, 48):
-        alerts = monitor.check_transactional_health(now=last + timedelta(hours=hours), force=True)
-        assert alerts[0]["kind"] == "acceptance_gap"
-    assert monitor.send_monitor_alert.call_count == 4
-    # Arrival of the resend burst resolves the acceptance gap.
-    TransactionalMessage.objects.filter(client=client_record).update(created_at=last + timedelta(hours=49))
-    assert monitor.check_transactional_health(now=last + timedelta(hours=49), force=True) == []
+    night = datetime(2026, 10, 23, 2, 30, tzinfo=UTC)
+    assert monitor.client_alerts(client_record, night) == []
+    assert monitor.check_transactional_health(now=night, force=True) == []
+    monitor.send_monitor_alert.assert_not_called()
+
+
+def test_high_volume_same_hour_stop_pages_once_and_resolves(client_record):
+    last = datetime(2026, 10, 22, 2, 21, 16, tzinfo=UTC)
+    seed_history(client_record, last)
+    now = last + timedelta(hours=2)
+    seed_expected_hour(client_record, now, count=3)
+
+    first = monitor.check_transactional_health(now=now, force=True)
+    assert [item["kind"] for item in first] == ["acceptance_gap"]
+    assert first[0]["expected_hour_count"] == 3
+    assert first[0]["threshold_minutes"] == 60
+    assert monitor.check_transactional_health(now=now + timedelta(minutes=10), force=True) == []
+    assert monitor.send_monitor_alert.call_count == 1
+
+    # The first accepted message ends the incident and emits one resolve.
+    message = TransactionalMessage.objects.filter(client=client_record).order_by("-created_at").first()
+    TransactionalMessage.objects.filter(pk=message.pk).update(created_at=now + timedelta(minutes=11))
+    resolved = monitor.check_transactional_health(now=now + timedelta(minutes=12), force=True)
+    assert [item["kind"] for item in resolved] == ["acceptance_gap_resolved"]
+    assert monitor.send_monitor_alert.call_count == 2
+    assert monitor.check_transactional_health(now=now + timedelta(minutes=13), force=True) == []
+    assert monitor.send_monitor_alert.call_count == 2
+
+
+def test_sparse_same_hour_rate_uses_longer_gap_threshold(client_record):
+    last = datetime(2026, 10, 22, 2, 21, 16, tzinfo=UTC)
+    seed_history(client_record, last)
+    now = last + timedelta(minutes=80)
+    seed_expected_hour(client_record, now, count=2)
+    assert monitor.client_alerts(client_record, now) == []
+    alerts = monitor.client_alerts(client_record, now + timedelta(minutes=12))
+    assert alerts[0]["threshold_minutes"] == 90
+    assert alerts[0]["gap_minutes"] > alerts[0]["threshold_minutes"]
+    assert monitor.check_transactional_health(now=now, force=True) == []
 
 
 def test_configurable_quiet_night_and_morning_grace(client_record, settings):
     last = datetime(2026, 10, 22, 20, 0, tzinfo=UTC)
     seed_history(client_record, last)
     settings.RELAY_TRANSACTIONAL_MONITOR_CLIENTS = {str(client_record.pk): {"quiet_hours": [0, 1, 2, 3, 4, 5, 6, 7]}}
+    seed_expected_hour(client_record, datetime(2026, 10, 23, 7, 0, tzinfo=UTC), count=3)
     for hour in (0, 4, 6):
         assert monitor.client_alerts(client_record, datetime(2026, 10, 23, hour, 30, tzinfo=UTC)) == []
     assert monitor.client_alerts(client_record, datetime(2026, 10, 23, 7, 0, tzinfo=UTC))
@@ -150,12 +200,16 @@ def test_full_4xx_at_low_volume_does_not_page(client_record):
 def test_persisted_repeat_limit_and_delivery_failure_retry(client_record):
     now = datetime(2026, 10, 24, 12, tzinfo=UTC)
     seed_history(client_record, now - timedelta(hours=2))
+    seed_expected_hour(client_record, now, count=3)
     monitor.send_monitor_alert.side_effect = RuntimeError("secret must not be logged")
     monitor.check_transactional_health(now=now, force=True)
     monitor.send_monitor_alert.side_effect = None
     monitor.check_transactional_health(now=now + timedelta(minutes=1), force=True)
     monitor.check_transactional_health(now=now + timedelta(minutes=2), force=True)
-    assert monitor.send_monitor_alert.call_count == 2
+    message = TransactionalMessage.objects.filter(client=client_record).order_by("-created_at").first()
+    TransactionalMessage.objects.filter(pk=message.pk).update(created_at=now + timedelta(minutes=3))
+    monitor.check_transactional_health(now=now + timedelta(minutes=4), force=True)
+    assert monitor.send_monitor_alert.call_count == 3
 
 
 @pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 429, 500, 503])
