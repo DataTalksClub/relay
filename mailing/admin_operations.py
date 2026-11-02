@@ -465,16 +465,38 @@ def schedule_action(request, schedule_id):
 def transactional_retry(request, message_id):
     from mailing.services.transactional_retry import (  # noqa: PLC0415
         TransactionalRetryError,
+        retry_refusal_code,
         retry_transactional_message,
     )
 
-    data = body(request, {"reason", "force"})
+    data = body(request, {"reason", "force", "dry_run"})
     reason = data.get("reason", "")
     if reason not in ("", None) and not isinstance(reason, str):
         raise ApiError("validation_error", fields={"reason": "must_be_string"})
     force = data.get("force", False)
-    if force not in (True, False):
+    if not isinstance(force, bool):
         raise ApiError("validation_error", fields={"force": "must_be_boolean"})
+    dry_run = data.get("dry_run", False)
+    if not isinstance(dry_run, bool):
+        raise ApiError("validation_error", fields={"dry_run": "must_be_boolean"})
+    if dry_run:
+        try:
+            message = models.TransactionalMessage.objects.select_related("client", "contact").get(pk=message_id)
+        except models.TransactionalMessage.DoesNotExist as exc:
+            raise ApiError("not_found", 404) from exc
+        refusal = retry_refusal_code(message, reason=reason or "", force=force)
+        from mailing.dry_run import dry_run_enforced  # noqa: PLC0415
+
+        return JsonResponse(
+            {
+                "id": message.id,
+                "status": message.status,
+                "would_retry": not bool(refusal),
+                "refusal_code": refusal,
+                "dry_run": True,
+                "dry_run_enforced": dry_run_enforced(),
+            }
+        )
     try:
         result = retry_transactional_message(
             message_id, actor=request.admin_key.user, reason=reason or "", force=force
@@ -519,27 +541,27 @@ def transactional_bulk_retry(request):
         raise ApiError("validation_error", fields={"reason": "must_be_string"})
     reason = (reason or "").strip()
     force = data.get("force", False)
-    if force not in (True, False):
+    if not isinstance(force, bool):
         raise ApiError("validation_error", fields={"force": "must_be_boolean"})
     if force and not reason:
         raise ApiError("reason_required", 400)
     dry_run = data.get("dry_run", False)
-    if dry_run not in (True, False):
+    if not isinstance(dry_run, bool):
         raise ApiError("validation_error", fields={"dry_run": "must_be_boolean"})
     confirm = data.get("confirm", False)
-    if confirm not in (True, False):
+    if not isinstance(confirm, bool):
         raise ApiError("validation_error", fields={"confirm": "must_be_boolean"})
     if not dry_run and not confirm:
         raise ApiError("confirmation_required", 400)
     limit = data.get("limit", MAX_BULK_RETRY)
-    if not isinstance(limit, int) or not 1 <= limit <= MAX_BULK_RETRY:
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_BULK_RETRY:
         raise ApiError("validation_error", fields={"limit": f"must_be_int_1_{MAX_BULK_RETRY}"})
     status = data.get("status", models.TransactionalMessageStatus.FAILED)
     if not isinstance(status, str) or status not in dict(models.TransactionalMessageStatus.choices):
         raise ApiError("validation_error", fields={"status": "invalid_status"})
     client = None
     if data.get("client_id") is not None:
-        if not isinstance(data["client_id"], int):
+        if isinstance(data["client_id"], bool) or not isinstance(data["client_id"], int):
             raise ApiError("validation_error", fields={"client_id": "invalid_type"})
         client = get_record(models.Client, pk=data["client_id"])
     client_slug = data.get("client", "")

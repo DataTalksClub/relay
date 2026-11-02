@@ -15,6 +15,7 @@ Only ``failed`` messages retry without ``--force``. ``--force`` needs
 ``--reason`` and still never retries suppressed/blocked recipients.
 """
 
+import getpass
 from datetime import datetime
 
 from django.core.management.base import BaseCommand, CommandError
@@ -28,6 +29,7 @@ from mailing.services.transactional_retry import (
     BulkRetryResult,
     bulk_retry_transactional_messages,
     collect_retry_candidates,
+    retry_refusal_code,
     retry_transactional_message,
 )
 from mailing.services.transactional_retry import (
@@ -112,13 +114,25 @@ class Command(BaseCommand):
         except TransactionalMessage.DoesNotExist as exc:
             raise CommandError(f"transactional message {message_id} not found") from exc
         if dry_run:
-            self.stdout.write(
-                f"would retry message {message.id} ({message.email}, "
-                f"client={message.client.slug}, status={message.status}): {message.last_error[:200]}"
-            )
+            refusal = retry_refusal_code(message, force=force, reason=reason)
+            if refusal:
+                self.stdout.write(
+                    f"would skip message {message.id} ({message.email}, status={message.status}): {refusal}"
+                )
+            else:
+                self.stdout.write(
+                    f"would retry message {message.id} ({message.email}, "
+                    f"client={message.client.slug}, status={message.status}): {message.last_error[:200]}"
+                )
             return
         try:
-            result = retry_transactional_message(message.pk, actor=None, reason=reason, force=force)
+            result = retry_transactional_message(
+                message.pk,
+                actor=None,
+                operator_name=getpass.getuser(),
+                reason=reason,
+                force=force,
+            )
         except RetryError as exc:
             raise CommandError(f"retry refused: {exc.code}") from exc
         self.stdout.write(
@@ -148,12 +162,22 @@ class Command(BaseCommand):
             )
         if dry_run:
             result: BulkRetryResult = bulk_retry_transactional_messages(
-                qs, actor=None, reason=reason, force=force, limit=limit, dry_run=True
+                qs,
+                actor=None,
+                operator_name=getpass.getuser(),
+                reason=reason,
+                force=force,
+                limit=limit,
+                dry_run=True,
             )
             for row in result.retried:
                 self.stdout.write(
                     f"would retry {row['id']} ({row['email']}, client={row['client']}, "
                     f"template={row['template_key']}, status={row['status']})"
+                )
+            for row in result.skipped:
+                self.stdout.write(
+                    f"would skip {row['id']} ({row['email']}, status={row['status']}): {row['code']}"
                 )
             self.stdout.write(self.style.WARNING(f"dry-run: {len(result.retried)} would be re-queued."))
             return
@@ -164,7 +188,13 @@ class Command(BaseCommand):
                 self.stdout.write("aborted.")
                 return
         result = bulk_retry_transactional_messages(
-            qs, actor=None, reason=reason, force=force, limit=limit, dry_run=False
+            qs,
+            actor=None,
+            operator_name=getpass.getuser(),
+            reason=reason,
+            force=force,
+            limit=limit,
+            dry_run=False,
         )
         for row in result.retried:
             self.stdout.write(f"retried {row['id']} ({row['email']})")

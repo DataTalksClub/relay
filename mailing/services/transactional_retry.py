@@ -116,6 +116,35 @@ def suppression_block_reason(message):
     return recipient_block_reason(message.email)
 
 
+def retry_refusal_code(
+    message,
+    *,
+    force=False,
+    reason="",
+    blocked_addresses=None,
+    blocked_domains=None,
+):
+    """Return the reason a retry would be refused, without changing state.
+
+    Bulk callers pass preloaded blocklists to keep previews and execution
+    bounded to a small number of queries. Single-message callers can let this
+    function check the blocklist directly.
+    """
+    if message.status not in NON_FORCE_RETRYABLE_STATUSES and not force:
+        return "message_not_retryable"
+    if force and not (reason or "").strip():
+        return "reason_required"
+    if message.contact is not None and not is_transactional_email_allowed(message.contact):
+        return "recipient_suppressed"
+
+    email = normalize_email(message.email)
+    if blocked_addresses is None or blocked_domains is None:
+        return "recipient_suppressed" if recipient_block_reason(email) else ""
+    if email in blocked_addresses or email.partition("@")[2] in blocked_domains:
+        return "recipient_suppressed"
+    return ""
+
+
 def resolve_retry_sender(message):
     """Re-resolve the sender at retry time so a fixed route applies.
 
@@ -183,7 +212,9 @@ def _next_retry_count(message):
 
 
 @transaction.atomic
-def retry_transactional_message(message_or_id, *, actor=None, reason="", force=False):
+def retry_transactional_message(
+    message_or_id, *, actor=None, operator_name="", reason="", force=False
+):
     """Retry one transactional message, keeping its row/idempotency key."""
     from mailing.enqueue import enqueue_transactional_email  # noqa: PLC0415 - avoid import cycle
     from mailing.services.transactional import (  # noqa: PLC0415 - avoid import cycle
@@ -262,6 +293,7 @@ def retry_transactional_message(message_or_id, *, actor=None, reason="", force=F
             "sender_changed": sender_changed,
             "from_email": sender_email,
             "dry_run_enforced": enforced,
+            "operator": (operator_name or "").strip()[:150],
         },
     )
     message.refresh_from_db()
@@ -311,27 +343,50 @@ def collect_retry_candidates(
 
 @transaction.atomic
 def bulk_retry_transactional_messages(
-    queryset, *, actor=None, reason="", force=False, limit=MAX_BULK_RETRY, dry_run=False
+    queryset,
+    *,
+    actor=None,
+    operator_name="",
+    reason="",
+    force=False,
+    limit=MAX_BULK_RETRY,
+    dry_run=False,
 ):
     """Bulk-retry a candidate queryset with per-row guardrails.
 
     Never raises for a skippable row: suppressed/blocked and (without
     force) non-failed rows are reported in ``skipped`` instead.
     """
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_BULK_RETRY:
+        raise ValueError(f"limit must be 1..{MAX_BULK_RETRY}")
+    reason = (reason or "").strip()
     enforced = dry_run_enforced()
     result = BulkRetryResult(dry_run=dry_run, dry_run_enforced=enforced)
+    blocked_addresses = set()
+    blocked_domains = set()
+    for scope, value in BlockedSender.objects.values_list("scope", "value"):
+        (blocked_addresses if scope == BlockedSender.Scope.ADDRESS else blocked_domains).add(value.lower())
     if dry_run:
         for message in queryset[:limit]:
-            result.retried.append(
-                {
-                    "id": message.id,
-                    "email": message.email,
-                    "client": message.client.slug if message.client_id else "",
-                    "template_key": message.template_key,
-                    "status": message.status,
-                    "last_error": (message.last_error or "")[:300],
-                }
+            row = {
+                "id": message.id,
+                "email": message.email,
+                "client": message.client.slug if message.client_id else "",
+                "template_key": message.template_key,
+                "status": message.status,
+                "last_error": (message.last_error or "")[:300],
+            }
+            refusal = retry_refusal_code(
+                message,
+                force=force,
+                reason=reason,
+                blocked_addresses=blocked_addresses,
+                blocked_domains=blocked_domains,
             )
+            if refusal:
+                result.skipped.append(row | {"code": refusal})
+            else:
+                result.retried.append(row)
         return result
     from mailing.enqueue import enqueue_transactional_email  # noqa: PLC0415
     from mailing.services.bulk_enqueue import enqueue_send_tasks  # noqa: PLC0415
@@ -341,21 +396,15 @@ def bulk_retry_transactional_messages(
     from mailing.tasks import send_transactional_email  # noqa: PLC0415
 
     messages = list(queryset.select_for_update(of=("self",))[:limit])
-    blocked_addresses = set()
-    blocked_domains = set()
-    for scope, value in BlockedSender.objects.values_list("scope", "value"):
-        (blocked_addresses if scope == BlockedSender.Scope.ADDRESS else blocked_domains).add(value.lower())
     accepted, events, audits, payloads = [], [], [], []
     for message in messages:
-        code = ""
-        if message.status not in NON_FORCE_RETRYABLE_STATUSES and not force:
-            code = "message_not_retryable"
-        elif force and not reason.strip():
-            code = "reason_required"
-        elif ((message.contact is not None and not is_transactional_email_allowed(message.contact))
-              or normalize_email(message.email) in blocked_addresses
-              or normalize_email(message.email).partition("@")[2] in blocked_domains):
-            code = "recipient_suppressed"
+        code = retry_refusal_code(
+            message,
+            force=force,
+            reason=reason,
+            blocked_addresses=blocked_addresses,
+            blocked_domains=blocked_domains,
+        )
         if code:
             result.skipped.append({"id": message.pk, "email": message.email, "code": code})
             continue
@@ -375,7 +424,8 @@ def bulk_retry_transactional_messages(
             actor=actor if getattr(actor, "is_authenticated", False) else None,
             action=RETRY_ACTION, target_type="transactionalmessage", target_id=message.pk,
             metadata=details | {"prior_error": prior_error[:500], "force": force,
-                                "from_email": sender_email, "dry_run_enforced": enforced},
+                                "from_email": sender_email, "dry_run_enforced": enforced,
+                                "operator": (operator_name or "").strip()[:150]},
         ))
         accepted.append(message)
         payloads.append(build_transactional_queue_payload(message))

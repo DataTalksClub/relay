@@ -1,3 +1,4 @@
+import getpass
 import io
 import json
 
@@ -187,6 +188,63 @@ def test_bulk_dry_run_lists_without_enqueue(failed_message, monkeypatch):
     assert calls == []
 
 
+def test_bulk_dry_run_lists_only_retryable_and_reports_guardrail_skips(
+    failed_message, client_record, contact, template
+):
+    sent_contact = Contact.objects.create(email="sent@example.com")
+    sent_message = TransactionalMessage.objects.create(
+        client=client_record,
+        contact=sent_contact,
+        email=sent_contact.email,
+        template=template,
+        template_key=template.key,
+        status=TransactionalMessageStatus.SENT,
+        idempotency_key="sent-preview",
+    )
+    suppressed_contact = Contact.objects.create(email="suppressed@example.com")
+    suppressed_message = TransactionalMessage.objects.create(
+        client=client_record,
+        contact=suppressed_contact,
+        email=suppressed_contact.email,
+        template=template,
+        template_key=template.key,
+        status=TransactionalMessageStatus.FAILED,
+        idempotency_key="suppressed-preview",
+    )
+    blocked_contact = Contact.objects.create(email="blocked@example.com")
+    blocked_message = TransactionalMessage.objects.create(
+        client=client_record,
+        contact=blocked_contact,
+        email=blocked_contact.email,
+        template=template,
+        template_key=template.key,
+        status=TransactionalMessageStatus.FAILED,
+        idempotency_key="blocked-preview",
+    )
+    BlockedSender.objects.create(scope=BlockedSender.Scope.ADDRESS, value=blocked_contact.email)
+    suppressed_contact.hard_bounced_at = timezone.now()
+    suppressed_contact.save(update_fields=["hard_bounced_at"])
+
+    result = bulk_retry_transactional_messages(
+        collect_retry_candidates(status=""), reason="route fixed", dry_run=True
+    )
+
+    assert [row["id"] for row in result.retried] == [failed_message.id]
+    assert {row["id"]: row["code"] for row in result.skipped} == {
+        suppressed_message.id: "recipient_suppressed",
+        sent_message.id: "message_not_retryable",
+        blocked_message.id: "recipient_suppressed",
+    }
+    failed_message.refresh_from_db()
+    sent_message.refresh_from_db()
+    suppressed_message.refresh_from_db()
+    blocked_message.refresh_from_db()
+    assert failed_message.status == TransactionalMessageStatus.FAILED
+    assert sent_message.status == TransactionalMessageStatus.SENT
+    assert suppressed_message.status == TransactionalMessageStatus.FAILED
+    assert blocked_message.status == TransactionalMessageStatus.FAILED
+
+
 def test_bulk_skips_suppressed_rows(failed_message, contact, monkeypatch):
     monkeypatch.setattr("mailing.enqueue.enqueue_transactional_email", lambda payload: None)
     contact.complained_at = timezone.now()
@@ -212,6 +270,21 @@ def test_cli_single_retries(failed_message, monkeypatch):
     assert "retried message" in out.getvalue()
     failed_message.refresh_from_db()
     assert failed_message.status == TransactionalMessageStatus.QUEUED
+    audit = OperatorAudit.objects.get(action="transactional_message.retry", target_id=failed_message.id)
+    assert audit.metadata["operator"] == getpass.getuser()
+
+
+def test_cli_single_dry_run_reports_non_retryable_status(failed_message):
+    failed_message.status = TransactionalMessageStatus.SENT
+    failed_message.save(update_fields=["status"])
+    out = io.StringIO()
+
+    call_command("retry_transactional", str(failed_message.id), "--dry-run", stdout=out)
+
+    assert f"would skip message {failed_message.id}" in out.getvalue()
+    assert "message_not_retryable" in out.getvalue()
+    failed_message.refresh_from_db()
+    assert failed_message.status == TransactionalMessageStatus.SENT
 
 
 def test_cli_bulk_dry_run(failed_message):
@@ -245,6 +318,25 @@ def test_admin_api_single_retry(operator, failed_message, monkeypatch):
     assert OperatorAudit.objects.filter(
         action="transactional_message.retry", target_id=failed_message.id
     ).exists()
+
+
+def test_admin_api_single_dry_run_reports_non_retryable_without_mutation(operator, failed_message):
+    failed_message.status = TransactionalMessageStatus.SENT
+    failed_message.save(update_fields=["status"])
+    _, token = create_admin_api_key(user=operator, name="preview-api")
+    http = HttpClient(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+    response = http.post(
+        f"/api/admin/transactional-messages/{failed_message.id}/retry",
+        data=json.dumps({"dry_run": True}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200, response.content
+    assert response.json()["would_retry"] is False
+    assert response.json()["refusal_code"] == "message_not_retryable"
+    failed_message.refresh_from_db()
+    assert failed_message.status == TransactionalMessageStatus.SENT
 
 
 def test_admin_api_single_refuses_sent(operator, failed_message, monkeypatch):
@@ -283,6 +375,28 @@ def test_admin_api_bulk_dry_run(operator, failed_message):
     )
     assert response.status_code == 200, response.content
     assert response.json()["retried_count"] >= 1
+    failed_message.refresh_from_db()
+    assert failed_message.status == TransactionalMessageStatus.FAILED
+
+
+def test_admin_api_bulk_dry_run_reports_suppressed_messages(operator, failed_message, contact):
+    contact.complained_at = timezone.now()
+    contact.save(update_fields=["complained_at"])
+    _, token = create_admin_api_key(user=operator, name="suppressed-api")
+    http = HttpClient(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+    response = http.post(
+        "/api/admin/transactional-messages/retry",
+        data=json.dumps({"reason": "review", "dry_run": True}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body["retried_count"] == 0
+    assert body["skipped_count"] == 1
+    assert body["skipped"][0]["id"] == failed_message.id
+    assert body["skipped"][0]["code"] == "recipient_suppressed"
     failed_message.refresh_from_db()
     assert failed_message.status == TransactionalMessageStatus.FAILED
 
@@ -338,3 +452,10 @@ def test_bulk_retry_preserves_distinct_metadata_and_counts(failed_message, clien
     other.refresh_from_db()
     assert failed_message.metadata == {"retry_count": 8, "keep": "first", "last_retry_reason": "fixed"}
     assert other.metadata == {"retry_count": 1, "keep": "second", "last_retry_reason": "fixed"}
+
+
+def test_bulk_retry_service_rejects_batch_above_max(failed_message):
+    with pytest.raises(ValueError, match="limit must be"):
+        bulk_retry_transactional_messages(
+            collect_retry_candidates(), reason="fixed", limit=MAX_BULK_RETRY + 1, dry_run=True
+        )
