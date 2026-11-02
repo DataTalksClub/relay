@@ -26,7 +26,7 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
-from mailing.services.auth import hash_api_key
+from mailing.services.auth import fast_hash_api_key, hash_api_key
 
 ADMIN_USERNAME = "admin"
 ADMIN_EMAIL = "admin@example.com"
@@ -212,6 +212,7 @@ def upsert_client_api_keys(clients):
             defaults={
                 "public_id": public_id,
                 "key_hash": hash_api_key(key_spec["raw_key"]),
+                "key_fast_hash": fast_hash_api_key(key_spec["raw_key"]),
                 "notes": key_spec["notes"],
                 "revoked_at": None,
             },

@@ -1,6 +1,9 @@
+import hashlib
+import hmac
 import secrets
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.utils import timezone
 
@@ -30,6 +33,32 @@ def check_api_key(raw_api_key, api_key_hash):
     return check_password(raw_api_key, api_key_hash)
 
 
+def fast_hash_api_key(raw_api_key):
+    """Fast verifier for high-entropy API keys (intake e5cd1579).
+
+    Raw keys carry ~192 bits of entropy (`secrets.token_urlsafe(32)`), so the
+    ~240 ms PBKDF2 stretching designed for low-entropy passwords is pure
+    per-request overhead (measured on prod: every authenticated API call paid
+    it). HMAC-SHA256 keyed by `SECRET_KEY` with a constant-time comparison is
+    the correct verifier here. `SECRET_KEY` rotation is safe: a mismatch falls
+    back to the PBKDF2 `key_hash` and re-stores the fast hash on success.
+    """
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        raw_api_key.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def check_api_key_fast(raw_api_key, stored_fast_hash):
+    if not raw_api_key or not stored_fast_hash:
+        return False
+    try:
+        return hmac.compare_digest(fast_hash_api_key(raw_api_key), stored_fast_hash)
+    except (TypeError, ValueError):
+        return False
+
+
 def generate_raw_api_key(public_id=None):
     public_id = public_id or secrets.token_urlsafe(9).replace("-", "").replace("_", "")[:12]
     secret = secrets.token_urlsafe(32)
@@ -57,6 +86,7 @@ def create_client_api_key(*, client, name, notes="", raw_api_key=None, public_id
         notes=notes,
         public_id=parsed_public_id,
         key_hash=hash_api_key(raw_key),
+        key_fast_hash=fast_hash_api_key(raw_key),
     )
     return api_key, raw_key
 
@@ -78,11 +108,21 @@ def authenticate_bearer_token(authorization_header):
         api_keys = api_keys.filter(public_id=public_id)
 
     for api_key in api_keys:
-        if check_api_key(raw_api_key, api_key.key_hash):
+        if check_api_key_fast(raw_api_key, api_key.key_fast_hash):
             if not api_key.client.is_active:
                 return AuthResult(client=None, error="inactive_client")
             api_key.last_used_at = timezone.now()
             api_key.save(update_fields=["last_used_at", "updated_at"])
+            return AuthResult(client=api_key.client)
+        if check_api_key(raw_api_key, api_key.key_hash):
+            # Legacy PBKDF2-only key (pre-fast-hash, transfer import, or a
+            # SECRET_KEY rotation): upgrade to the fast verifier on the same
+            # write that records usage, so only this request pays PBKDF2.
+            if not api_key.client.is_active:
+                return AuthResult(client=None, error="inactive_client")
+            api_key.key_fast_hash = fast_hash_api_key(raw_api_key)
+            api_key.last_used_at = timezone.now()
+            api_key.save(update_fields=["key_fast_hash", "last_used_at", "updated_at"])
             return AuthResult(client=api_key.client)
 
     return AuthResult(client=None, error="invalid_api_key")

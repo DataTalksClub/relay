@@ -81,6 +81,11 @@ class ClientApiKey(TimeStampedModel):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="api_keys")
     name = models.CharField(max_length=120)
     key_hash = models.CharField(max_length=255)
+    # Fast HMAC-SHA256 verifier (hex digest) for high-entropy API keys.
+    # PBKDF2 `key_hash` stays as the legacy fallback (transfer files, rollback);
+    # empty means "not upgraded yet" and the first successful PBKDF2 check
+    # populates it (intake e5cd1579: PBKDF2 cost ~240 ms per API request).
+    key_fast_hash = models.CharField(max_length=128, blank=True, default="")
     public_id = models.CharField(max_length=32, unique=True)
     notes = models.TextField(blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
@@ -118,6 +123,8 @@ class AdminApiKey(TimeStampedModel):
     name = models.CharField(max_length=120)
     public_id = models.CharField(max_length=32, unique=True)
     key_hash = models.CharField(max_length=255)
+    # Fast HMAC-SHA256 verifier, same scheme as ClientApiKey.key_fast_hash.
+    key_fast_hash = models.CharField(max_length=128, blank=True, default="")
     last_used_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
 

@@ -3,7 +3,7 @@ import os
 from django.core.management.base import BaseCommand, CommandError
 
 from mailing.models import Client, ClientApiKey
-from mailing.services.auth import hash_api_key, public_id_from_raw_key
+from mailing.services.auth import fast_hash_api_key, hash_api_key, public_id_from_raw_key
 
 
 class Command(BaseCommand):
@@ -39,6 +39,7 @@ class Command(BaseCommand):
             api_key = ClientApiKey(client=client, name=options["name"])
         api_key.public_id = public_id
         api_key.key_hash = hash_api_key(raw_key)
+        api_key.key_fast_hash = fast_hash_api_key(raw_key)
         api_key.notes = "Managed by the Relay sandbox deployment."
         api_key.save()
         self.stdout.write(
