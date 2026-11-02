@@ -221,11 +221,12 @@ def test_api_metrics_include_auth_failures_without_storing_token(client_record, 
     metric = TransactionalRequestMinute.objects.get(client=client_record)
     assert (metric.total, metric.errors) == (1, int(status >= 400))
     assert metric.server_errors == int(status >= 500)
+    assert metric.missing_template == 0
     assert raw not in str(metric.__dict__)
 
 
 @pytest.mark.parametrize("missing", ["key", "inactive", "version", "lookup"])
-def test_template_missing_404_keeps_http_contract_without_api_error(client, client_record, missing):
+def test_template_missing_404_counts_error_and_reports_own_class(client, client_record, missing):
     _, raw = create_client_api_key(client=client_record, name="reminders")
     key = "registration-confirmation-reminder-1"
     if missing in {"inactive", "version"}:
@@ -245,11 +246,16 @@ def test_template_missing_404_keeps_http_contract_without_api_error(client, clie
     assert response.status_code == 404
     assert response.json() == {"error": {"code": "validation_error", "fields": {field: "not_found"}}}
     metric = TransactionalRequestMinute.objects.get(client=client_record)
-    assert (metric.total, metric.errors, metric.server_errors) == (1, 0, 0)
+    assert (metric.total, metric.errors, metric.server_errors) == (1, 1, 0)
+    assert metric.missing_template == 1
     assert not TransactionalMessage.objects.exists()
+    # One lost email is below the api_errors flood volume but still reports.
+    alerts = monitor.client_alerts(client_record, datetime.now(UTC))
+    assert [alert["kind"] for alert in alerts] == ["missing_template"]
+    assert alerts[0]["missing_template"] == 1
 
 
-def test_missing_template_flood_does_not_page_but_other_4xx_still_do(client, client_record):
+def test_missing_template_flood_still_raises_client_alerts(client, client_record):
     _, raw = create_client_api_key(client=client_record, name="reminders")
     headers = {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
     for _ in range(20):
@@ -259,14 +265,19 @@ def test_missing_template_flood_does_not_page_but_other_4xx_still_do(client, cli
             content_type="application/json", **headers,
         )
         assert response.status_code == 404
-    now = datetime.now(UTC)
-    assert monitor.client_alerts(client_record, now) == []
+    alerts = monitor.client_alerts(client_record, datetime.now(UTC))
+    assert [alert["kind"] for alert in alerts] == ["api_errors", "missing_template"]
+    assert alerts[0]["requests"] == 20
+    assert alerts[0]["errors"] == 20
+    assert alerts[1]["missing_template"] == 20
+    # Non-template 404s count as errors without joining the missing-template class.
     for _ in range(5):
         response = client.get("/api/transactional/messages/999999", **headers)
         assert response.status_code == 404
-    alert = monitor.client_alerts(client_record, datetime.now(UTC))[0]
-    assert (alert["requests"], alert["errors"], alert["server_errors"]) == (25, 5, 0)
-    assert alert["error_percent"] == 20
+    alert, missing = monitor.client_alerts(client_record, datetime.now(UTC))
+    assert (alert["requests"], alert["errors"], alert["server_errors"]) == (25, 25, 0)
+    assert alert["error_percent"] == 100.0
+    assert missing["missing_template"] == 20
 
 
 def test_test_command_has_fixed_recipient(monkeypatch, settings):

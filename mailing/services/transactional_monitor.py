@@ -82,9 +82,11 @@ def client_alerts(client, now):
         alerts.append(gap)
     counts = TransactionalRequestMinute.objects.filter(
         client=client, minute__gt=now - timedelta(minutes=15), minute__lte=now,
-    ).aggregate(total=Sum("total"), errors=Sum("errors"), server_errors=Sum("server_errors"))
+    ).aggregate(total=Sum("total"), errors=Sum("errors"), server_errors=Sum("server_errors"),
+                missing_template=Sum("missing_template"))
     total, errors = counts["total"] or 0, counts["errors"] or 0
     server_errors = counts["server_errors"] or 0
+    missing_template = counts["missing_template"] or 0
     # Relay-side 5xx page at low volume: a real outage must never be muted.
     server_alarm = (total >= max(1, policy["min_requests"])
                     and server_errors * 100 >= total * policy["error_percent"])
@@ -96,6 +98,11 @@ def client_alerts(client, now):
         alerts.append({"kind": "api_errors", "client_id": client.pk,
                        "requests": total, "errors": errors, "server_errors": server_errors,
                        "error_percent": round(errors * 100 / total, 1)})
+    # Every missing-template 404 is a client email that did not deliver, so it
+    # reports at any volume; the one-hour per-kind cooldown paces repeats.
+    if missing_template:
+        alerts.append({"kind": "missing_template", "client_id": client.pk,
+                       "requests": total, "errors": errors, "missing_template": missing_template})
     return alerts
 
 

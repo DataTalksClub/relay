@@ -35,8 +35,9 @@ class TransactionalMonitorMiddleware:
                 )
                 TransactionalRequestMinute.objects.filter(pk=row.pk).update(
                     total=F("total") + 1,
-                    errors=F("errors") + int(response.status_code >= 400 and not expected_missing),
-                    server_errors=F("server_errors") + int(response.status_code >= 500))
+                    errors=F("errors") + int(response.status_code >= 400),
+                    server_errors=F("server_errors") + int(response.status_code >= 500),
+                    missing_template=F("missing_template") + int(expected_missing))
         except Exception as exc:
             logger.error("relay_transactional_api_metric_failed error_type=%s", type(exc).__name__)
         return response

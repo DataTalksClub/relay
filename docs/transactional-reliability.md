@@ -60,12 +60,16 @@ so a real server outage is never muted. Client-side HTTP 4xx (bad input, bad or
 revoked key, operator auth probes) contribute to a combined 4xx/5xx check:
 >=20% errors with at least 20 requests in 15 minutes (`min_requests_4xx`).
 Mixed failures therefore count even when neither class alone reaches 20%.
-Expected template-missing 404s (`template_key: not_found` or
-`template_version: not_found`) remain in the request total but do not increment
-the error count. Other 404s, validation failures, authentication failures and
-all 5xx still count. The HTTP response contract is unchanged. Missing templates
-must still be provisioned by the integration owner; this exemption does not
-make a failed reminder deliver. A template with no published versions falls
+Template-missing 404s (`template_key: not_found` or `template_version:
+not_found`) stay in the error count — each one is a client email that did not
+deliver — so a sustained missing-template flood pages as `api_errors`. They are
+also counted separately and raise a dedicated `missing_template` alert on any
+occurrence in the trailing 15 minutes (paced by the usual one-hour per-kind
+cooldown), so even a single lost email stays visible. Other 404s, validation
+failures, authentication failures and all 5xx count as before. The HTTP
+response contract is unchanged. Missing templates must still be provisioned by
+the integration owner; no counting exemption makes a failed reminder deliver.
+A template with no published versions falls
 back to its draft unless the caller explicitly requests a version.
 A single 4xx probe at low traffic does not
 page (2026-10-24: one 401 probe among 5 requests for client 2 paged before this
@@ -74,8 +78,9 @@ still covered by the acceptance-gap check. Minute counters expire after a day.
 The boundary minute is excluded, giving up to one minute of rounding at the
 start of that window.
 
-The middleware stores only client ID, minute, total, error and server-error (5xx)
-counts. It uses
+The middleware stores only client ID, minute, total, error, server-error (5xx)
+and missing-template (404 `template_key`/`template_version: not_found`) counts.
+It uses
 the authenticated client or, on authentication failure, the key's public ID as
 an attribution hint (including revoked keys). An unknown/missing key cannot be
 assigned to a client. Public-ID attribution is not proof of caller identity.

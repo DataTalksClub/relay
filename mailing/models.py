@@ -1362,6 +1362,10 @@ class TransactionalRequestMinute(models.Model):
     # HTTP 5xx subset of errors. 4xx are client-side (bad input, bad key);
     # 5xx are Relay-side and page at low volume, 4xx only as a flood.
     server_errors = models.PositiveIntegerField(default=0)
+    # HTTP 404 template_key/template_version not_found subset of errors. Each
+    # occurrence is a client email that did not deliver, so it stays in the
+    # error total and reports as its own alert class at any volume.
+    missing_template = models.PositiveIntegerField(default=0)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["client", "minute"], name="tx_request_client_minute_unique")]
