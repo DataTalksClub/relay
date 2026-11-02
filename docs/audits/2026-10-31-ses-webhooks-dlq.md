@@ -105,6 +105,41 @@ this session and none is needed — the DLQ has been empty since at latest
 longer be read from the queue because the queue is empty; confirming the
 AWS-side receive actor is an operator task via CloudTrail if desired.
 
+## AC1 follow-up: recoverability of the original message fields (2026-11-02)
+
+The existing VictoriaLogs analysis above does not recover the message's SES
+event id, its per-message `ApproximateReceiveCount`, or a message-specific
+handler failure reason. The preserved logs show that the ingress had no
+handler failures around the incident and that the message received after the
+redrive was deleted successfully, with its provider-event task succeeding at
+05:14:21Z. They do not preserve the redriven message body or attributes. The
+configured `maxReceiveCount=5` establishes the threshold for moving a message
+to the DLQ, and the observed timing is consistent with five receives outside
+the application; it is not a captured per-message receive-count value. The
+best-supported explanation is that external receives exhausted that
+threshold, but the actor, intent, SES event id, and exact original failure
+reason remain unverified.
+
+CloudTrail may provide actor and timing evidence for queue API calls.
+`ReceiveMessage` is an SQS data event, and AWS says data events are off by
+default and absent from Event history; `StartMessageMoveTask` is a management
+event and is logged by default. AWS also documents `responseElements` as null
+for read-only APIs. Thus a `ReceiveMessage` record cannot recover the response
+body, `ApproximateReceiveCount`, or an SES event id, and a move-task record
+identifies a queue-level redrive rather than the original message content or
+failure reason. See [SQS CloudTrail logging](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/logging-using-cloudtrail.html)
+and [CloudTrail record contents](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-record-contents.html).
+This session had no authorized AWS access to check whether matching data events
+were enabled or retained; the previous investigation also lacked that access.
+
+**AC1 outcome:** the exact fields cannot be recovered from the preserved
+application logs, and CloudTrail could at most add actor/timing evidence. The
+original e30c9b48 AC1 should be updated so that, when a DLQ message was already
+redriven before its body and attributes were captured, recording the known
+redrive threshold and evidence-based explanation plus the unavailable exact
+fields satisfies the criterion. No further queue action is warranted for
+this incident.
+
 ## Notes for future on-call
 
 - The transport guard (`mailing/services/ses_monitor.py::
