@@ -105,18 +105,36 @@ this session and none is needed — the DLQ has been empty since at latest
 longer be read from the queue because the queue is empty; confirming the
 AWS-side receive actor is an operator task via CloudTrail if desired.
 
-## AC1 follow-up: recoverability of the original message fields (2026-11-02)
+## AC1 follow-up: recoverability of the original message fields (intake 358088c2)
 
 The existing VictoriaLogs analysis above does not recover the message's SES
 event id, its per-message `ApproximateReceiveCount`, or a message-specific
 handler failure reason. The preserved logs show that the ingress had no
 handler failures around the incident and that the message received after the
 redrive was deleted successfully, with its provider-event task succeeding at
-05:14:21Z. They do not preserve the redriven message body or attributes. The
-configured `maxReceiveCount=5` establishes the threshold for moving a message
-to the DLQ, and the observed timing is consistent with five receives outside
-the application; it is not a captured per-message receive-count value. The
-best-supported explanation is that external receives exhausted that
+05:14:21Z. They do not preserve the redriven message body or attributes:
+
+- `mailing/management/commands/drain_sqs_ingress.py` and
+  `mailing/sqs_worker.py` (`SqsWorker.run_once`) log only aggregate poll
+  counts (`received=1 deleted=1 failed=0`) on successful polls; individual SQS
+  `MessageId` values and failure reasons are logged only when
+  `mailing/sqs.py::process_sqs_event` or batch deletion fails.
+- `mailing/services/ses_webhooks.py::normalize_ses_webhook_worker_payload`
+  copies only `SentTimestamp` (`sqs_sent_timestamp`) and
+  `ApproximateFirstReceiveTimestamp` (`sqs_approximate_first_receive_timestamp`)
+  from SQS system attributes; it never records `ApproximateReceiveCount`, and
+  a message redriven back to the source queue via `StartMessageMoveTask` is
+  delivered as a new message on the destination queue.
+- `mailing/tasks.py::process_ses_webhook_event` returns only
+  `{"email_event_id": ..., "event_type": ...}` or
+  `{"operator_audit_id": ..., "action": ...}`, and the `provider-events`
+  worker stdout in VictoriaLogs records only the task run UUID (`e0f47ccb…`)
+  and `SUCCEEDED`, not `provider_event_id` or `ses_message_id`.
+
+The configured `maxReceiveCount=5` establishes the threshold for moving a
+message to the DLQ, and the observed timing is consistent with five receives
+outside the application; it is not a captured per-message receive-count value.
+The best-supported explanation is that external receives exhausted that
 threshold, but the actor, intent, SES event id, and exact original failure
 reason remain unverified.
 
@@ -130,15 +148,18 @@ identifies a queue-level redrive rather than the original message content or
 failure reason. See [SQS CloudTrail logging](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/logging-using-cloudtrail.html)
 and [CloudTrail record contents](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-record-contents.html).
 This session had no authorized AWS access to check whether matching data events
-were enabled or retained; the previous investigation also lacked that access.
+were enabled or retained; the previous investigation also lacked that access,
+and no `main-temp` or static AWS keys were used.
 
-**AC1 outcome:** the exact fields cannot be recovered from the preserved
-application logs, and CloudTrail could at most add actor/timing evidence. The
-original e30c9b48 AC1 should be updated so that, when a DLQ message was already
-redriven before its body and attributes were captured, recording the known
-redrive threshold and evidence-based explanation plus the unavailable exact
-fields satisfies the criterion. No further queue action is warranted for
-this incident.
+**AC1 outcome:** the exact fields (`ses_message_id` / `provider_event_id`,
+per-message `ApproximateReceiveCount`, and message-specific failure reason)
+cannot be recovered from the preserved application logs or CloudTrail
+`ReceiveMessage`/`StartMessageMoveTask` records. The original `e30c9b48` AC1
+criterion should be updated so that, when a DLQ message was already redriven
+before its body and attributes were captured, recording the known redrive
+threshold (`maxReceiveCount=5`) and evidence-based explanation plus the
+unavailable exact fields satisfies the criterion. No purge, redrive, delete,
+or email action is warranted or performed for this incident.
 
 ## Notes for future on-call
 
