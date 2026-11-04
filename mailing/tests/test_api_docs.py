@@ -236,3 +236,19 @@ def test_api_docs_endpoint_reference_matches_openapi_paths(client, staff_user):
         assert path in page
 
     assert "/api/v1" not in page
+
+
+def test_transactional_send_paths_document_retryable_rate_limit():
+    spec = build_openapi_spec()
+
+    assert spec["components"]["responses"]["TooManyRequests"]["description"] == "Rate limit exceeded"
+
+    for path in (
+        "/api/transactional/send",
+        "/api/recipient-lists/{list_key}/transactional-send",
+        "/api/transient-recipient-lists/transactional-send",
+    ):
+        responses = spec["paths"][path]["post"]["responses"]
+        assert responses["429"] == {"$ref": "#/components/responses/TooManyRequests"}
+        # Auth/validation verdicts stay documented; throttling is 429, not 403.
+        assert "403" in responses

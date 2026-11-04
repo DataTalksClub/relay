@@ -637,6 +637,14 @@ suppression:
 A send with `category_tag: "transactional"` is never suppressed by the
 category check.
 
+Bursts above the edge per-IP rate budget are rejected with `429` and a
+`Retry-After` header (seconds), never with a dead-end block page. Treat `429`
+as retryable: wait at least `Retry-After`, then retry with the same
+`idempotency_key` — replays return the existing message instead of sending
+twice. Any other `4xx` is a verdict about the request itself (bad input, bad
+or revoked key, suppressed contact, missing template), not throttling: do not
+retry those as if they were rate limited.
+
 ### Transactional Message Status
 
 ```text

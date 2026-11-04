@@ -1637,7 +1637,8 @@ OPENAPI_SPEC = {
                         "#/components/schemas/RecipientListTransactionalSendResponse",
                     ),
                     accepted=True,
-                ),
+                )
+                | {"429": {"$ref": "#/components/responses/TooManyRequests"}},
             }
         },
         "/api/transient-recipient-lists/transactional-send": {
@@ -1653,7 +1654,8 @@ OPENAPI_SPEC = {
                         "#/components/schemas/TransientRecipientListTransactionalSendResponse",
                     ),
                     accepted=True,
-                ),
+                )
+                | {"429": {"$ref": "#/components/responses/TooManyRequests"}},
             }
         },
         "/api/client/senders": {
@@ -1688,7 +1690,8 @@ OPENAPI_SPEC = {
                     json_response("Transactional message accepted", "#/components/schemas/TransactionalSendResponse"),
                     accepted=True,
                 )
-                | {"409": json_response("Contact suppressed", "#/components/schemas/TransactionalSendResponse")},
+                | {"409": json_response("Contact suppressed", "#/components/schemas/TransactionalSendResponse")}
+                | {"429": {"$ref": "#/components/responses/TooManyRequests"}},
             }
         },
         "/api/transactional/templates": {
@@ -1931,6 +1934,7 @@ OPENAPI_SPEC = {
         "responses": {
             "Unauthorized": json_response("Authentication failed", "#/components/schemas/ErrorResponse"),
             "Forbidden": json_response("Scope forbidden", "#/components/schemas/ErrorResponse"),
+            "TooManyRequests": json_response("Rate limit exceeded", "#/components/schemas/ErrorResponse"),
             "ValidationError": json_response("Validation error", "#/components/schemas/ErrorResponse"),
             "MethodNotAllowed": json_response("Method not allowed", "#/components/schemas/ErrorResponse"),
         },
