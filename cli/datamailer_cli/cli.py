@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import mimetypes
+import os
 import sys
 
 from . import __version__, config
@@ -47,7 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
     # --- send -------------------------------------------------------------
     p_send = sub.add_parser("send", help="Send an email. Body may come from --body, --body-file, or stdin.")
     _add_connection_args(p_send)
-    p_send.add_argument("--to", help="Recipient email (defaults to the configured default_to).")
+    p_send.add_argument(
+        "--to",
+        action="append",
+        default=[],
+        metavar="EMAIL",
+        help="Recipient email; repeatable, comma-separated also accepted "
+        "(defaults to the configured default_to).",
+    )
     p_send.add_argument("--subject", "-s", help="Subject line.")
     p_send.add_argument("--body", "-b", help="Message body. If omitted, read from --body-file or stdin.")
     p_send.add_argument("--body-file", dest="body_file", help="Read the body from this file ('-' for stdin).")
@@ -141,12 +150,27 @@ def cmd_configure(args) -> int:
     return 0
 
 
+def split_recipients(values) -> list:
+    """Flatten --to values: repeatable flags, comma/space separated lists."""
+    if isinstance(values, str):
+        values = [values]
+    recipients = []
+    for value in values or []:
+        for token in str(value).replace(",", " ").split():
+            token = token.strip()
+            if token and token not in recipients:
+                recipients.append(token)
+    return recipients
+
+
 def cmd_send(args) -> int:
     settings = config.resolve(args)
     client = DatamailerClient(settings.base_url, settings.api_key)
 
-    recipient = args.to or settings.default_to
-    if not recipient:
+    recipients = split_recipients(args.to) or split_recipients(
+        settings.default_to
+    )
+    if not recipients:
         raise ApiError("No recipient. Pass --to or set a default with `relay configure --default-to`.")
     if not args.subject:
         raise ApiError("Missing --subject.")
@@ -156,39 +180,48 @@ def cmd_send(args) -> int:
         raise ApiError("Empty body. Pass --body, --body-file, or pipe text on stdin.")
 
     template_key, template = template_for(args.html)
-    payload = {
-        "email": recipient,
-        "template_key": template_key,
-        "context": {"subject": args.subject, "body": body},
-    }
     attachments = _read_attachments(args.attachments or [])
-    if attachments:
-        payload["message_parts"] = attachments
     from_sender = args.from_ or settings.default_from
-    if from_sender:
-        payload["from_email"] = from_sender
-    if args.idempotency_key:
-        payload["idempotency_key"] = args.idempotency_key
 
-    try:
-        result = client.send(payload)
-    except ApiError as exc:
-        if not exc.is_template_not_found:
-            raise
-        # First use against this deployment: provision the generic template, then retry once.
-        client.upsert_template(template_key, template)
-        result = client.send(payload)
+    results = []
+    for recipient in recipients:
+        payload = {
+            "email": recipient,
+            "template_key": template_key,
+            "context": {"subject": args.subject, "body": body},
+        }
+        if attachments:
+            payload["message_parts"] = attachments
+        if from_sender:
+            payload["from_email"] = from_sender
+        if args.idempotency_key:
+            payload["idempotency_key"] = (
+                args.idempotency_key
+                if len(recipients) == 1
+                else f"{args.idempotency_key}:{recipient}"
+            )
+
+        try:
+            result = client.send(payload)
+        except ApiError as exc:
+            if not exc.is_template_not_found:
+                raise
+            # First use against this deployment: provision the generic template, then retry once.
+            client.upsert_template(template_key, template)
+            result = client.send(payload)
+        results.append((recipient, result))
 
     if args.json:
-        print(json.dumps(result, indent=2))
+        print(json.dumps([result for _, result in results], indent=2))
         return 0
 
-    message = result.get("message", {}) if isinstance(result, dict) else {}
-    print(f"Sent to {message.get('email', recipient)}")
-    print(f"  message id: {message.get('id')}")
-    print(f"  status:     {message.get('status')}")
-    if result.get("idempotent_replay"):
-        print("  (idempotent replay of an earlier send)")
+    for recipient, result in results:
+        message = result.get("message", {}) if isinstance(result, dict) else {}
+        print(f"Sent to {message.get('email', recipient)}")
+        print(f"  message id: {message.get('id')}")
+        print(f"  status:     {message.get('status')}")
+        if result.get("idempotent_replay"):
+            print("  (idempotent replay of an earlier send)")
     return 0
 
 
@@ -309,9 +342,6 @@ def _read_attachments(paths: list) -> list:
     Server accepts text/* parts only (200KB each, max 10); enforce the
     same limits client-side with a clear error instead of a 4xx.
     """
-    import mimetypes
-    import os
-
     if len(paths) > MAX_ATTACHMENTS:
         raise ApiError(f"Too many attachments ({len(paths)}): max {MAX_ATTACHMENTS}.")
     parts = []

@@ -127,3 +127,99 @@ def test_send_rejects_oversized_attachment(server, tmp_path):
     big.write_text("x" * (cli.MAX_ATTACHMENT_BYTES + 1))
     with pytest.raises(api.ApiError):
         cli.cmd_send(_send_args(attachments=[str(big)]))
+
+
+def _ok_payload(payload, next_id):
+    return 202, {"message": {"id": next_id[0], "email": payload["email"], "status": "queued"}}
+
+
+def test_send_multiple_recipients(server):
+    ids = iter([11, 12])
+    server.route(
+        "POST",
+        "/api/transactional/send",
+        lambda payload: _ok_payload(payload, [next(ids)]),
+    )
+    assert cli.cmd_send(_send_args(to=["a@example.com", "b@example.com"])) == 0
+    assert [call[2]["email"] for call in server.calls] == [
+        "a@example.com",
+        "b@example.com",
+    ]
+
+
+def test_send_splits_comma_separated_recipients(server):
+    server.route(
+        "POST",
+        "/api/transactional/send",
+        lambda payload: (202, {"message": {"id": 1, "email": payload["email"], "status": "queued"}}),
+    )
+    cli.cmd_send(_send_args(to=["a@example.com,b@example.com b@example.com"]))
+    assert [call[2]["email"] for call in server.calls] == [
+        "a@example.com",
+        "b@example.com",
+    ]
+
+
+def test_send_scopes_idempotency_key_per_recipient(server):
+    server.route(
+        "POST",
+        "/api/transactional/send",
+        lambda payload: (202, {"message": {"id": 1, "email": payload["email"], "status": "queued"}}),
+    )
+    cli.cmd_send(
+        _send_args(
+            to=["a@example.com", "b@example.com"],
+            idempotency_key="batch-1",
+        )
+    )
+    assert [call[2]["idempotency_key"] for call in server.calls] == [
+        "batch-1:a@example.com",
+        "batch-1:b@example.com",
+    ]
+
+
+def test_send_keeps_idempotency_key_for_single_recipient(server):
+    server.route(
+        "POST",
+        "/api/transactional/send",
+        lambda payload: (202, {"message": {"id": 1, "email": payload["email"], "status": "queued"}}),
+    )
+    cli.cmd_send(_send_args(to=["a@example.com"], idempotency_key="solo-1"))
+    assert server.calls[0][2]["idempotency_key"] == "solo-1"
+
+
+def test_send_attaches_same_file_to_every_recipient(server, tmp_path):
+    csv_file = tmp_path / "list.csv"
+    csv_file.write_text("name,email\nAlex,a@x.com\n")
+    server.route(
+        "POST",
+        "/api/transactional/send",
+        lambda payload: (202, {"message": {"id": 1, "email": payload["email"], "status": "queued"}}),
+    )
+    cli.cmd_send(
+        _send_args(to=["a@example.com", "b@example.com"], attachments=[str(csv_file)])
+    )
+    assert len(server.calls) == 2
+    for _, _, payload in server.calls:
+        assert payload["message_parts"] == [
+            {
+                "content_type": "text/csv",
+                "content": "name,email\nAlex,a@x.com\n",
+                "filename": "list.csv",
+                "disposition": "attachment",
+            }
+        ]
+
+
+def test_split_recipients():
+    assert cli.split_recipients("a@example.com") == ["a@example.com"]
+    assert cli.split_recipients(["a@example.com", "b@example.com"]) == [
+        "a@example.com",
+        "b@example.com",
+    ]
+    assert cli.split_recipients(["a@example.com,b@example.com a@example.com"]) == [
+        "a@example.com",
+        "b@example.com",
+    ]
+    assert cli.split_recipients(None) == []
+    assert cli.split_recipients([]) == []

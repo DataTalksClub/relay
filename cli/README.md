@@ -50,6 +50,12 @@ relay send --to me@example.com --subject "Pipeline done" --body "All 42 jobs pas
 
 # body from a file, as HTML
 relay send --to me@example.com -s "Report" --body-file report.html --html
+
+# several recipients at once (repeatable, comma-separated also works)
+relay send --to me@example.com --to peer@example.com --subject "Pipeline done" --body "All 42 jobs passed."
+
+# attach text files (repeatable, e.g. a CSV) — one send per recipient
+relay send --to me@example.com --to peer@example.com --subject "Export" --body "CSV attached." --attach export.csv --idempotency-key export-2026-11-06
 ```
 
 The first send against a deployment auto-creates a generic transactional template
