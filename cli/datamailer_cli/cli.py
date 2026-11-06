@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import mimetypes
+import os
 import sys
 
 from . import __version__, config
@@ -340,9 +342,6 @@ def _read_attachments(paths: list) -> list:
     Server accepts text/* parts only (200KB each, max 10); enforce the
     same limits client-side with a clear error instead of a 4xx.
     """
-    import mimetypes
-    import os
-
     if len(paths) > MAX_ATTACHMENTS:
         raise ApiError(f"Too many attachments ({len(paths)}): max {MAX_ATTACHMENTS}.")
     parts = []
