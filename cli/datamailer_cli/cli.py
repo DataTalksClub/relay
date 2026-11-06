@@ -1,4 +1,4 @@
-"""Command-line interface for sending email through a Datamailer deployment."""
+"""Command-line interface for sending email through a Relay deployment."""
 
 from __future__ import annotations
 
@@ -29,10 +29,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="datamailer",
-        description="Send email through a Datamailer deployment from the terminal.",
+        prog="relay",
+        description="Send email through a Relay deployment from the terminal.",
     )
-    parser.add_argument("--version", action="version", version=f"datamailer {__version__}")
+    parser.add_argument("--version", action="version", version=f"relay {__version__}")
 
     sub = parser.add_subparsers(dest="command")
 
@@ -40,8 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_configure = sub.add_parser("configure", help="Save the deployment URL and API key to the config file.")
     p_configure.add_argument("--url", help="Datamailer base URL, e.g. https://datamailer.example.com")
     p_configure.add_argument("--api-key", dest="api_key", help="Client API key (dm_...).")
-    p_configure.add_argument("--default-to", dest="default_to", help="Default recipient for `datamailer send`.")
-    p_configure.add_argument("--default-from", dest="default_from", help="Default sender id for `datamailer send`.")
+    p_configure.add_argument("--default-to", dest="default_to", help="Default recipient for `relay send`.")
+    p_configure.add_argument("--default-from", dest="default_from", help="Default sender id for `relay send`.")
     p_configure.set_defaults(handler=cmd_configure)
 
     # --- send -------------------------------------------------------------
@@ -53,6 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--body-file", dest="body_file", help="Read the body from this file ('-' for stdin).")
     p_send.add_argument("--html", action="store_true", help="Treat the body as raw HTML instead of plain text.")
     p_send.add_argument("--from", dest="from_", help="Sender id (defaults to the client's default sender).")
+    p_send.add_argument("--attach", dest="attachments", action="append", default=[], metavar="FILE", help="Attach a text file (repeatable, e.g. a CSV). Max 10 files, 200KB each.")
     p_send.add_argument("--idempotency-key", dest="idempotency_key", help="Dedupe key; replays return the prior send.")
     p_send.add_argument("--json", action="store_true", help="Print the raw JSON response.")
     p_send.set_defaults(handler=cmd_send)
@@ -60,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     # --- status -----------------------------------------------------------
     p_status = sub.add_parser("status", help="Show delivery status for a transactional message id.")
     _add_connection_args(p_status)
-    p_status.add_argument("message_id", help="Message id returned by `datamailer send`.")
+    p_status.add_argument("message_id", help="Message id returned by `relay send`.")
     p_status.add_argument("--json", action="store_true", help="Print the raw JSON response.")
     p_status.set_defaults(handler=cmd_status)
 
@@ -146,7 +147,7 @@ def cmd_send(args) -> int:
 
     recipient = args.to or settings.default_to
     if not recipient:
-        raise ApiError("No recipient. Pass --to or set a default with `datamailer configure --default-to`.")
+        raise ApiError("No recipient. Pass --to or set a default with `relay configure --default-to`.")
     if not args.subject:
         raise ApiError("Missing --subject.")
 
@@ -160,6 +161,9 @@ def cmd_send(args) -> int:
         "template_key": template_key,
         "context": {"subject": args.subject, "body": body},
     }
+    attachments = _read_attachments(args.attachments or [])
+    if attachments:
+        payload["message_parts"] = attachments
     from_sender = args.from_ or settings.default_from
     if from_sender:
         payload["from_email"] = from_sender
@@ -293,6 +297,51 @@ def _read_body(args) -> str:
     if not sys.stdin.isatty():
         return sys.stdin.read()
     return ""
+
+
+MAX_ATTACHMENTS = 10
+MAX_ATTACHMENT_BYTES = 200_000
+
+
+def _read_attachments(paths: list) -> list:
+    """Read --attach files into transactional message_parts.
+
+    Server accepts text/* parts only (200KB each, max 10); enforce the
+    same limits client-side with a clear error instead of a 4xx.
+    """
+    import mimetypes
+    import os
+
+    if len(paths) > MAX_ATTACHMENTS:
+        raise ApiError(f"Too many attachments ({len(paths)}): max {MAX_ATTACHMENTS}.")
+    parts = []
+    for path in paths:
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            raise ApiError(f"Attachment not found: {path}")
+        if size > MAX_ATTACHMENT_BYTES:
+            raise ApiError(f"Attachment too large ({size} bytes, max {MAX_ATTACHMENT_BYTES}): {path}")
+        with open(path, encoding="utf-8") as handle:
+            try:
+                content = handle.read()
+            except UnicodeDecodeError:
+                raise ApiError(f"Attachment must be UTF-8 text: {path}")
+        content_type, _ = mimetypes.guess_type(path)
+        if not content_type or not content_type.startswith("text/"):
+            if path.endswith(".csv"):
+                content_type = "text/csv"
+            else:
+                raise ApiError(f"Attachment must be a text file (.csv, .txt): {path}")
+        parts.append(
+            {
+                "content_type": content_type,
+                "content": content,
+                "filename": os.path.basename(path),
+                "disposition": "attachment",
+            }
+        )
+    return parts
 
 
 def _prompt(label: str, default: str, *, secret: bool = False) -> str:

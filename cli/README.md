@@ -1,4 +1,4 @@
-# datamailer
+# relay
 
 Command-line client for sending email through a [Datamailer](https://github.com/DataTalksClub/datamailer)
 deployment. Built for the "an agent/script finished — just email me the result" case:
@@ -11,9 +11,9 @@ client API key.
 ## Install
 
 ```bash
-pip install datamailer
+pip install relay
 # or, run without installing:
-uvx datamailer --help
+uvx relay --help
 ```
 
 Requires Python 3.11+.
@@ -24,9 +24,9 @@ A Datamailer operator issues you a client API key (`dm_...`) and tells you the U
 their instance is deployed. Then:
 
 ```bash
-datamailer configure --url https://datamailer.example.com --api-key dm_xxx
+relay configure --url https://datamailer.example.com --api-key dm_xxx
 # optionally set a default recipient and sender:
-datamailer configure --default-to me@example.com --default-from results
+relay configure --default-to me@example.com --default-from results
 ```
 
 Settings are stored in `~/.config/datamailer/config.toml` (mode `0600`). You can override
@@ -36,20 +36,20 @@ or skip the file entirely with the environment variables `DATAMAILER_URL` and
 Verify the connection:
 
 ```bash
-datamailer whoami
+relay whoami
 ```
 
 ## Send
 
 ```bash
 # inline body
-datamailer send --to me@example.com --subject "Pipeline done" --body "All 42 jobs passed."
+relay send --to me@example.com --subject "Pipeline done" --body "All 42 jobs passed."
 
 # body from stdin — ideal for agents and scripts
-./run_pipeline.sh | datamailer send --to me@example.com --subject "Pipeline output"
+./run_pipeline.sh | relay send --to me@example.com --subject "Pipeline output"
 
 # body from a file, as HTML
-datamailer send --to me@example.com -s "Report" --body-file report.html --html
+relay send --to me@example.com -s "Report" --body-file report.html --html
 ```
 
 The first send against a deployment auto-creates a generic transactional template
@@ -59,9 +59,9 @@ subject and body are passed as the template context.
 Other commands:
 
 ```bash
-datamailer status <message_id>     # delivery status + event timeline
-datamailer senders                 # list configured sender addresses
-datamailer senders --set 'results=Agent <agent@example.com>' --default results
+relay status <message_id>     # delivery status + event timeline
+relay senders                 # list configured sender addresses
+relay senders --set 'results=Agent <agent@example.com>' --default results
 ```
 
 Add `--json` to `send`, `status`, `whoami`, or `senders` for machine-readable output.
@@ -69,7 +69,7 @@ Add `--json` to `send`, `status`, `whoami`, or `senders` for machine-readable ou
 ## Notes
 
 - Sends require the client to have a verified sender address configured. If `whoami`
-  shows no sender, set one with `datamailer senders --set ...` (the address must be
+  shows no sender, set one with `relay senders --set ...` (the address must be
   verified in the deployment's SES).
 - Transactional sends are blocked for recipients that hard-bounced or complained.
 
@@ -79,9 +79,9 @@ Operators register a sending domain through Relay using an admin API key (set
 `DATAMAILER_API_KEY` privately; do not pass credentials in shell history):
 
 ```bash
-datamailer domains --admin --data-file domain.json
-datamailer domains --admin --id 1 --verify
-datamailer domains
+relay domains --admin --data-file domain.json
+relay domains --admin --id 1 --verify
+relay domains
 ```
 
 Example `domain.json` (provider route identifiers are not credentials):
@@ -114,9 +114,9 @@ prevents fallback to another provider. The same controls are available at
 Sender changes merge with the current policy, preserving other sender IDs:
 
 ```bash
-datamailer senders --set 'alerts=DTC Alerts <alerts@dtcdev.click>'
-datamailer senders --default alerts
-datamailer senders --delete obsolete-sender
+relay senders --set 'alerts=DTC Alerts <alerts@dtcdev.click>'
+relay senders --default alerts
+relay senders --delete obsolete-sender
 ```
 
 New addresses require an authorized, provider-verified and routed domain through
