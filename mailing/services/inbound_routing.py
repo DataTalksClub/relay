@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import unicodedata
 from datetime import timedelta
 from email import policy
 from email.parser import BytesParser
@@ -33,6 +34,149 @@ from mailing.services.transactional import append_transactional_event, build_tra
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
 
+# Subject labels collected from common mail clients and inbound-mail filters.
+# NFKD + casefold matching below makes accent variants equivalent (for example
+# "Respuesta automática" and "Respuesta automatica"). This is intentionally a
+# prefix list: words later in a real subject do not cause suppression.
+_AUTO_REPLY_SUBJECT_PREFIXES = (
+    # English and RFC 3834's human-readable "Auto:" convention.
+    'automatic reply', 'automatic response', 'auto-reply', 'auto reply',
+    'autoreply', 'out of office', 'out of the office', 'out-of-office',
+    'auto:', 'ooo:', 'oof:', '[auto-reply]',
+    # German, Dutch, and other Germanic languages.
+    'automatische antwort', 'abwesenheitsnotiz', 'abwesenheitshinweis',
+    'automatisch antwoord', 'afwezigheidsbericht', 'afwezigheidsnotitie',
+    'automatiskt svar', 'frånvaromeddelande', 'frånvaro', 'autosvar',
+    'automatisk svar', 'fraværsmelding', 'fravær', 'automatisch svar',
+    'automaattinen vastaus', 'automaattivastaus', 'poissaoloviesti',
+    'sjálfvirkt svar', 'outomatiese antwoord', 'ateb awtomatig',
+    'automatesch äntwert',
+    # Romance languages.
+    'respuesta automática',
+    'respuesta automática de fuera de la oficina', 'fuera de la oficina',
+    'ausencia de la oficina', 'réponse automatique',
+    'réponse d’absence', 'absence du bureau', 'resposta automática',
+    'auto-resposta', 'ausência temporária',
+    'fora do escritório', 'risposta automatica',
+    'risposta automatica fuori sede', 'fuori sede', 'non al computer',
+    'risposta non al computer', 'izvan ureda', 'fora de l’oficina',
+    'erantzun automatikoa',
+    'përgjigje automatike', 'răspuns automat', 'răspuns automatizat',
+    'absență de la birou', 'automatyczna odpowiedź',
+    'odpowiedź automatyczna', 'poza biurem',
+    'автоматски одговор',
+    'samodejni odgovor', 'odsotnost', 'automatická odpověď',
+    'odpověď mimo kancelář', 'automatická odpoveď',
+    'odpoveď mimo kancelárie', 'automatikus válasz', 'házon kívül',
+    'távollét', 'автоматичен отговор', 'извън офиса', 'автоматична відповідь',
+    'поза офісом', 'аўтаматычны адказ', 'автоматический ответ',
+    'автоответ', 'otomatik yanıt', 'otomatik cevap', 'ofis dışı mesajı',
+    'otomatik yanit',
+    # Greek, Arabic, Hebrew, and Persian.
+    'αυτόματη απάντηση', 'εκτός γραφείου', 'رد تلقائي', 'رد آلي',
+    'خارج المكتب', 'תשובה אוטומטית', 'מענה אוטומטי', 'מחוץ למשרד',
+    'پاسخ خودکار',
+    # East and South-East Asian languages.
+    '自動返信', '自動応答', '不在通知', '自動返信メール',
+    '自动回复', '自动答复', '不在办公室', '自動回覆', '自動答覆',
+    '不在辦公室', '자동 회신', '자동회신', '자동응답', '자동 답변',
+    '부재중 자동응답', '부재중 알림', 'ตอบกลับอัตโนมัติ', 'ตอบอัตโนมัติ',
+    'ไม่อยู่ที่ทำงาน', 'trả lời tự động', 'phản hồi tự động', 'vắng mặt',
+    'balasan otomatis', 'jawaban otomatis', 'di luar kantor',
+    'balasan automatik', 'jawapan automatik', 'di luar pejabat',
+    'awtomatikong tugon',
+    # South Asian languages.
+    'स्वचालित उत्तर', 'स्वतः उत्तर', 'स्वयंचलित उत्तर', 'स्वचालित जवाब',
+    'স্বয়ংক্রিয় উত্তর', 'স্বয়ংক্ৰিয় উত্তৰ', 'خودکار جواب',
+    'स्वतः जवाफ', 'स्वचालित जवाफ', 'தானியங்கி பதில்',
+    'స్వయంచాలక సమాధానం', 'സ്വയമേവയുള്ള മറുപടി', 'ସ୍ୱୟଂଚାଳିତ ଉତ୍ତର',
+    # Other Microsoft 365 language-pack locales.
+    'avtomatik cavab', 'avtomatik javob', 'ავტომატური პასუხი',
+    'автоматты жауап', 'автомат хариу',
+    'automaatvastus', 'automaatne vastus', 'automātiskā atbilde',
+    'automātiska atbilde', 'automatinis atsakymas',
+    'tweġiba awtomatika', 'ավտոմատ պատասխան', 'jibu la kiotomatiki',
+    'whakautu aunoa',
+)
+
+
+def _fold_subject(value):
+    """Case- and accent-insensitive subject form for localized prefix checks."""
+    folded = unicodedata.normalize('NFKD', value or '').casefold()
+    result = []
+    base_script = ''
+    for char in folded:
+        if unicodedata.category(char).startswith('M'):
+            # Strip accent marks from alphabetic scripts where they are
+            # optional spelling variants. Preserve combining marks in scripts
+            # such as Devanagari, where they are part of the letters.
+            if base_script not in {'LATIN', 'GREEK', 'CYRILLIC', 'ARABIC', 'HEBREW'}:
+                result.append(char)
+            continue
+        if char.isalpha():
+            name = unicodedata.name(char, '')
+            base_script = next((script for script in
+                                ('LATIN', 'GREEK', 'CYRILLIC', 'ARABIC', 'HEBREW')
+                                if script in name), '')
+        else:
+            base_script = ''
+        result.append(char)
+    return ''.join(result).strip()
+
+
+AUTO_REPLY_SUBJECT_PREFIXES = tuple(dict.fromkeys(
+    _fold_subject(prefix) for prefix in _AUTO_REPLY_SUBJECT_PREFIXES
+))
+
+
+def is_auto_reply_subject(subject):
+    folded = _fold_subject(subject)
+    for folded_prefix in AUTO_REPLY_SUBJECT_PREFIXES:
+        if not folded.startswith(folded_prefix):
+            continue
+        if len(folded) == len(folded_prefix):
+            return True
+        # A localized marker must end at a word or punctuation boundary.
+        # This prevents e.g. "autoreplying" from matching "autoreply".
+        next_char = folded[len(folded_prefix)]
+        if next_char.isspace() or unicodedata.category(next_char).startswith(('P', 'Z')):
+            return True
+    return False
+
+
+def has_auto_reply_headers(mime):
+    auto_submitted = {
+        str(value).split(';', 1)[0].strip().split(maxsplit=1)[0].casefold()
+        for value in mime.get_all('Auto-Submitted', [])
+        if str(value).strip()
+    }
+    if auto_submitted.intersection({'auto-replied', 'auto-generated', 'auto-forwarded'}):
+        return True
+
+    # Exchange uses "All" on generated automatic replies. Other values such
+    # as "OOF" can be set on ordinary human mail to suppress replies to it.
+    suppress_values = {
+        token.strip().casefold()
+        for value in mime.get_all('X-Auto-Response-Suppress', [])
+        for token in str(value).split(',')
+    }
+    if 'all' in suppress_values:
+        return True
+
+    precedence = {
+        token.strip().casefold()
+        for value in mime.get_all('Precedence', [])
+        for token in str(value).split(',')
+    }
+    if precedence.intersection({'auto_reply', 'auto-reply', 'autoreply'}):
+        return True
+
+    return any(
+        str(value).strip()
+        for name in ('X-Autorespond', 'X-Autoreply', 'X-Autoresponder')
+        for value in mime.get_all(name, [])
+    )
+
 
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -63,9 +207,7 @@ def loop_reason(raw, parsed):
         return 'dmarc_archived'
     if mime.get('X-Loop') or mime.get('X-Relay-Inbound'):
         return 'loop_header'
-    # Alert-style Auto-Submitted mail is allowed once; Relay's own replies and
-    # forwarded mail are blocked by the headers below and by sender identity.
-    if str(mime.get('Auto-Submitted', '')).lower().startswith(('auto-replied', 'auto-forwarded')):
+    if has_auto_reply_headers(mime) or is_auto_reply_subject(parsed.subject):
         return 'auto_reply'
     if mime.get_content_type() == 'multipart/report' or any(
         part.get_content_type() == 'text/calendar' and

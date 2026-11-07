@@ -87,12 +87,20 @@ web form feeds these mailboxes (the pitches are direct mail to
 alexey@/team@/welcome@aishippinglabs.com).
 
 Loop controls reject X-Loop/X-Relay-Inbound, automatic replies, Relay-originated
-message IDs and domain senders, bounces and calendar replies. Auto-generated
-alert emails can pass the allowlist once; forwarded mail is marked auto-forwarded
-and X-Loop. Original senders are excluded from forward destinations. Each
-mailbox has a serialized per-minute cap; refusals are recorded. DMARC messages
-are retained in raw storage and suppressed from forwarding, preserving the old
-archive-only behaviour without running the forwarding Lambda.
+message IDs and domain senders, bounces and calendar replies. Automatic replies
+are recognized by `Auto-Submitted: auto-replied`, `auto-generated` or
+`auto-forwarded`; `X-Auto-Response-Suppress: All`; `Precedence: auto_reply`;
+`X-Autorespond` family headers; and a multilingual list of subject prefixes in
+`mailing/services/inbound_routing.py`. Subject matching is case- and
+accent-insensitive and only checks the beginning of the subject. Exchange's
+more specific `X-Auto-Response-Suppress` values can appear on ordinary human
+mail, so only its `All` value is treated as an auto-reply marker. Every
+suppressed delivery is recorded with reason `auto_reply` and is never sent or
+answered. Forwarded mail is marked auto-forwarded and X-Loop. Original senders
+are excluded from forward destinations. Each mailbox has a serialized
+per-minute cap; refusals are recorded. DMARC messages are retained in raw
+storage and suppressed from forwarding, preserving the old archive-only
+behaviour without running the forwarding Lambda.
 
 DMARC aggregate reports use the shared Relay database archive for every enabled
 inbound domain. Detection ports the AISHL Lambda's sender substring, subject
