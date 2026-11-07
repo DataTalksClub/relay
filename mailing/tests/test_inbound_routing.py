@@ -41,11 +41,12 @@ def mailbox(domain, kind='bot', **kwargs):
     return row
 
 
-def mime(to='bot@example.com', sender='Alexey <alexey@example.net>', headers=None):
+def mime(to='bot@example.com', sender='Alexey <alexey@example.net>', headers=None,
+         subject='Prüfung — 日本語'):
     message = EmailMessage()
     message['From'] = sender
     message['To'] = to
-    message['Subject'] = 'Prüfung — 日本語'
+    message['Subject'] = subject
     message['Message-ID'] = '<routing-test@example.net>'
     message['Date'] = 'Sat, 24 Oct 2026 12:00:00 +0200'
     message['References'] = '<original@example.net>'
@@ -126,6 +127,81 @@ def test_loop_protection(domain, headers, sender, reason):
     assert (row.status, row.reason) == ('suppressed', reason)
 
 
+@pytest.mark.parametrize('subject', [
+    'Respuesta automática: Workshop recap: tracing for AI agents',
+    'Respuesta automatica: Workshop recap',
+    'AUTOMATISCHE ANTWORT: Workshop recap',
+    'Réponse automatique: Workshop recap',
+    'Automatisch antwoord: Workshop recap',
+    'Risposta automatica: Workshop recap',
+    'Автоматический ответ: Workshop recap',
+    'Odpowiedź automatyczna: Workshop recap',
+    '自動返信: Workshop recap',
+    '自动回复: Workshop recap',
+    '自動回覆: Workshop recap',
+    '자동 회신: Workshop recap',
+    'Otomatik yanıt: Workshop recap',
+    'Automatisk svar: Workshop recap',
+    'Automaattinen vastaus: Workshop recap',
+    'Αυτόματη απάντηση: Workshop recap',
+    'رد تلقائي: Workshop recap',
+    'תשובה אוטומטית: Workshop recap',
+    'स्वचालित उत्तर: Workshop recap',
+    'Automatic reply: Workshop recap',
+    'Auto: Workshop recap',
+    'OOO: Workshop recap',
+])
+def test_localized_auto_reply_subject_prefixes_are_suppressed(domain, subject, caplog):
+    caplog.set_level('INFO', logger='mailing.services.inbound_routing')
+    box = mailbox(domain, kind='forward', destinations=['destination@example.net'])
+    ingest(mime(subject=subject))
+    delivery = InboundDelivery.objects.get(mailbox=box)
+    assert (delivery.status, delivery.reason) == ('suppressed', 'auto_reply')
+    assert delivery.outbound_message_id is None
+    assert 'reason=auto_reply' in caplog.text
+
+
+def test_auto_reply_prefix_is_case_and_accent_insensitive(domain):
+    box = mailbox(domain)
+    ingest(mime(subject='rÉpOnSe automatique: Workshop recap'))
+    delivery = InboundDelivery.objects.get(mailbox=box)
+    assert (delivery.status, delivery.reason) == ('suppressed', 'auto_reply')
+
+
+def test_auto_reply_words_in_middle_of_subject_do_not_suppress_human_reply(domain):
+    box = mailbox(domain, kind='forward', destinations=['destination@example.net'])
+    ingest(mime(subject='Re: Follow-up on the automatic reply settings'))
+    delivery = InboundDelivery.objects.get(mailbox=box)
+    assert delivery.status == 'pending'
+    assert delivery.reason == ''
+
+
+@pytest.mark.parametrize('header,value', [
+    ('Auto-Submitted', 'auto-replied'),
+    ('Auto-Submitted', 'auto-replied (vacation)'),
+    ('Auto-Submitted', 'auto-generated'),
+    ('X-Auto-Response-Suppress', 'All'),
+    ('Precedence', 'auto_reply'),
+    ('X-Autorespond', 'yes'),
+])
+def test_header_only_auto_reply_is_suppressed_without_subject_prefix(domain, header, value):
+    box = mailbox(domain, kind='forward', destinations=['alexey@example.net'])
+    ingest(mime(subject='Re: Quarterly planning', headers={header: value}))
+    delivery = InboundDelivery.objects.get(mailbox=box)
+    assert (delivery.status, delivery.reason) == ('suppressed', 'auto_reply')
+    assert delivery.outbound_message_id is None
+
+
+def test_exchange_suppress_reply_subtypes_do_not_drop_a_human_message(domain):
+    box = mailbox(domain)
+    ingest(mime(subject='Re: Quarterly planning', headers={
+        'X-Auto-Response-Suppress': 'OOF, DR, RN, NRN, AutoReply',
+    }))
+    delivery = InboundDelivery.objects.get(mailbox=box)
+    assert delivery.status == 'pending'
+    assert delivery.reason == ''
+
+
 @pytest.mark.parametrize('sender,subject', [
     ('DMARC <dmarc-noreply@google.com>', 'Prüfung — 日本語'),
     ('Alexey <alexey@example.net>', 'Report domain example.com submitted by Google'),
@@ -158,12 +234,13 @@ def test_dmarc_report_archived_not_forwarded(domain, sender, subject):
     assert InboundDelivery.objects.get(pk=row.pk).status == 'suppressed'
 
 
-def test_auto_generated_alert_allowed_and_rate_cap(domain):
+def test_auto_generated_message_is_suppressed_and_does_not_consume_rate_cap(domain):
     box = mailbox(domain, rate_per_minute=1)
     ingest(mime(headers={'Auto-Submitted': 'auto-generated'}))
-    assert InboundDelivery.objects.get().status == 'pending'
+    auto_reply = InboundDelivery.objects.get()
+    assert (auto_reply.status, auto_reply.reason) == ('suppressed', 'auto_reply')
     ingest(mime().replace(b'<routing-test@example.net>', b'<second@example.net>'))
-    assert InboundDelivery.objects.filter(mailbox=box, reason='rate_cap', status='suppressed').count() == 1
+    assert InboundDelivery.objects.filter(mailbox=box, status='pending').count() == 1
 
 
 def test_webhook_payload_auth_secret_redaction_and_2xx(domain, monkeypatch, settings):
