@@ -524,3 +524,28 @@ def test_campaign_test_send_explicit_source_wins_over_client_sender(campaign_set
     send_campaign_test_message(campaign, "test@example.com", ses_client=ses, source="explicit@example.com")
 
     assert ses.params["Source"] == "explicit@example.com"
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_batch_send_uses_client_default_sender(campaign_setup):
+    campaign, recipient = campaign_setup
+    client = campaign.client
+    client.sender_emails = [{"id": "alexey", "email": "Alexey Grigorev <alexey@datatalks.club>"}]
+    client.default_sender_id = "alexey"
+    client.save(update_fields=["sender_emails", "default_sender_id", "updated_at"])
+    ses = _RawSesClient()
+
+    result = send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+
+    assert result.sent_count == 1
+    assert ses.params["Source"] == "Alexey Grigorev <alexey@datatalks.club>"
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_batch_send_falls_back_to_default_from_without_sender(campaign_setup):
+    campaign, recipient = campaign_setup
+    ses = _RawSesClient()
+
+    send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+
+    assert ses.params["Source"] == "relay@example.com"
