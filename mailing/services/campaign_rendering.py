@@ -7,16 +7,19 @@ from urllib.parse import urlparse
 
 from mailing.services.public_urls import click_redirect_url, open_pixel_url, unsubscribe_url
 
-
 # Mailchimp archive copies keep recipient-specific footer links with a literal [UNIQID] placeholder.
 _UNIQID = "[UNIQID]"
 _FORWARD_LINK_RE = re.compile(
     r"<a\b[^>]*href=\"[^\"]*forward-to-friend\.com[^\"]*\"[^>]*>.*?</a>(?:\s*(?:&middot;|&#183;|·)\s*)?",
     flags=re.IGNORECASE | re.DOTALL,
 )
-_MAILCHIMP_ACCOUNT_LINK_RE = re.compile(r"^https?://[^/]*list-manage\.com/(?:unsubscribe|profile)\b", flags=re.IGNORECASE)
+_MAILCHIMP_ACCOUNT_LINK_RE = re.compile(
+    r"^https?://[^/]*list-manage\.com/(?:unsubscribe|profile)\b", flags=re.IGNORECASE
+)
 _TEXT_FORWARD_LINE_RE = re.compile(r"^.*forward-to-friend\.com.*(?:\n|$)", flags=re.IGNORECASE | re.MULTILINE)
-_TEXT_ACCOUNT_URL_RE = re.compile(r"https?://[^\s)>\"]*list-manage\.com/(?:unsubscribe|profile)[^\s)>\"]*", flags=re.IGNORECASE)
+_TEXT_ACCOUNT_URL_RE = re.compile(
+    r"https?://[^\s)>\"]*list-manage\.com/(?:unsubscribe|profile)[^\s)>\"]*", flags=re.IGNORECASE
+)
 
 
 def resolve_archive_placeholders_html(html_body):
