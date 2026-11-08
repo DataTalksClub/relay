@@ -18,8 +18,14 @@ from mailing.models import (
 )
 from mailing.services.campaign_rendering import (
     build_campaign_html_body as build_campaign_html_body,
+)
+from mailing.services.campaign_rendering import (
     build_campaign_text_body as build_campaign_text_body,
+)
+from mailing.services.campaign_rendering import (
     campaign_unsubscribe_headers,
+)
+from mailing.services.campaign_rendering import (
     rewrite_html_links as rewrite_html_links,
 )
 from mailing.services.tokens import (
