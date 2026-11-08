@@ -16,6 +16,7 @@ from mailing.models import (
     EmailEvent,
     EmailEventType,
 )
+from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_rendering import (
     build_campaign_html_body as build_campaign_html_body,
 )
@@ -94,12 +95,33 @@ def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=No
     )
     return send_email(
         ses_client=ses_client or default_ses_client(),
-        source=source or settings.DEFAULT_FROM_EMAIL,
+        source=source or _campaign_test_source(campaign) or settings.DEFAULT_FROM_EMAIL,
         to_email=to_email,
         subject=rendered["subject"],
         html_body=rendered["html_body"],
         text_body=rendered["text_body"],
     )
+
+
+def _campaign_test_source(campaign):
+    """Prefer the campaign client's default sender for test sends.
+
+    Falls back to None (the caller then uses DEFAULT_FROM_EMAIL) when the
+    client has no sender configured. Grandfathered senders stored directly
+    on Client.sender_emails resolve here without a SendingDomain row.
+    """
+    from mailing.models import Client  # noqa: PLC0415 - avoid import cycle
+    from mailing.services.senders import resolve_sender_email  # noqa: PLC0415 - avoid import cycle
+
+    client = getattr(campaign, "client", None)
+    if client is None and getattr(campaign, "client_id", None):
+        client = Client.objects.filter(pk=campaign.client_id).first()
+    if client is None:
+        return None
+    try:
+        return resolve_sender_email(client).email
+    except ApiValidationError:
+        return None
 
 
 def send_campaign_batch(payload, *, ses_client=None):
