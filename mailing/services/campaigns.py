@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -28,6 +29,7 @@ from mailing.models import (
 )
 from mailing.queue_contracts import CAMPAIGN_EMAIL_CONTRACT, CONTRACT_VERSION, validate_campaign_email_message
 from mailing.services.campaign_composer import composer_send_issues
+from mailing.services.campaign_rendering import campaign_unsubscribe_headers
 from mailing.services.contacts import (
     NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES,
     has_invalid_email_validation,
@@ -387,10 +389,22 @@ class CampaignNotReady(ValueError):
 
 def campaign_send_issues(campaign):
     issues = list(composer_send_issues(campaign))
+    if (
+        not settings.DEBUG
+        and not getattr(settings, "TESTING", False)
+        and not campaign_unsubscribe_headers("configuration-check")
+    ):
+        issues.append("Set PUBLIC_BASE_URL to HTTPS before sending campaigns.")
     if not campaign.subject.strip():
         issues.append("Add a subject before sending.")
     if not campaign.html_body.strip() and not campaign.text_body.strip():
         issues.append("Add HTML or plain-text email content before sending.")
+    if any(re.search(r"\*\|[^|]+\|\*", body or "") for body in (
+        campaign.subject,
+        campaign.html_body,
+        campaign.text_body,
+    )):
+        issues.append("Resolve Mailchimp merge tags before sending through Relay.")
     if campaign.scheduled_at and timezone.is_naive(campaign.scheduled_at):
         issues.append("Choose a send time with an explicit timezone.")
     return issues
@@ -398,12 +412,10 @@ def campaign_send_issues(campaign):
 
 def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
                    expected_revision=None, reject_past_schedule=False):
-    # Each send task is one django.tasks enqueue plus a TaskRun projection row,
-    # both per-batch INSERTs on the synchronous queue path. 1000 recipients per
-    # task keeps that overhead at ~36 rows for a 36k audience instead of ~360,
-    # without changing delivery semantics: recipients are still sent one by one
-    # and per-recipient status checks keep requeued batches idempotent.
-    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 1000)
+    # Keep batches short so the worker can pick up higher-priority transactional
+    # sends between campaign batches. Per-recipient status checks keep each
+    # smaller batch idempotent if it is redelivered.
+    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 100)
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
 

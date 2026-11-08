@@ -346,6 +346,29 @@ def test_unsubscribe_post_emits_cmp_callback_only(client, recipient, app_client,
     assert cmp_body is not None and cmp_body.event_type == "subscription.unsubscribed"
 
 
+def test_rfc8058_one_click_post_unsubscribes_client_scope_without_form(client, recipient, contact):
+    token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
+
+    response = client.post(
+        reverse("mailing:public_unsubscribe", args=[token]),
+        {"List-Unsubscribe": "One-Click"},
+    )
+
+    contact.refresh_from_db()
+    recipient.refresh_from_db()
+    subscription = Subscription.objects.get(
+        contact=contact,
+        audience=recipient.campaign.audience,
+        client=recipient.campaign.client,
+    )
+    event = EmailEvent.objects.get(campaign_recipient=recipient, event_type=EmailEventType.UNSUBSCRIBE)
+    assert response.status_code == 204
+    assert recipient.status == CampaignRecipientStatus.UNSUBSCRIBED
+    assert subscription.status == SubscriptionStatus.UNSUBSCRIBED
+    assert contact.global_unsubscribed_at is None
+    assert event.metadata == {"scope": "client"}
+
+
 def test_unsubscribe_invalid_token_and_invalid_scope_do_not_mutate(client, recipient):
     token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
 

@@ -29,6 +29,18 @@ def build_campaign_text_body(text_body, unsubscribe_token):
     return f"Unsubscribe or manage preferences: {url}"
 
 
+def campaign_unsubscribe_headers(unsubscribe_token):
+    """Build RFC 8058 one-click headers when Relay has a public HTTPS URL."""
+    url = unsubscribe_url(unsubscribe_token)
+    parsed_url = urlparse(url)
+    if parsed_url.scheme.lower() != "https" or not parsed_url.netloc:
+        return {}
+    return {
+        "List-Unsubscribe": f"<{url}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+
+
 def rewrite_html_links(html_body, tracking_token):
     rewriter = _ClickTrackingHTMLRewriter(tracking_token)
     rewriter.feed(html_body)
