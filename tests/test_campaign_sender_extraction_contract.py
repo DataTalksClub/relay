@@ -57,6 +57,9 @@ class Provider:
         self.atomic.append(connection.in_atomic_block)
         return {"MessageId": self.message_id}
 
+    def send_raw_email(self, **parameters):
+        return self.send_email(**parameters)
+
 
 def payload(pending):
     campaign, recipient = pending

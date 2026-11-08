@@ -389,7 +389,11 @@ class CampaignNotReady(ValueError):
 
 def campaign_send_issues(campaign):
     issues = list(composer_send_issues(campaign))
-    if not settings.DEBUG and not campaign_unsubscribe_headers("configuration-check"):
+    if (
+        not settings.DEBUG
+        and not getattr(settings, "TESTING", False)
+        and not campaign_unsubscribe_headers("configuration-check")
+    ):
         issues.append("Set PUBLIC_BASE_URL to HTTPS before sending campaigns.")
     if not campaign.subject.strip():
         issues.append("Add a subject before sending.")

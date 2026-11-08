@@ -321,7 +321,7 @@ def test_campaign_sender_rejects_recipient_ids_from_another_campaign(campaign_se
     }
 
 
-@override_settings(DEBUG=False, PUBLIC_BASE_URL="http://relay.example.com")
+@override_settings(DEBUG=False, TESTING=False, PUBLIC_BASE_URL="http://relay.example.com")
 def test_live_campaign_requires_https_public_base_url(campaign_setup):
     campaign, _recipient = campaign_setup
 
