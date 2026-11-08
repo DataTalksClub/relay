@@ -1,10 +1,10 @@
 import json
 import re
+from email.parser import BytesParser
+from email.policy import default
 
-import boto3
 import pytest
 from botocore.exceptions import ClientError
-from botocore.stub import Stubber
 from django.test import override_settings
 
 from mailing.models import (
@@ -19,6 +19,7 @@ from mailing.models import (
     Organization,
 )
 from mailing.services.campaign_sender import build_campaign_html_body, send_campaign_batch
+from mailing.services.campaigns import campaign_send_issues
 from mailing.services.tokens import token_hash
 from mailing.sqs import records_from_messages
 from mailing.workers import campaign_email_handler
@@ -52,46 +53,32 @@ def campaign_setup():
 )
 def test_campaign_sender_sends_pending_recipient_and_persists_audit_state(campaign_setup):
     campaign, recipient = campaign_setup
-    ses = _ses_client()
+    ses = _RawSesClient()
+    result = send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
 
-    with Stubber(ses) as stubber:
-        stubber.add_response(
-            "send_email",
-            {"MessageId": "ses-message-1"},
-            {
-                "Source": "newsletter@example.com",
-                "Destination": {"ToAddresses": ["person@example.com"]},
-                "Message": {
-                    "Subject": {"Charset": "UTF-8", "Data": "Weekly update"},
-                    "Body": {
-                        "Html": {
-                            "Charset": "UTF-8",
-                            "Data": _html_body_matcher(
-                                [
-                                    'https://mail.example.com/t/o/',
-                                    'https://mail.example.com/t/c/',
-                                    "u=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2",
-                                    'href="mailto:a@example.com"',
-                                    "Unsubscribe or manage preferences",
-                                ]
-                            ),
-                        },
-                        "Text": {
-                            "Charset": "UTF-8",
-                            "Data": _text_body_matcher(
-                                [
-                                    "Hello in text",
-                                    "Unsubscribe or manage preferences: https://mail.example.com/unsubscribe/",
-                                ]
-                            ),
-                        },
-                    },
-                },
-                "ConfigurationSetName": "campaign-events",
-            },
-        )
-
-        result = send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+    assert ses.params["Source"] == "newsletter@example.com"
+    assert ses.params["Destinations"] == ["person@example.com"]
+    assert ses.params["ConfigurationSetName"] == "campaign-events"
+    raw_message = BytesParser(policy=default).parsebytes(ses.params["RawMessage"]["Data"])
+    html_body = raw_message.get_body(preferencelist=("html",)).get_content()
+    text_body = raw_message.get_body(preferencelist=("plain",)).get_content()
+    assert _html_body_matcher(
+        [
+            "https://mail.example.com/t/o/",
+            "https://mail.example.com/t/c/",
+            "u=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2",
+            'href="mailto:a@example.com"',
+            "Unsubscribe or manage preferences",
+        ]
+    ) == html_body
+    assert _text_body_matcher(
+        [
+            "Hello in text",
+            "Unsubscribe or manage preferences: https://mail.example.com/unsubscribe/",
+        ]
+    ) == text_body
+    assert raw_message["List-Unsubscribe"].startswith("<https://mail.example.com/unsubscribe/")
+    assert raw_message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
     recipient.refresh_from_db()
     campaign.refresh_from_db()
@@ -115,6 +102,9 @@ def test_campaign_handler_is_idempotent_for_duplicate_sqs_delivery(campaign_setu
         def send_email(self, **params):
             sends.append(params)
             return {"MessageId": "ses-message-1"}
+
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
 
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: FakeSes())
 
@@ -162,6 +152,9 @@ def test_campaign_sender_records_permanent_failure_and_acknowledges_record(campa
         def send_email(self, **params):
             raise ClientError({"Error": {"Code": "MessageRejected", "Message": "Address rejected"}}, "SendEmail")
 
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
+
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: RejectingSes())
     event = _event_from_payloads([("message-1", _payload(campaign, recipient))])
 
@@ -192,6 +185,9 @@ def test_campaign_handler_returns_partial_batch_failure_for_retryable_send(campa
                     "SendEmail",
                 )
             return {"MessageId": "ses-message-2"}
+
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
 
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: MixedSes())
     event = _event_from_payloads(
@@ -232,6 +228,9 @@ def test_campaign_handler_refreshes_sent_count_when_single_record_partially_send
                 )
             return {"MessageId": "ses-message-1"}
 
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
+
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: MixedSes())
     payload = _payload(campaign, recipient) | {"campaign_recipient_ids": [recipient.id, second_recipient.id]}
     event = _event_from_payloads([("mixed-message", payload)])
@@ -270,6 +269,9 @@ def test_campaign_handler_can_retry_pending_recipient_with_token_hashes_after_tr
                     "SendEmail",
                 )
             return {"MessageId": "ses-message-2"}
+
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
 
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: FlakySes())
     event = _event_from_payloads([("retry-message", _payload(campaign, recipient))])
@@ -319,6 +321,20 @@ def test_campaign_sender_rejects_recipient_ids_from_another_campaign(campaign_se
     }
 
 
+@override_settings(DEBUG=False, PUBLIC_BASE_URL="http://relay.example.com")
+def test_live_campaign_requires_https_public_base_url(campaign_setup):
+    campaign, _recipient = campaign_setup
+
+    assert "Set PUBLIC_BASE_URL to HTTPS before sending campaigns." in campaign_send_issues(campaign)
+
+
+def test_campaign_preflight_rejects_unresolved_mailchimp_merge_tags(campaign_setup):
+    campaign, _recipient = campaign_setup
+    campaign.html_body = '<html><body>*|HTML:LIST_ADDRESS|* *|UNSUB|*</body></html>'
+
+    assert "Resolve Mailchimp merge tags before sending through Relay." in campaign_send_issues(campaign)
+
+
 @override_settings(PUBLIC_BASE_URL="https://mail.example.com")
 def test_build_campaign_html_body_adds_tracking_pixel_click_links_and_unsubscribe_link():
     html = build_campaign_html_body(
@@ -356,13 +372,34 @@ def _event_from_payloads(message_payloads):
     )
 
 
-def _ses_client():
-    return boto3.client(
-        "ses",
-        region_name="us-east-1",
-        aws_access_key_id="test",
-        aws_secret_access_key="test",
-    )
+class _RawSesClient:
+    def __init__(self):
+        self.params = None
+
+    def send_raw_email(self, **params):
+        self.params = params
+        return {"MessageId": "ses-message-1"}
+
+
+def _raw_to_ses_params(params):
+    message = BytesParser(policy=default).parsebytes(params["RawMessage"]["Data"])
+    body = {}
+    for part in message.walk():
+        if part.get_content_type() == "text/plain":
+            body["Text"] = {"Charset": "UTF-8", "Data": part.get_content()}
+        elif part.get_content_type() == "text/html":
+            body["Html"] = {"Charset": "UTF-8", "Data": part.get_content()}
+    result = {
+        "Source": params["Source"],
+        "Destination": {"ToAddresses": [message["To"]]},
+        "Message": {
+            "Subject": {"Charset": "UTF-8", "Data": str(message["Subject"])},
+            "Body": body,
+        },
+    }
+    if "ConfigurationSetName" in params:
+        result["ConfigurationSetName"] = params["ConfigurationSetName"]
+    return result
 
 
 class _FailingIfCalledSes:

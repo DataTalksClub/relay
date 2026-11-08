@@ -18,11 +18,8 @@ from mailing.models import (
 )
 from mailing.services.campaign_rendering import (
     build_campaign_html_body as build_campaign_html_body,
-)
-from mailing.services.campaign_rendering import (
     build_campaign_text_body as build_campaign_text_body,
-)
-from mailing.services.campaign_rendering import (
+    campaign_unsubscribe_headers,
     rewrite_html_links as rewrite_html_links,
 )
 from mailing.services.tokens import (
@@ -180,6 +177,7 @@ def _deliver_campaign_recipient(recipient, ses, tokens):
             subject=recipient.campaign.subject,
             html_body=html_body,
             text_body=text_body,
+            headers=campaign_unsubscribe_headers(tokens.unsubscribe_token),
         )
     except Exception as exc:
         retryable = is_retryable_send_error(exc)

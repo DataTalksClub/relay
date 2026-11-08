@@ -1475,7 +1475,9 @@ def public_unsubscribe(request, unsubscribe_token):
         return render(request, "mailing/unsubscribe.html", status=404, context={"invalid": True})
 
     if request.method == "POST":
-        recipient = apply_unsubscribe(unsubscribe_token, request.POST.get("scope", ""))
+        one_click = request.POST.get("List-Unsubscribe") == "One-Click"
+        scope = "client" if one_click else request.POST.get("scope", "")
+        recipient = apply_unsubscribe(unsubscribe_token, scope)
         if recipient is None:
             return render(
                 request,
@@ -1483,6 +1485,8 @@ def public_unsubscribe(request, unsubscribe_token):
                 status=400,
                 context={"recipient": get_recipient_by_unsubscribe_token(unsubscribe_token), "invalid_scope": True},
             )
+        if one_click:
+            return HttpResponse(status=204)
         return render(request, "mailing/unsubscribe.html", context={"recipient": recipient, "confirmed": True})
 
     return render(request, "mailing/unsubscribe.html", context={"recipient": recipient})

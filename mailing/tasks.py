@@ -47,7 +47,7 @@ def _summarise(value, to_dict):
     return None if value is None else to_dict(value)
 
 
-@task()
+@task(priority=50)
 def send_transactional_email(payload, *, attempt=1):
     """Render and send one transactional message."""
     validate_transactional_email_message(payload)
@@ -85,7 +85,7 @@ def send_transactional_email(payload, *, attempt=1):
     return _summarise(message, lambda m: {"transactional_message_id": m.pk, "status": m.status})
 
 
-@task()
+@task(priority=-50)
 def send_campaign_email_batch(payload):
     """Send one batch of a campaign's recipients.
 
@@ -111,7 +111,7 @@ def send_campaign_email_batch(payload):
     )
 
 
-@task()
+@task(priority=50)
 def send_transactional_email_batch(message_ids, list_key="", template_key="", client_id=None):
     """Fan out one bulk transactional send -- a scoring run, a reminder sweep.
 

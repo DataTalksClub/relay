@@ -52,8 +52,10 @@ Do not begin the production audience split until all of these are complete:
    rendering-failure events into Relay's durable ingress path.
 4. Verify that permanent bounces and complaints suppress later sends and that
    soft bounces do not become permanent suppressions.
-5. Add RFC 8058 one-click unsubscribe headers to Relay campaign messages, in
-   addition to the existing visible HTML and text preference link.
+5. Send RFC 8058 one-click unsubscribe headers on Relay campaign messages, in
+   addition to the existing visible HTML and text preference link. The header
+   requires an HTTPS `PUBLIC_BASE_URL`; the public unsubscribe endpoint handles
+   the one-click POST at client scope.
 6. Verify production queue throttling, retries, idempotency, dead-letter
    handling, monitoring, and operator alerts.
 7. Add or verify an operator-safe way to create the deterministic migration
@@ -150,6 +152,9 @@ are active.
    contacts.
 3. Add `delivery-relay` in Mailchimp to contacts whose bucket is below the
    current threshold. Never remove it from an earlier cohort.
+   For a CSV sample, use Mailchimp's **Audience → Tags → Bulk tag**, upload
+   an email-only file, and choose **Tag these emails**. Confirm the tag's
+   resulting member count before using it in campaign targeting.
 4. Export the complete Mailchimp audience again after the tag update. A full
    export is required so Relay receives current subscribed, unsubscribed,
    cleaned, and tag state together.
@@ -187,6 +192,23 @@ are active.
    Queue Preview, its queueable count, and every suppression/skip-reason count.
 10. In Mailchimp, select the subscribed audience and set `delivery-relay` in
     **Do not send to**. Review the final recipient count.
+
+### Campaign HTML compatibility
+
+Relay accepts full HTML and plain-text campaign bodies. It rewrites HTTP(S)
+anchor links for click tracking, adds an open pixel, and adds its own visible
+unsubscribe link. It does not evaluate Mailchimp merge tags or render
+per-contact personalization. Resolve Mailchimp-specific tags before copying
+HTML into Relay. Preserve the sender's physical mailing address, use a working
+browser-view link or remove that control, and replace Mailchimp unsubscribe and
+profile links with Relay's unsubscribe preferences. Leave image sources on
+public HTTPS URLs that remain available to recipients.
+
+Campaign batch tasks run below transactional task priority. The default batch
+size is 100 recipients, so the worker can return to the queue between campaign
+chunks instead of holding transactional sends behind a large newsletter batch.
+This bounds queue blocking; it does not replace checking the live SES quota,
+account usage, and other senders before a campaign.
 
 ## Pre-send Partition Check
 
