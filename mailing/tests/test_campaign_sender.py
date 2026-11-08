@@ -18,7 +18,12 @@ from mailing.models import (
     EmailEventType,
     Organization,
 )
-from mailing.services.campaign_sender import build_campaign_html_body, build_campaign_text_body, send_campaign_batch
+from mailing.services.campaign_sender import (
+    build_campaign_html_body,
+    build_campaign_text_body,
+    send_campaign_batch,
+    send_campaign_test_message,
+)
 from mailing.services.campaigns import campaign_send_issues
 from mailing.services.tokens import token_hash
 from mailing.sqs import records_from_messages
@@ -472,3 +477,50 @@ def test_campaign_bodies_replace_mailchimp_uniqid_footer_links():
     assert "forward-to-friend" not in out_text
     assert "list-manage" not in out_text
     assert "/unsubscribe/unsub-tok" in out_text
+
+
+class _CapturingSes:
+    def __init__(self):
+        self.params = None
+
+    def send_email(self, **params):
+        self.params = params
+        return {"MessageId": "test-message-1"}
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_test_send_uses_client_default_sender(campaign_setup):
+    campaign, _recipient = campaign_setup
+    client = campaign.client
+    client.sender_emails = [{"id": "alexey", "email": "Alexey Grigorev <alexey@datatalks.club>"}]
+    client.default_sender_id = "alexey"
+    client.save(update_fields=["sender_emails", "default_sender_id", "updated_at"])
+    ses = _CapturingSes()
+
+    assert send_campaign_test_message(campaign, "test@example.com", ses_client=ses) == "test-message-1"
+    assert ses.params["Source"] == "Alexey Grigorev <alexey@datatalks.club>"
+    assert ses.params["Destination"] == {"ToAddresses": ["test@example.com"]}
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_test_send_falls_back_to_default_from_without_sender(campaign_setup):
+    campaign, _recipient = campaign_setup
+    ses = _CapturingSes()
+
+    send_campaign_test_message(campaign, "test@example.com", ses_client=ses)
+
+    assert ses.params["Source"] == "relay@example.com"
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_test_send_explicit_source_wins_over_client_sender(campaign_setup):
+    campaign, _recipient = campaign_setup
+    client = campaign.client
+    client.sender_emails = [{"id": "alexey", "email": "Alexey Grigorev <alexey@datatalks.club>"}]
+    client.default_sender_id = "alexey"
+    client.save(update_fields=["sender_emails", "default_sender_id", "updated_at"])
+    ses = _CapturingSes()
+
+    send_campaign_test_message(campaign, "test@example.com", ses_client=ses, source="explicit@example.com")
+
+    assert ses.params["Source"] == "explicit@example.com"
