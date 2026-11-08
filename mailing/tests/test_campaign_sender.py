@@ -433,3 +433,31 @@ def test_full_document_tracking_and_unsubscribe_stay_inside_body():
     assert rendered.index('width="1" height="1"') < body_end
     assert lowered.endswith("</body></html>")
     assert lowered.count("</body>") == 1
+
+
+def test_campaign_bodies_replace_mailchimp_uniqid_footer_links():
+    from mailing.services.campaign_rendering import build_campaign_text_body
+
+    html = (
+        '<html><body><a href="https://mailchi.mp/datatalks.club/weekly-301?e=[UNIQID]">View</a>'
+        '<a href="https://us19.forward-to-friend.com/forward?u=1&id=2&e=[UNIQID]">Forward to a friend</a> · '
+        '<a href="https://club.us19.list-manage.com/profile?u=1&id=2&e=[UNIQID]&c=3">update your preferences</a>'
+        '<a href="https://club.us19.list-manage.com/unsubscribe?u=1&id=2&t=b&e=[UNIQID]&c=3">unsubscribe</a>'
+        "</body></html>"
+    )
+    text = (
+        "View (https://mailchi.mp/datatalks.club/weekly-301?e=[UNIQID])\n"
+        "Forward to a friend (https://us19.forward-to-friend.com/forward?u=1&id=2&e=[UNIQID])\n"
+        "unsubscribe (https://club.us19.list-manage.com/unsubscribe?u=1&id=2&t=b&e=[UNIQID]&c=3)\n"
+    )
+    out_html = build_campaign_html_body(html, "track-tok", "unsub-tok")
+    out_text = build_campaign_text_body(text, "unsub-tok")
+
+    assert "UNIQID" not in out_html
+    assert "forward-to-friend" not in out_html
+    assert "list-manage" not in out_html
+    assert out_html.count("/unsubscribe/unsub-tok") == 3  # preferences, unsubscribe, appended footer
+    assert "UNIQID" not in out_text
+    assert "forward-to-friend" not in out_text
+    assert "list-manage" not in out_text
+    assert "/unsubscribe/unsub-tok" in out_text
