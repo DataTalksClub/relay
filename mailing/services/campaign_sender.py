@@ -95,7 +95,7 @@ def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=No
     )
     return send_email(
         ses_client=ses_client or default_ses_client(),
-        source=source or _campaign_test_source(campaign) or settings.DEFAULT_FROM_EMAIL,
+        source=source or _campaign_default_source(campaign) or settings.DEFAULT_FROM_EMAIL,
         to_email=to_email,
         subject=rendered["subject"],
         html_body=rendered["html_body"],
@@ -103,8 +103,8 @@ def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=No
     )
 
 
-def _campaign_test_source(campaign):
-    """Prefer the campaign client's default sender for test sends.
+def _campaign_default_source(campaign):
+    """Prefer the campaign client's default sender for test and batch sends.
 
     Falls back to None (the caller then uses DEFAULT_FROM_EMAIL) when the
     client has no sender configured. Grandfathered senders stored directly
@@ -200,7 +200,7 @@ def _deliver_campaign_recipient(recipient, ses, tokens):
     try:
         message_id = send_email(
             ses_client=ses,
-            source=settings.DEFAULT_FROM_EMAIL,
+            source=_campaign_default_source(recipient.campaign) or settings.DEFAULT_FROM_EMAIL,
             to_email=recipient.email,
             subject=recipient.campaign.subject,
             html_body=html_body,
