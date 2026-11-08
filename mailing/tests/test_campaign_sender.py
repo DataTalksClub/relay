@@ -18,7 +18,7 @@ from mailing.models import (
     EmailEventType,
     Organization,
 )
-from mailing.services.campaign_sender import build_campaign_html_body, send_campaign_batch
+from mailing.services.campaign_sender import build_campaign_html_body, build_campaign_text_body, send_campaign_batch
 from mailing.services.campaigns import campaign_send_issues
 from mailing.services.tokens import token_hash
 from mailing.sqs import records_from_messages
@@ -62,21 +62,27 @@ def test_campaign_sender_sends_pending_recipient_and_persists_audit_state(campai
     raw_message = BytesParser(policy=default).parsebytes(ses.params["RawMessage"]["Data"])
     html_body = raw_message.get_body(preferencelist=("html",)).get_content()
     text_body = raw_message.get_body(preferencelist=("plain",)).get_content()
-    assert _html_body_matcher(
-        [
-            "https://mail.example.com/t/o/",
-            "https://mail.example.com/t/c/",
-            "u=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2",
-            'href="mailto:a@example.com"',
-            "Unsubscribe or manage preferences",
-        ]
-    ) == html_body
-    assert _text_body_matcher(
-        [
-            "Hello in text",
-            "Unsubscribe or manage preferences: https://mail.example.com/unsubscribe/",
-        ]
-    ) == text_body
+    assert (
+        _html_body_matcher(
+            [
+                "https://mail.example.com/t/o/",
+                "https://mail.example.com/t/c/",
+                "u=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2",
+                'href="mailto:a@example.com"',
+                "Unsubscribe or manage preferences",
+            ]
+        )
+        == html_body
+    )
+    assert (
+        _text_body_matcher(
+            [
+                "Hello in text",
+                "Unsubscribe or manage preferences: https://mail.example.com/unsubscribe/",
+            ]
+        )
+        == text_body
+    )
     assert raw_message["List-Unsubscribe"].startswith("<https://mail.example.com/unsubscribe/")
     assert raw_message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
@@ -172,7 +178,9 @@ def test_campaign_sender_records_permanent_failure_and_acknowledges_record(campa
 def test_campaign_handler_returns_partial_batch_failure_for_retryable_send(campaign_setup, monkeypatch):
     campaign, recipient = campaign_setup
     second_contact = Contact.objects.create(email="second@example.com")
-    second_recipient = CampaignRecipient.objects.create(campaign=campaign, contact=second_contact, email=second_contact.email)
+    second_recipient = CampaignRecipient.objects.create(
+        campaign=campaign, contact=second_contact, email=second_contact.email
+    )
 
     class MixedSes:
         def send_email(self, **params):
@@ -211,10 +219,14 @@ def test_campaign_handler_returns_partial_batch_failure_for_retryable_send(campa
 
 
 @override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")
-def test_campaign_handler_refreshes_sent_count_when_single_record_partially_sends_before_retry(campaign_setup, monkeypatch):
+def test_campaign_handler_refreshes_sent_count_when_single_record_partially_sends_before_retry(
+    campaign_setup, monkeypatch
+):
     campaign, recipient = campaign_setup
     second_contact = Contact.objects.create(email="second@example.com")
-    second_recipient = CampaignRecipient.objects.create(campaign=campaign, contact=second_contact, email=second_contact.email)
+    second_recipient = CampaignRecipient.objects.create(
+        campaign=campaign, contact=second_contact, email=second_contact.email
+    )
 
     class MixedSes:
         def send_email(self, **params):
@@ -312,7 +324,9 @@ def test_campaign_sender_rejects_recipient_ids_from_another_campaign(campaign_se
         client=campaign.client,
         subject="Other",
     )
-    other_recipient = CampaignRecipient.objects.create(campaign=other_campaign, contact=recipient.contact, email=recipient.email)
+    other_recipient = CampaignRecipient.objects.create(
+        campaign=other_campaign, contact=recipient.contact, email=recipient.email
+    )
 
     event = _event_from_payloads([("bad-message", _payload(campaign, other_recipient))])
 
@@ -330,7 +344,7 @@ def test_live_campaign_requires_https_public_base_url(campaign_setup):
 
 def test_campaign_preflight_rejects_unresolved_mailchimp_merge_tags(campaign_setup):
     campaign, _recipient = campaign_setup
-    campaign.html_body = '<html><body>*|HTML:LIST_ADDRESS|* *|UNSUB|*</body></html>'
+    campaign.html_body = "<html><body>*|HTML:LIST_ADDRESS|* *|UNSUB|*</body></html>"
 
     assert "Resolve Mailchimp merge tags before sending through Relay." in campaign_send_issues(campaign)
 
@@ -423,9 +437,8 @@ class _text_body_matcher:
         return all(part in other for part in self.expected_parts)
 
 
-
 def test_full_document_tracking_and_unsubscribe_stay_inside_body():
-    document = '<!doctype html><html><head><title>Email</title></head><BODY><p>Hello</p></BODY></html>'
+    document = "<!doctype html><html><head><title>Email</title></head><BODY><p>Hello</p></BODY></html>"
     rendered = build_campaign_html_body(document, "tracking", "unsubscribe")
     lowered = rendered.lower()
     body_end = lowered.rindex("</body>")
@@ -433,3 +446,29 @@ def test_full_document_tracking_and_unsubscribe_stay_inside_body():
     assert rendered.index('width="1" height="1"') < body_end
     assert lowered.endswith("</body></html>")
     assert lowered.count("</body>") == 1
+
+
+def test_campaign_bodies_replace_mailchimp_uniqid_footer_links():
+    html = (
+        '<html><body><a href="https://mailchi.mp/datatalks.club/weekly-301?e=[UNIQID]">View</a>'
+        '<a href="https://us19.forward-to-friend.com/forward?u=1&id=2&e=[UNIQID]">Forward to a friend</a> · '
+        '<a href="https://club.us19.list-manage.com/profile?u=1&id=2&e=[UNIQID]&c=3">update your preferences</a>'
+        '<a href="https://club.us19.list-manage.com/unsubscribe?u=1&id=2&t=b&e=[UNIQID]&c=3">unsubscribe</a>'
+        "</body></html>"
+    )
+    text = (
+        "View (https://mailchi.mp/datatalks.club/weekly-301?e=[UNIQID])\n"
+        "Forward to a friend (https://us19.forward-to-friend.com/forward?u=1&id=2&e=[UNIQID])\n"
+        "unsubscribe (https://club.us19.list-manage.com/unsubscribe?u=1&id=2&t=b&e=[UNIQID]&c=3)\n"
+    )
+    out_html = build_campaign_html_body(html, "track-tok", "unsub-tok")
+    out_text = build_campaign_text_body(text, "unsub-tok")
+
+    assert "UNIQID" not in out_html
+    assert "forward-to-friend" not in out_html
+    assert "list-manage" not in out_html
+    assert out_html.count("/unsubscribe/unsub-tok") == 3  # preferences, unsubscribe, appended footer
+    assert "UNIQID" not in out_text
+    assert "forward-to-friend" not in out_text
+    assert "list-manage" not in out_text
+    assert "/unsubscribe/unsub-tok" in out_text

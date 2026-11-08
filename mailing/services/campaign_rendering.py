@@ -7,9 +7,34 @@ from urllib.parse import urlparse
 
 from mailing.services.public_urls import click_redirect_url, open_pixel_url, unsubscribe_url
 
+# Mailchimp archive copies keep recipient-specific footer links with a literal [UNIQID] placeholder.
+_UNIQID = "[UNIQID]"
+_FORWARD_LINK_RE = re.compile(
+    r"<a\b[^>]*href=\"[^\"]*forward-to-friend\.com[^\"]*\"[^>]*>.*?</a>(?:\s*(?:&middot;|&#183;|·)\s*)?",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_MAILCHIMP_ACCOUNT_LINK_RE = re.compile(
+    r"^https?://[^/]*list-manage\.com/(?:unsubscribe|profile)\b", flags=re.IGNORECASE
+)
+_TEXT_FORWARD_LINE_RE = re.compile(r"^.*forward-to-friend\.com.*(?:\n|$)", flags=re.IGNORECASE | re.MULTILINE)
+_TEXT_ACCOUNT_URL_RE = re.compile(
+    r"https?://[^\s)>\"]*list-manage\.com/(?:unsubscribe|profile)[^\s)>\"]*", flags=re.IGNORECASE
+)
+
+
+def resolve_archive_placeholders_html(html_body):
+    """Drop forward-to-a-friend (Relay has no such feature); the rewriter handles the other links."""
+    return _FORWARD_LINK_RE.sub("", html_body)
+
+
+def resolve_archive_placeholders_text(text_body, unsubscribe_token):
+    text = _TEXT_FORWARD_LINE_RE.sub("", text_body)
+    text = _TEXT_ACCOUNT_URL_RE.sub(lambda _: unsubscribe_url(unsubscribe_token), text)
+    return text.replace("?e=[UNIQID]", "").replace("&e=[UNIQID]", "")
+
 
 def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
-    body = rewrite_html_links(html_body or "", tracking_token)
+    body = rewrite_html_links(resolve_archive_placeholders_html(html_body or ""), tracking_token, unsubscribe_token)
     pixel = f'<img src="{escape(open_pixel_url(tracking_token), quote=True)}" width="1" height="1" alt="" />'
     unsubscribe_href = escape(unsubscribe_url(unsubscribe_token), quote=True)
     footer = f'<p><a href="{unsubscribe_href}">Unsubscribe or manage preferences</a></p>'
@@ -23,7 +48,7 @@ def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
 
 def build_campaign_text_body(text_body, unsubscribe_token):
     url = unsubscribe_url(unsubscribe_token)
-    body = (text_body or "").rstrip()
+    body = resolve_archive_placeholders_text(text_body or "", unsubscribe_token).rstrip()
     if body:
         return f"{body}\n\nUnsubscribe or manage preferences: {url}"
     return f"Unsubscribe or manage preferences: {url}"
@@ -41,17 +66,18 @@ def campaign_unsubscribe_headers(unsubscribe_token):
     }
 
 
-def rewrite_html_links(html_body, tracking_token):
-    rewriter = _ClickTrackingHTMLRewriter(tracking_token)
+def rewrite_html_links(html_body, tracking_token, unsubscribe_token=None):
+    rewriter = _ClickTrackingHTMLRewriter(tracking_token, unsubscribe_token)
     rewriter.feed(html_body)
     rewriter.close()
     return rewriter.output
 
 
 class _ClickTrackingHTMLRewriter(HTMLParser):
-    def __init__(self, tracking_token):
+    def __init__(self, tracking_token, unsubscribe_token=None):
         super().__init__(convert_charrefs=False)
         self.tracking_token = tracking_token
+        self.unsubscribe_token = unsubscribe_token
         self.parts = []
 
     @property
@@ -88,6 +114,12 @@ class _ClickTrackingHTMLRewriter(HTMLParser):
     def _format_tag(self, tag, attrs, *, closed):
         rewritten_attrs = []
         for name, value in attrs:
+            if tag.lower() == "a" and name.lower() == "href" and value and _UNIQID in value:
+                if self.unsubscribe_token and _MAILCHIMP_ACCOUNT_LINK_RE.match(value):
+                    # Relay's unsubscribe page is the single unsubscribe/preferences surface; skip click tracking.
+                    rewritten_attrs.append((name, unsubscribe_url(self.unsubscribe_token)))
+                    continue
+                value = value.replace("?e=[UNIQID]", "").replace("&e=[UNIQID]", "")
             if tag.lower() == "a" and name.lower() == "href" and _is_trackable_url(value):
                 value = click_redirect_url(self.tracking_token, value)
             rewritten_attrs.append((name, value))
