@@ -205,10 +205,11 @@ profile links with Relay's unsubscribe preferences. Leave image sources on
 public HTTPS URLs that remain available to recipients.
 
 Campaign batch tasks run below transactional task priority. The default batch
-size is 100 recipients, so the worker can return to the queue between campaign
-chunks instead of holding transactional sends behind a large newsletter batch.
-This bounds queue blocking; it does not replace checking the live SES quota,
-account usage, and other senders before a campaign.
+size is 100 recipients, giving the worker an opportunity to pick up
+higher-priority transactional tasks between batches. A worker remains occupied
+while it sends the current batch; this does not bound provider-call latency or
+coordinate send rate across processes. Check the live SES quota, account usage,
+and other senders before a campaign.
 
 ## Pre-send Partition Check
 
