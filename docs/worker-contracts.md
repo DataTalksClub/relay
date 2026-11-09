@@ -109,7 +109,7 @@ recipient row, and the unique non-empty `EmailEvent.provider_event_id` makes a
 redelivery a no-op (the loser of a race gets an `IntegrityError`, rolls back before
 applying anything and is counted as a duplicate). One consumer drains ~30 events/s
 and N consumers scale close to linearly (`scripts/bench_provider_events.py`,
-local PostgreSQL: 1 -> 30, 2 -> 53, 3 -> 77, 4 -> 100 events/s), which is >= 2x the
+local PostgreSQL: 1 -> 30, 2 -> 53, 3 -> 77, 4 -> 100, 6 -> 96 events/s; the shared benchmark box saturates at 4-6), which is >= 2x the
 ~45 msg/s send peak. Add another `provider-events-worker-N` service if the
 `provider-events` READY backlog stays high during a send. The CMP outbox row for an
 event is written in the same transaction as the event.
