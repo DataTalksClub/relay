@@ -30,6 +30,12 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
+class _Server(ThreadingHTTPServer):
+    # The default listen backlog (5) resets some of 16 simultaneous connects; SES send
+    # clients no longer retry in botocore (one attempt), so that would surface as an error.
+    request_queue_size = 64
+
+
 @override_settings(
     RELAY_TASK_ROLE_ARNS={}, RELAY_REQUIRE_TASK_ROLES=False,
     AWS_REGION="us-east-1", AWS_SES_REGION="us-east-1", CAMPAIGN_SEND_CONCURRENCY=THREADS,
@@ -37,7 +43,7 @@ class _Handler(BaseHTTPRequestHandler):
 def test_send_concurrency_threads_do_not_overflow_the_connection_pool(monkeypatch, caplog):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "k")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "s")
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    server = _Server(("127.0.0.1", 0), _Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         client = aws.ses_client(endpoint_url=f"http://127.0.0.1:{server.server_port}")
