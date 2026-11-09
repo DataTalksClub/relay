@@ -147,3 +147,17 @@ def test_ses_client_config_pool_retries_timeouts_keepalive(monkeypatch):
 @override_settings(CAMPAIGN_SEND_CONCURRENCY=40)
 def test_pool_size_follows_send_concurrency():
     assert aws._ses_config().max_pool_connections >= 44
+
+
+@pytest.mark.parametrize("configured_timeout, expected", [(5, 25), (60, 60)])
+def test_sqs_cached_client_outlasts_maximum_long_poll(monkeypatch, configured_timeout, expected):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "k")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "s")
+    with override_settings(AWS_READ_TIMEOUT=configured_timeout):
+        # The monitor may create this shared client before the ingress worker.
+        monitor_client = aws.aws_client("sqs")
+        ingress_client = aws.sqs_client()
+        assert monitor_client is ingress_client
+        assert ingress_client.meta.config.read_timeout == expected
+        assert ingress_client.meta.config.read_timeout > 20
+        assert aws.aws_client("s3").meta.config.read_timeout == configured_timeout

@@ -569,6 +569,25 @@ def _append_and_apply_ses_event(payload, provider_event_id, notification_type):
             # Campaign links are double-wrapped (SES click tracking -> Relay
             # /t/c/ -> target). Relay's redirector already recorded this
             # human click, so the SES event on the wrapper would count twice.
+            # Retain a durable disposition so exact-ID reconciliation does not
+            # mistake this intentional suppression for an unpersisted event.
+            # correlate_ses_message holds the recipient lock, serializing
+            # duplicate receipts for this recipient as well as its updates.
+            OperatorAudit.objects.get_or_create(
+                action="ses.click.ignored_relay_tracker",
+                metadata__provider_event_id=provider_event_id,
+                defaults={
+                    "target_type": "campaignrecipient",
+                    "target_id": source.pk,
+                    "metadata": {
+                        "provider_event_id": provider_event_id,
+                        "sns_message_id": provider_event_id,
+                        "sns_topic_arn": (payload.get("metadata") or {}).get("sns_topic_arn"),
+                        "sns_timestamp": (payload.get("metadata") or {}).get("sns_timestamp"),
+                        "reason": "relay_tracker_click_counted_by_tracking_path",
+                    },
+                },
+            )
             logger.info("Ignoring SES click on Relay tracker URL for recipient %s", source.pk)
             return None, None
     event = append_provider_event(payload, source)
