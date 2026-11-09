@@ -161,6 +161,13 @@ RELAY_QUEUE_AGE_ALERT_SECONDS = {
 }
 RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS", "30")))
 RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS", "900")))
+# Campaign SES-throttling retries include the first attempt. A batch that hits
+# retryable SES throttling does not fail: the remaining PENDING recipients of
+# that batch are requeued as a new task with run_after backoff (base, doubling,
+# capped), so a transient rate-limit never fails mail that was never attempted.
+RELAY_CAMPAIGN_THROTTLE_MAX_ATTEMPTS = max(1, int(os.environ.get("RELAY_CAMPAIGN_THROTTLE_MAX_ATTEMPTS", "8")))
+RELAY_CAMPAIGN_THROTTLE_BASE_SECONDS = max(1, int(os.environ.get("RELAY_CAMPAIGN_THROTTLE_BASE_SECONDS", "30")))
+RELAY_CAMPAIGN_THROTTLE_MAX_SECONDS = max(1, int(os.environ.get("RELAY_CAMPAIGN_THROTTLE_MAX_SECONDS", "900")))
 RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL = os.environ.get("RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL", "").strip()
 
 # Identifies this project in the taskdeck status contract and in TaskRun rows.

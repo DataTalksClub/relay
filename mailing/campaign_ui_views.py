@@ -12,7 +12,13 @@ from django.views.decorators.http import require_POST
 
 from mailing.campaign_test_tasks import enqueue_campaign_test
 from mailing.models import Campaign
-from mailing.services.api import cancel_campaign_instance, validate_test_recipient_emails
+from mailing.services.api import (
+    cancel_campaign_instance,
+    pause_campaign_instance,
+    resume_campaign_instance,
+    stop_campaign_instance,
+    validate_test_recipient_emails,
+)
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaigns import campaign_send_issues
 from mailing.services.task_leases import campaign_dispatch_alerts
@@ -67,6 +73,78 @@ def campaign_test_send(request, campaign_id):
             messages.success(request, format_html('{} <a href="{}">View test task result</a>', text, result_url))
         else:
             messages.success(request, text)
+    return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
+
+
+@staff_member_required
+@require_POST
+def campaign_pause(request, campaign_id):
+    from mailing.views import require_active_client  # noqa: PLC0415 - avoid routing import cycle
+
+    active_client = require_active_client(request)
+    if active_client is None:
+        return redirect("mailing:dashboard")
+    campaign = get_object_or_404(Campaign, pk=campaign_id, client=active_client)
+    if request.POST.get("confirm_pause") != "1":
+        messages.error(request, "Confirm pausing before halting this campaign.")
+        return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
+    try:
+        result = pause_campaign_instance(campaign)
+    except ApiValidationError:
+        messages.error(request, "This campaign cannot be paused. Only queued or sending campaigns can be paused.")
+    else:
+        if result["paused"]:
+            messages.success(request, "Campaign paused. No further email is sent; resume to continue with the remaining recipients.")
+        else:
+            messages.info(request, "This campaign is already paused.")
+    return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
+
+
+@staff_member_required
+@require_POST
+def campaign_resume(request, campaign_id):
+    from mailing.views import require_active_client  # noqa: PLC0415 - avoid routing import cycle
+
+    active_client = require_active_client(request)
+    if active_client is None:
+        return redirect("mailing:dashboard")
+    campaign = get_object_or_404(Campaign, pk=campaign_id, client=active_client)
+    if request.POST.get("confirm_resume") != "1":
+        messages.error(request, "Confirm resuming before restarting this campaign.")
+        return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
+    try:
+        result = resume_campaign_instance(campaign)
+    except ApiValidationError:
+        messages.error(request, "This campaign cannot be resumed. Only a paused campaign can be resumed; a stopped campaign stays stopped.")
+    else:
+        messages.success(
+            request,
+            f"Campaign resumed. {result['recipient_count']} remaining recipient(s) re-queued in {result['batch_count']} batch(es).",
+        )
+    return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
+
+
+@staff_member_required
+@require_POST
+def campaign_stop(request, campaign_id):
+    from mailing.views import require_active_client  # noqa: PLC0415 - avoid routing import cycle
+
+    active_client = require_active_client(request)
+    if active_client is None:
+        return redirect("mailing:dashboard")
+    campaign = get_object_or_404(Campaign, pk=campaign_id, client=active_client)
+    if request.POST.get("confirm_stop") != "1":
+        messages.error(request, "Confirm stopping before ending this campaign.")
+        return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
+    try:
+        result = stop_campaign_instance(campaign)
+    except ApiValidationError:
+        messages.error(request, "This campaign cannot be stopped. Only queued or sending campaigns can be stopped.")
+    else:
+        if result["stopped"]:
+            messages.success(request, "Campaign stopped. No further email is sent; sent email cannot be recalled.")
+        else:
+            messages.info(request, "This campaign was already stopped.")
     return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
 
 

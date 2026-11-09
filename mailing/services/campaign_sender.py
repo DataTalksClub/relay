@@ -91,6 +91,14 @@ class RetryableCampaignSendError(CampaignSenderError):
     pass
 
 
+class CampaignHalted(CampaignSenderError):
+    """Control signal: the campaign was paused or stopped mid-batch.
+
+    Not an error: the batch ends cleanly, remaining PENDING recipients are
+    left untouched (resumable), and no further SES calls are made.
+    """
+
+
 @dataclass(frozen=True)
 class CampaignSendResult:
     sent_count: int
@@ -191,7 +199,20 @@ def send_campaign_batch(payload, *, ses_client=None):
     concurrency = _send_concurrency(len(recipient_ids))
     started = time.monotonic()
     cpu_started = time.process_time()
-    outcomes, failure = _send_recipients(campaign_id, recipient_ids, ses, concurrency, context)
+    if _campaign_send_halted(campaign_id):
+        # Halted before the first send: leave every PENDING recipient
+        # untouched so pause is resumable and stop keeps them as-is.
+        logger.error("Campaign batch halted before first send campaign_id=%s", campaign_id)
+        refresh_campaign_send_counts(campaign_id)
+        return CampaignSendResult(sent_count=0, skipped_count=0, failed_count=0)
+    try:
+        outcomes, failure = _send_recipients(campaign_id, recipient_ids, ses, concurrency, context)
+    except CampaignHalted:
+        # A halt observed between the loop checks (never from a recorded
+        # failure): end the batch cleanly with what was sent so far.
+        logger.error("Campaign batch halted campaign_id=%s", campaign_id)
+        refresh_campaign_send_counts(campaign_id)
+        return CampaignSendResult(**result)
     for outcome in outcomes:
         result[f"{outcome}_count"] += 1
     _report_batch_throughput(
@@ -242,8 +263,14 @@ def _send_recipients(campaign_id, recipient_ids, ses, concurrency, context):
     failures = []
     if concurrency == 1:
         for recipient_id in recipient_ids:
+            if _campaign_send_halted(campaign_id):
+                logger.error("Campaign batch halted campaign_id=%s", campaign_id)
+                return outcomes, None
             try:
                 outcomes.append(_send_campaign_recipient(campaign_id, recipient_id, ses, context))
+            except CampaignHalted:
+                logger.error("Campaign batch halted campaign_id=%s", campaign_id)
+                return outcomes, None
             except Exception as exc:
                 return outcomes, (recipient_id, exc)
         return outcomes, None
@@ -258,12 +285,20 @@ def _send_recipients(campaign_id, recipient_ids, ses, concurrency, context):
         # close_old_connections drops only broken or CONN_MAX_AGE-expired ones.
         try:
             while not stop.is_set():
+                if _campaign_send_halted(campaign_id):
+                    logger.error("Campaign batch halted campaign_id=%s", campaign_id)
+                    stop.set()
+                    return
                 try:
                     recipient_id = pending.get_nowait()
                 except queue.Empty:
                     return
                 try:
                     outcomes.append(_send_campaign_recipient(campaign_id, recipient_id, ses, context))
+                except CampaignHalted:
+                    logger.error("Campaign batch halted campaign_id=%s", campaign_id)
+                    stop.set()
+                    return
                 except Exception as exc:
                     failures.append((recipient_id, exc))
                     stop.set()
@@ -276,6 +311,11 @@ def _send_recipients(campaign_id, recipient_ids, ses, concurrency, context):
     futures = [pool.submit(drain) for _ in range(concurrency)]
     for future in futures:
         future.result()
+    if failures and _campaign_send_halted(campaign_id):
+        # Halt wins over a concurrent failure: the batch ends cleanly with
+        # PENDING recipients untouched instead of raising into a retry.
+        logger.error("Campaign batch halted campaign_id=%s", campaign_id)
+        return outcomes, None
     return outcomes, (failures[0] if failures else None)
 
 
@@ -364,6 +404,11 @@ def _mark_campaign_sending(campaign_id, recipient_ids):
         campaign.save(update_fields=["status", "updated_at"])
 
 
+def _campaign_send_halted(campaign_id):
+    """Plain, lock-free read of the pause/stop flag. Never takes a row lock."""
+    return bool(Campaign.objects.filter(pk=campaign_id).values_list("send_halted_at", flat=True).first())
+
+
 def _lock_campaign_shared(campaign_id):
     # Cancellation and dispatch still exclude each other (cancel takes FOR UPDATE,
     # which waits for in-flight sends), but sends no longer exclude one another.
@@ -373,7 +418,7 @@ def _lock_campaign_shared(campaign_id):
             cursor.execute(f"SELECT 1 FROM {table} WHERE id = %s FOR SHARE", [campaign_id])  # noqa: S608
             if cursor.fetchone() is None:
                 raise Campaign.DoesNotExist(f"campaign {campaign_id} does not exist")
-    return Campaign.objects.only("id", "status", "scheduled_at").get(pk=campaign_id)
+    return Campaign.objects.only("id", "status", "scheduled_at", "send_halted_at").get(pk=campaign_id)
 
 
 def _send_campaign_recipient(campaign_id, recipient_id, ses, context):
@@ -392,9 +437,15 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses, context):
 
 
 def _send_campaign_recipient_locked(campaign_id, recipient_id, ses, context, timing):
+    # Lock-free halt check before EVERY SES call: send_halted_at rides on the
+    # campaign row _lock_campaign_shared loads, so this adds no query. A paused
+    # or stopped campaign stops within one in-flight call while remaining
+    # PENDING recipients stay untouched and resumable.
+    campaign = _lock_campaign_shared(campaign_id)
+    if campaign.send_halted_at is not None:
+        raise CampaignHalted(f"campaign {campaign_id} halted")
     # Cancellation and dispatch share this lock; cancellation cannot race an
     # in-flight provider call and claim no message was sent.
-    campaign = _lock_campaign_shared(campaign_id)
     recipient = (
         CampaignRecipient.objects.select_for_update(of=("self",))
         .select_related("contact")

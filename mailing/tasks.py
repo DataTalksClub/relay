@@ -24,7 +24,7 @@ from mailing.queue_contracts import (
     validate_email_event_message,
     validate_transactional_email_message,
 )
-from mailing.services.campaign_sender import send_campaign_batch
+from mailing.services.campaign_sender import RetryableCampaignSendError, send_campaign_batch
 from mailing.services.inbound_email import process_inbound_s3_notification
 from mailing.services.transactional_sender import send_transactional_email_from_queue
 
@@ -86,7 +86,7 @@ def send_transactional_email(payload, *, attempt=1):
 
 
 @task(queue_name="campaign", priority=-50)
-def send_campaign_email_batch(payload):
+def send_campaign_email_batch(payload, *, attempt=1):
     """Send one batch of a campaign's recipients.
 
     Progress for the campaign as a whole is not derived from these tasks. The
@@ -104,11 +104,90 @@ def send_campaign_email_batch(payload):
     if recipient_ids:
         taskdeck.set_total(len(recipient_ids), message=f"{len(recipient_ids)} recipients")
 
-    result = send_campaign_batch(payload)
+    try:
+        result = send_campaign_batch(payload)
+    except RetryableCampaignSendError as exc:
+        return _requeue_throttled_campaign_batch(payload, attempt, exc)
     return _summarise(
         result,
         lambda r: {"sent": r.sent_count, "skipped": r.skipped_count, "failed": r.failed_count},
     )
+
+
+def _requeue_throttled_campaign_batch(payload, attempt, exc):
+    """Requeue the remaining PENDING recipients instead of failing the batch.
+
+    SES throttling means the failed recipient (and everything after it) was
+    never attempted, so failing the batch would misreport unsent mail. The
+    remaining PENDING rows of this batch go out as one new task with run_after
+    backoff and bounded attempts; exhaustion re-raises so the batch is FAILED
+    loudly instead of retrying forever. A halted (paused/stopped) campaign is
+    never requeued: resume re-enqueues what is still pending.
+    """
+    from mailing.models import Campaign, CampaignRecipient, CampaignRecipientStatus  # noqa: PLC0415
+    from mailing.services.campaign_sender import _campaign_send_halted  # noqa: PLC0415
+
+    campaign_id = payload.get("campaign_id")
+    batch_recipient_ids = list(payload.get("campaign_recipient_ids") or [])
+    max_attempts = max(1, int(getattr(settings, "RELAY_CAMPAIGN_THROTTLE_MAX_ATTEMPTS", 8) or 8))
+    base_seconds = max(1, int(getattr(settings, "RELAY_CAMPAIGN_THROTTLE_BASE_SECONDS", 30) or 30))
+    max_seconds = max(1, int(getattr(settings, "RELAY_CAMPAIGN_THROTTLE_MAX_SECONDS", 900) or 900))
+
+    if campaign_id and _campaign_send_halted(campaign_id):
+        logger.error(
+            "campaign_send_throttled_but_halted campaign_id=%s batch_id=%s attempt=%d error=%s",
+            campaign_id, payload.get("batch_id"), attempt, str(exc)[:200],
+        )
+        return {"deferred": False, "halted": True, "attempt": attempt}
+
+    remaining_ids = []
+    if campaign_id and batch_recipient_ids:
+        remaining_ids = list(
+            CampaignRecipient.objects.filter(
+                campaign_id=campaign_id,
+                pk__in=batch_recipient_ids,
+                status=CampaignRecipientStatus.PENDING,
+            )
+            .order_by("id")
+            .values_list("id", flat=True)
+        )
+    if campaign_id and not Campaign.objects.filter(pk=campaign_id).exists():
+        logger.error(
+            "campaign_send_throttle_exhausted campaign_id=%s batch_id=%s attempt=%d remaining=%d error=%s",
+            campaign_id, payload.get("batch_id"), attempt, len(remaining_ids), str(exc)[:200],
+        )
+        raise exc
+    if not remaining_ids:
+        logger.error(
+            "campaign_send_throttled_no_pending campaign_id=%s batch_id=%s attempt=%d error=%s",
+            campaign_id, payload.get("batch_id"), attempt, str(exc)[:200],
+        )
+        return {"deferred": False, "remaining": 0, "attempt": attempt}
+    if attempt >= max_attempts:
+        logger.error(
+            "campaign_send_throttle_exhausted campaign_id=%s batch_id=%s attempt=%d/%d remaining=%d error=%s",
+            campaign_id, payload.get("batch_id"), attempt, max_attempts, len(remaining_ids), str(exc)[:200],
+        )
+        raise exc
+
+    delay = min(base_seconds * 2 ** (attempt - 1), max_seconds)
+    next_attempt = attempt + 1
+    retry_payload = {
+        **payload,
+        "batch_id": f"{payload.get('batch_id')}-throttle-retry-{next_attempt}",
+        "campaign_recipient_ids": remaining_ids,
+        "idempotency_key": f"{payload.get('batch_id')}-throttle-retry-{next_attempt}",
+    }
+    validate_campaign_email_message(retry_payload)
+    result = send_campaign_email_batch.using(
+        run_after=timezone.now() + timedelta(seconds=delay),
+    ).enqueue(retry_payload, attempt=next_attempt)
+    taskdeck.stamp(result, entity=("campaign", campaign_id) if campaign_id else None)
+    logger.error(
+        "campaign_send_throttled_requeued campaign_id=%s batch_id=%s attempt=%d/%d remaining=%d retry_in_s=%d error=%s",
+        campaign_id, payload.get("batch_id"), next_attempt, max_attempts, len(remaining_ids), delay, str(exc)[:200],
+    )
+    return {"deferred": True, "next_attempt": next_attempt, "retry_in_seconds": delay, "remaining": len(remaining_ids)}
 
 
 @task(queue_name="transactional", priority=50)

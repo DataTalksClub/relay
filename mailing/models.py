@@ -487,6 +487,13 @@ class Campaign(TimeStampedModel):
     recipient_count = models.PositiveIntegerField(default=0)
     sent_count = models.PositiveIntegerField(default=0)
     skipped_count = models.PositiveIntegerField(default=0)
+    # Lock-free halt flag for pause / resume / stop of a SENDING campaign.
+    # Set and cleared by a plain UPDATE (never SELECT ... FOR UPDATE) so the
+    # operator action never waits behind the senders' FOR SHARE row locks.
+    # send_halt_reason is "" (running), "paused" (halted, resumable) or
+    # "stopped" (halted permanently; the campaign is CANCELLED).
+    send_halted_at = models.DateTimeField(null=True, blank=True)
+    send_halt_reason = models.CharField(max_length=20, blank=True, default="")
     delivered_count = models.PositiveIntegerField(default=0)
     unique_open_count = models.PositiveIntegerField(default=0)
     open_count = models.PositiveIntegerField(default=0)

@@ -9,7 +9,7 @@
     </div>
     <div class="actions"><a class="button secondary" href="{% url 'mailing:campaign_list' %}">All campaigns</a>{% if can_edit %}<a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>{% endif %}{% if can_queue and not confirm_queue and not send_issues %}<a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Review and send</a>{% endif %}</div>
   </div>
-  {% if campaign.status == "queued" or campaign.status == "sending" or campaign.status == "snapshotting" %}<p role="status">Sending is in progress. Follow waiting recipients and results below; provider acceptance does not confirm delivery.</p>{% elif campaign.status == "cancelled" %}<p>Campaign cancelled. It will not send further pending recipients.</p>{% elif campaign.status == "failed" %}<p class="form-errors">Sending needs attention. Inspect failed recipients below before taking any recovery action.</p>{% endif %}
+  {% if campaign.status == "queued" or campaign.status == "sending" or campaign.status == "snapshotting" %}<p role="status">Sending is in progress. Follow waiting recipients and results below; provider acceptance does not confirm delivery.</p>{% if campaign.send_halted_at %}<p role="alert">{% if campaign.send_halt_reason == "paused" %}Sending is paused. No further email is sent until resumed.{% elif campaign.send_halt_reason == "stopped" %}Sending is stopped. No further email will be sent.{% endif %}</p>{% endif %}{% elif campaign.status == "cancelled" %}<p>Campaign cancelled. It will not send further pending recipients.</p>{% elif campaign.status == "failed" %}<p class="form-errors">Sending needs attention. Inspect failed recipients below before taking any recovery action.</p>{% endif %}
   <nav class="dk-tabs" aria-label="Campaign stages">
     {% if can_edit %}<a class="dk-tab" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a class="dk-tab" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a><a class="dk-tab" href="#draft-readiness" aria-current="page">3. Review</a>{% elif campaign.status == "scheduled" %}<a class="dk-tab" href="#campaign-scheduled-heading">Schedule</a><a class="dk-tab" href="#recipient-estimate">Current audience estimate</a>{% else %}<a class="dk-tab" href="#campaign-stats">Results</a><a class="dk-tab" href="#campaign-recipients">Recipients</a>{% endif %}
   </nav>
@@ -57,6 +57,20 @@
         <button type="submit" class="button">{% if campaign.scheduled_at %}Schedule for {{ scheduled_label }}{% else %}Send to <span class="data-num">{{ estimate.recipient_count }}</span> recipient{{ estimate.recipient_count|pluralize }} now{% endif %}</button><a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Return to editing</a><a class="button secondary" href="{% url 'mailing:campaign_detail' campaign.id %}">Cancel</a>
       </form>
     </section>
+  {% endif %}
+  {% if campaign.status == "queued" or campaign.status == "sending" %}
+    <details class="secondary-section panel-diagnostics" open><summary>Pause, resume, or stop sending</summary>
+      <p>{% if campaign.send_halted_at and campaign.send_halt_reason == "paused" %}Sending is paused: workers finish at most one in-flight email each and send nothing further. Resume re-queues the remaining recipients; sent email cannot be recalled.{% elif campaign.send_halted_at %}Sending is stopped: no further email will be sent. Sent email cannot be recalled.{% else %}Pausing halts sending within one in-flight email and keeps the remaining recipients for resume. Stopping ends the campaign permanently; sent email is kept and cannot be recalled.{% endif %}</p>
+      <div class="toolbar">
+        {% if not campaign.send_halted_at %}
+          <form method="post" action="{% url 'mailing:campaign_pause' campaign.id %}">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="confirm_pause" value="1"><button type="submit" class="secondary">Pause sending</button></form>
+          <form method="post" action="{% url 'mailing:campaign_stop' campaign.id %}" onsubmit="return confirm('Stop this campaign permanently? Remaining recipients will never be sent.');">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="confirm_stop" value="1"><button type="submit" class="danger">Stop sending</button></form>
+        {% elif campaign.send_halt_reason == "paused" %}
+          <form method="post" action="{% url 'mailing:campaign_resume' campaign.id %}">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="confirm_resume" value="1"><button type="submit" class="button">Resume sending</button></form>
+          <form method="post" action="{% url 'mailing:campaign_stop' campaign.id %}" onsubmit="return confirm('Stop this campaign permanently? Remaining recipients will never be sent.');">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="confirm_stop" value="1"><button type="submit" class="danger">Stop sending</button></form>
+        {% endif %}
+      </div>
+    </details>
   {% endif %}
   {% if campaign.status == "draft" or campaign.status == "queued" or campaign.status == "scheduled" %}
     <details class="secondary-section panel-diagnostics"><summary>Cancel campaign</summary><p>Cancellation is available for drafts, scheduled campaigns, or queued campaigns before sending starts. Sent messages cannot be recalled. Cancellation cannot be undone.</p>
