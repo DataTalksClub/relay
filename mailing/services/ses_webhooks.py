@@ -779,8 +779,9 @@ def reconcile_uncorrelated_ses_events(campaign_id=None):
         except Exception:  # noqa: BLE001
             result["errors"] += 1
             logger.exception("ses_reconcile_refresh_failed campaign_id=%s", refresh_id)
-    log = logger.warning if result["errors"] or result["still_uncorrelated"] else logger.info
-    log("ses_reconcile campaign_id=%s %s", campaign_id, result)
+    if result["candidates"]:  # quiet when there is nothing to reconcile
+        log = logger.warning if result["errors"] or result["still_uncorrelated"] else logger.info
+        log("ses_reconcile campaign_id=%s %s", campaign_id, result)
     return result
 
 
