@@ -39,6 +39,7 @@ from mailing.services.campaign_sender import refresh_campaign_send_counts
 from mailing.services.campaigns import _refresh_campaign_counts
 from mailing.services.client_callbacks import process_due_client_callbacks
 from mailing.services.contacts import is_marketing_email_allowed, is_transactional_email_allowed
+from mailing.services.ses_monitor import persisted_sns_notification_ids
 from mailing.services.ses_webhooks import (
     SNS_MOCK_SIGNATURE,
     canonical_sns_message,
@@ -530,8 +531,15 @@ def test_worker_open_and_click_update_summary_fields_without_duplicate_unique_co
 @override_settings(PUBLIC_BASE_URL="https://relay.example.test")
 def test_worker_ignores_ses_click_on_relay_tracker_url_for_campaign_recipient(recipient):
     tracker = "https://relay.example.test/t/c/token123?u=https%3A%2F%2Fexample.com%2Fx"
-    payloads = [("click-1", webhook_payload("click", "sns-click-t", "ses-campaign-1", metadata={"url": tracker}))]
+    now = timezone.now()
+    metadata = {
+        "url": tracker,
+        "sns_topic_arn": "arn:aws:sns:eu-west-1:123456789012:test-ses",
+        "sns_timestamp": now.isoformat(),
+    }
+    payloads = [("click-1", webhook_payload("click", "sns-click-t", "ses-campaign-1", metadata=metadata))]
 
+    ses_webhooks_handler(records_from_payloads(payloads), None)
     ses_webhooks_handler(records_from_payloads(payloads), None)
 
     recipient.refresh_from_db()
@@ -541,6 +549,12 @@ def test_worker_ignores_ses_click_on_relay_tracker_url_for_campaign_recipient(re
     assert recipient.campaign.click_count == 0
     assert recipient.campaign.unique_click_count == 0
     assert not EmailEvent.objects.filter(campaign_recipient=recipient, event_type=EmailEventType.CLICK).exists()
+    receipts = OperatorAudit.objects.filter(action="ses.click.ignored_relay_tracker")
+    assert receipts.count() == 1
+    assert "url" not in receipts.get().metadata
+    assert persisted_sns_notification_ids("test-ses", now - timedelta(minutes=1), now + timedelta(minutes=1)) == {
+        "sns-click-t",
+    }
 
 
 @override_settings(PUBLIC_BASE_URL="https://relay.example.test")

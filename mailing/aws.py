@@ -20,12 +20,12 @@ _client_cache = {}
 _client_cache_lock = threading.Lock()
 
 
-def _boto_config(*, max_attempts=None, **overrides):
+def _boto_config(*, max_attempts=None, read_timeout=None, **overrides):
     """Botocore Config shared by every client: standard retries, bounded timeouts, keepalive."""
     return Config(
         retries={"mode": "standard", "total_max_attempts": max_attempts or settings.AWS_MAX_ATTEMPTS},
         connect_timeout=settings.AWS_CONNECT_TIMEOUT,
-        read_timeout=settings.AWS_READ_TIMEOUT,
+        read_timeout=settings.AWS_READ_TIMEOUT if read_timeout is None else read_timeout,
         tcp_keepalive=True,
         **overrides,
     )
@@ -91,7 +91,13 @@ def aws_client(service_name, *, endpoint_url=None, task_type=None, role_arn=None
     kwargs = {
         "region_name": region_name or settings.AWS_REGION,
         "endpoint_url": endpoint_url if endpoint_url is not None else settings.AWS_ENDPOINT_URL or None,
-        "config": config if config is not None else _boto_config(),
+        # SQS ReceiveMessage may wait for 20 seconds. A shorter socket timeout
+        # abandons receives that SQS can still complete, driving unseen messages
+        # through the receive limit and into the DLQ. Apply this default here
+        # so a monitor constructing the cached SQS client first is safe too.
+        "config": config if config is not None else _boto_config(
+            read_timeout=max(25, settings.AWS_READ_TIMEOUT) if service_name == "sqs" else None,
+        ),
     }
     if not role_arn and task_type:
         role_arn = _role_credentials_arn(task_type)
