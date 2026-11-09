@@ -45,6 +45,7 @@ from mailing.services.campaigns import (
     request_campaign_queue,
     retry_campaign_recipient,
 )
+from mailing.services.task_leases import campaign_dispatch_alerts
 from mailing.services.categories import TRANSACTIONAL_CATEGORY, category_label, validate_canonical_category
 from mailing.services.client_callbacks import SUPPRESSION_REASON_CODES, emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
@@ -199,6 +200,7 @@ def campaign_payload(campaign):
         "include_tags": campaign.include_tags,
         "exclude_tags": campaign.exclude_tags,
         "metadata": campaign.metadata,
+        "dispatch_alerts": campaign_dispatch_alerts(campaign) if campaign.pk else [],
         "recipient_count": campaign.recipient_count,
         "sent_count": campaign.sent_count,
         "skipped_count": campaign.skipped_count,

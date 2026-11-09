@@ -33,6 +33,7 @@ from django_tasks_db.models import DBTaskResult
 from django_tasks_db.utils import exclusive_transaction
 
 from mailing import db_retry
+from mailing.services.task_leases import HeartbeatThread
 from mailing.db_retry import first_line, is_transient_db_error, run_loop_iteration
 
 logger = logging.getLogger("django_tasks_db")
@@ -60,6 +61,13 @@ class ResilientWorker(upstream.Worker):
                 # "claim" the task, so it isn't run by another worker process
                 task_result.claim(self.worker_id)
         return task_result
+
+    def run_task(self, db_task_result):
+        # Beat while the task runs so a worker that dies mid-task is detected
+        # by the scheduler (mailing.services.task_leases) instead of leaving
+        # the row RUNNING forever.
+        with HeartbeatThread(db_task_result.id, self.worker_id):
+            return super().run_task(db_task_result)
 
     def run(self) -> None:
         logger.info(

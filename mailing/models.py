@@ -535,6 +535,50 @@ class CampaignDispatch(TimeStampedModel):
         indexes = [models.Index(fields=["enqueued_at"], name="campaign_dispatch_pending_idx")]
 
 
+class CampaignDispatchBatch(models.Model):
+    """One batch task created from a dispatch intent; unique per campaign + batch index.
+
+    Written in the same transaction as the task row, so a re-run of the
+    dispatcher can never create the same batch twice.
+    """
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="dispatch_batches")
+    batch_index = models.PositiveIntegerField()
+    task_id = models.UUIDField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "campaign_dispatch_batches"
+        constraints = [
+            models.UniqueConstraint(fields=["campaign", "batch_index"], name="campaign_dispatch_batch_unique"),
+        ]
+
+
+class TaskHeartbeat(models.Model):
+    """Last liveness signal of a RUNNING task; the row is removed when the task ends."""
+    task_id = models.UUIDField(primary_key=True)
+    worker_id = models.CharField(max_length=200, blank=True)
+    beat_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "task_heartbeats"
+
+
+class CampaignTaskAlert(models.Model):
+    """Loud, durable warning on a campaign (stale batch task, recovery outcome).
+
+    Kept off the Campaign row on purpose: updating it would queue behind the
+    senders' row locks.
+    """
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="task_alerts")
+    task_id = models.UUIDField(unique=True)
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "campaign_task_alerts"
+        ordering = ["-created_at"]
+
+
 class CampaignRecipientStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     SENT = "sent", "Sent"

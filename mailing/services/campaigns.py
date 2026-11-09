@@ -9,10 +9,11 @@ from django.db.models import Case, CharField, Count, Exists, F, FilteredRelation
 from django.utils import timezone
 
 import taskdeck
-from mailing.enqueue import batch_campaign_enqueues, enqueue_campaign_email
+from mailing.enqueue import enqueue_campaign_email
 from mailing.models import (
     Campaign,
     CampaignDispatch,
+    CampaignDispatchBatch,
     CampaignRecipient,
     CampaignRecipientSkipReason,
     CampaignRecipientStatus,
@@ -371,16 +372,10 @@ def _is_verified_bulk(contact, audience_subscription, client_subscription):
     return False
 
 
-def _enqueue_campaign_batches(correlation_id, payloads):
-    with batch_campaign_enqueues(correlation_id):
-        for payload in payloads:
-            _enqueue_campaign_batch(correlation_id, payload)
-
-
 def _enqueue_campaign_batch(correlation_id, payload):
     """Enqueue one batch under the send's shared correlation id."""
     with taskdeck.bind_correlation(correlation_id):
-        enqueue_campaign_email(payload)
+        return enqueue_campaign_email(payload)
 
 
 class CampaignNotReady(ValueError):
@@ -483,16 +478,17 @@ def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
         # The correlation id must be bound *inside* the deferred callable, not
         # around this loop: on-commit callbacks run after the block exits, by
         # which point a context manager here would already have reset.
+        # Outbox: the dispatch intent commits with QUEUED. The on-commit hook is
+        # only a fast path; if the process dies between the commit and the
+        # enqueue, the scheduler's recover_campaign_dispatches() creates the
+        # batch tasks (idempotently, unique per campaign + batch index).
         send_correlation_id = uuid.uuid4()
-        if dispatching:
+        if dispatching or payloads:
             dispatch, _ = CampaignDispatch.objects.get_or_create(
                 campaign=locked_campaign,
                 defaults={"payloads": payloads, "correlation_id": send_correlation_id},
             )
             transaction.on_commit(lambda: _enqueue_scheduled_dispatch(dispatch.pk), robust=True)
-        else:
-            transaction.on_commit(lambda: _enqueue_campaign_batches(send_correlation_id, payloads))
-
 
     return QueueCampaignResult(
         campaign_id=locked_campaign.id,
@@ -531,8 +527,14 @@ def _enqueue_scheduled_dispatch(dispatch_id):
             if dispatch.enqueued_at is not None:
                 return False
             if dispatch.campaign.status != CampaignStatus.CANCELLED:
-                for payload in dispatch.payloads:
-                    _enqueue_campaign_batch(dispatch.correlation_id, payload)
+                done = set(dispatch.campaign.dispatch_batches.values_list("batch_index", flat=True))
+                for batch_index, payload in enumerate(dispatch.payloads, start=1):
+                    if batch_index in done:
+                        continue
+                    result = _enqueue_campaign_batch(dispatch.correlation_id, payload)
+                    CampaignDispatchBatch.objects.create(
+                        campaign=dispatch.campaign, batch_index=batch_index, task_id=result.id,
+                    )
             dispatch.enqueued_at = timezone.now()
             dispatch.last_error = ""
             dispatch.save(update_fields=["enqueued_at", "last_error", "updated_at"])

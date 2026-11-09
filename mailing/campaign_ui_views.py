@@ -15,6 +15,7 @@ from mailing.models import Campaign
 from mailing.services.api import cancel_campaign_instance, validate_test_recipient_emails
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaigns import campaign_send_issues
+from mailing.services.task_leases import campaign_dispatch_alerts
 
 
 def campaign_timing_context(campaign):
@@ -25,7 +26,11 @@ def campaign_timing_context(campaign):
     except (ZoneInfoNotFoundError, ValueError, TypeError):
         name, zone = "UTC", ZoneInfo("UTC")
     label = campaign.scheduled_at.astimezone(zone).strftime("%d %b %Y, %H:%M") + f" {name}" if campaign.scheduled_at else ""
-    return {"scheduled_label": label, "scheduling_error": metadata.get("scheduling_error", "")}
+    return {
+        "scheduled_label": label,
+        "scheduling_error": metadata.get("scheduling_error", ""),
+        "dispatch_alerts": campaign_dispatch_alerts(campaign),
+    }
 
 
 @staff_member_required
