@@ -4,7 +4,7 @@ from email.parser import BytesParser
 from email.policy import default
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectTimeoutError
 from django.test import override_settings
 from django.utils import timezone
 
@@ -290,10 +290,11 @@ def test_campaign_handler_can_retry_pending_recipient_with_token_hashes_after_tr
         def send_email(self, **params):
             sends.append(params)
             if len(sends) == 1:
-                # Transient but not Throttling: Throttling gets one internal
-                # re-permitted retry in mailing/ses.py, so a batch-level retry
-                # needs a different transient failure.
-                raise TimeoutError("Rate exceeded")
+                # Definitely not sent, but not Throttling (which gets one internal
+                # re-permitted retry in mailing/ses.py): a connect failure returns
+                # the row to PENDING for a batch-level retry. A read timeout would
+                # be ambiguous and end UNKNOWN instead.
+                raise ConnectTimeoutError(endpoint_url="https://email.example.invalid")
             return {"MessageId": "ses-message-2"}
 
         def send_raw_email(self, **params):
