@@ -422,7 +422,10 @@ replace_container relay-web "${app_container_args[@]}" \
   gunicorn -c gunicorn.conf.py --bind "$web_bind" --workers 3 --worker-class gthread --threads 8 --timeout 60 --access-logfile - relay.wsgi:application
 set_memory_args relay-worker
 replace_container relay-worker "${app_container_args[@]}" \
-  python manage.py db_worker --queue-name default --interval 1
+  python manage.py db_worker --queue-name transactional,default --interval 1
+set_memory_args relay-campaign-worker
+replace_container relay-campaign-worker "${app_container_args[@]}" \
+  python manage.py db_worker --queue-name campaign --interval 1
 set_memory_args relay-provider-events-worker
 replace_container relay-provider-events-worker "${app_container_args[@]}" \
   python manage.py db_worker --queue-name provider-events --interval 1

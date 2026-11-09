@@ -60,7 +60,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: ["python", "manage.py", "db_worker", "--interval", "1"]
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional,default", "--interval", "1"]
+
+  campaign-worker:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://relay:relay_password@db:5432/relay
+      DEBUG: "1"
+      SECRET_KEY: dev-secret-key-change-in-production
+      EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
 
   tracking-worker:
     build: .

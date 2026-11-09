@@ -1,4 +1,4 @@
-"""SES/inbound tasks must not wait behind default-queue send fan-out."""
+"""SES/inbound tasks must not wait behind campaign send fan-out."""
 
 import json
 
@@ -34,9 +34,9 @@ pytestmark = pytest.mark.django_db
 def test_provider_events_tasks_declare_dedicated_queue():
     assert mailing_tasks.process_ses_webhook_event.queue_name == "provider-events"
     assert mailing_tasks.process_inbound_email.queue_name == "provider-events"
-    assert mailing_tasks.send_campaign_email_batch.queue_name == "default"
-    assert mailing_tasks.send_transactional_email.queue_name == "default"
-    assert mailing_tasks.send_transactional_email_batch.queue_name == "default"
+    assert mailing_tasks.send_campaign_email_batch.queue_name == "campaign"
+    assert mailing_tasks.send_transactional_email.queue_name == "transactional"
+    assert mailing_tasks.send_transactional_email_batch.queue_name == "transactional"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -107,8 +107,8 @@ def test_ses_event_not_blocked_by_default_queue_backlog(client, settings, transp
     assert recipient.delivered_at is not None
     assert recipient.status == CampaignRecipientStatus.SENT
     assert EmailEvent.objects.get(provider_event_id="lane-test-delivery").event_type == EmailEventType.DELIVERED
-    assert DBTaskResult.objects.filter(queue_name="default", status=TaskResultStatus.READY).count() == 50
-    assert not DBTaskResult.objects.filter(queue_name="default", started_at__isnull=False).exists()
+    assert DBTaskResult.objects.filter(queue_name="campaign", status=TaskResultStatus.READY).count() == 50
+    assert not DBTaskResult.objects.filter(queue_name="campaign", started_at__isnull=False).exists()
     assert not DBTaskResult.objects.filter(queue_name="provider-events", status=TaskResultStatus.READY).exists()
     _assert_ses_status(client, TaskRunStatus.SUCCESS)
 

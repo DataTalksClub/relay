@@ -226,7 +226,8 @@ def test_bulk_send_batch_reports_progress_over_its_children(
     children are enqueued from inside the parent, which is why the batch task
     is driven here rather than the endpoint.
     """
-    settings.TASKS = {"default": {"BACKEND": "django_tasks.backends.immediate.ImmediateBackend"}}
+    settings.TASKS = {"default": {"BACKEND": "django_tasks.backends.immediate.ImmediateBackend",
+                                     "QUEUES": ["default", "transactional", "campaign"]}}
 
     messages = [
         _queued_message(client_record, subscribed_contact, score_template, f"s{i}@example.com")
@@ -263,7 +264,8 @@ def test_bulk_send_batch_skips_a_message_deleted_before_pickup(
 ):
     """The batch is enqueued on commit and runs later, so a row can vanish in
     between. The rest of the batch must still go out."""
-    settings.TASKS = {"default": {"BACKEND": "django_tasks.backends.immediate.ImmediateBackend"}}
+    settings.TASKS = {"default": {"BACKEND": "django_tasks.backends.immediate.ImmediateBackend",
+                                     "QUEUES": ["default", "transactional", "campaign"]}}
 
     kept = _queued_message(client_record, subscribed_contact, score_template, "kept@example.com")
     gone = _queued_message(client_record, subscribed_contact, score_template, "gone@example.com")

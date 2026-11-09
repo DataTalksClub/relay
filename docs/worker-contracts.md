@@ -41,39 +41,79 @@ Malformed JSON, missing required fields, unknown contract names, and unsupported
 
 Transactional and campaign work use separate queues and workers so campaign backlog cannot delay account-critical email.
 
+## Django send lanes: `transactional` vs `campaign`
+
+In the Django deployment, campaign and transactional sends use separate task
+queues so a campaign blast cannot delay account-critical email:
+`send_transactional_email` and `send_transactional_email_batch` enqueue on
+`transactional`; `send_campaign_email_batch` enqueues on `campaign`. All four
+send queues (`default`, `transactional`, `campaign`, `provider-events`,
+`tracking`) are registered in `TASKS` (`relay/settings.py`), and the backend
+refuses to enqueue on an unregistered queue, so the settings list and the
+`@task(queue_name=...)` declarations must stay in step (asserted by
+`mailing/tests/test_send_queue_split.py`).
+
+Run the send workers with explicit queue selection:
+
+```bash
+uv run python manage.py db_worker --queue-name transactional,default --interval 1
+uv run python manage.py db_worker --queue-name campaign --interval 1
+```
+
+The Coolify templates name these services `worker` and `campaign-worker`;
+`scripts/deploy_relay_sandbox.sh` starts `relay-worker` and
+`relay-campaign-worker` with the same commands. Deploy the web, ingress, and
+all workers from the same image.
+
+Rules that keep the lanes isolated:
+
+* The `campaign-worker` is the ONLY consumer of `campaign`, and it runs as
+  exactly ONE process: the SES rate limiter is per-process, so a second
+  replica would multiply the send rate. Scaling the campaign lane is the
+  later global-limiter work, not another replica.
+* The `worker` consumes `transactional` plus `default` and never `campaign`.
+  `default` still carries `jobs.execute_job`, campaign test sends and
+  `process_email_event`, and drains any pre-split rows the 0049 migration
+  did not move -- none of which is a campaign batch.
+* A worker using `--queue-name '*'` would consume every lane and remove
+  their isolation. Never run one where sends happen.
+
+Stranded-row handling on rollout: READY send tasks enqueued on `default`
+before the split are moved by migration `mailing/0049_send_queue_split.py`
+(campaign batches to `campaign`, transactional sends to `transactional`;
+RUNNING rows and non-send tasks stay). After deploy, no campaign task should
+ever sit on a queue the `campaign-worker` does not consume -- verify with a
+read-only check of the task table before and after (see the deploy note in
+the txn-queue report).
+
 ## Django provider-events lane
 
-In the Django deployment, campaign and transactional sends share the `default`
-task queue. `process_ses_webhook_event` and `process_inbound_email` use
-`provider-events`, which is registered alongside `default` in `TASKS`.
+`process_ses_webhook_event` and `process_inbound_email` use
+`provider-events`, which is registered alongside the send queues in `TASKS`.
 Both the HTTP SES fallback and the SQS ingress drain enqueue the same SES task.
 SQS messages are deleted after that durable enqueue; the drain does not process
 notifications inline.
 
-Run both workers with explicit queue selection:
-
 ```bash
-uv run python manage.py db_worker --queue-name default --interval 1
 uv run python manage.py db_worker --queue-name provider-events --interval 1
 ```
 
-The Coolify templates name the second service `provider-events-worker`;
+The Coolify templates name this service `provider-events-worker`;
 `scripts/deploy_relay_sandbox.sh` starts `relay-provider-events-worker` with the
-same command. Deploy the web, ingress, and both workers from the same image.
-An unqualified worker selects `default`; a worker using `--queue-name '*'`
-would consume both lanes and remove their isolation. Tasks already enqueued on
-`default` before rollout remain there and finish on the default worker.
+same command.
 
 The staff-only `/api/workers/status` retains its SES ingress entry. Individual
 SES task runs, including queued and completed states, appear in the taskdeck
 contract at `/internal/ops/status` using its configured bearer authentication.
-The isolation regression test runs the real provider worker through both HTTP
+The isolation regression tests run the real provider worker through both HTTP
 and fake SQS ingress while 50 `send_campaign_email_batch` tasks remain ready on
-`default`, and checks that the delivery is applied and both status endpoints
-continue to expose SES work. Run it with:
+`campaign`, and check that the delivery is applied and both status endpoints
+continue to expose SES work. The send-lane test proves a transactional task is
+claimable by the `transactional` worker while a campaign batch is RUNNING on
+the campaign lane. Run them with:
 
 ```bash
-uv run pytest mailing/tests/test_provider_events_queue.py mailing/tests/test_ingress.py
+uv run pytest mailing/tests/test_provider_events_queue.py mailing/tests/test_ingress.py mailing/tests/test_send_queue_split.py
 ```
 
 ## `inbound-email` v1
