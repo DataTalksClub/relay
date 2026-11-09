@@ -1284,6 +1284,38 @@ python manage.py process_mailchimp_syncs --batch-size 25
 Operators can inspect recent sync status, attempt counts, next retry time, and
 the last error from the client detail page and Django admin.
 
+## Newsletter blocks
+
+Newsletter issues are built from typed blocks. Staff operators (web UI at
+`/newsletters/`) and client API keys have the same abilities on the issues of
+their client. Nothing here sends to an audience: the only delivery is a test
+copy to explicit addresses.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/newsletter-block-types` | Block types, their fields (`text`, `url`, `markdown`, `lines`, `html`), required flags and defaults |
+| GET | `/api/newsletter-issues` | Latest 100 issues of the key's client |
+| GET, PUT | `/api/newsletter-issues/<key>` | Read or create/update an issue: `subject` (required on create), `preview_text`, `issue_number`, `publication_date` (`YYYY-MM-DD`). PUT returns 201 on create |
+| POST | `/api/newsletter-issues/<key>/blocks` | Add a block: `{"type": "sponsor", "data": {...}, "position": 0}`; `position` is optional (default: append) |
+| GET, PUT, DELETE | `/api/newsletter-issues/<key>/blocks/<id>` | Read, replace `data` (and optionally `type`, `position`), or delete one block |
+| POST | `/api/newsletter-issues/<key>/preview` | Rendered `subject`, `html_body`, `text_body`; `{"block_id": 12}` previews one block |
+| POST | `/api/newsletter-issues/<key>/test-send` | `{"emails": ["alexey@datatalks.club", "sponsor@example.com"], "block_id": 12}` (block optional, max 10 addresses) |
+
+Block field values are strings. `lines` fields also accept a list of strings.
+`events` lines are `when | title | https://link | with Speaker`; `links`
+lines are `title | https://link | note`. Markdown fields escape raw HTML and
+only keep `http(s)`/`mailto` links; the `html` block type inserts HTML as is.
+Validation errors return 400 with field codes such as
+`{"data.cta_url": "invalid_url"}`.
+
+Test sends are synchronous. The subject is prefixed with `[TEST]`, links are
+not click-tracked, no open pixel is added and no unsubscribe token is minted.
+Each address gets its own result: `sent` (provider accepted, with
+`message_id`), `failed` (with the provider error), `timeout` (no answer within
+15 s; the email may still arrive, and later addresses are `not_attempted`),
+or `dry_run`. The response is 200 when every address was accepted and 502
+otherwise. Every attempt is logged and kept in the issue's test history.
+
 ## Scheduled campaigns
 
 Campaign `scheduled_at` accepts a future timestamp with an explicit UTC offset.

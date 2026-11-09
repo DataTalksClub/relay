@@ -1386,4 +1386,5 @@ class TransactionalMonitorState(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=["client", "kind"], name="tx_monitor_client_kind_unique")]
 from mailing.dmarc_models import DmarcArchive, DmarcAttachment, DmarcRecord, DmarcReport  # noqa: E402,F401
+from mailing.newsletter_models import NewsletterBlock, NewsletterIssue, NewsletterTestSend  # noqa: E402,F401
 from mailing.sending_domain_models import SendingDomain  # noqa: E402,F401
