@@ -67,12 +67,15 @@ from mailing.services.api import (
     get_transactional_messages_since_for_client,
     get_transactional_template_for_client,
     list_transactional_templates_for_client,
+    pause_campaign_for_client,
     preview_campaign_for_client,
     queue_campaign_for_client,
     recount_campaign_for_client,
     remove_contact_tag_for_client,
     replace_contact_tags_for_client,
+    resume_campaign_for_client,
     retry_campaign_recipient_for_client,
+    stop_campaign_for_client,
     subscribe_for_client,
     test_send_campaign_for_client,
     unsubscribe_for_client,
@@ -2438,6 +2441,69 @@ def api_campaign_cancel(request, external_key):
 
     try:
         payload = cancel_campaign_for_client(
+            external_key,
+            json_request_body(request),
+            client,
+        )
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_campaign_pause(request, external_key):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = pause_campaign_for_client(
+            external_key,
+            json_request_body(request),
+            client,
+        )
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_campaign_resume(request, external_key):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = resume_campaign_for_client(
+            external_key,
+            json_request_body(request),
+            client,
+        )
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_campaign_stop(request, external_key):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = stop_campaign_for_client(
             external_key,
             json_request_body(request),
             client,

@@ -17,7 +17,9 @@ pytestmark = pytest.mark.django_db
 SEND_PHASES = ("lock_sql", "render_mime", "limiter_wait", "ses_call", "commit")
 # SQLite: 9 after, 10 before (the second recipient SELECT ... FOR UPDATE in tokens.py).
 # PostgreSQL adds the one FOR SHARE campaign lock query per email to both.
-EXPECTED_QUERIES_PER_EMAIL = 9 + (1 if connection.vendor == "postgresql" else 0)
+# The hard-stop halt flag adds one indexed PK SELECT per email (the drain-loop
+# check; the pre-SES check rides on the already-loaded campaign row).
+EXPECTED_QUERIES_PER_EMAIL = 10 + (1 if connection.vendor == "postgresql" else 0)
 
 
 class _FakeSes:

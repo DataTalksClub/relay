@@ -58,6 +58,9 @@ API_DOC_PATHS = {
     "mailing:api_campaign": "/api/campaigns/{external_key}",
     "mailing:api_campaign_queue": "/api/campaigns/{external_key}/queue",
     "mailing:api_campaign_cancel": "/api/campaigns/{external_key}/cancel",
+    "mailing:api_campaign_pause": "/api/campaigns/{external_key}/pause",
+    "mailing:api_campaign_resume": "/api/campaigns/{external_key}/resume",
+    "mailing:api_campaign_stop": "/api/campaigns/{external_key}/stop",
     "mailing:api_campaign_preview": "/api/campaigns/{external_key}/preview",
     "mailing:api_campaign_test_send": "/api/campaigns/{external_key}/test-send",
     "mailing:api_campaign_recount": "/api/campaigns/{external_key}/recount",
@@ -793,6 +796,9 @@ def endpoint_groups():
                 ("GET", "/api/campaigns/{external_key}", "Get one campaign by external key."),
                 ("POST", "/api/campaigns/{external_key}/queue", "Snapshot and queue one draft campaign."),
                 ("POST", "/api/campaigns/{external_key}/cancel", "Cancel one draft or unsent queued campaign."),
+                ("POST", "/api/campaigns/{external_key}/pause", "Pause one queued or sending campaign; resume continues with the remaining recipients."),
+                ("POST", "/api/campaigns/{external_key}/resume", "Resume one paused campaign by re-queueing its remaining recipients."),
+                ("POST", "/api/campaigns/{external_key}/stop", "Stop one queued or sending campaign permanently; sent email is kept."),
                 ("POST", "/api/campaigns/{external_key}/preview", "Render one campaign without recipients."),
                 ("POST", "/api/campaigns/{external_key}/test-send", "Send one campaign to explicit test addresses."),
                 (
@@ -914,6 +920,18 @@ def route_path_map():
         ),
         API_DOC_PATHS["mailing:api_campaign_cancel"]: reverse(
             "mailing:api_campaign_cancel",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_pause"]: reverse(
+            "mailing:api_campaign_pause",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_resume"]: reverse(
+            "mailing:api_campaign_resume",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_stop"]: reverse(
+            "mailing:api_campaign_stop",
             args=["cmp-course-start-2026"],
         ),
         API_DOC_PATHS["mailing:api_campaign_preview"]: reverse(
@@ -1412,6 +1430,46 @@ OPENAPI_SPEC = {
                     json_response("Campaign cancelled", "#/components/schemas/CampaignCancelResponse")
                 )
                 | {"409": {"$ref": "#/components/responses/ValidationError"}},
+            }
+        },
+        "/api/campaigns/{external_key}/pause": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Pause campaign",
+                "description": "Halts a queued or sending campaign within one in-flight email. Remaining pending recipients are left untouched and resumable.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(
+                    json_response("Campaign paused", "#/components/schemas/CampaignPauseResponse")
+                ),
+            }
+        },
+        "/api/campaigns/{external_key}/resume": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Resume campaign",
+                "description": "Clears a pause and re-queues batches for the remaining pending recipients only. A stopped campaign stays stopped.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(
+                    json_response("Campaign resumed", "#/components/schemas/CampaignResumeResponse")
+                )
+                | {"409": {"$ref": "#/components/responses/ValidationError"}},
+            }
+        },
+        "/api/campaigns/{external_key}/stop": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Stop campaign",
+                "description": "Halts a queued or sending campaign permanently. Sent recipients are kept; remaining pending recipients are left untouched.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(
+                    json_response("Campaign stopped", "#/components/schemas/CampaignStopResponse")
+                ),
             }
         },
         "/api/campaigns/{external_key}/preview": {
@@ -1993,6 +2051,9 @@ OPENAPI_SPEC = {
                     "status": {"$ref": "#/components/schemas/CampaignStatus"},
                     "scheduled_at": {"type": ["string", "null"], "format": "date-time"},
                     "sent_at": {"type": ["string", "null"], "format": "date-time"},
+                    "send_halted_at": {"type": ["string", "null"], "format": "date-time"},
+                    "send_halt_reason": {"type": "string"},
+                    "send_halted": {"type": "boolean"},
                     "category_tag": {"type": "string"},
                     "recipient_list_key": {"type": "string"},
                     "include_tags": {"type": "array", "items": {"type": "string"}},
@@ -2041,6 +2102,29 @@ OPENAPI_SPEC = {
                     "campaign": {"$ref": "#/components/schemas/Campaign"},
                     "cancelled": {"type": "boolean"},
                     "skipped_count": {"type": "integer"},
+                },
+            },
+            "CampaignPauseResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "paused": {"type": "boolean"},
+                },
+            },
+            "CampaignResumeResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "resumed": {"type": "boolean"},
+                    "batch_count": {"type": "integer"},
+                    "recipient_count": {"type": "integer"},
+                },
+            },
+            "CampaignStopResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "stopped": {"type": "boolean"},
                 },
             },
             "CampaignPreview": {

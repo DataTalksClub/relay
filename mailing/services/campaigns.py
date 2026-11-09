@@ -515,6 +515,34 @@ def request_campaign_queue(campaign, *, expected_revision=None, reject_past_sche
     )
 
 
+def resume_campaign_send(campaign_id, *, batch_size=None):
+    """Enqueue batches for the remaining PENDING recipients only.
+
+    Used by resume-after-pause: stale pre-pause batch tasks already queued are
+    idempotent (SENT rows are skipped), and this covers PENDING rows no queued
+    task will reach. Enqueues only once the surrounding transaction commits.
+    Returns (payloads, recipient_ids).
+    """
+    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 100)
+    recipient_ids = list(
+        CampaignRecipient.objects.filter(
+            campaign_id=campaign_id,
+            status=CampaignRecipientStatus.PENDING,
+        )
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    payloads = _campaign_email_payloads(campaign_id, recipient_ids, batch_size)
+    send_correlation_id = uuid.uuid4()
+    transaction.on_commit(lambda: _resume_enqueue_batches(send_correlation_id, payloads))
+    return payloads, recipient_ids
+
+
+def _resume_enqueue_batches(correlation_id, payloads):
+    for payload in payloads:
+        _enqueue_campaign_batch(correlation_id, payload)
+
+
 def _enqueue_scheduled_dispatch(dispatch_id):
     """Task inserts and the completion marker commit together on the DB backend.
 

@@ -195,6 +195,9 @@ def campaign_payload(campaign):
         "status": campaign.status,
         "scheduled_at": isoformat(campaign.scheduled_at),
         "sent_at": isoformat(campaign.sent_at),
+        "send_halted_at": isoformat(campaign.send_halted_at),
+        "send_halt_reason": campaign.send_halt_reason or "",
+        "send_halted": bool(campaign.send_halted_at),
         "category_tag": campaign.category_tag,
         "recipient_list_key": campaign.recipient_list_key,
         "include_tags": campaign.include_tags,
@@ -444,6 +447,85 @@ def cancel_campaign_instance(campaign):
         return {"campaign": campaign_payload(campaign), "cancelled": True, "skipped_count": skipped}
 
     raise ApiValidationError({"status": "not_cancellable"}, status_code=409)
+
+
+# Pause / resume / stop for SENDING (and QUEUED) campaigns.
+#
+# The halt flag is set and cleared by a plain UPDATE with no
+# SELECT ... FOR UPDATE: senders hold FOR SHARE locks on the campaign row for
+# the whole provider call, and the operator action must not queue behind them.
+# The sender reads the same flag with a plain SELECT before every SES call, so
+# a pause/stop takes effect within one in-flight call.
+
+HALTABLE_STATUSES = {CampaignStatus.QUEUED, CampaignStatus.SENDING}
+
+PAUSE_REASON = "paused"
+STOP_REASON = "stopped"
+
+
+def pause_campaign_for_client(external_key, data, authenticated_client):
+    campaign = campaign_for_client(external_key, data, authenticated_client)
+    return pause_campaign_instance(campaign)
+
+
+def pause_campaign_instance(campaign):
+    """Halt a queued/sending campaign, resumably. Plain UPDATE, no row lock."""
+    now = timezone.now()
+    updated = Campaign.objects.filter(
+        pk=campaign.pk,
+        status__in=HALTABLE_STATUSES,
+        send_halted_at__isnull=True,
+    ).update(send_halted_at=now, send_halt_reason=PAUSE_REASON, updated_at=now)
+    campaign.refresh_from_db()
+    return {"campaign": campaign_payload(campaign), "paused": bool(updated)}
+
+
+def resume_campaign_for_client(external_key, data, authenticated_client):
+    campaign = campaign_for_client(external_key, data, authenticated_client)
+    return resume_campaign_instance(campaign)
+
+
+def resume_campaign_instance(campaign):
+    """Clear a pause and re-enqueue batches for remaining PENDING recipients."""
+    from mailing.services.campaigns import resume_campaign_send  # noqa: PLC0415 - avoids service import cycle
+
+    campaign.refresh_from_db()
+    if campaign.send_halted_at is None or campaign.send_halt_reason != PAUSE_REASON:
+        raise ApiValidationError({"status": "not_paused"}, status_code=409)
+    if campaign.status == CampaignStatus.CANCELLED:
+        raise ApiValidationError({"status": "not_paused"}, status_code=409)
+    now = timezone.now()
+    Campaign.objects.filter(pk=campaign.pk).update(send_halted_at=None, send_halt_reason="", updated_at=now)
+    with transaction.atomic():
+        payloads, recipient_ids = resume_campaign_send(campaign.pk)
+    campaign.refresh_from_db()
+    return {
+        "campaign": campaign_payload(campaign),
+        "resumed": True,
+        "batch_count": len(payloads),
+        "recipient_count": len(recipient_ids),
+    }
+
+
+def stop_campaign_for_client(external_key, data, authenticated_client):
+    campaign = campaign_for_client(external_key, data, authenticated_client)
+    return stop_campaign_instance(campaign)
+
+
+def stop_campaign_instance(campaign):
+    """Halt a queued/sending campaign permanently. Sent rows are kept; the
+    remaining PENDING recipients are left untouched. Plain UPDATE, no row lock."""
+    campaign.refresh_from_db()
+    if campaign.status == CampaignStatus.CANCELLED:
+        return {"campaign": campaign_payload(campaign), "stopped": False}
+    if campaign.status not in HALTABLE_STATUSES:
+        raise ApiValidationError({"status": "not_stoppable"}, status_code=409)
+    now = timezone.now()
+    Campaign.objects.filter(pk=campaign.pk).update(
+        status=CampaignStatus.CANCELLED, send_halted_at=now, send_halt_reason=STOP_REASON, updated_at=now
+    )
+    campaign.refresh_from_db()
+    return {"campaign": campaign_payload(campaign), "stopped": True}
 
 
 def preview_campaign_for_client(external_key, data, authenticated_client):
