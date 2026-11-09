@@ -263,3 +263,4 @@ def test_limiter_overhead_under_2ms_per_permit():
     mean_ms = (time.perf_counter() - started) / count * 1000
     print(f"\nlimiter overhead: {mean_ms:.3f} ms per permit (budget 2 ms)")
     assert mean_ms < 2.0, f"limiter overhead {mean_ms:.3f} ms per permit"
+
