@@ -14,10 +14,12 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.hashes import SHA1, SHA256
 from django.conf import settings
+from django.core.cache import cache
 from django.db import connection, transaction
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django_tasks_db.models import DBTaskResult
 
 from mailing.enqueue import enqueue_ses_webhook
 from mailing.models import (
@@ -541,15 +543,27 @@ def process_ses_webhook(payload):
             return None
         if source is not None:
             apply_correlated_updates(payload, source, event)
-        return event
+        refresh_campaign_id = source.campaign_id if isinstance(source, CampaignRecipient) else None
+
+    if refresh_campaign_id is not None:
+        try:
+            refresh_campaign_provider_counts_if_due(refresh_campaign_id)
+        except Exception:  # noqa: BLE001 - the event is already committed; the next event or drain refreshes
+            logger.exception("Refreshing provider counts for campaign %s failed", refresh_campaign_id)
+    return event
 
 
 def correlate_ses_message(ses_message_id):
     if not ses_message_id:
         return None
 
-    # Resolve uniqueness without locking children, then use the same parent-first
-    # order as the sender, cancellation, tracking and operator reconciliation.
+    # Resolve uniqueness without locking, then lock only the child row. The
+    # campaign row is deliberately NOT locked: senders hold it FOR SHARE per
+    # recipient across the SES call, and a FOR UPDATE here per event made the
+    # two starve each other (2026-11-09, campaign 7: ~0.3 events/s and
+    # ~13 msg/s). Campaign counters are refreshed after commit instead
+    # (``refresh_campaign_provider_counts_if_due``), so no webhook transaction
+    # holds a recipient lock while waiting on the campaign: no deadlock cycle.
     candidates = list(CampaignRecipient.objects.filter(ses_message_id=ses_message_id)
                       .values("pk", "campaign_id")[:2])
     transactional_messages = (
@@ -559,7 +573,6 @@ def correlate_ses_message(ses_message_id):
     )
     if len(candidates) == 1 and not transactional_messages.exists():
         candidate = candidates[0]
-        Campaign.objects.select_for_update().get(pk=candidate["campaign_id"])
         return (CampaignRecipient.objects.select_for_update(of=("self",))
                 .select_related("campaign", "campaign__client", "campaign__audience", "contact")
                 .filter(pk=candidate["pk"], ses_message_id=ses_message_id).first())
@@ -602,7 +615,6 @@ def apply_correlated_updates(payload, source, event):
     metadata = payload.get("metadata") or {}
     if isinstance(source, CampaignRecipient):
         apply_campaign_recipient_update(source, notification_type, occurred_at, metadata)
-        refresh_campaign_provider_counts(source.campaign_id)
     elif isinstance(source, TransactionalMessage):
         apply_transactional_message_update(source, notification_type, occurred_at, metadata)
 
@@ -692,11 +704,31 @@ def apply_transactional_message_update(message, notification_type, occurred_at, 
     message.save(update_fields=sorted(set(update_fields)))
 
 
+PROVIDER_COUNTS_REFRESH_INTERVAL_SECONDS = 5
+
+
+def refresh_campaign_provider_counts_if_due(campaign_id):
+    """Refresh counters at most once per interval per process, plus once the queue drains.
+
+    Recomputing per event was O(recipients) under the campaign lock. Skipped
+    events are not lost: the counters are a pure function of recipient rows,
+    and the event that finds no provider-events task READY always refreshes,
+    so the final totals are exact once the backlog is processed.
+    """
+    due = cache.add(
+        f"campaign-provider-counts:{campaign_id}", 1, timeout=PROVIDER_COUNTS_REFRESH_INTERVAL_SECONDS
+    )
+    if not due and DBTaskResult.objects.filter(
+        task_path="mailing.tasks.process_ses_webhook_event", status="READY"
+    ).exists():
+        return False
+    refresh_campaign_provider_counts(campaign_id)
+    return True
+
+
 def refresh_campaign_provider_counts(campaign_id):
-    campaign = Campaign.objects.get(pk=campaign_id)
-    # One pass over the campaign's recipients. This runs per webhook event under
-    # the campaign row lock, so seven separate scans capped provider-events
-    # throughput (~11 events/s at 6.7k recipients) during large sends.
+    # One pass over the campaign's recipients, written with a single UPDATE so
+    # the campaign row is locked only for that statement.
     totals = CampaignRecipient.objects.filter(campaign_id=campaign_id).aggregate(
         delivered=Count("pk", filter=Q(delivered_at__isnull=False)),
         bounced=Count("pk", filter=Q(status=CampaignRecipientStatus.BOUNCED)),
@@ -706,24 +738,15 @@ def refresh_campaign_provider_counts(campaign_id):
         opens=Sum("open_count"),
         clicks=Sum("click_count"),
     )
-    campaign.delivered_count = totals["delivered"]
-    campaign.bounce_count = totals["bounced"]
-    campaign.complaint_count = totals["complained"]
-    campaign.unique_open_count = totals["unique_opens"]
-    campaign.unique_click_count = totals["unique_clicks"]
-    campaign.open_count = totals["opens"] or 0
-    campaign.click_count = totals["clicks"] or 0
-    campaign.save(
-        update_fields=[
-            "delivered_count",
-            "bounce_count",
-            "complaint_count",
-            "unique_open_count",
-            "unique_click_count",
-            "open_count",
-            "click_count",
-            "updated_at",
-        ]
+    Campaign.objects.filter(pk=campaign_id).update(
+        delivered_count=totals["delivered"],
+        bounce_count=totals["bounced"],
+        complaint_count=totals["complained"],
+        unique_open_count=totals["unique_opens"],
+        unique_click_count=totals["unique_clicks"],
+        open_count=totals["opens"] or 0,
+        click_count=totals["clicks"] or 0,
+        updated_at=timezone.now(),
     )
 
 
