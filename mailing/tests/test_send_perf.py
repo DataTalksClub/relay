@@ -17,7 +17,10 @@ pytestmark = pytest.mark.django_db
 SEND_PHASES = ("lock_sql", "render_mime", "limiter_wait", "ses_call", "commit")
 # SQLite: 9 after, 10 before (the second recipient SELECT ... FOR UPDATE in tokens.py).
 # PostgreSQL adds the one FOR SHARE campaign lock query per email to both.
-EXPECTED_QUERIES_PER_EMAIL = 9 + (1 if connection.vendor == "postgresql" else 0)
+# WP2's global SES bucket adds exactly 2 per email on top: one SELECT of the
+# bucket row plus one conditional UPDATE that consumes the permit (shortage
+# performs no write; BEGIN/COMMIT are gone — autocommit statements only).
+EXPECTED_QUERIES_PER_EMAIL = 11 + (1 if connection.vendor == "postgresql" else 0)
 
 
 class _FakeSes:
@@ -70,7 +73,7 @@ def test_queries_per_email_marginal_cost_and_no_duplicate_work():
     assert len(full_campaign_loads) == 3, len(full_campaign_loads)
 
 
-@override_settings(SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_batch_log_has_phase_breakdown_and_cpu_without_pii(caplog):
     payload = _batch(25)
     with caplog.at_level(logging.INFO, logger="mailing.services.campaign_sender"):
