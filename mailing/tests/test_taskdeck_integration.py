@@ -86,7 +86,7 @@ def campaign(audience, client_record, subscribed_contact):
 
 def test_transactional_tasks_precede_campaign_batches(settings):
     assert mailing_tasks.send_transactional_email.priority > mailing_tasks.send_campaign_email_batch.priority
-    assert settings.CAMPAIGN_EMAIL_BATCH_SIZE == 100
+    assert settings.CAMPAIGN_EMAIL_BATCH_SIZE == 500
 
 
 class Rollback(Exception):
