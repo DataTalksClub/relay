@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 import pytest
+from botocore.credentials import RefreshableCredentials
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 from django.utils import timezone
@@ -36,31 +37,20 @@ def test_email_client_uses_assumed_role_credentials(monkeypatch):
                 }
             }
 
-    class Ses:
-        pass
-
-    def fake_client(service_name, **kwargs):
+    def fake_sts(service_name, **kwargs):
         calls.append((service_name, kwargs))
-        return Sts() if service_name == "sts" else Ses()
+        return Sts()
 
-    aws._credential_cache.clear()
-    monkeypatch.setattr(aws.boto3, "client", fake_client)
+    monkeypatch.setattr(aws.boto3, "client", fake_sts)
 
-    assert isinstance(aws.ses_client(), Ses)
+    client = aws.ses_client()
     assert calls[0][0] == "sts"
     assert calls[1][1]["RoleArn"] == "arn:aws:iam::123456789012:role/relay-email"
-    ses_name, ses_kwargs = calls[2]
-    assert ses_kwargs.pop("config").max_pool_connections >= 32  # > send threads: no per-send TLS handshakes
-    assert (ses_name, ses_kwargs) == (
-        "ses",
-        {
-            "region_name": "us-east-1",
-            "endpoint_url": None,
-            "aws_access_key_id": "scoped-access",
-            "aws_secret_access_key": "scoped-secret",
-            "aws_session_token": "scoped-token",
-        },
-    )
+    assert client.meta.region_name == "us-east-1"
+    creds = client._request_signer._credentials
+    assert isinstance(creds, RefreshableCredentials)
+    frozen = creds.get_frozen_credentials()
+    assert (frozen.access_key, frozen.secret_key, frozen.token) == ("scoped-access", "scoped-secret", "scoped-token")
 
 
 @override_settings(
@@ -97,35 +87,59 @@ def test_default_chain_clients_are_cached_per_process(monkeypatch):
     AWS_SES_REGION="us-east-1",
     AWS_ENDPOINT_URL="",
 )
-def test_role_credential_clients_are_never_cached(monkeypatch):
-    constructions = []
+def test_role_client_is_cached_and_refreshes_credentials(monkeypatch):
+    sts_calls = []
+    # First credentials are already inside botocore's refresh window.
+    lifetimes = iter([timedelta(minutes=1), timedelta(hours=1)])
 
     class Sts:
         def assume_role(self, **kwargs):
+            sts_calls.append(kwargs)
+            n = len(sts_calls)
             return {
                 "Credentials": {
-                    "AccessKeyId": "scoped-access",
-                    "SecretAccessKey": "scoped-secret",
-                    "SessionToken": "scoped-token",
-                    "Expiration": timezone.now() + timedelta(hours=1),
+                    "AccessKeyId": f"access-{n}",
+                    "SecretAccessKey": "secret",
+                    "SessionToken": "token",
+                    "Expiration": timezone.now() + next(lifetimes),
                 }
             }
 
-    class Ses:
-        pass
-
-    def fake_client(service_name, **kwargs):
-        constructions.append(service_name)
-        return Sts() if service_name == "sts" else Ses()
-
-    monkeypatch.setattr(aws.boto3, "client", fake_client)
+    monkeypatch.setattr(aws.boto3, "client", lambda service_name, **kwargs: Sts())
 
     first = aws.ses_client()
+    assert len(sts_calls) == 1
     second = aws.ses_client()
+    assert first is second  # created once per process, not per batch
+    creds = first._request_signer._credentials
+    assert isinstance(creds, RefreshableCredentials)
+    # Signing near expiry refreshes in place on the same client.
+    assert creds.get_frozen_credentials().access_key == "access-2"
+    assert len(sts_calls) == 2
+    assert aws.ses_client() is first
 
-    assert isinstance(first, Ses)
-    assert isinstance(second, Ses)
-    # Role clients are never client-cached; the second ses build reuses the
-    # already-assumed role credentials from the credential cache.
-    assert first is not second
-    assert constructions == ["sts", "ses", "ses"]
+
+@override_settings(
+    RELAY_TASK_ROLE_ARNS={},
+    AWS_REGION="eu-west-1",
+    AWS_SES_REGION="us-east-1",
+    AWS_ENDPOINT_URL="",
+    CAMPAIGN_SEND_CONCURRENCY=16,
+    AWS_CONNECT_TIMEOUT=4,
+    AWS_READ_TIMEOUT=17,
+    AWS_MAX_ATTEMPTS=3,
+)
+def test_ses_client_config_pool_retries_timeouts_keepalive(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "k")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "s")
+    config = aws.ses_client().meta.config
+    assert config.max_pool_connections >= 16 + 4
+    assert config.retries["mode"] == "standard"
+    assert config.retries["total_max_attempts"] == 3
+    assert (config.connect_timeout, config.read_timeout) == (4, 17)
+    assert config.tcp_keepalive is True
+
+
+@override_settings(CAMPAIGN_SEND_CONCURRENCY=40)
+def test_pool_size_follows_send_concurrency():
+    assert aws._ses_config().max_pool_connections >= 44

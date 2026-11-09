@@ -1,89 +1,110 @@
+import logging
 import re
 import threading
-from datetime import timedelta
 from urllib.parse import quote_plus
 
 import boto3
+import botocore.session
 from botocore.config import Config
+from botocore.credentials import RefreshableCredentials
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.utils import timezone
 
 import taskdeck
 from mailing.dry_run import DryRunGuardClient, dry_run_enforced
 from mailing.ses_routes import route_for_source
 
-_credential_cache = {}
-_credential_cache_lock = threading.Lock()
+logger = logging.getLogger(__name__)
+
 _client_cache = {}
 _client_cache_lock = threading.Lock()
 
 
+def _boto_config(**overrides):
+    """Botocore Config shared by every client: standard retries, bounded timeouts, keepalive."""
+    return Config(
+        retries={"mode": "standard", "total_max_attempts": settings.AWS_MAX_ATTEMPTS},
+        connect_timeout=settings.AWS_CONNECT_TIMEOUT,
+        read_timeout=settings.AWS_READ_TIMEOUT,
+        tcp_keepalive=True,
+        **overrides,
+    )
+
+
 def _assume_role(role_arn):
-    with _credential_cache_lock:
-        cached = _credential_cache.get(role_arn)
-        if cached and cached["Expiration"] > timezone.now() + timedelta(minutes=5):
-            return cached
-
-        run_id = taskdeck.current_run_id()
-        session_name = f"relay-{str(run_id or 'worker')[:48]}"
-        response = boto3.client(
-            "sts",
-            region_name=settings.AWS_REGION,
-            endpoint_url=settings.AWS_ENDPOINT_URL or None,
-        ).assume_role(RoleArn=role_arn, RoleSessionName=session_name)
-        credentials = response["Credentials"]
-        _credential_cache[role_arn] = credentials
-        return credentials
+    """One uncached STS AssumeRole call; RefreshableCredentials owns reuse and expiry."""
+    run_id = taskdeck.current_run_id()
+    session_name = f"relay-{str(run_id or 'worker')[:48]}"
+    response = boto3.client(
+        "sts",
+        region_name=settings.AWS_REGION,
+        endpoint_url=settings.AWS_ENDPOINT_URL or None,
+        config=_boto_config(),
+    ).assume_role(RoleArn=role_arn, RoleSessionName=session_name)
+    return response["Credentials"]
 
 
-def _role_credentials(task_type):
+def _refreshable_credentials(role_arn):
+    def fetch():
+        try:
+            credentials = _assume_role(role_arn)
+        except Exception:
+            logger.exception("STS AssumeRole failed for %s", role_arn)
+            raise
+        return {
+            "access_key": credentials["AccessKeyId"],
+            "secret_key": credentials["SecretAccessKey"],
+            "token": credentials["SessionToken"],
+            "expiry_time": credentials["Expiration"].isoformat(),
+        }
+
+    return RefreshableCredentials.create_from_metadata(
+        metadata=fetch(), refresh_using=fetch, method="sts-assume-role"
+    )
+
+
+def _role_client(service_name, role_arn, kwargs):
+    # The botocore session's credentials object refreshes itself (thread-safe)
+    # before expiry, so the client built here lives for the whole process.
+    botocore_session = botocore.session.get_session()
+    botocore_session._credentials = _refreshable_credentials(role_arn)
+    return boto3.Session(botocore_session=botocore_session).client(service_name, **kwargs)
+
+
+def _role_credentials_arn(task_type):
     role_arn = settings.RELAY_TASK_ROLE_ARNS.get(task_type, "")
-    if not role_arn:
-        if settings.RELAY_REQUIRE_TASK_ROLES:
-            raise ImproperlyConfigured(
-                f"Relay task type {task_type!r} has no configured IAM role."
-            )
-        return None
-    return _assume_role(role_arn)
+    if not role_arn and settings.RELAY_REQUIRE_TASK_ROLES:
+        raise ImproperlyConfigured(
+            f"Relay task type {task_type!r} has no configured IAM role."
+        )
+    return role_arn or None
 
 
 def aws_client(service_name, *, endpoint_url=None, task_type=None, role_arn=None, region_name=None, config=None):
+    """Return the per-process client for (service, region, endpoint, role).
+
+    Default-chain clients pay botocore's eager instance-metadata probes at
+    construction (seconds of dead connect timeouts on hosts without a metadata
+    service), and role clients pay an STS call, so both are built once.
+    Role clients carry RefreshableCredentials instead of frozen keys.
+    """
     kwargs = {
         "region_name": region_name or settings.AWS_REGION,
         "endpoint_url": endpoint_url if endpoint_url is not None else settings.AWS_ENDPOINT_URL or None,
+        "config": config if config is not None else _boto_config(),
     }
-    if config is not None:
-        kwargs["config"] = config
-    if role_arn:
-        credentials = _assume_role(role_arn)
-    elif task_type:
-        credentials = _role_credentials(task_type)
-    else:
-        credentials = None
-    if credentials:
-        kwargs |= {
-            "aws_access_key_id": credentials["AccessKeyId"],
-            "aws_secret_access_key": credentials["SecretAccessKey"],
-            "aws_session_token": credentials["SessionToken"],
-        }
-        return boto3.client(service_name, **kwargs)
-
-    # Default-chain clients (no injected credentials) pay botocore's eager
-    # instance-metadata credential probes at construction; on hosts without a
-    # metadata service that is seconds of dead connect timeouts per build
-    # before the eventual NoCredentialsError. Build one client per process
-    # instead. Deployments that provide explicit credentials keep building
-    # fresh, uncached clients, so no assumed-role credentials are ever frozen
-    # into a cached object.
-    cache_key = (service_name, kwargs["region_name"], kwargs["endpoint_url"])
+    if not role_arn and task_type:
+        role_arn = _role_credentials_arn(task_type)
+    cache_key = (service_name, kwargs["region_name"], kwargs["endpoint_url"], role_arn)
     with _client_cache_lock:
         cached = _client_cache.get(cache_key)
-    if cached is not None:
+        if cached is None:
+            if role_arn:
+                cached = _role_client(service_name, role_arn, kwargs)
+            else:
+                cached = boto3.client(service_name, **kwargs)
+            _client_cache[cache_key] = cached
         return cached
-    client = boto3.client(service_name, **kwargs)
-    with _client_cache_lock:
-        return _client_cache.setdefault(cache_key, client)
 
 
 def sqs_client(*, endpoint_url=None):
@@ -127,7 +148,8 @@ def _ses_config():
     # CAMPAIGN_SEND_CONCURRENCY threads. Over the pool size urllib3 opens a
     # connection, then discards it after the request: a fresh TLS handshake per
     # send, and its warning is not visible in the worker log.
-    return Config(max_pool_connections=max(10, 2 * int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 16) or 1)))
+    concurrency = int(settings.CAMPAIGN_SEND_CONCURRENCY or 1)
+    return _boto_config(max_pool_connections=max(10, 2 * concurrency, concurrency + 4))
 
 
 def _with_fast_form_body(client):

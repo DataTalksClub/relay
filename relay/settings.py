@@ -312,6 +312,10 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "newsletter@example.co
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 AWS_SES_REGION = os.environ.get("AWS_SES_REGION", AWS_REGION)
+# boto3 client transport: seconds per attempt, total attempts incl. the first (standard retry mode).
+AWS_CONNECT_TIMEOUT = int_env("RELAY_AWS_CONNECT_TIMEOUT", default=5)
+AWS_READ_TIMEOUT = int_env("RELAY_AWS_READ_TIMEOUT", default=20)
+AWS_MAX_ATTEMPTS = int_env("RELAY_AWS_MAX_ATTEMPTS", default=3)
 AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "")
 DMARC_READER_ROLE_ARN = os.environ.get("DMARC_READER_ROLE_ARN", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
