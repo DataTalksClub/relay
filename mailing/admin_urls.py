@@ -1,7 +1,7 @@
 from django.urls import path
 from django.views.decorators.csrf import csrf_exempt
 
-from mailing import admin_api, dmarc_api, inbound_routing_api, sending_domains_api
+from mailing import admin_api, dmarc_api, inbound_routing_api, sending_domains_api, ses_quota_api
 from mailing import admin_operations as operations
 from mailing.urls import urlpatterns as client_patterns
 
@@ -24,6 +24,7 @@ urlpatterns = [
     path("inbound-dmarc/<int:pk>/raw", dmarc_api.download, name="dmarc_raw"),
     path("inbound-dmarc/<int:pk>/attachments/<int:attachment_id>", dmarc_api.download, name="dmarc_attachment"),
     path("inbound-dmarc-summary", dmarc_api.summary, name="dmarc_summary"),
+    path("ses-quota", ses_quota_api.quota, name="ses_quota"),
     path("", admin_api.endpoint_index, name="index"),
     path("transfer/export", admin_api.data_transfer, {"action": "export"}, name="transfer_export"),
     path("transfer/load", admin_api.data_transfer, {"action": "load"}, name="transfer_load"),
@@ -173,6 +174,7 @@ OPERATOR_API_PARITY = {
     "dmarc_report_xml": "dmarc_raw",
     "dmarc_report_attachment": "dmarc_attachment",
     "dmarc_summary": "dmarc_summary",
+    "ses_quota": "ses_quota",
     "blocked_sender_delete": "read_blocked-senders_detail",
     "campaign_list": "read_campaigns",
     "campaign_create": "campaign_create",

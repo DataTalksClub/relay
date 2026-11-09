@@ -174,6 +174,7 @@ from mailing.services.recipient_lists import (
     upsert_recipient_list_for_client,
     upsert_recipient_list_member_for_client,
 )
+from mailing.services.ses_quota import ses_quota_rows
 from mailing.services.ses_webhooks import (
     SesWebhookError,
     SnsSignatureError,
@@ -290,6 +291,11 @@ def pagination_querystring(request):
     params = request.GET.copy()
     params.pop("page", None)
     return params.urlencode()
+
+
+@staff_member_required
+def ses_quota(request):
+    return render(request, "mailing/operator/ses_quota.html", {"rows": ses_quota_rows()})
 
 
 @staff_member_required
