@@ -94,11 +94,23 @@ def callback_payload(event):
     return payload
 
 
-def emit_cmp_contact_event(event):
+def emit_cmp_contact_event(event, *, in_transaction=False):
+    """Queue the CMP callback for one appended ``EmailEvent``.
+
+    By default the outbox row is written after the surrounding transaction
+    commits, re-reading the event. ``in_transaction=True`` writes it now from
+    the in-memory event (relations already loaded by the caller), so it commits
+    atomically with the event and costs no extra commit or six-table re-read.
+    The provider-events consumer uses it: a failure rolls the whole event back
+    and the task retries, instead of losing the callback after the event commit.
+    """
     payload = callback_payload(event)
     if payload is None:
         return
 
+    if in_transaction:
+        _create_cmp_callback(event, payload)
+        return
     transaction.on_commit(lambda: enqueue_cmp_contact_event(event.pk))
 
 
@@ -122,6 +134,10 @@ def enqueue_cmp_contact_event(email_event_id):
     if payload is None:
         return None
 
+    return _create_cmp_callback(event, payload)
+
+
+def _create_cmp_callback(event, payload):
     config = cmp_callback_config(event.client)
     if config is None:
         return None
