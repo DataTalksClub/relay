@@ -1,13 +1,15 @@
 import logging
 import queue
+import statistics
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
 from mailing.aws import ses_client as default_ses_client
@@ -38,7 +40,7 @@ from mailing.services.tokens import (
     generate_raw_token,
     token_hash,
 )
-from mailing.ses import send_email
+from mailing.ses import send_email, send_phase_timings
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +148,12 @@ class _BatchContext:
     def __init__(self, campaign_id):
         self.campaign = Campaign.objects.select_related("client", "audience").get(pk=campaign_id)
         self.source = _campaign_default_source(self.campaign) or settings.DEFAULT_FROM_EMAIL
+        # One dict of per-phase seconds per attempted recipient (list.append is
+        # thread-safe); summarized into the batch log line.
+        self.timings = []
+
+
+SEND_PHASES = ("lock_sql", "render_mime", "limiter_wait", "ses_call", "commit")
 
 
 def send_campaign_batch(payload, *, ses_client=None):
@@ -170,10 +178,13 @@ def send_campaign_batch(payload, *, ses_client=None):
     context = _BatchContext(campaign_id)
     concurrency = _send_concurrency(len(recipient_ids))
     started = time.monotonic()
+    cpu_started = time.process_time()
     outcomes, failure = _send_recipients(campaign_id, recipient_ids, ses, concurrency, context)
     for outcome in outcomes:
         result[f"{outcome}_count"] += 1
-    _report_batch_throughput(campaign_id, result, time.monotonic() - started, concurrency)
+    _report_batch_throughput(
+        campaign_id, result, time.monotonic() - started, concurrency, context.timings, time.process_time() - cpu_started
+    )
 
     if failure is not None:
         recipient_id, exc = failure
@@ -220,7 +231,8 @@ def _send_recipients(campaign_id, recipient_ids, ses, concurrency, context):
     stop = threading.Event()
 
     def drain():
-        # Each thread owns a database connection; close it when the thread ends.
+        # The pool threads (and their database connections) outlive the batch;
+        # close_old_connections drops only broken or CONN_MAX_AGE-expired ones.
         try:
             while not stop.is_set():
                 try:
@@ -233,17 +245,64 @@ def _send_recipients(campaign_id, recipient_ids, ses, concurrency, context):
                     failures.append((recipient_id, exc))
                     stop.set()
         finally:
-            connection.close()
+            close_old_connections()
 
-    threads = [threading.Thread(target=drain, name=f"campaign-send-{index}") for index in range(concurrency)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    # Sized by the configured maximum, not this batch's thread count, so a short
+    # final batch does not resize (and reconnect) the pool.
+    pool = _send_pool(max(1, int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 1) or 1)))
+    futures = [pool.submit(drain) for _ in range(concurrency)]
+    for future in futures:
+        future.result()
     return outcomes, (failures[0] if failures else None)
 
 
-def _report_batch_throughput(campaign_id, result, elapsed, concurrency):
+_pool = None
+_pool_size = 0
+_pool_lock = threading.Lock()
+
+
+def _send_pool(size):
+    """Persistent sender threads: Django connections are per-thread, so reusing
+    the threads keeps their connections open across batches."""
+    global _pool, _pool_size
+    with _pool_lock:
+        if _pool is None or _pool_size != size:
+            if _pool is not None:
+                shutdown_send_pool()
+            _pool = ThreadPoolExecutor(max_workers=size, thread_name_prefix="campaign-send")
+            _pool_size = size
+        return _pool
+
+
+def shutdown_send_pool():
+    """Stop the sender threads and close their connections (resize, tests)."""
+    global _pool, _pool_size
+    pool, _pool, _pool_size = _pool, None, 0
+    if pool is None:
+        return
+    closers = [pool.submit(connection.close) for _ in range(pool._max_workers)]
+    for closer in closers:
+        closer.result(timeout=30)
+    pool.shutdown(wait=True)
+
+
+def _percentile(sorted_values, fraction):
+    return sorted_values[min(len(sorted_values) - 1, int(fraction * len(sorted_values)))]
+
+
+def _phase_summary(timings):
+    """`phase=sum_ms/p50_ms/p95_ms` per phase; counts and timings only, no PII."""
+    parts = []
+    for phase in SEND_PHASES:
+        values = sorted(timing.get(phase, 0.0) * 1000 for timing in timings)
+        if not values:
+            parts.append(f"{phase}_ms=0/0/0")
+            continue
+        parts.append(f"{phase}_ms={sum(values):.0f}/{statistics.median(values):.1f}/{_percentile(values, 0.95):.1f}")
+    return " ".join(parts)
+
+
+def _report_batch_throughput(campaign_id, result, elapsed, concurrency, timings=(), cpu_seconds=0.0):
     attempted = result["sent_count"] + result["failed_count"]
     if attempted < THROUGHPUT_ALERT_MIN_MESSAGES or elapsed <= 0:
         return
@@ -251,8 +310,10 @@ def _report_batch_throughput(campaign_id, result, elapsed, concurrency):
     configured = float(getattr(settings, "SES_MAX_SEND_RATE_PER_SECOND", 0) or 0)
     logger.info(
         "Campaign batch sent campaign_id=%s attempted=%s elapsed_s=%.1f rate_per_s=%.1f "
-        "configured_rate_per_s=%.1f concurrency=%s",
-        campaign_id, attempted, elapsed, rate, configured, concurrency,
+        "configured_rate_per_s=%.1f concurrency=%s emails=%s worker_cpu_s=%.2f cpu_ms_per_email=%.1f "
+        "phases(sum/p50/p95)[%s]",
+        campaign_id, attempted, elapsed, rate, configured, concurrency, len(timings), cpu_seconds,
+        cpu_seconds * 1000 / attempted, _phase_summary(timings),
     )
     if configured > 0 and rate < configured * THROUGHPUT_ALERT_RATIO:
         logger.error(
@@ -292,8 +353,22 @@ def _lock_campaign_shared(campaign_id):
     return Campaign.objects.only("id", "status", "scheduled_at").get(pk=campaign_id)
 
 
-@transaction.atomic
 def _send_campaign_recipient(campaign_id, recipient_id, ses, context):
+    timing = {}
+    started = time.perf_counter()
+    with transaction.atomic():
+        outcome = _send_campaign_recipient_locked(campaign_id, recipient_id, ses, context, timing)
+        body_done = time.perf_counter()
+    timing["commit"] = time.perf_counter() - body_done
+    # Everything in the transaction that is not render/limiter/SES is lock and SQL work.
+    in_tx = body_done - started
+    timing["lock_sql"] = max(0.0, in_tx - timing.get("render_mime", 0) - timing.get("limiter_wait", 0) - timing.get("ses_call", 0))
+    if outcome in {"sent", "failed"}:
+        context.timings.append(timing)
+    return outcome
+
+
+def _send_campaign_recipient_locked(campaign_id, recipient_id, ses, context, timing):
     # Cancellation and dispatch share this lock; cancellation cannot race an
     # in-flight provider call and claim no message was sent.
     campaign = _lock_campaign_shared(campaign_id)
@@ -323,7 +398,7 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses, context):
         raise CampaignSenderError("Campaign has not been released for sending.")
 
     tokens = _send_tokens_for_pending_recipient(recipient)
-    return _deliver_campaign_recipient(recipient, ses, tokens, context.source)
+    return _deliver_campaign_recipient(recipient, ses, tokens, context.source, timing)
 
 
 # Rendering an ~80 KB newsletter (HTML parse + link rewrite) costs ~15 ms of
@@ -354,8 +429,12 @@ def _render_recipient_bodies(campaign, tokens):
     )
 
 
-def _deliver_campaign_recipient(recipient, ses, tokens, source):
+def _deliver_campaign_recipient(recipient, ses, tokens, source, timing):
+    render_started = time.perf_counter()
     html_body, text_body = _render_recipient_bodies(recipient.campaign, tokens)
+    timing["render_mime"] = time.perf_counter() - render_started
+    send_phase_timings.build = send_phase_timings.limiter_wait = 0.0
+    send_started = time.perf_counter()
 
     # SES clients can raise transport, service, or unexpected adapter errors;
     # preserve the catch-all delivery contract at this external boundary.
@@ -369,7 +448,9 @@ def _deliver_campaign_recipient(recipient, ses, tokens, source):
             text_body=text_body,
             headers=campaign_unsubscribe_headers(tokens.unsubscribe_token, recipient.campaign),
         )
+        _record_send_phases(timing, time.perf_counter() - send_started)
     except Exception as exc:
+        _record_send_phases(timing, time.perf_counter() - send_started)
         retryable = is_retryable_send_error(exc)
         _log_campaign_delivery_error(recipient, exc, retryable)
         if retryable:
@@ -379,6 +460,15 @@ def _deliver_campaign_recipient(recipient, ses, tokens, source):
 
     _complete_campaign_recipient(recipient, message_id)
     return "sent"
+
+
+def _record_send_phases(timing, send_elapsed):
+    # send_email total = MIME/parameter build + limiter wait + the SES call itself.
+    build = getattr(send_phase_timings, "build", 0.0)
+    limiter = getattr(send_phase_timings, "limiter_wait", 0.0)
+    timing["render_mime"] += build
+    timing["limiter_wait"] = limiter
+    timing["ses_call"] = max(0.0, send_elapsed - build - limiter)
 
 
 def _log_campaign_delivery_error(recipient, exc, retryable):
@@ -448,7 +538,7 @@ def _mark_recipient_failed(recipient, error_message):
 
 
 def _send_tokens_for_pending_recipient(recipient):
-    tokens = ensure_campaign_recipient_tokens(recipient)
+    tokens = ensure_campaign_recipient_tokens(recipient, locked=True)
     if tokens.tracking_token and tokens.unsubscribe_token:
         return tokens
 
