@@ -37,6 +37,7 @@ MAILCHIMP_LIST_ID = "97178021aa"
 SOURCE_TAG = "src-mailchimp-import-{date}"
 BATCH_RANGES = [(0, 4), (5, 9), (10, 14), (15, 24), (25, 44), (45, 99)]
 IMPORT_BODY_LIMIT = 6800
+PAGE_PAUSE_SECONDS = 0.5
 
 
 def normalize(email):
@@ -72,12 +73,19 @@ def http_json(url, headers, body=None, tries=5):
     request_headers = {"User-Agent": "curl/8.5.0", **headers}
     if data is not None:
         request_headers["Content-Type"] = "application/json"
+    forbidden_waits = [30, 60, 120, 240]  # CloudFront rate rule: slow down, never bypass
+    forbidden = 0
     for attempt in range(tries):
         try:
             req = urllib.request.Request(url, data, request_headers)
             with urllib.request.urlopen(req, timeout=120) as response:
+                time.sleep(PAGE_PAUSE_SECONDS)
                 return json.load(response)
         except urllib.error.HTTPError as exc:
+            if exc.code == 403 and forbidden < len(forbidden_waits):
+                time.sleep(forbidden_waits[forbidden])
+                forbidden += 1
+                continue
             if exc.code in (429, 500, 502, 503, 504) and attempt < tries - 1:
                 time.sleep(2**attempt)
                 continue
