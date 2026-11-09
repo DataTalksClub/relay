@@ -1,3 +1,4 @@
+import re
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -21,6 +22,7 @@ from mailing.models import (
     Subscription,
     SubscriptionStatus,
 )
+from mailing.services.campaign_rendering import campaign_unsubscribe_headers
 from mailing.services.public_urls import (
     campaign_recipient_public_urls,
     click_redirect_url,
@@ -261,65 +263,107 @@ def test_click_redirect_invalid_token_does_not_mutate(client, recipient):
     assert EmailEvent.objects.count() == 0
 
 
-def test_unsubscribe_get_renders_public_page_without_login(client, recipient):
+FORBIDDEN_PUBLIC_TERMS = [
+    "datamailer",
+    "relay",
+    "sender",
+    "audience",
+    "scope",
+    "action required",
+    "marketing preferences",
+    "marketing emails",
+    "DTC Courses",
+    "/admin/",
+    "Campaigns",
+]
+
+
+def assert_no_internal_terms(html):
+    visible = re.sub(r"<(script|style)\b.*?</\1>", " ", html, flags=re.S | re.I)
+    visible = re.sub(r"<[^>]+>", " ", visible)
+    lowered = visible.lower()
+    for term in FORBIDDEN_PUBLIC_TERMS:
+        assert term.lower() not in lowered, term
+
+
+def test_unsubscribe_get_renders_simple_public_page_without_login(client, recipient):
     token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
 
     response = client.get(reverse("mailing:public_unsubscribe", args=[token]))
     html = response.content.decode()
 
     assert response.status_code == 200
-    assert "Choose which marketing emails to stop" in html
+    assert "Unsubscribe from DataTalksClub?" in html
     assert "Person@example.com" in html
-    assert "DTC Courses" in html
-    assert "DataTalksClub" in html
-    assert "Stop marketing emails from DTC Courses" in html
-    assert "Stop marketing emails for DataTalksClub" in html
-    assert "Stop all Datamailer-managed marketing emails" in html
-    assert "Update marketing preferences" in html
-    assert 'name="scope" value="client"' in html
-    assert 'name="scope" value="audience"' in html
-    assert 'name="scope" value="global"' in html
-    assert "Campaigns" not in html
-    assert "/admin/" not in html
+    assert html.count("<button") == 1
+    assert ">Unsubscribe</button>" in html
+    assert 'type="radio"' not in html
+    assert 'name="scope"' not in html
+    assert_no_internal_terms(html)
 
 
-@pytest.mark.parametrize("scope", ["client", "audience", "global"])
-def test_unsubscribe_post_applies_scope_idempotently_and_records_events(client, recipient, contact, scope):
+def test_unsubscribe_post_unsubscribes_only_the_single_audience_and_records_event(client, recipient, contact, audience):
+    other_audience = Audience.objects.create(organization=audience.organization, name="Other List", slug="other-list")
+    other_subscription = Subscription.objects.create(
+        contact=contact, audience=other_audience, status=SubscriptionStatus.SUBSCRIBED
+    )
     token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
     url = reverse("mailing:public_unsubscribe", args=[token])
 
-    first = client.post(url, {"scope": scope})
-    second = client.post(url, {"scope": scope})
+    first = client.post(url)
+    second = client.post(url)
 
     recipient.refresh_from_db()
     contact.refresh_from_db()
+    other_subscription.refresh_from_db()
     recipient.campaign.refresh_from_db()
     assert first.status_code == 200
     assert second.status_code == 200
     html = first.content.decode()
-    assert "Your marketing preference was updated" in html
-    assert "Person@example.com has been unsubscribed from the selected marketing emails." in html
-    assert "transactional or required account emails" in html
-    assert "Campaigns" not in html
-    assert "/admin/" not in html
+    assert "You're unsubscribed." in html
+    assert "You won't get DataTalksClub anymore." in html
+    assert "Resubscribe" in html
+    assert_no_internal_terms(html)
     assert recipient.status == CampaignRecipientStatus.UNSUBSCRIBED
     assert recipient.campaign.unsubscribe_count == 1
-    assert EmailEvent.objects.filter(event_type=EmailEventType.UNSUBSCRIBE, campaign_recipient=recipient).count() == 2
+    events = EmailEvent.objects.filter(event_type=EmailEventType.UNSUBSCRIBE, campaign_recipient=recipient)
+    assert events.count() == 2
+    assert all(event.metadata == {"scope": "audience"} for event in events)
 
-    if scope == "global":
-        assert contact.global_unsubscribed_at is not None
-    elif scope == "audience":
-        subscription = Subscription.objects.get(
-            contact=contact, audience=recipient.campaign.audience, client__isnull=True
-        )
-        assert subscription.status == SubscriptionStatus.UNSUBSCRIBED
-        assert subscription.unsubscribe_reason == "public_unsubscribe"
-    else:
-        subscription = Subscription.objects.get(
-            contact=contact, audience=recipient.campaign.audience, client=recipient.campaign.client
-        )
-        assert subscription.status == SubscriptionStatus.UNSUBSCRIBED
-        assert subscription.unsubscribe_reason == "public_unsubscribe"
+    subscription = Subscription.objects.get(contact=contact, audience=audience, client__isnull=True)
+    assert subscription.status == SubscriptionStatus.UNSUBSCRIBED
+    assert subscription.unsubscribe_reason == "public_unsubscribe"
+    # Nothing outside this one list changes.
+    assert contact.global_unsubscribed_at is None
+    assert other_subscription.status == SubscriptionStatus.SUBSCRIBED
+    assert Subscription.objects.get(contact=contact, audience=audience, client=recipient.campaign.client).status == (
+        SubscriptionStatus.SUBSCRIBED
+    )
+
+
+def test_unsubscribe_ignores_legacy_scope_field(client, recipient, contact):
+    token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
+
+    response = client.post(reverse("mailing:public_unsubscribe", args=[token]), {"scope": "global"})
+
+    contact.refresh_from_db()
+    assert response.status_code == 200
+    assert contact.global_unsubscribed_at is None
+
+
+def test_resubscribe_restores_only_the_single_audience(client, recipient, contact, audience):
+    token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
+    url = reverse("mailing:public_unsubscribe", args=[token])
+    client.post(url)
+
+    response = client.post(url, {"action": "resubscribe"})
+
+    contact.refresh_from_db()
+    subscription = Subscription.objects.get(contact=contact, audience=audience, client__isnull=True)
+    assert response.status_code == 200
+    assert "You're subscribed again." in response.content.decode()
+    assert subscription.status == SubscriptionStatus.SUBSCRIBED
+    assert contact.global_unsubscribed_at is None
 
 
 @override_settings(CMP_WEBHOOK_URL="https://cmp.example.com/api/datamailer/events", CMP_WEBHOOK_TOKEN="secret")
@@ -333,7 +377,6 @@ def test_unsubscribe_post_emits_cmp_callback_only(client, recipient, app_client,
 
     response = client.post(
         reverse("mailing:public_unsubscribe", args=[token]),
-        {"scope": "client"},
     )
 
     assert response.status_code == 200
@@ -346,7 +389,7 @@ def test_unsubscribe_post_emits_cmp_callback_only(client, recipient, app_client,
     assert cmp_body is not None and cmp_body.event_type == "subscription.unsubscribed"
 
 
-def test_rfc8058_one_click_post_unsubscribes_client_scope_without_form(client, recipient, contact):
+def test_rfc8058_one_click_post_unsubscribes_single_audience_without_form(client, recipient, contact, audience):
     token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
 
     response = client.post(
@@ -356,57 +399,46 @@ def test_rfc8058_one_click_post_unsubscribes_client_scope_without_form(client, r
 
     contact.refresh_from_db()
     recipient.refresh_from_db()
-    subscription = Subscription.objects.get(
-        contact=contact,
-        audience=recipient.campaign.audience,
-        client=recipient.campaign.client,
-    )
+    subscription = Subscription.objects.get(contact=contact, audience=audience, client__isnull=True)
+    sender_subscription = Subscription.objects.get(contact=contact, audience=audience, client=recipient.campaign.client)
     event = EmailEvent.objects.get(campaign_recipient=recipient, event_type=EmailEventType.UNSUBSCRIBE)
     assert response.status_code == 204
     assert recipient.status == CampaignRecipientStatus.UNSUBSCRIBED
     assert subscription.status == SubscriptionStatus.UNSUBSCRIBED
+    assert sender_subscription.status == SubscriptionStatus.SUBSCRIBED
     assert contact.global_unsubscribed_at is None
-    assert event.metadata == {"scope": "client"}
+    assert event.metadata == {"scope": "audience"}
 
 
-def test_unsubscribe_invalid_token_and_invalid_scope_do_not_mutate(client, recipient):
-    token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
-
-    invalid_token_response = client.post(
-        reverse("mailing:public_unsubscribe", args=["missing-token"]), {"scope": "global"}
-    )
-    invalid_scope_response = client.post(reverse("mailing:public_unsubscribe", args=[token]), {"scope": "bad"})
-    invalid_token_html = invalid_token_response.content.decode()
-    invalid_scope_html = invalid_scope_response.content.decode()
+def test_unsubscribe_invalid_token_does_not_mutate(client, recipient):
+    invalid_token_response = client.post(reverse("mailing:public_unsubscribe", args=["missing-token"]))
+    html = invalid_token_response.content.decode()
 
     recipient.refresh_from_db()
     assert invalid_token_response.status_code == 404
-    assert "This unsubscribe link is no longer available" in invalid_token_html
-    assert "Person@example.com" not in invalid_token_html
-    assert "Campaigns" not in invalid_token_html
-    assert "/admin/" not in invalid_token_html
-    assert invalid_scope_response.status_code == 400
-    assert "Select one of the unsubscribe options below" in invalid_scope_html
-    assert "Stop marketing emails from DTC Courses" in invalid_scope_html
-    assert "Stop marketing emails for DataTalksClub" in invalid_scope_html
-    assert "Stop all Datamailer-managed marketing emails" in invalid_scope_html
+    assert "This unsubscribe link is no longer available" in html
+    assert "Person@example.com" not in html
+    assert_no_internal_terms(html)
     assert recipient.status == CampaignRecipientStatus.SENT
     assert EmailEvent.objects.count() == 0
 
 
-def test_unsubscribe_invalid_scope_keeps_subscriptions_unchanged(client, recipient, contact):
-    token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
+@override_settings(PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_headers_include_per_list_list_id_with_one_click(campaign):
+    headers = campaign_unsubscribe_headers("tok", campaign)
 
-    response = client.post(reverse("mailing:public_unsubscribe", args=[token]), {"scope": "bad"})
+    assert headers["List-Id"] == "DataTalksClub <dtc-courses.datatalks-club.list-id.mail.example.com>"
+    assert headers["List-Unsubscribe"] == "<https://mail.example.com/unsubscribe/tok>"
+    assert headers["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
-    recipient.refresh_from_db()
-    contact.refresh_from_db()
-    subscription = Subscription.objects.get(
-        contact=contact, audience=recipient.campaign.audience, client=recipient.campaign.client
-    )
-    assert response.status_code == 400
-    assert recipient.status == CampaignRecipientStatus.SENT
-    assert contact.global_unsubscribed_at is None
-    assert subscription.status == SubscriptionStatus.SUBSCRIBED
-    assert subscription.unsubscribe_reason == ""
-    assert EmailEvent.objects.count() == 0
+
+@override_settings(PUBLIC_BASE_URL="https://mail.example.com")
+def test_list_id_differs_per_client_and_audience(campaign, organization):
+    other_audience = Audience.objects.create(organization=organization, name='Other "List"', slug="other")
+    other = Campaign.objects.create(audience=other_audience, client=campaign.client, subject="x")
+
+    first = campaign_unsubscribe_headers("tok", campaign)["List-Id"]
+    second = campaign_unsubscribe_headers("tok", other)["List-Id"]
+
+    assert first != second
+    assert second == "Other List <dtc-courses.other.list-id.mail.example.com>"

@@ -181,7 +181,7 @@ from mailing.services.ses_webhooks import (
     ingest_sns_webhook,
 )
 from mailing.services.tokens import get_recipient_by_unsubscribe_token
-from mailing.services.tracking import TRANSPARENT_GIF, apply_unsubscribe, record_click, record_open
+from mailing.services.tracking import TRANSPARENT_GIF, apply_resubscribe, apply_unsubscribe, record_click, record_open
 from mailing.services.transactional import (
     TransactionalSendRejected,
     confirm_category_verification_for_client,
@@ -1476,15 +1476,10 @@ def public_unsubscribe(request, unsubscribe_token):
 
     if request.method == "POST":
         one_click = request.POST.get("List-Unsubscribe") == "One-Click"
-        scope = "client" if one_click else request.POST.get("scope", "")
-        recipient = apply_unsubscribe(unsubscribe_token, scope)
-        if recipient is None:
-            return render(
-                request,
-                "mailing/unsubscribe.html",
-                status=400,
-                context={"recipient": get_recipient_by_unsubscribe_token(unsubscribe_token), "invalid_scope": True},
-            )
+        if request.POST.get("action") == "resubscribe" and not one_click:
+            recipient = apply_resubscribe(unsubscribe_token)
+            return render(request, "mailing/unsubscribe.html", context={"recipient": recipient, "resubscribed": True})
+        recipient = apply_unsubscribe(unsubscribe_token)
         if one_click:
             return HttpResponse(status=204)
         return render(request, "mailing/unsubscribe.html", context={"recipient": recipient, "confirmed": True})

@@ -54,16 +54,26 @@ def build_campaign_text_body(text_body, unsubscribe_token):
     return f"Unsubscribe or manage preferences: {url}"
 
 
-def campaign_unsubscribe_headers(unsubscribe_token):
-    """Build RFC 8058 one-click headers when Relay has a public HTTPS URL."""
+def campaign_list_id(campaign, host):
+    """RFC 2919 List-Id, unique per client + audience, e.g. ``DataTalks.Club <dtc.news.list-id.relay.example>``."""
+    name = " ".join(re.sub(r"[<>\"\\\r\n]+", " ", campaign.audience.name).split())
+    list_id = f"{campaign.client.slug}.{campaign.audience.slug}.list-id.{host}"
+    return f"{name} <{list_id}>" if name else f"<{list_id}>"
+
+
+def campaign_unsubscribe_headers(unsubscribe_token, campaign=None):
+    """Build RFC 8058 one-click headers (and the per-list List-Id) when Relay has a public HTTPS URL."""
     url = unsubscribe_url(unsubscribe_token)
     parsed_url = urlparse(url)
     if parsed_url.scheme.lower() != "https" or not parsed_url.netloc:
         return {}
-    return {
+    headers = {
         "List-Unsubscribe": f"<{url}>",
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     }
+    if campaign is not None:
+        headers["List-Id"] = campaign_list_id(campaign, parsed_url.hostname)
+    return headers
 
 
 def rewrite_html_links(html_body, tracking_token, unsubscribe_token=None):
