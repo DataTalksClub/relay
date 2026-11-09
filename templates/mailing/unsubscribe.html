@@ -36,6 +36,11 @@
             <h1 id="unsubscribe-title">This unsubscribe link is no longer available</h1>
             <p>The link may have expired or been replaced by a newer email. Nothing was changed.</p>
           </div>
+        {% elif unavailable %}
+          <div class="unsubscribe-state">
+            <h1 id="unsubscribe-title">We couldn't record your unsubscribe</h1>
+            <p>Something went wrong on our side and nothing was changed. Please try again in a minute.</p>
+          </div>
         {% elif confirmed %}
           <div class="unsubscribe-state">
             <h1 id="unsubscribe-title">You're unsubscribed.</h1>

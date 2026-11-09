@@ -10,6 +10,7 @@
 #   web                gunicorn (public; Traefik domains managed in Coolify UI)
 #   worker             django.tasks DB worker on queue "default" (sends)
 #   provider-events-worker  django.tasks DB worker on queue "provider-events"
+#   tracking-worker    django.tasks DB worker on queue "tracking" (opens/clicks/deferred unsubscribes)
 #   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
 #   cmp-callbacks      CMP webhook outbox dispatcher
 #   client-callbacks   tenant client-callback outbox dispatcher
@@ -69,6 +70,20 @@ services:
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
       test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "provider-events"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  tracking-worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    # Recipient opens/clicks and deferred unsubscribes accepted by the web
+    # (/t/o, /t/c, /unsubscribe). Own lane: never waits behind sends or an SES backlog.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "tracking", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "tracking"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from datetime import timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
@@ -7,7 +8,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
-from django.db import connection
+from django.db import DatabaseError, connection
 from django.db.models import Count, Max, Q, Sum
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -1493,7 +1494,15 @@ def public_unsubscribe(request, unsubscribe_token):
         if request.POST.get("action") == "resubscribe" and not one_click:
             recipient = apply_resubscribe(unsubscribe_token)
             return render(request, "mailing/unsubscribe.html", context={"recipient": recipient, "resubscribed": True})
-        recipient = apply_unsubscribe(unsubscribe_token)
+        try:
+            recipient, _outcome = apply_unsubscribe(unsubscribe_token)
+        except DatabaseError:
+            # Neither the write nor the durable hand-off succeeded: say so, never
+            # show "unsubscribed" for a request that was not recorded.
+            logger.exception("unsubscribe_failed reason=sync_and_deferred_write_failed")
+            if one_click:
+                return HttpResponse(status=503, headers={"Retry-After": "60"})
+            return render(request, "mailing/unsubscribe.html", status=503, context={"unavailable": True})
         if one_click:
             return HttpResponse(status=204)
         return render(request, "mailing/unsubscribe.html", context={"recipient": recipient, "confirmed": True})
@@ -2606,6 +2615,35 @@ def api_client_mailchimp_tag_mappings(request):
 @csrf_exempt
 @require_POST
 def ses_webhook(request):
+    # Verify + insert only (processing runs on the provider-events worker), and
+    # capped per process so a webhook burst can never take every web thread.
+    if not _ses_webhook_slots.acquire(blocking=False):
+        logger.error("ses_webhook_concurrency_limited max=%s", settings.RELAY_SES_WEBHOOK_MAX_CONCURRENCY)
+        return JsonResponse(
+            {"error": {"code": "webhook_busy", "message": "Retry later."}}, status=503, headers={"Retry-After": "5"}
+        )
+    try:
+        return _ses_webhook(request)
+    finally:
+        _ses_webhook_slots.release()
+
+
+class _UnboundedSlots:
+    def acquire(self, blocking=True):
+        return True
+
+    def release(self):
+        pass
+
+
+_ses_webhook_slots = (
+    threading.BoundedSemaphore(settings.RELAY_SES_WEBHOOK_MAX_CONCURRENCY)
+    if settings.RELAY_SES_WEBHOOK_MAX_CONCURRENCY
+    else _UnboundedSlots()
+)
+
+
+def _ses_webhook(request):
     try:
         # F4: Content-Length gate runs before Django buffers the body.
         check_sns_body_size(request)
