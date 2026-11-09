@@ -149,6 +149,7 @@ OPERATOR_API_PARITY = {
     "campaign_pause": "scoped_api_campaign_cancel",
     "campaign_resume": "scoped_api_campaign_cancel",
     "campaign_stop": "scoped_api_campaign_cancel",
+    "campaign_unknown_resend": "scoped_api_campaign_unknown_resend",
     "job_list": "read_jobs",
     "job_detail": "read_jobs_detail",
     "job_retry": "job_retry",
