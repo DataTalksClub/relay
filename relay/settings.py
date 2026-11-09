@@ -304,19 +304,29 @@ SUBSCRIPTION_CONFIRM_BASE_URL = (
 INBOUND_BLOCK_LINK_BASE_URL = os.environ.get("INBOUND_BLOCK_LINK_BASE_URL", "").strip().rstrip("/")
 # Static sites call these lists without a client API key. The value is parsed
 # by mailing.services.public_lists. Empty disables the public routes' lists.
-RELAY_PUBLIC_LISTS = os.environ.get("RELAY_PUBLIC_LISTS", "")
-RELAY_PUBLIC_SUBSCRIBE_ORIGINS = frozenset(csv_env("RELAY_PUBLIC_SUBSCRIBE_ORIGINS", "", allow_empty=True))
+# Unset env falls back to the datatalks.club newsletter form (slugs only, no
+# secrets); setting the variable replaces the default.
+DEFAULT_PUBLIC_LISTS = (
+    "dtc-newsletter org=datatalksclub client=dtc-newsletter audience=dtc "
+    "category=newsletter template=newsletter-welcome optin=single"
+)
+RELAY_PUBLIC_LISTS = os.environ.get("RELAY_PUBLIC_LISTS", "").strip() or DEFAULT_PUBLIC_LISTS
+RELAY_PUBLIC_SUBSCRIBE_ORIGINS = frozenset(
+    csv_env("RELAY_PUBLIC_SUBSCRIBE_ORIGINS", "https://datatalks.club,https://www.datatalks.club", allow_empty=True)
+)
 RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT", "3"))
 RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS = int(
     os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS", "3600")
 )
 # Single-opt-in public lists also limit signups per client IP. The IP is the
-# Nth entry from the right of X-Forwarded-For (N = trusted proxy hops).
+# Nth entry from the right of X-Forwarded-For (N = trusted proxy hops). Prod is
+# client -> CloudFront -> ALB -> app: the ALB appends the CloudFront edge, so
+# the client is 2nd from the right.
 RELAY_PUBLIC_SUBSCRIBE_IP_LIMIT = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_IP_LIMIT", "10"))
 RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS = int(
     os.environ.get("RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS", "3600")
 )
-RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS", "1"))
+RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS", "2"))
 AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 # domain role=<arn> region=<region> configuration_set=<name>, separated by ';'
 # or newlines. Domains absent from this list use email.send and the values above.

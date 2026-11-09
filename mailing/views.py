@@ -1782,7 +1782,8 @@ def _public_client_ip(request):
     hops = settings.RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS
     if hops > 0 and len(forwarded) >= hops:
         return forwarded[-hops]
-    return request.META.get("REMOTE_ADDR", "")
+    # Fewer hops than configured: use the first entry rather than a shared proxy address.
+    return forwarded[0] if forwarded else request.META.get("REMOTE_ADDR", "")
 
 
 def _public_subscribe_consent(request, body):

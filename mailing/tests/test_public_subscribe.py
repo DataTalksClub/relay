@@ -249,7 +249,7 @@ def test_single_optin_subscribes_records_consent_and_sends_welcome(client, welco
     monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
 
     response = post_single(
-        client, {"email": "Ada@Example.com", "page": "https://pocketshell.io/"}, HTTP_X_FORWARDED_FOR="9.9.9.9, 1.2.3.4"
+        client, {"email": "Ada@Example.com", "page": "https://pocketshell.io/"}, HTTP_X_FORWARDED_FOR="1.2.3.4, 9.9.9.9"
     )
 
     assert response.status_code == 200
@@ -374,3 +374,14 @@ def test_parse_public_lists_single_optin_needs_no_confirm_base():
     with pytest.raises(Exception):
         parse_public_lists(SINGLE + " optin=bogus")
     assert parse_public_lists(LISTS)["pocketshell"].optin == "double"
+
+
+def test_default_public_list_is_the_datatalks_newsletter():
+    from django.conf import settings as django_settings
+
+    spec = parse_public_lists(django_settings.RELAY_PUBLIC_LISTS)["dtc-newsletter"]
+
+    assert (spec.organization_slug, spec.client_slug, spec.audience_slug) == ("datatalksclub", "dtc-newsletter", "dtc")
+    assert spec.optin == "single"
+    assert spec.template_key == "newsletter-welcome"
+    assert "https://www.datatalks.club" in django_settings.RELAY_PUBLIC_SUBSCRIBE_ORIGINS

@@ -1,7 +1,8 @@
 # Public website signup (single opt-in)
 
 Static sites post to `POST /api/public/lists/<key>/subscribe` with no API key.
-A list is one entry of `RELAY_PUBLIC_LISTS`:
+A list is one entry of `RELAY_PUBLIC_LISTS` (when the variable is unset it defaults to the line below, and
+`RELAY_PUBLIC_SUBSCRIBE_ORIGINS` to `https://datatalks.club,https://www.datatalks.club`):
 
 ```text
 dtc-newsletter org=datatalksclub client=dtc-newsletter audience=dtc category=newsletter template=newsletter-welcome optin=single
@@ -28,7 +29,7 @@ list or template is not set up, 500 `internal_error`.
 - Per IP: `RELAY_PUBLIC_SUBSCRIBE_IP_LIMIT` per
   `RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS` (10 per hour). The IP is the
   `RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS`-th entry from the right of
-  `X-Forwarded-For` (default 1).
+  `X-Forwarded-For` (default 2: client -> CloudFront -> ALB -> app).
 - `RELAY_PUBLIC_SUBSCRIBE_ORIGINS` lists the browser origins allowed by CORS.
 - Consent evidence is stored in `ContactSourceMetadata` (source
   `website-signup`): time, IP, origin, user agent, page, list key. The
