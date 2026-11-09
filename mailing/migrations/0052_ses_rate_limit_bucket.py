@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('mailing', '0050_dispatch_outbox_heartbeat_alerts'),
+        ('mailing', '0051_campaign_send_halt'),
     ]
 
     operations = [
