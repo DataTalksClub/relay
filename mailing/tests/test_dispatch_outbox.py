@@ -2,10 +2,12 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings
 from django.test import override_settings
 from django.utils import timezone
 from django_tasks_db.models import DBTaskResult
 
+from mailing.campaign_ui_views import campaign_timing_context
 from mailing.models import (
     Audience,
     Campaign,
@@ -19,6 +21,7 @@ from mailing.models import (
     Organization,
     Subscription,
 )
+from mailing.services import campaigns
 from mailing.services.api import campaign_payload
 from mailing.services.campaigns import queue_campaign, recover_campaign_dispatches
 from mailing.services.task_leases import (
@@ -74,8 +77,6 @@ def test_crash_between_queued_commit_and_enqueue_is_recovered_once(campaign):
 
 def test_dispatch_partial_failure_rolls_back_and_retry_creates_each_batch_once(campaign):
     queue_campaign(campaign, batch_size=1)
-    from mailing.services import campaigns
-
     real = campaigns.enqueue_campaign_email
     calls = {"n": 0}
 
@@ -157,14 +158,10 @@ def test_stale_alert_shown_on_campaign_page(campaign, admin_client):
     campaign.save()
     make_running_batch(campaign, [], started_ago=timedelta(hours=1))
     fail_stale_campaign_tasks()
-    from mailing.campaign_ui_views import campaign_timing_context
-
     assert "FAILED_STALE" in campaign_timing_context(campaign)["dispatch_alerts"][0]["message"]
 
 
 def test_auto_reenqueue_is_off_by_default_and_only_reports(campaign):
-    from django.conf import settings
-
     assert settings.RELAY_STALE_BATCH_AUTO_REENQUEUE is False
     make_running_batch(campaign, recipients_for(campaign), started_ago=timedelta(hours=1))
     with patch("mailing.services.task_leases.enqueue_campaign_email") as enqueue:

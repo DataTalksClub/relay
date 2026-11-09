@@ -45,7 +45,6 @@ from mailing.services.campaigns import (
     request_campaign_queue,
     retry_campaign_recipient,
 )
-from mailing.services.task_leases import campaign_dispatch_alerts
 from mailing.services.categories import TRANSACTIONAL_CATEGORY, category_label, validate_canonical_category
 from mailing.services.client_callbacks import SUPPRESSION_REASON_CODES, emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
@@ -61,6 +60,7 @@ from mailing.services.contacts import (
     upsert_contact,
 )
 from mailing.services.sending_domains import validate_sender_domains
+from mailing.services.task_leases import campaign_dispatch_alerts
 
 
 @dataclass(frozen=True)
