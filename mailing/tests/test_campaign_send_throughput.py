@@ -27,7 +27,13 @@ from mailing.models import (
     Contact,
     Organization,
 )
-from mailing.services.campaign_sender import RetryableCampaignSendError, send_campaign_batch
+from mailing.services.campaign_rendering import build_campaign_html_body, build_campaign_text_body
+from mailing.services.campaign_sender import (
+    RetryableCampaignSendError,
+    _render_recipient_bodies,
+    send_campaign_batch,
+)
+from mailing.services.tokens import CampaignRecipientTokens, generate_raw_token
 
 SES_LATENCY_SECONDS = 0.2
 needs_postgres = pytest.mark.skipif(connection.vendor != "postgresql", reason="needs PostgreSQL")
@@ -65,12 +71,21 @@ class _SlowSes:
                 self.in_flight -= 1
 
 
-def _campaign_with_recipients(count):
+def _big_html(links=400):
+    rows = "".join(
+        f'<p>Item {i} <a href="https://example.com/post/{i}?a=1&b=2&utm_source=n">read more about topic {i}</a></p>'
+        + "<span style=\"color:#333;font-family:Arial\">padding text padding text padding text</span>" * 2
+        for i in range(links)
+    )
+    return f"<html><body>{rows}</body></html>"
+
+
+def _campaign_with_recipients(count, html_body="<p>Hi</p>"):
     organization = Organization.objects.create(name="Org", slug="org")
     audience = Audience.objects.create(organization=organization, name="News", slug="news")
     client = Client.objects.create(organization=organization, name="Client", slug="client")
     campaign = Campaign.objects.create(
-        audience=audience, client=client, subject="Hi", status="queued", html_body="<p>Hi</p>", text_body="Hi"
+        audience=audience, client=client, subject="Hi", status="queued", html_body=html_body, text_body="Hi https://example.com/x"
     )
     contacts = [Contact.objects.create(email=f"person{i}@example.com") for i in range(count)]
     recipients = CampaignRecipient.objects.bulk_create(
@@ -181,3 +196,27 @@ def test_throughput_near_configured_rate_logs_info_only(caplog):
 
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert any("Campaign batch sent" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.django_db
+def test_cached_render_matches_direct_render_for_each_recipient():
+    campaign, _ = _campaign_with_recipients(1, html_body=_big_html(20))
+    for _ in range(3):
+        tokens = CampaignRecipientTokens(tracking_token=generate_raw_token(), unsubscribe_token=generate_raw_token())
+        html, text = _render_recipient_bodies(campaign, tokens)
+        assert html == build_campaign_html_body(campaign.html_body, tokens.tracking_token, tokens.unsubscribe_token)
+        assert text == build_campaign_text_body(campaign.text_body, tokens.unsubscribe_token)
+
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+@override_settings(SES_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=16)
+def test_realistic_newsletter_batch_reaches_40_per_second():
+    # 300 recipients: the per-batch fixed cost (thread/connection setup, last
+    # SES call) is amortised like a default-size (500) batch.
+    campaign, payload = _campaign_with_recipients(300, html_body=_big_html())
+    started = time.monotonic()
+    result = send_campaign_batch(payload, ses_client=_SlowSes())
+    rate = 300 / (time.monotonic() - started)
+    assert result.sent_count == 300
+    assert rate >= 40, f"{rate:.1f} msg/s"

@@ -310,9 +310,36 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
     return _deliver_campaign_recipient(recipient, ses, tokens)
 
 
+# Rendering an ~80 KB newsletter (HTML parse + link rewrite) costs ~15 ms of
+# pure-Python CPU per recipient. Threads share the GIL, so that alone caps a
+# worker near 25 msg/s however many SES calls are in flight. Render once per
+# distinct body with sentinel tokens and substitute the real tokens per recipient.
+_TRACKING_SENTINEL = "RLYTRK0SENTINEL0TOKEN"
+_UNSUBSCRIBE_SENTINEL = "RLYUNS0SENTINEL0TOKEN"
+_TEMPLATE_CACHE_MAX = 4
+_template_cache = {}
+
+
+def _render_recipient_bodies(campaign, tokens):
+    key = (campaign.html_body, campaign.text_body)
+    template = _template_cache.get(key)
+    if template is None:
+        template = (
+            build_campaign_html_body(campaign.html_body, _TRACKING_SENTINEL, _UNSUBSCRIBE_SENTINEL),
+            build_campaign_text_body(campaign.text_body, _UNSUBSCRIBE_SENTINEL),
+        )
+        if len(_template_cache) >= _TEMPLATE_CACHE_MAX:
+            _template_cache.clear()
+        _template_cache[key] = template
+    html, text = template
+    return (
+        html.replace(_TRACKING_SENTINEL, tokens.tracking_token).replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token),
+        text.replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token),
+    )
+
+
 def _deliver_campaign_recipient(recipient, ses, tokens):
-    html_body = build_campaign_html_body(recipient.campaign.html_body, tokens.tracking_token, tokens.unsubscribe_token)
-    text_body = build_campaign_text_body(recipient.campaign.text_body, tokens.unsubscribe_token)
+    html_body, text_body = _render_recipient_bodies(recipient.campaign, tokens)
 
     # SES clients can raise transport, service, or unexpected adapter errors;
     # preserve the catch-all delivery contract at this external boundary.

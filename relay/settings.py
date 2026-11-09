@@ -333,7 +333,9 @@ AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 RELAY_SES_DOMAIN_ROUTES = os.environ.get("RELAY_SES_DOMAIN_ROUTES", "")
 RELAY_SES_QUOTA_REGIONS = csv_env("RELAY_SES_QUOTA_REGIONS", "eu-west-1,us-east-1", allow_empty=True)
 SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0)
-CAMPAIGN_EMAIL_BATCH_SIZE = int_env("RELAY_CAMPAIGN_EMAIL_BATCH_SIZE", default=100)
+# 100-message batches spent ~15% of their time in fixed per-batch overhead (thread +
+# DB connection setup, last SES call tail); 500 reaches the limiter rate.
+CAMPAIGN_EMAIL_BATCH_SIZE = int_env("RELAY_CAMPAIGN_EMAIL_BATCH_SIZE", default=500)
 # SES calls in flight per batch. ~11 saturate 45/s at ~240 ms per call.
 CAMPAIGN_SEND_CONCURRENCY = int_env("RELAY_CAMPAIGN_SEND_CONCURRENCY", default=16)
 SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = os.environ.get("SQS_TRANSACTIONAL_EMAIL_QUEUE_URL", "")
