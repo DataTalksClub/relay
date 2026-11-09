@@ -21,7 +21,8 @@ import time
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db.models import F
+from django.db.models.functions import Greatest
 from django.db.utils import DatabaseError, IntegrityError
 from django.utils import timezone
 
@@ -177,6 +178,10 @@ def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
     a saturating campaign delays transactional mail by ~1 s at most. Raises
     :class:`SesRateLimiterTimeout` past the deadline and
     :class:`SesRateLimiterUnavailable` when the limiter's database errors.
+
+    Hot path is two statements and no transaction: one SELECT plus one
+    conditional UPDATE guarded by optimistic concurrency (the row must still
+    hold the tokens we read). A lost race re-reads instead of over-issuing.
     """
     if kind not in KINDS:
         raise ValueError(f"unknown limiter kind: {kind!r}")
@@ -186,6 +191,7 @@ def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
         return
     bucket = key or bucket_key()
     deadline = time.monotonic() + (config["timeout"] if timeout is None else max(0.0, timeout))
+    conflicts = 0
     while True:
         try:
             granted, sleep_hint = _try_acquire_once(bucket, cost, kind, config)
@@ -207,6 +213,13 @@ def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
             ) from exc
         if granted:
             return
+        if sleep_hint < 0:
+            # Lost a race with another sender: re-read immediately (bounded).
+            conflicts += 1
+            if conflicts < 50:
+                continue
+            sleep_hint = config["poll_interval"]
+            conflicts = 0
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             waited = config["timeout"] if timeout is None else timeout
@@ -221,68 +234,71 @@ def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
 
 
 def _try_acquire_once(bucket, cost, kind, config):
-    """Single atomic refill-and-consume; returns (granted, sleep_hint_seconds)."""
-    with transaction.atomic():
-        lookup = SesRateLimitBucket.objects.filter(key=bucket)
-        if connection.vendor == "postgresql":
-            lookup = lookup.select_for_update()
-        row = lookup.first()
-        if row is None:
-            row = _ensure_bucket(bucket, config)
-        now = timezone.now()
-        base_rate = resolve_base_rate(config)
-        now_ts = now.timestamp()
-        rate = effective_rate(
-            base_rate, row.penalty_factor, now_ts, _to_ts(row.penalty_expires_at), config["recovery_seconds"]
-        )
-        rate = max(config["min_rate"] if row.penalty_factor < 1.0 else 0.0, rate)
-        elapsed = max(0.0, (now - row.last_refill).total_seconds())
-        tokens = min(config["capacity"], row.tokens + elapsed * rate)
-        recovered = (
-            row.penalty_factor < 1.0
-            and row.penalty_expires_at is not None
-            and now_ts >= _to_ts(row.penalty_expires_at) + config["recovery_seconds"]
-        )
-        if recovered:
-            row.penalty_factor = 1.0
-            row.penalty_expires_at = None
-        overdraft = config["reserve"] if kind == TRANSACTIONAL else 0.0
-        needed = cost - overdraft
-        row.tokens = tokens
-        row.last_refill = now
-        row.base_rate = base_rate
-        row.capacity = config["capacity"]
-        if tokens >= needed:
-            row.tokens = tokens - cost
-            row.save(update_fields=[
-                "tokens", "last_refill", "base_rate", "capacity",
-                "penalty_factor", "penalty_expires_at", "updated_at",
-            ])
-            return True, 0.0
-        row.save(update_fields=[
-            "tokens", "last_refill", "base_rate", "capacity",
-            "penalty_factor", "penalty_expires_at", "updated_at",
-        ])
+    """Single refill-and-consume attempt.
+
+    Returns (granted, sleep_hint); a negative sleep_hint means the row moved
+    under us (lost optimistic-concurrency race) and the caller should re-read.
+    No transaction is held: the SELECT runs in autocommit and the UPDATE only
+    applies when the row still holds exactly the tokens we read, so concurrent
+    senders can never over-issue. Shortage performs no write at all (the next
+    attempt recomputes the refill from the stored timestamp).
+    """
+    row = SesRateLimitBucket.objects.filter(key=bucket).values(
+        "tokens", "last_refill", "penalty_factor", "penalty_expires_at",
+    ).first()
+    if row is None:
+        _ensure_bucket(bucket, config)
+        return False, -1.0
+    now = timezone.now()
+    base_rate = resolve_base_rate(config)
+    now_ts = now.timestamp()
+    rate = effective_rate(
+        base_rate, row["penalty_factor"], now_ts, _to_ts(row["penalty_expires_at"]), config["recovery_seconds"]
+    )
+    if row["penalty_factor"] < 1.0:
+        rate = max(rate, config["min_rate"])
+    elapsed = max(0.0, (now - row["last_refill"]).total_seconds())
+    tokens = min(config["capacity"], row["tokens"] + elapsed * rate)
+    recovered = (
+        row["penalty_factor"] < 1.0
+        and row["penalty_expires_at"] is not None
+        and now_ts >= _to_ts(row["penalty_expires_at"]) + config["recovery_seconds"]
+    )
+    overdraft = config["reserve"] if kind == TRANSACTIONAL else 0.0
+    needed = cost - overdraft
+    if tokens < needed:
         deficit = needed - tokens
         return False, deficit / rate if rate > 0 else config["poll_interval"]
+    update_fields = {
+        "tokens": tokens - cost,
+        "last_refill": now,
+        "base_rate": base_rate,
+        "capacity": config["capacity"],
+    }
+    if recovered:
+        update_fields["penalty_factor"] = 1.0
+        update_fields["penalty_expires_at"] = None
+    updated = SesRateLimitBucket.objects.filter(key=bucket, tokens=row["tokens"]).update(**update_fields)
+    if not updated:
+        return False, -1.0
+    return True, 0.0
 
 
 def _ensure_bucket(bucket, config):
     now = timezone.now()
     try:
-        with transaction.atomic():
-            row, _ = SesRateLimitBucket.objects.get_or_create(
-                key=bucket,
-                defaults={
-                    "tokens": config["capacity"],
-                    "capacity": config["capacity"],
-                    "base_rate": config["base_rate"],
-                    "penalty_factor": 1.0,
-                    "penalty_expires_at": None,
-                    "last_refill": now,
-                },
-            )
-            return row
+        row, _ = SesRateLimitBucket.objects.get_or_create(
+            key=bucket,
+            defaults={
+                "tokens": config["capacity"],
+                "capacity": config["capacity"],
+                "base_rate": config["base_rate"],
+                "penalty_factor": 1.0,
+                "penalty_expires_at": None,
+                "last_refill": now,
+            },
+        )
+        return row
     except IntegrityError:
         row = SesRateLimitBucket.objects.filter(key=bucket).first()
         if row is None:
@@ -291,33 +307,34 @@ def _ensure_bucket(bucket, config):
 
 
 def report_ses_throttling(*, key=None):
-    """AIMD feedback: multiply the shared rate by 0.8 for 60 s. Logged loudly."""
+    """AIMD feedback: multiply the shared rate by 0.8 for 60 s. Logged loudly.
+
+    A single atomic UPDATE (multiplicative, floored), so concurrent feedback
+    from several sender processes compounds instead of last-writer-wins.
+    """
     config = limiter_config()
     if config["base_rate"] <= 0:
         logger.debug("ses_rate_limit_feedback_ignored_limiter_disabled")
         return
     bucket = key or bucket_key()
     try:
-        with transaction.atomic():
-            lookup = SesRateLimitBucket.objects.filter(key=bucket)
-            if connection.vendor == "postgresql":
-                lookup = lookup.select_for_update()
-            row = lookup.first()
-            if row is None:
-                row = _ensure_bucket(bucket, config)
-            now = timezone.now()
-            base_rate = resolve_base_rate(config)
-            current = effective_rate(
-                base_rate, row.penalty_factor, now.timestamp(),
-                _to_ts(row.penalty_expires_at), config["recovery_seconds"],
-            )
-            row.penalty_factor = feedback_penalty(
-                current, base_rate, factor=config["penalty_factor"], min_rate=config["min_rate"]
-            )
-            row.penalty_expires_at = now + timedelta(seconds=config["penalty_seconds"])
-            row.base_rate = base_rate
-            row.save(update_fields=["penalty_factor", "penalty_expires_at", "base_rate", "updated_at"])
-            penalized = base_rate * row.penalty_factor
+        base_rate = resolve_base_rate(config)
+        floor = config["min_rate"] / base_rate if base_rate > 0 else 1.0
+        now = timezone.now()
+        update_kwargs = {
+            "penalty_factor": Greatest(F("penalty_factor") * config["penalty_factor"], floor),
+            "penalty_expires_at": now + timedelta(seconds=config["penalty_seconds"]),
+            "base_rate": base_rate,
+            "updated_at": now,
+        }
+        if not SesRateLimitBucket.objects.filter(key=bucket).update(**update_kwargs):
+            _ensure_bucket(bucket, config)
+            SesRateLimitBucket.objects.filter(key=bucket).update(**update_kwargs)
+        state = SesRateLimitBucket.objects.filter(key=bucket).values(
+            "penalty_factor", "penalty_expires_at", "base_rate",
+        ).first()
+        factor = state["penalty_factor"] if state else 1.0
+        penalized = base_rate * factor
     except DatabaseError as exc:
         logger.error(
             "ses_rate_limit_feedback_unavailable bucket=%s error_type=%s",
@@ -329,5 +346,5 @@ def report_ses_throttling(*, key=None):
     logger.error(
         "ses_rate_limit_throttling_feedback bucket=%s shared_rate_per_s=%.1f base_rate_per_s=%.1f "
         "penalty_factor=%.2f penalty_s=%.0f",
-        bucket, penalized, base_rate, row.penalty_factor, config["penalty_seconds"],
+        bucket, penalized, base_rate, factor, config["penalty_seconds"],
     )
