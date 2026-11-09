@@ -1,7 +1,10 @@
+import re
 import threading
 from datetime import timedelta
+from urllib.parse import quote_plus
 
 import boto3
+from botocore.config import Config
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
@@ -45,11 +48,13 @@ def _role_credentials(task_type):
     return _assume_role(role_arn)
 
 
-def aws_client(service_name, *, endpoint_url=None, task_type=None, role_arn=None, region_name=None):
+def aws_client(service_name, *, endpoint_url=None, task_type=None, role_arn=None, region_name=None, config=None):
     kwargs = {
         "region_name": region_name or settings.AWS_REGION,
         "endpoint_url": endpoint_url if endpoint_url is not None else settings.AWS_ENDPOINT_URL or None,
     }
+    if config is not None:
+        kwargs["config"] = config
     if role_arn:
         credentials = _assume_role(role_arn)
     elif task_type:
@@ -85,17 +90,69 @@ def sqs_client(*, endpoint_url=None):
     return aws_client("sqs", endpoint_url=endpoint_url)
 
 
+_BASE64_ONLY = re.compile(r"[A-Za-z0-9+/=]*")
+_FAST_FORM_MIN_LENGTH = 4096
+
+
+def _fast_form_body(params, **kwargs):
+    """Form-encode a large base64 field without botocore's per-byte quote loop.
+
+    SES v1 SendRawEmail carries the whole message base64-encoded in a
+    form-urlencoded body. ``urllib.parse.quote`` takes a per-byte Python path
+    for it because '+', '/' and '=' are not "always safe": ~25 ms of GIL-held CPU
+    for an 80 KB newsletter, the largest single cost of a campaign send. For a
+    value made only of base64 characters the encoding is exactly three
+    replacements, so the bytes sent (and signed) are identical.
+    """
+    body = params.get("body")
+    if not isinstance(body, dict):
+        return
+    pairs = []
+    fast = False
+    for key, value in body.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            return
+        if len(value) >= _FAST_FORM_MIN_LENGTH and _BASE64_ONLY.fullmatch(value):
+            encoded = value.replace("+", "%2B").replace("/", "%2F").replace("=", "%3D")
+            fast = True
+        else:
+            encoded = quote_plus(value.encode("utf-8"))
+        pairs.append(f"{quote_plus(key.encode('utf-8'))}={encoded}")
+    if fast:
+        params["body"] = "&".join(pairs)
+
+
+def _ses_config():
+    # botocore's default pool is 10 connections; campaign sends run
+    # CAMPAIGN_SEND_CONCURRENCY threads. Over the pool size urllib3 opens a
+    # connection, then discards it after the request: a fresh TLS handshake per
+    # send, and its warning is not visible in the worker log.
+    return Config(max_pool_connections=max(10, 2 * int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 16) or 1)))
+
+
+def _with_fast_form_body(client):
+    if not hasattr(client, "meta"):
+        return client
+    if not getattr(client, "_relay_fast_form_body", False):
+        client.meta.events.register("before-call.ses.SendRawEmail", _fast_form_body)
+        client._relay_fast_form_body = True
+    return client
+
+
 def ses_client(*, endpoint_url=None):
     if dry_run_enforced():
         # Inert transport guard, not a boto3 client: no STS, no network, and
         # no raise here — suppression surfaces at the send gate so pre-loop
         # factory resolution (e.g. campaign batches) stays non-raising.
         return DryRunGuardClient()
-    return aws_client(
-        "ses",
-        endpoint_url=endpoint_url,
-        task_type="email.send",
-        region_name=settings.AWS_SES_REGION,
+    return _with_fast_form_body(
+        aws_client(
+            "ses",
+            endpoint_url=endpoint_url,
+            task_type="email.send",
+            region_name=settings.AWS_SES_REGION,
+            config=_ses_config(),
+        )
     )
 
 
@@ -105,11 +162,14 @@ def ses_client_for_source(source, *, endpoint_url=None):
     route = route_for_source(source)
     if route is None:
         return ses_client(endpoint_url=endpoint_url)
-    return aws_client(
-        "ses",
-        endpoint_url=endpoint_url,
-        role_arn=route.role_arn,
-        region_name=route.region,
+    return _with_fast_form_body(
+        aws_client(
+            "ses",
+            endpoint_url=endpoint_url,
+            role_arn=route.role_arn,
+            region_name=route.region,
+            config=_ses_config(),
+        )
     )
 
 

@@ -134,6 +134,20 @@ def _campaign_default_source(campaign):
         return None
 
 
+class _BatchContext:
+    """Per-batch values every recipient of the batch shares.
+
+    Loaded once: the campaign row carries the ~80 KB body, and the sender
+    resolution costs queries, so reloading them for each of 500 recipients was
+    measurable GIL-held CPU. Status/schedule are still re-read under the row
+    lock for every recipient.
+    """
+
+    def __init__(self, campaign_id):
+        self.campaign = Campaign.objects.select_related("client", "audience").get(pk=campaign_id)
+        self.source = _campaign_default_source(self.campaign) or settings.DEFAULT_FROM_EMAIL
+
+
 def send_campaign_batch(payload, *, ses_client=None):
     campaign_id = payload["campaign_id"]
     recipient_ids = payload["campaign_recipient_ids"]
@@ -153,9 +167,10 @@ def send_campaign_batch(payload, *, ses_client=None):
         )
 
     _mark_campaign_sending(campaign_id, recipient_ids)
+    context = _BatchContext(campaign_id)
     concurrency = _send_concurrency(len(recipient_ids))
     started = time.monotonic()
-    outcomes, failure = _send_recipients(campaign_id, recipient_ids, ses, concurrency)
+    outcomes, failure = _send_recipients(campaign_id, recipient_ids, ses, concurrency, context)
     for outcome in outcomes:
         result[f"{outcome}_count"] += 1
     _report_batch_throughput(campaign_id, result, time.monotonic() - started, concurrency)
@@ -180,7 +195,7 @@ def _send_concurrency(recipient_count):
     return max(1, min(configured, recipient_count))
 
 
-def _send_recipients(campaign_id, recipient_ids, ses, concurrency):
+def _send_recipients(campaign_id, recipient_ids, ses, concurrency, context):
     """Send each recipient once; return (outcomes, first_failure).
 
     The SES call is a synchronous network round trip of roughly 200 ms, so one
@@ -194,7 +209,7 @@ def _send_recipients(campaign_id, recipient_ids, ses, concurrency):
     if concurrency == 1:
         for recipient_id in recipient_ids:
             try:
-                outcomes.append(_send_campaign_recipient(campaign_id, recipient_id, ses))
+                outcomes.append(_send_campaign_recipient(campaign_id, recipient_id, ses, context))
             except Exception as exc:
                 return outcomes, (recipient_id, exc)
         return outcomes, None
@@ -213,7 +228,7 @@ def _send_recipients(campaign_id, recipient_ids, ses, concurrency):
                 except queue.Empty:
                     return
                 try:
-                    outcomes.append(_send_campaign_recipient(campaign_id, recipient_id, ses))
+                    outcomes.append(_send_campaign_recipient(campaign_id, recipient_id, ses, context))
                 except Exception as exc:
                     failures.append((recipient_id, exc))
                     stop.set()
@@ -274,19 +289,20 @@ def _lock_campaign_shared(campaign_id):
             cursor.execute(f"SELECT 1 FROM {table} WHERE id = %s FOR SHARE", [campaign_id])  # noqa: S608
             if cursor.fetchone() is None:
                 raise Campaign.DoesNotExist(f"campaign {campaign_id} does not exist")
-    return Campaign.objects.get(pk=campaign_id)
+    return Campaign.objects.only("id", "status", "scheduled_at").get(pk=campaign_id)
 
 
 @transaction.atomic
-def _send_campaign_recipient(campaign_id, recipient_id, ses):
+def _send_campaign_recipient(campaign_id, recipient_id, ses, context):
     # Cancellation and dispatch share this lock; cancellation cannot race an
     # in-flight provider call and claim no message was sent.
     campaign = _lock_campaign_shared(campaign_id)
     recipient = (
         CampaignRecipient.objects.select_for_update(of=("self",))
-        .select_related("campaign", "campaign__client", "campaign__audience", "contact")
+        .select_related("contact")
         .get(pk=recipient_id, campaign_id=campaign_id)
     )
+    recipient.campaign = context.campaign
 
     if recipient.status in TERMINAL_STATUSES or recipient.ses_message_id:
         return "skipped"
@@ -294,7 +310,7 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
     if recipient.status != CampaignRecipientStatus.PENDING:
         return "skipped"
 
-    if recipient.campaign.status == CampaignStatus.CANCELLED:
+    if campaign.status == CampaignStatus.CANCELLED:
         recipient.status = CampaignRecipientStatus.SKIPPED
         recipient.last_error = "campaign_cancelled"
         recipient.save(update_fields=["status", "last_error", "updated_at"])
@@ -307,7 +323,7 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
         raise CampaignSenderError("Campaign has not been released for sending.")
 
     tokens = _send_tokens_for_pending_recipient(recipient)
-    return _deliver_campaign_recipient(recipient, ses, tokens)
+    return _deliver_campaign_recipient(recipient, ses, tokens, context.source)
 
 
 # Rendering an ~80 KB newsletter (HTML parse + link rewrite) costs ~15 ms of
@@ -338,7 +354,7 @@ def _render_recipient_bodies(campaign, tokens):
     )
 
 
-def _deliver_campaign_recipient(recipient, ses, tokens):
+def _deliver_campaign_recipient(recipient, ses, tokens, source):
     html_body, text_body = _render_recipient_bodies(recipient.campaign, tokens)
 
     # SES clients can raise transport, service, or unexpected adapter errors;
@@ -346,7 +362,7 @@ def _deliver_campaign_recipient(recipient, ses, tokens):
     try:
         message_id = send_email(
             ses_client=ses,
-            source=_campaign_default_source(recipient.campaign) or settings.DEFAULT_FROM_EMAIL,
+            source=source,
             to_email=recipient.email,
             subject=recipient.campaign.subject,
             html_body=html_body,

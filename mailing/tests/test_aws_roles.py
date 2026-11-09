@@ -49,7 +49,9 @@ def test_email_client_uses_assumed_role_credentials(monkeypatch):
     assert isinstance(aws.ses_client(), Ses)
     assert calls[0][0] == "sts"
     assert calls[1][1]["RoleArn"] == "arn:aws:iam::123456789012:role/relay-email"
-    assert calls[2] == (
+    ses_name, ses_kwargs = calls[2]
+    assert ses_kwargs.pop("config").max_pool_connections >= 32  # > send threads: no per-send TLS handshakes
+    assert (ses_name, ses_kwargs) == (
         "ses",
         {
             "region_name": "us-east-1",
