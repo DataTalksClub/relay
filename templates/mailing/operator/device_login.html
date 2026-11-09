@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Approve Relay CLI login{% endblock %}
+{% block content %}
+<main class="page-shell">
+  <section class="panel">
+    <h1>Connect Relay CLI</h1>
+    {% if decided %}
+      {% if approved %}<p role="status">This device is approved. Return to the Relay CLI.</p>
+      {% else %}<p role="status">This device login was denied.</p>{% endif %}
+    {% elif login and not expired %}
+      <p>A command line client is asking to use your Relay operator account.</p>
+      <dl>
+        <dt>Code</dt><dd><strong>{{ user_code }}</strong></dd>
+        <dt>Device</dt><dd>{{ login.label|default:"Relay CLI" }}</dd>
+        <dt>Request address</dt><dd>{{ login.request_ip|default:"Unknown" }}</dd>
+        <dt>Requested</dt><dd>{{ login.created_at|date:"Y-m-d H:i T" }}</dd>
+        <dt>Signed in as</dt><dd>{{ request.user.email }}</dd>
+      </dl>
+      <p>Approve only if you started this login on a device you control.</p>
+      <form method="post" action="{% url 'mailing:device_login_decide' %}">
+        {% csrf_token %}<input type="hidden" name="code" value="{{ user_code }}">
+        <button type="submit" name="approve" value="true">Approve device</button>
+        <button type="submit" name="approve" value="false">Deny</button>
+      </form>
+    {% else %}
+      {% if error %}<p role="alert">{{ error }}</p>{% else %}<p role="status">This code is unknown, expired, or already used.</p>{% endif %}
+      <form method="get" action="{% url 'mailing:device_login_approval' %}">
+        <label for="device-code">Enter the code shown in your terminal</label>
+        <input id="device-code" name="code" autocomplete="one-time-code" required>
+        <button type="submit">Review device</button>
+      </form>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

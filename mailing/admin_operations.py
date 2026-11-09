@@ -3,7 +3,9 @@
 from dataclasses import asdict, fields, is_dataclass
 
 from django import forms
+from django.core.exceptions import ValidationError
 from django.db.models import Q, QuerySet
+from django.db.models.deletion import ProtectedError
 from django.forms.models import model_to_dict
 from django.http import JsonResponse
 from django.utils import timezone
@@ -75,7 +77,7 @@ READ_FIELDS = {
     ),
     "templates": (
         models.EmailTemplate,
-        "id client_id key name subject html_body text_body category markdown_body created_at updated_at",
+        "id client_id key name description subject html_body text_body markdown_body markdown_layout_context category required_context example_context default_sender_id is_transactional is_active created_at updated_at",
     ),
     "transactional-messages": (
         models.TransactionalMessage,
@@ -316,6 +318,49 @@ def tag_write(request, tag_id=None):
     tag.save()
     record_audit(request, "admin.tag.save", tag)
     return JsonResponse(projection("tags", tag), status=201 if request.method == "POST" else 200)
+
+
+@admin_endpoint(["POST", "PATCH", "DELETE"])
+def template_write(request, template_id=None):
+    if (request.method == "POST") != (template_id is None):
+        raise ApiError("method_not_allowed", 405)
+    template = get_record(models.EmailTemplate, pk=template_id) if template_id else models.EmailTemplate()
+    if request.method == "DELETE":
+        record_audit(request, "admin.template.delete", template, {"client_id": template.client_id, "key": template.key})
+        try:
+            template.delete()
+        except ProtectedError:
+            raise ApiError("template_in_use", 409) from None
+        return JsonResponse({"deleted": True, "id": template_id})
+
+    allowed = {
+        "client_id", "key", "name", "description", "subject", "html_body", "text_body", "markdown_body",
+        "markdown_layout_context", "category", "required_context", "example_context", "default_sender_id",
+        "is_transactional", "is_active",
+    }
+    data = body(request, allowed)
+    for field, value in data.items():
+        if field == "client_id":
+            valid = type(value) is int and value > 0
+        elif field in {"markdown_layout_context", "is_transactional", "is_active"}:
+            valid = type(value) is bool
+        elif field == "required_context":
+            valid = isinstance(value, list)
+        elif field == "example_context":
+            valid = isinstance(value, dict)
+        else:
+            valid = isinstance(value, str)
+        if not valid:
+            raise ApiError("validation_error", fields={field: "invalid_type"})
+        setattr(template, field, value)
+    try:
+        template.full_clean()
+    except ValidationError as exc:
+        raise ApiError("validation_error", fields=exc.message_dict) from None
+    template.save()
+    action = "create" if request.method == "POST" else "update"
+    record_audit(request, f"admin.template.{action}", template, {"client_id": template.client_id, "key": template.key})
+    return JsonResponse(projection("templates", template), status=201 if request.method == "POST" else 200)
 
 
 @admin_endpoint(["POST", "PATCH"])

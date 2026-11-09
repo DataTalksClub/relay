@@ -107,6 +107,7 @@ for action in ("mark-read", "block", "unblock"):
 
 WRITE_RESOURCES = {
     "tags": (operations.tag_write, "tag_id"),
+    "templates": (operations.template_write, "template_id"),
     "inbound-addresses": (operations.inbound_address_write, "address_id"),
     "blocked-senders": (operations.blocked_delete, "rule_id"),
 }

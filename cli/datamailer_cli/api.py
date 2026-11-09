@@ -1,4 +1,4 @@
-"""Minimal, dependency-free HTTP client for the Datamailer API.
+"""Minimal, dependency-free HTTP client for the Relay API.
 
 Uses only the standard library (``urllib``) so the CLI installs fast and light.
 """
@@ -15,7 +15,7 @@ from . import __version__
 
 
 class ApiError(Exception):
-    """A non-2xx response (or transport failure) from the Datamailer API."""
+    """A non-2xx response (or transport failure) from the Relay API."""
 
     def __init__(self, message: str, *, status: int | None = None, code: str = "", fields: dict | None = None):
         super().__init__(message)
@@ -32,9 +32,9 @@ class ApiError(Exception):
 class DatamailerClient:
     def __init__(self, base_url: str, api_key: str, *, timeout: float = 30.0):
         if not base_url:
-            raise ApiError("No Datamailer URL configured. Run `datamailer configure` or set DATAMAILER_URL.")
+            raise ApiError("No Relay URL configured. Run `relay configure` or set RELAY_URL.")
         if not api_key:
-            raise ApiError("No API key configured. Run `datamailer configure` or set DATAMAILER_API_KEY.")
+            raise ApiError("No API credential configured. Run `relay auth login` or set RELAY_API_KEY.")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
@@ -56,7 +56,7 @@ class DatamailerClient:
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": f"datamailer-cli/{__version__}",
+                "User-Agent": f"relay-cli/{__version__}",
             },
         )
 
@@ -66,7 +66,11 @@ class DatamailerClient:
         except urllib.error.HTTPError as exc:
             raise _error_from_response(exc.code, exc.read()) from exc
         except urllib.error.URLError as exc:
-            raise ApiError(f"Could not reach Datamailer at {self.base_url}: {exc.reason}") from exc
+            if isinstance(exc.reason, TimeoutError):
+                raise ApiError(f"Relay request timed out after {self.timeout:g} seconds.") from exc
+            raise ApiError(f"Could not reach Relay at {self.base_url}: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise ApiError(f"Relay request timed out after {self.timeout:g} seconds.") from exc
 
     # --- endpoint helpers -------------------------------------------------
 
