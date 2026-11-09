@@ -137,6 +137,20 @@ RELAY_UNSUBSCRIBE_LOCK_TIMEOUT_MS = max(100, int(os.environ.get("RELAY_UNSUBSCRI
 # thread from /t/* and /unsubscribe. 0 disables the endpoint cap.
 RELAY_SES_WEBHOOK_MAX_CONCURRENCY = max(0, int(os.environ.get("RELAY_SES_WEBHOOK_MAX_CONCURRENCY", "2")))
 # Queue-age alerting (scheduler): oldest runnable READY task per queue.
+# Stuck-task detection (WP5). A campaign batch task RUNNING with no heartbeat
+# for the lease is failed loudly (FAILED, "stale task" error) and the campaign
+# gets an alert. The worker beats every HEARTBEAT seconds, so the lease must be
+# several beats long.
+RELAY_TASK_HEARTBEAT_SECONDS = max(1, int(os.environ.get("RELAY_TASK_HEARTBEAT_SECONDS", "30")))
+RELAY_TASK_LEASE_SECONDS = max(
+    RELAY_TASK_HEARTBEAT_SECONDS * 3, int(os.environ.get("RELAY_TASK_LEASE_SECONDS", "300"))
+)
+# Re-enqueue the still-PENDING recipients of a stale batch. OFF until WP1
+# (claim/send/finalize, SES call outside the transaction) is deployed: before
+# it, PENDING can mean "accepted by SES but rolled back", so a re-enqueue could
+# send a duplicate. Off = report only.
+RELAY_STALE_BATCH_AUTO_REENQUEUE = bool_env("RELAY_STALE_BATCH_AUTO_REENQUEUE", default=False)
+
 RELAY_QUEUE_AGE_ALERT_SECONDS = {
     "provider-events": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_PROVIDER_EVENTS_SECONDS", "900")),
     "tracking": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_TRACKING_SECONDS", "300")),

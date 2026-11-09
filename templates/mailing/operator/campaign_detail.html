@@ -27,6 +27,7 @@
         <p>Delivery starts after this time when the scheduler and sending workers process the campaign. You can cancel before sending starts.</p>
       </section>
     {% endif %}
+    {% for alert in dispatch_alerts %}<p class="form-errors" role="alert"><strong>Stuck send task:</strong> {{ alert.message }}</p>{% endfor %}
     {% if scheduling_error %}<p class="form-errors" role="alert">{{ scheduling_error }}</p>{% endif %}
     <details class="secondary-section panel-diagnostics"><summary>View campaign message and test preview</summary>
   {% endif %}

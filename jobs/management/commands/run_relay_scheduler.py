@@ -9,6 +9,7 @@ from jobs.services import (
 )
 from mailing import db_retry
 from mailing.services.campaigns import dispatch_due_campaigns
+from mailing.services.task_leases import fail_stale_campaign_tasks
 from mailing.services.queue_monitor import check_queue_age
 from mailing.services.ses_monitor import check_ses_delivery_gap
 from mailing.services.transactional_monitor import check_transactional_health
@@ -37,6 +38,7 @@ class Command(BaseCommand):
         recovered = recover_unenqueued_jobs()
         fired = run_due_schedules()
         campaigns = dispatch_due_campaigns()
+        fail_stale_campaign_tasks()
         pruned = prune_finished_task_results()
         alert_stuck_transactional_messages()
         check_transactional_health()
