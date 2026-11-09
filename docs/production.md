@@ -57,7 +57,7 @@ Differences from the sandbox deploy path:
 - `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `DEFAULT_FROM_EMAIL`,
   `AWS_SES_REGION`, and `AWS_SES_CONFIGURATION_SET` come from
   `/etc/relay/infrastructure.env` and are never rewritten by the deploy.
-- `RELAY_SES_MAX_SEND_RATE` is not set, so the application default of 10
+- `RELAY_SES_ACCOUNT_MAX_SEND_RATE` is not set, so the application default of 45
   messages per second applies.
 - There is no public health URL to poll after the deploy; the release gate is
   the local readiness check, the container checks, and the in-host smoke test.

@@ -93,7 +93,7 @@ def fetch_row(pair):
         "account": account_label(pair.role_arn),
         "region": pair.region,
         "sources": list(pair.sources),
-        "configured_max_send_rate": settings.SES_MAX_SEND_RATE_PER_SECOND,
+        "configured_max_send_rate": settings.SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND,
         "status": "ok",
         "error": "",
         "identities": [],

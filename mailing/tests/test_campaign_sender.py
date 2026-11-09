@@ -290,13 +290,10 @@ def test_campaign_handler_can_retry_pending_recipient_with_token_hashes_after_tr
         def send_email(self, **params):
             sends.append(params)
             if len(sends) == 1:
-                raise ClientError(
-                    {
-                        "Error": {"Code": "Throttling", "Message": "Rate exceeded"},
-                        "ResponseMetadata": {"HTTPStatusCode": 429},
-                    },
-                    "SendEmail",
-                )
+                # Transient but not Throttling: Throttling gets one internal
+                # re-permitted retry in mailing/ses.py, so a batch-level retry
+                # needs a different transient failure.
+                raise TimeoutError("Rate exceeded")
             return {"MessageId": "ses-message-2"}
 
         def send_raw_email(self, **params):
