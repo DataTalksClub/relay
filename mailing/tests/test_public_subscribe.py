@@ -1,4 +1,5 @@
 import pytest
+from django.conf import settings
 from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
@@ -377,11 +378,9 @@ def test_parse_public_lists_single_optin_needs_no_confirm_base():
 
 
 def test_default_public_list_is_the_datatalks_newsletter():
-    from django.conf import settings as django_settings
-
-    spec = parse_public_lists(django_settings.RELAY_PUBLIC_LISTS)["dtc-newsletter"]
+    spec = parse_public_lists(settings.RELAY_PUBLIC_LISTS)["dtc-newsletter"]
 
     assert (spec.organization_slug, spec.client_slug, spec.audience_slug) == ("datatalksclub", "dtc-newsletter", "dtc")
     assert spec.optin == "single"
     assert spec.template_key == "newsletter-welcome"
-    assert "https://www.datatalks.club" in django_settings.RELAY_PUBLIC_SUBSCRIBE_ORIGINS
+    assert "https://www.datatalks.club" in settings.RELAY_PUBLIC_SUBSCRIBE_ORIGINS
