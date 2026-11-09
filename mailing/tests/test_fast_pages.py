@@ -172,7 +172,9 @@ def test_readiness_ok(client):
 
 def test_dashboard_query_budget(client, staff_user, client_record, seeded):
     login_staff(client, staff_user, client_record)
-    with django_assert_num_queries(20):
+    # 22: the complaint panels add the recent-complaints query plus the
+    # complaint-rate aggregation (d392318); the rest of the budget is unchanged.
+    with django_assert_num_queries(22):
         response = client.get(reverse("mailing:dashboard"))
     assert response.status_code == 200
 

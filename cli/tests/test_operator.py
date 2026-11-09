@@ -110,3 +110,124 @@ def test_regular_template_delete_requires_confirmation(capsys):
     ])
     assert result == 1
     assert "--confirm" in capsys.readouterr().err
+
+
+UUID = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+
+
+def test_schedule_show_uses_uuid_path():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"id": UUID})) as request:
+        result = cli.main([
+            "operator", "schedules", "show", "--uuid", UUID,
+            "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ])
+    assert result == 0
+    request.assert_called_once_with("GET", f"/api/admin/schedules/{UUID}", payload=None, query=None)
+
+
+def test_job_retry_requires_confirmation(capsys):
+    result = cli.main([
+        "operator", "jobs", "retry", "--uuid", UUID,
+        "--url", "https://relay.test", "--api-key", "relay_admin_test",
+    ])
+    assert result == 1
+    assert "--confirm" in capsys.readouterr().err
+
+
+def test_job_retry_posts_confirmed_retry():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"id": UUID})) as request:
+        result = cli.main([
+            "operator", "jobs", "retry", "--uuid", UUID, "--confirm",
+            "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ])
+    assert result == 0
+    request.assert_called_once_with("POST", f"/api/admin/jobs/{UUID}/retry", payload={}, query=None)
+
+
+def test_dead_letter_list_uses_admin_resource():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"items": []})) as request:
+        result = cli.main(["operator", "dead-letters", "list", "--url", "https://relay.test", "--api-key", "relay_admin_test"])
+    assert result == 0
+    request.assert_called_once_with("GET", "/api/admin/dead-letters", payload=None, query=None)
+
+
+def test_dead_letter_retry_rejects_invalid_uuid(capsys):
+    result = cli.main([
+        "operator", "dead-letters", "retry", "--uuid", "not-a-uuid", "--confirm",
+        "--url", "https://relay.test", "--api-key", "relay_admin_test",
+    ])
+    assert result == 1
+    assert "--uuid" in capsys.readouterr().err
+
+
+def test_email_activity_list_filters_by_client():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"items": []})) as request:
+        result = cli.main([
+            "operator", "events", "list", "--client-id", "3",
+            "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ])
+    assert result == 0
+    request.assert_called_once_with("GET", "/api/admin/events", payload=None, query={"client_id": 3})
+
+
+def test_stats_workers_reports_service_health():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"workers": []})) as request:
+        result = cli.main(["operator", "stats", "workers", "--url", "https://relay.test", "--api-key", "relay_admin_test"])
+    assert result == 0
+    request.assert_called_once_with("GET", "/api/admin/workers", payload=None, query=None)
+
+
+def test_audience_overview_uses_overview_endpoint():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"overview": {}})) as request:
+        result = cli.main([
+            "operator", "lists", "overview", "--id", "5",
+            "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ])
+    assert result == 0
+    request.assert_called_once_with("GET", "/api/admin/audiences/5/overview", payload=None, query=None)
+
+
+def test_campaign_recipient_assume_sent_posts_with_confirmation():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"id": 8})) as request:
+        result = cli.main([
+            "operator", "campaigns", "assume-sent", "--id", "4", "--recipient-id", "8", "--confirm",
+            "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ])
+    assert result == 0
+    request.assert_called_once_with("POST", "/api/admin/campaigns/4/recipients/8/assume-sent", payload={}, query=None)
+
+
+def test_contact_csv_export_prints_raw_csv():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"raw": "email\nx@y.z\n"})) as request:
+        result = cli.main([
+            "operator", "contacts", "csv-export", "--client-id", "3", "--query", "x@y.z",
+            "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ])
+    assert result == 0
+    request.assert_called_once_with(
+        "GET", "/api/admin/clients/3/contacts.csv", payload=None, query={"q": "x@y.z"},
+    )
+
+
+def test_contact_csv_import_requires_dry_run_or_confirmation(tmp_path, capsys):
+    data_file = tmp_path / "contacts.csv.json"
+    data_file.write_text('{"csv": "email\\nx@y.z\\n"}')
+    result = cli.main([
+        "operator", "contacts", "csv-import", "--client-id", "3", "--data-file", str(data_file),
+        "--url", "https://relay.test", "--api-key", "relay_admin_test",
+    ])
+    assert result == 1
+    assert "--confirm" in capsys.readouterr().err
+
+    dry_run_file = tmp_path / "contacts-dry.json"
+    dry_run_file.write_text('{"csv": "email\\nx@y.z\\n", "dry_run": true}')
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"created": 1})) as request:
+        result = cli.main([
+            "operator", "contacts", "csv-import", "--client-id", "3", "--data-file", str(dry_run_file),
+            "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ])
+    assert result == 0
+    request.assert_called_once_with(
+        "POST", "/api/admin/clients/3/contacts/imports/csv",
+        payload={"csv": "email\nx@y.z\n", "dry_run": True}, query=None,
+    )
