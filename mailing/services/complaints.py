@@ -9,7 +9,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db import connection, transaction
-from django.db.models import Count, Q
+from django.db.models import Count
 from django.utils import timezone
 
 from mailing.models import Campaign, CampaignRecipient, EmailEvent, EmailEventType, OperatorAudit
