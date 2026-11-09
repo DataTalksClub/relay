@@ -6,6 +6,7 @@ from email.policy import default
 import pytest
 from botocore.exceptions import ClientError
 from django.test import override_settings
+from django.utils import timezone
 
 from mailing.models import (
     Audience,
@@ -17,6 +18,8 @@ from mailing.models import (
     EmailEvent,
     EmailEventType,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
 from mailing.services.campaign_sender import (
     build_campaign_html_body,
@@ -45,9 +48,18 @@ def campaign_setup():
         html_body='<p>Hello <a href="https://example.com/post?a=1&b=2">read</a> <a href="mailto:a@example.com">mail</a></p>',
         text_body="Hello in text",
     )
-    contact = Contact.objects.create(email="person@example.com")
+    contact = make_sendable_contact("person@example.com", audience, client)
     recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)
     return campaign, recipient
+
+
+def make_sendable_contact(email, audience, client):
+    """A contact the pre-send suppression recheck lets through."""
+    contact = Contact.objects.create(email=email, verified_at=timezone.now())
+    Subscription.objects.create(
+        contact=contact, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED,
+    )
+    return contact
 
 
 @override_settings(
@@ -182,7 +194,7 @@ def test_campaign_sender_records_permanent_failure_and_acknowledges_record(campa
 @override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")
 def test_campaign_handler_returns_partial_batch_failure_for_retryable_send(campaign_setup, monkeypatch):
     campaign, recipient = campaign_setup
-    second_contact = Contact.objects.create(email="second@example.com")
+    second_contact = make_sendable_contact("second@example.com", campaign.audience, campaign.client)
     second_recipient = CampaignRecipient.objects.create(
         campaign=campaign, contact=second_contact, email=second_contact.email
     )
@@ -228,7 +240,7 @@ def test_campaign_handler_refreshes_sent_count_when_single_record_partially_send
     campaign_setup, monkeypatch
 ):
     campaign, recipient = campaign_setup
-    second_contact = Contact.objects.create(email="second@example.com")
+    second_contact = make_sendable_contact("second@example.com", campaign.audience, campaign.client)
     second_recipient = CampaignRecipient.objects.create(
         campaign=campaign, contact=second_contact, email=second_contact.email
     )

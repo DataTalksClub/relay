@@ -31,12 +31,9 @@ from mailing.models import (
 from mailing.queue_contracts import CAMPAIGN_EMAIL_CONTRACT, CONTRACT_VERSION, validate_campaign_email_message
 from mailing.services.campaign_composer import composer_send_issues
 from mailing.services.campaign_rendering import campaign_unsubscribe_headers
-from mailing.services.contacts import (
-    NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES,
-    has_invalid_email_validation,
-    is_verified_for_marketing,
-)
+from mailing.services.contacts import NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES
 from mailing.services.insert_select import insert_select
+from mailing.services.suppression import suppression_skip_reason
 
 
 @dataclass(frozen=True)
@@ -337,39 +334,15 @@ def _bulk_skip_context(campaign, contact_ids):
 
 
 def _skip_reason_bulk(contact, campaign, bulk):
-    if contact.hard_bounced_at is not None:
-        return CampaignRecipientSkipReason.HARD_BOUNCE
-    if contact.complained_at is not None:
-        return CampaignRecipientSkipReason.COMPLAINT
-    if contact.global_unsubscribed_at is not None:
-        return CampaignRecipientSkipReason.GLOBAL_UNSUBSCRIBE
-    if has_invalid_email_validation(contact):
-        return CampaignRecipientSkipReason.INVALID_EMAIL
     audience_subs, client_subs, disabled = bulk
-    audience_subscription = audience_subs.get(contact.pk)
-    client_subscription = client_subs.get(contact.pk)
-
-    if not _is_verified_bulk(contact, audience_subscription, client_subscription):
-        return CampaignRecipientSkipReason.UNVERIFIED
-    if audience_subscription and audience_subscription["status"] == SubscriptionStatus.UNSUBSCRIBED:
-        return CampaignRecipientSkipReason.AUDIENCE_UNSUBSCRIBE
-    if client_subscription and client_subscription["status"] == SubscriptionStatus.UNSUBSCRIBED:
-        return CampaignRecipientSkipReason.CLIENT_UNSUBSCRIBE
-    if not client_subscription or client_subscription["status"] != SubscriptionStatus.SUBSCRIBED:
-        return CampaignRecipientSkipReason.SUPPRESSED
+    reason = suppression_skip_reason(
+        contact, audience_subs.get(contact.pk), client_subs.get(contact.pk),
+    )
+    if reason:
+        return reason
     if campaign.category_tag and contact.pk in disabled:
         return CampaignRecipientSkipReason.CLIENT_UNSUBSCRIBE
     return ""
-
-
-def _is_verified_bulk(contact, audience_subscription, client_subscription):
-    """Mirror contacts.is_verified_for_marketing without per-row queries."""
-    if contact.verified_at is not None:
-        return True
-    for sub in (audience_subscription, client_subscription):
-        if sub and sub.get("verified_at") is not None:
-            return True
-    return False
 
 
 def _enqueue_campaign_batch(correlation_id, payload):
@@ -696,34 +669,13 @@ def _recipient_status(contact, campaign):
 
 
 def _skip_reason(contact, campaign):
-    if contact.hard_bounced_at is not None:
-        return CampaignRecipientSkipReason.HARD_BOUNCE
-    if contact.complained_at is not None:
-        return CampaignRecipientSkipReason.COMPLAINT
-    if contact.global_unsubscribed_at is not None:
-        return CampaignRecipientSkipReason.GLOBAL_UNSUBSCRIBE
-    if has_invalid_email_validation(contact):
-        return CampaignRecipientSkipReason.INVALID_EMAIL
     audience_subscription = _subscription_for(contact, campaign, client=None)
     client_subscription = _subscription_for(contact, campaign, client=campaign.client)
-
-    if not is_verified_for_marketing(
-        contact,
-        audience_subscription,
-        client_subscription,
-    ):
-        return CampaignRecipientSkipReason.UNVERIFIED
-
-    if audience_subscription and audience_subscription.status == SubscriptionStatus.UNSUBSCRIBED:
-        return CampaignRecipientSkipReason.AUDIENCE_UNSUBSCRIBE
-
-    if client_subscription and client_subscription.status == SubscriptionStatus.UNSUBSCRIBED:
-        return CampaignRecipientSkipReason.CLIENT_UNSUBSCRIBE
-    if not client_subscription or client_subscription.status != SubscriptionStatus.SUBSCRIBED:
-        return CampaignRecipientSkipReason.SUPPRESSED
+    reason = suppression_skip_reason(contact, audience_subscription, client_subscription)
+    if reason:
+        return reason
     if _has_disabled_category_preference(contact, campaign):
         return CampaignRecipientSkipReason.CLIENT_UNSUBSCRIBE
-
     return ""
 
 

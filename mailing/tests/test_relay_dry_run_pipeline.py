@@ -10,6 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 from django.test import override_settings
+from django.utils import timezone
 
 from mailing.dry_run import DryRunSuppressed
 from mailing.models import (
@@ -24,6 +25,8 @@ from mailing.models import (
     EmailEventType,
     EmailTemplate,
     Organization,
+    Subscription,
+    SubscriptionStatus,
     TransactionalMessage,
     TransactionalMessageStatus,
 )
@@ -91,7 +94,10 @@ def campaign_setup(organization):
         html_body="<p>Hello</p>",
         text_body="Hello in text",
     )
-    contact = Contact.objects.create(email="recipient@example.com")
+    contact = Contact.objects.create(email="recipient@example.com", verified_at=timezone.now())
+    Subscription.objects.create(
+        contact=contact, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED,
+    )
     recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)
     return campaign, recipient
 
