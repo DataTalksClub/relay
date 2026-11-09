@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('mailing', '0048_newsletter_issues_blocks'),
+        ('mailing', '0049_send_queue_split'),
     ]
 
     operations = [
