@@ -1,3 +1,4 @@
+import binascii
 import logging
 import threading
 import time
@@ -154,11 +155,28 @@ def _raw_message(envelope, content):
     return message
 
 
+# The stdlib quoted-printable encoder is pure Python (~10 ms for an 80 KB
+# newsletter, GIL-held, once per recipient). binascii does the same job in C.
+_FAST_QP_MIN_HTML = 8192
+
+
+def _add_html_alternative(message, html):
+    if len(html) < _FAST_QP_MIN_HTML:
+        message.add_alternative(html, subtype="html")
+        return
+    message.make_alternative()
+    part = type(message)(policy=message.policy)
+    part["Content-Type"] = 'text/html; charset="utf-8"'
+    part["Content-Transfer-Encoding"] = "quoted-printable"
+    part.set_payload(binascii.b2a_qp(html.encode("utf-8")).decode("ascii"))
+    message.attach(part)
+
+
 def _ordinary_body(message, content):
     if content.text:
         message.set_content(content.text)
         if content.html:
-            message.add_alternative(content.html, subtype="html")
+            _add_html_alternative(message, content.html)
     else:
         message.set_content(content.html, subtype="html")
     if content.parts:
