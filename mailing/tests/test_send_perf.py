@@ -4,6 +4,7 @@ import logging
 import re
 
 import pytest
+from django.conf import settings
 from django.db import connection
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
@@ -84,13 +85,13 @@ def test_queries_per_email_marginal_cost_and_no_duplicate_work():
     print(f"queries_per_email={per_email}")
     assert per_email <= EXPECTED_QUERIES_PER_EMAIL, per_email
 
-    # Recipient row loaded once per email (the old second FOR UPDATE in tokens.py
-    # was a second SELECT of the same row); campaign body loaded once per batch.
-    recipient_selects = [q for q in large if 'FROM "campaign_recipients"' in q and '"campaign_recipients"."id" = ' in q.split("WHERE")[-1]]
-    assert len(recipient_selects) == 12, len(recipient_selects)
+    # Claim-send-finalize: recipients are claimed in chunks (one SELECT per chunk, not per
+    # email), no query locks a row, and the campaign body is loaded once per batch.
+    claim_selects = [q for q in large if 'FROM "campaign_recipients"' in q and '"claim_owner" = ' in q]
+    assert len(claim_selects) == -(-12 // settings.CAMPAIGN_CLAIM_CHUNK), len(claim_selects)
+    assert not [q for q in large if "FOR UPDATE" in q or "FOR SHARE" in q], "send path must not lock rows"
     full_campaign_loads = [q for q in large if 'FROM "campaigns"' in q and '"campaigns"."html_body"' in q.split("FROM")[0]]
-    # (status flip, batch context, final counts): per batch, independent of N
-    assert len(full_campaign_loads) == 3, len(full_campaign_loads)
+    assert len(full_campaign_loads) == 1, len(full_campaign_loads)  # the batch context; independent of N
 
 
 @override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)

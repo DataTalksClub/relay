@@ -128,6 +128,7 @@ def test_role_client_is_cached_and_refreshes_credentials(monkeypatch):
     AWS_CONNECT_TIMEOUT=4,
     AWS_READ_TIMEOUT=17,
     AWS_MAX_ATTEMPTS=3,
+    AWS_SES_SEND_MAX_ATTEMPTS=1,
 )
 def test_ses_client_config_pool_retries_timeouts_keepalive(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "k")
@@ -135,7 +136,10 @@ def test_ses_client_config_pool_retries_timeouts_keepalive(monkeypatch):
     config = aws.ses_client().meta.config
     assert config.max_pool_connections >= 16 + 4
     assert config.retries["mode"] == "standard"
-    assert config.retries["total_max_attempts"] == 3
+    # SES sends are not idempotent: botocore must not retry a lost response (a duplicate
+    # email the sender's UNKNOWN handling never sees). Other clients keep AWS_MAX_ATTEMPTS.
+    assert config.retries["total_max_attempts"] == 1
+    assert aws._boto_config().retries["total_max_attempts"] == 3
     assert (config.connect_timeout, config.read_timeout) == (4, 17)
     assert config.tcp_keepalive is True
 

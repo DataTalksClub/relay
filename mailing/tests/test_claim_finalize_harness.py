@@ -1,14 +1,13 @@
 """WP1 acceptance tests: claim -> SES call outside any transaction -> finalize.
 
-Phase A (this file's first commit) lands the fault-injection harness and the
-acceptance tests against the planned API. Tests that need WP1 behaviour are
-marked ``wp1`` and xfail until the implementation (Phase B) removes the mark.
-The ``test_harness_*`` tests pass on main and prove the harness itself.
+Acceptance tests AC1-AC8 for the claim/send/finalize path, driven by the fault-injection
+harness (``claim_finalize_harness``). The ``test_harness_*`` tests prove the harness itself.
 
 Needs PostgreSQL (row locks, one connection per thread, real subprocesses):
     DATABASE_URL=postgresql://... uv run pytest mailing/tests/test_claim_finalize_harness.py
 """
 
+import ast
 import json
 import os
 import signal
@@ -22,7 +21,14 @@ from django.utils import timezone
 
 from mailing.models import Campaign, CampaignRecipient, CampaignRecipientStatus
 from mailing.services.campaign_sender import send_campaign_batch
+from mailing.services.send_reconcile import (
+    expire_stale_claims,
+    reconcile_unknown_from_event,
+    resend_unknown,
+    unknown_recipients,
+)
 from mailing.tests.claim_finalize_harness import (
+    RUNNER,
     FaultSes,
     big_html,
     campaign_with_recipients,
@@ -35,11 +41,10 @@ pytestmark = [
     pytest.mark.skipif(connection.vendor != "postgresql", reason="needs PostgreSQL"),
     pytest.mark.django_db(transaction=True),
 ]
-wp1 = pytest.mark.xfail(reason="WP1 phase B: claim-send-finalize not implemented yet", strict=False)
 
 SENDING = "sending"
 UNKNOWN = "unknown"
-FAST = {"SES_MAX_SEND_RATE_PER_SECOND": 1000.0}
+FAST = {"SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND": 0}
 
 
 def _recipient(email):
@@ -80,7 +85,6 @@ def test_harness_detects_transaction_open_during_call_on_main():
 # --- AC1: no DB transaction during the SES call -----------------------------------------
 
 
-@wp1
 @override_settings(CAMPAIGN_SEND_CONCURRENCY=4, **FAST)
 def test_ac1_no_transaction_open_during_ses_call():
     campaign, payload = campaign_with_recipients(20)
@@ -93,7 +97,6 @@ def test_ac1_no_transaction_open_during_ses_call():
 # --- AC2: no lock on the Campaign row while sending --------------------------------------
 
 
-@wp1
 @override_settings(CAMPAIGN_SEND_CONCURRENCY=4, **FAST)
 def test_ac2_no_campaign_row_lock_in_send_path():
     campaign, payload = campaign_with_recipients(20)
@@ -102,11 +105,9 @@ def test_ac2_no_campaign_row_lock_in_send_path():
     campaign_locks = [
         sql for sql in log.matching('"campaigns"') if "for share" in sql.lower() or "for update" in sql.lower()
     ]
-    # _mark_campaign_sending may lock the campaign once per batch (not per message); never per recipient.
-    assert len(campaign_locks) <= 1, campaign_locks
+    assert campaign_locks == [], campaign_locks
 
 
-@wp1
 @override_settings(CAMPAIGN_SEND_CONCURRENCY=8, **FAST)
 def test_ac2_concurrent_campaign_update_is_not_blocked_by_in_flight_sends():
     campaign, payload = campaign_with_recipients(40)
@@ -140,24 +141,29 @@ def _run_batch(payload, ses, errors):
 # --- AC3: crash between SES accept and finalize ------------------------------------------
 
 
-@wp1
 @override_settings(CAMPAIGN_SEND_LEASE_SECONDS=600, **FAST)
 def test_ac3_sigkill_after_accept_ends_unknown_is_never_resent_and_reconciles_once():
     campaign, payload = campaign_with_recipients(6)
-    process = run_batch_subprocess(payload, faults={3: "crash_after_accept"}, concurrency=1)
+    # One row per claim, so only the crash window itself is exposed: rows 1-2 were accepted but
+    # still sit in the unflushed finalize buffer, row 3 was accepted and the process dies, 4-6
+    # were never claimed.
+    process = run_batch_subprocess(
+        payload, faults={3: "crash_after_accept"}, concurrency=1, settings_env={"RELAY_CAMPAIGN_CLAIM_CHUNK": "1"}
+    )
     process.communicate(timeout=60)
     assert process.returncode == -signal.SIGKILL
 
-    sending = CampaignRecipient.objects.filter(campaign=campaign, status=SENDING)
-    assert sending.count() == 1, statuses(campaign)
-    stuck = sending.get()
+    counts = statuses(campaign)
+    assert counts == {SENDING: 3, CampaignRecipientStatus.PENDING: 3}, counts
+    stuck = _recipient("person2@example.com")
+    assert stuck.status == SENDING
 
     # Lease not expired: the periodic task must leave it alone.
-    from mailing.services.send_reconcile import expire_stale_claims, reconcile_unknown_from_event
-
     assert expire_stale_claims() == 0
-    CampaignRecipient.objects.filter(pk=stuck.pk).update(claimed_at=timezone.now() - timezone.timedelta(minutes=11))
-    assert expire_stale_claims() == 1
+    CampaignRecipient.objects.filter(campaign=campaign, status=SENDING).update(
+        claimed_at=timezone.now() - timezone.timedelta(minutes=11)
+    )
+    assert expire_stale_claims() == 3
     stuck.refresh_from_db()
     assert stuck.status == UNKNOWN
 
@@ -168,18 +174,17 @@ def test_ac3_sigkill_after_accept_ends_unknown_is_never_resent_and_reconciles_on
     stuck.refresh_from_db()
     assert stuck.status == UNKNOWN
 
-    event = {"ses_message_id": "ses-3", "recipient": stuck.email, "campaign_id": campaign.id}
+    event = {"ses_message_id": "ses-crashed-3", "recipient": stuck.email, "campaign_id": campaign.id}
     assert reconcile_unknown_from_event(event) is True
     assert reconcile_unknown_from_event(event) is False  # exactly once
     stuck.refresh_from_db()
-    assert stuck.status == CampaignRecipientStatus.SENT and stuck.ses_message_id == "ses-3"
-    assert CampaignRecipient.objects.filter(campaign=campaign, ses_message_id="ses-3").count() == 1
+    assert stuck.status == CampaignRecipientStatus.SENT and stuck.ses_message_id == "ses-crashed-3"
+    assert CampaignRecipient.objects.filter(campaign=campaign, ses_message_id="ses-crashed-3").count() == 1
 
 
 # --- AC4: ambiguous / definite / throttled outcomes --------------------------------------
 
 
-@wp1
 @override_settings(CAMPAIGN_SEND_CONCURRENCY=1, **FAST)
 @pytest.mark.parametrize("fault", ["read_timeout", "conn_reset"])
 def test_ac4_ambiguous_error_becomes_unknown_and_is_not_retried(fault):
@@ -216,7 +221,6 @@ def test_ac4_throttling_returns_row_to_pending():
 # --- AC5: SIGTERM mid-batch --------------------------------------------------------------
 
 
-@wp1
 @override_settings(**FAST)
 def test_ac5_sigterm_finalizes_in_flight_returns_unstarted_and_exits_in_grace():
     campaign, payload = campaign_with_recipients(60)
@@ -238,7 +242,6 @@ def test_ac5_sigterm_finalizes_in_flight_returns_unstarted_and_exits_in_grace():
 # --- AC6: DB round trips per email -------------------------------------------------------
 
 
-@wp1
 @override_settings(CAMPAIGN_SEND_CONCURRENCY=4, **FAST)
 def test_ac6_db_round_trips_per_email_at_most_3_amortized():
     count = 200
@@ -255,7 +258,7 @@ def test_ac6_db_round_trips_per_email_at_most_3_amortized():
 
 
 @pytest.mark.skipif(not os.environ.get("RELAY_BENCH"), reason="set RELAY_BENCH=1 to run the throughput benchmark")
-@override_settings(CAMPAIGN_SEND_CONCURRENCY=16, SES_MAX_SEND_RATE_PER_SECOND=45.0)
+@override_settings(CAMPAIGN_SEND_CONCURRENCY=16, SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0)
 def test_ac7_benchmark_throughput_200ms_80kb_limiter_45():
     count = int(os.environ.get("RELAY_BENCH_COUNT", "300"))
     campaign, payload = campaign_with_recipients(count, html_body=big_html())
@@ -270,10 +273,7 @@ def test_ac7_benchmark_throughput_200ms_80kb_limiter_45():
 # --- AC8: operator list + confirmed resend ----------------------------------------------
 
 
-@wp1
 def test_ac8_unknown_list_counts_and_resend_requires_confirmation(client):
-    from mailing.services.send_reconcile import resend_unknown, unknown_recipients
-
     campaign, payload = campaign_with_recipients(3)
     CampaignRecipient.objects.filter(campaign=campaign).update(status=UNKNOWN)
     listing = unknown_recipients(campaign.id)
@@ -288,8 +288,5 @@ def test_ac8_unknown_list_counts_and_resend_requires_confirmation(client):
 
 def test_harness_json_runner_importable():
     # Guard: the runner module must stay import-clean (it is exec'd as a script).
-    import ast
-    from mailing.tests.claim_finalize_harness import RUNNER
-
     ast.parse(RUNNER.read_text())
     assert json.dumps({}) == "{}"

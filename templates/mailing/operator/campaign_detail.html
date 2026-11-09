@@ -27,6 +27,7 @@
         <p>Delivery starts after this time when the scheduler and sending workers process the campaign. You can cancel before sending starts.</p>
       </section>
     {% endif %}
+    {% if unknown_recipient_count %}<p class="form-errors" role="alert"><strong>{{ unknown_recipient_count }} recipient{{ unknown_recipient_count|pluralize }} with unknown send outcome.</strong> The sender could not confirm whether SES accepted the message. They are never resent automatically; SES events resolve them, or <a href="?filter=unknown">review and resend them</a>.</p>{% endif %}
     {% for alert in dispatch_alerts %}<p class="form-errors" role="alert"><strong>Stuck send task:</strong> {{ alert.message }}</p>{% endfor %}
     {% if scheduling_error %}<p class="form-errors" role="alert">{{ scheduling_error }}</p>{% endif %}
     <details class="secondary-section panel-diagnostics"><summary>View campaign message and test preview</summary>
@@ -325,6 +326,13 @@
                     <form method="post" action="{% url 'mailing:campaign_recipient_assume_sent' campaign.id row.recipient.id %}">
                       {% csrf_token %}
                       <button type="submit" class="secondary" onclick="return confirm('Mark {{ row.recipient.email|escapejs }} as assumed sent without resending? This records an operator assumption, not confirmed delivery.');">Assume sent</button>
+                    </form>
+                  {% elif row.recipient.status == "unknown" %}
+                    <form method="post" action="{% url 'mailing:campaign_unknown_resend' campaign.id %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="recipient_ids" value="{{ row.recipient.id }}">
+                      <input type="hidden" name="confirm_resend" value="1">
+                      <button type="submit" class="secondary" onclick="return confirm('Resend to {{ row.recipient.email|escapejs }}? The first copy may already have been delivered, so they could receive two.');">Resend</button>
                     </form>
                   {% else %}
                     <span class="muted">—</span>

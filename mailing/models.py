@@ -588,9 +588,14 @@ class CampaignTaskAlert(models.Model):
 
 class CampaignRecipientStatus(models.TextChoices):
     PENDING = "pending", "Pending"
+    # Claimed by a sender; the SES call is in flight or its outcome is not yet recorded.
+    SENDING = "sending", "Sending"
     SENT = "sent", "Sent"
     SKIPPED = "skipped", "Skipped"
     FAILED = "failed", "Failed"
+    # The SES call's outcome is ambiguous (timeout after send, connection reset, crash,
+    # expired lease). Never auto-resent; reconciled from SES events or resent by an operator.
+    UNKNOWN = "unknown", "Unknown"
     BOUNCED = "bounced", "Bounced"
     COMPLAINED = "complained", "Complained"
     UNSUBSCRIBED = "unsubscribed", "Unsubscribed"
@@ -632,6 +637,8 @@ class CampaignRecipient(TimeStampedModel):
     open_count = models.PositiveIntegerField(default=0)
     click_count = models.PositiveIntegerField(default=0)
     last_error = models.TextField(blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    claim_owner = models.CharField(max_length=64, blank=True)
 
     class Meta:
         db_table = "campaign_recipients"
@@ -647,6 +654,11 @@ class CampaignRecipient(TimeStampedModel):
             models.Index(fields=["contact", "sent_at"], name="camp_recip_contact_sent_idx"),
             models.Index(fields=["contact", "created_at"], name="camp_recip_contact_created_idx"),
             models.Index(fields=["campaign", "sent_at"], name="camp_recip_sent_idx"),
+            models.Index(
+                fields=["claimed_at"],
+                name="camp_recip_claimed_idx",
+                condition=models.Q(status__in=["sending", "unknown"]),
+            ),
         ]
 
     def __str__(self):

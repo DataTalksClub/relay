@@ -20,10 +20,10 @@ _client_cache = {}
 _client_cache_lock = threading.Lock()
 
 
-def _boto_config(**overrides):
+def _boto_config(*, max_attempts=None, **overrides):
     """Botocore Config shared by every client: standard retries, bounded timeouts, keepalive."""
     return Config(
-        retries={"mode": "standard", "total_max_attempts": settings.AWS_MAX_ATTEMPTS},
+        retries={"mode": "standard", "total_max_attempts": max_attempts or settings.AWS_MAX_ATTEMPTS},
         connect_timeout=settings.AWS_CONNECT_TIMEOUT,
         read_timeout=settings.AWS_READ_TIMEOUT,
         tcp_keepalive=True,
@@ -149,7 +149,14 @@ def _ses_config():
     # connection, then discards it after the request: a fresh TLS handshake per
     # send, and its warning is not visible in the worker log.
     concurrency = int(settings.CAMPAIGN_SEND_CONCURRENCY or 1)
-    return _boto_config(max_pool_connections=max(10, 2 * concurrency, concurrency + 4))
+    # One attempt: botocore would retry a read timeout, and a send whose response
+    # was lost has usually been accepted, so an in-client retry is a duplicate email
+    # that the sender's UNKNOWN handling never sees. Throttling is requeued by the
+    # campaign task instead.
+    return _boto_config(
+        max_attempts=settings.AWS_SES_SEND_MAX_ATTEMPTS,
+        max_pool_connections=max(10, 2 * concurrency, concurrency + 4),
+    )
 
 
 def _with_fast_form_body(client):

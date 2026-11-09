@@ -15,6 +15,7 @@ Fault vocabulary (``FaultSes(faults={call_number: fault})``):
 - ``"crash_after_accept"``  accepted, then the process SIGKILLs itself
 """
 
+import json
 import os
 import signal
 import subprocess
@@ -27,6 +28,7 @@ from pathlib import Path
 from botocore.exceptions import ClientError, ReadTimeoutError
 from django.db import connection
 from django.db.backends import utils as db_utils
+from django.utils import timezone
 
 from mailing.models import (
     Audience,
@@ -35,6 +37,8 @@ from mailing.models import (
     Client,
     Contact,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
 
 RUNNER = Path(__file__).with_name("claim_finalize_runner.py")
@@ -152,7 +156,11 @@ def campaign_with_recipients(count, html_body="<p>Hi</p>", status="queued"):
         audience=audience, client=client, subject="Hi", status=status, html_body=html_body,
         text_body="Hi https://example.com/x",
     )
-    contacts = [Contact.objects.create(email=f"person{i}@example.com") for i in range(count)]
+    contacts = [Contact.objects.create(email=f"person{i}@example.com", verified_at=timezone.now()) for i in range(count)]
+    # The pre-send suppression recheck skips anything that is not subscribed.
+    Subscription.objects.bulk_create(
+        [Subscription(contact=c, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED) for c in contacts]
+    )
     recipients = CampaignRecipient.objects.bulk_create(
         [CampaignRecipient(campaign=campaign, contact=c, email=c.email) for c in contacts]
     )
@@ -181,10 +189,10 @@ def database_url():
 
 def run_batch_subprocess(payload, *, latency=0.0, faults=None, concurrency=4, settings_env=None):
     """Start a send batch in its own process; returns the Popen (stdout = JSON call log on exit)."""
-    import json
-
+    root = str(Path(__file__).resolve().parents[2])
     env = {
         **os.environ,
+        "PYTHONPATH": root + os.pathsep + os.environ.get("PYTHONPATH", ""),
         "DATABASE_URL": database_url(),
         "DJANGO_SETTINGS_MODULE": "relay.settings",
         "CF_PAYLOAD": json.dumps(payload),
@@ -195,5 +203,5 @@ def run_batch_subprocess(payload, *, latency=0.0, faults=None, concurrency=4, se
     }
     return subprocess.Popen(
         [sys.executable, str(RUNNER)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        cwd=str(Path(__file__).resolve().parents[2]),
+        cwd=root,
     )

@@ -24,7 +24,7 @@ from mailing.queue_contracts import (
     validate_email_event_message,
     validate_transactional_email_message,
 )
-from mailing.services.campaign_sender import RetryableCampaignSendError, send_campaign_batch
+from mailing.services.campaign_sender import CampaignSendInterrupted, RetryableCampaignSendError, send_campaign_batch
 from mailing.services.inbound_email import process_inbound_s3_notification
 from mailing.services.transactional_sender import send_transactional_email_from_queue
 
@@ -106,15 +106,19 @@ def send_campaign_email_batch(payload, *, attempt=1):
 
     try:
         result = send_campaign_batch(payload)
+    except CampaignSendInterrupted as exc:
+        # SIGTERM drain: not throttling, so the attempt budget is not spent.
+        return _requeue_throttled_campaign_batch(payload, max(1, attempt - 1), exc, delay_override=5)
     except RetryableCampaignSendError as exc:
         return _requeue_throttled_campaign_batch(payload, attempt, exc)
     return _summarise(
         result,
-        lambda r: {"sent": r.sent_count, "skipped": r.skipped_count, "failed": r.failed_count},
+        lambda r: {"sent": r.sent_count, "skipped": r.skipped_count, "failed": r.failed_count}
+        | ({"unknown": r.unknown_count} if getattr(r, "unknown_count", 0) else {}),
     )
 
 
-def _requeue_throttled_campaign_batch(payload, attempt, exc):
+def _requeue_throttled_campaign_batch(payload, attempt, exc, *, delay_override=None):
     """Requeue the remaining PENDING recipients instead of failing the batch.
 
     SES throttling means the failed recipient (and everything after it) was
@@ -170,7 +174,7 @@ def _requeue_throttled_campaign_batch(payload, attempt, exc):
         )
         raise exc
 
-    delay = min(base_seconds * 2 ** (attempt - 1), max_seconds)
+    delay = delay_override or min(base_seconds * 2 ** (attempt - 1), max_seconds)
     next_attempt = attempt + 1
     retry_payload = {
         **payload,

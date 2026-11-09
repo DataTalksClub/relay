@@ -104,14 +104,15 @@ def test_empty_html_retains_footer_and_pixel_bytes():
 
 
 @pytest.mark.parametrize("message_id", ["synthetic-id", ""])
-def test_provider_return_including_empty_id_keeps_state_events_counts_and_lock(pending, monkeypatch, message_id):
+def test_provider_return_including_empty_id_keeps_state_events_counts_and_no_row_locks(
+    pending, monkeypatch, message_id
+):
     provider = Provider(message_id)
-    steps = []
+    locks = []
     original = QuerySet.select_for_update
 
     def locking(query, *args, **kwargs):
-        if query.model is CampaignRecipient:
-            steps.append(("lock", connection.in_atomic_block))
+        locks.append(query.model)
         return original(query, *args, **kwargs)
 
     monkeypatch.setattr(QuerySet, "select_for_update", locking)
@@ -121,53 +122,51 @@ def test_provider_return_including_empty_id_keeps_state_events_counts_and_lock(p
     recipient.refresh_from_db()
     campaign.refresh_from_db()
     assert (result.sent_count, result.skipped_count, result.failed_count) == (1, 0, 0)
-    assert steps and all(atomic for _, atomic in steps)
-    assert provider.atomic == [True]
+    # Claim-send-finalize: the send path takes no row lock at all (a claim is a conditional UPDATE).
+    assert locks == []
+    assert len(provider.calls) == 1
     assert recipient.status == "sent" and recipient.ses_message_id == message_id
     assert recipient.sent_at is not None and recipient.last_error == ""
+    assert recipient.claimed_at is not None and recipient.claim_owner
+    assert recipient.tracking_token_hash and recipient.unsubscribe_token_hash
     assert campaign.sent_count == 1
     event = EmailEvent.objects.get(campaign_recipient=recipient)
     assert event.event_type == "sent" and event.metadata == {"ses_message_id": message_id}
     assert provider.calls[0]["Source"] == "global@relay.example.invalid"
 
 
-def test_cancelled_claim_records_skip_before_tokens_or_provider(pending, monkeypatch):
+def test_cancelled_campaign_records_skip_and_never_calls_provider(pending):
     campaign, recipient = pending
     campaign.status = "cancelled"
     campaign.save(update_fields=["status"])
-
-    def forbidden(*args):
-        raise AssertionError("Cancelled claim must not prepare tokens")
-
-    monkeypatch.setattr(sender, "_send_tokens_for_pending_recipient", forbidden)
     provider = Provider()
     result = sender.send_campaign_batch(payload(pending), ses_client=provider)
     recipient.refresh_from_db()
     assert result.skipped_count == 1 and provider.calls == []
     assert recipient.status == "skipped" and recipient.last_error == "campaign_cancelled"
+    # The claim minted tokens; a skipped row drops them since no message carries them.
+    assert recipient.tracking_token_hash is None and recipient.unsubscribe_token_hash is None
     event = EmailEvent.objects.get(campaign_recipient=recipient)
     assert event.event_type == "skipped" and event.metadata == {"reason": "campaign_cancelled"}
 
 
-def test_audit_exception_rolls_back_claim_but_not_recorded_provider_effect(pending, monkeypatch):
+def test_failed_finalize_leaves_row_sending_and_fails_loudly(pending, monkeypatch, caplog):
     provider = Provider()
-    original_tokens = (pending[1].tracking_token_hash, pending[1].unsubscribe_token_hash)
 
-    def fail_event(*args, **kwargs):
-        assert connection.in_atomic_block
-        raise RuntimeError("synthetic audit failure")
+    def fail_write(*args, **kwargs):
+        raise RuntimeError("synthetic finalize failure")
 
-    monkeypatch.setattr(sender, "_create_campaign_event", fail_event)
-    assert not connection.in_atomic_block
-    with pytest.raises(RuntimeError, match="synthetic audit failure"):
+    monkeypatch.setattr(sender, "_write_outcomes", fail_write)
+    monkeypatch.setattr(sender.time, "sleep", lambda seconds: None)
+    with pytest.raises(sender.CampaignSenderError, match="could not record 1 send outcomes"):
         sender.send_campaign_batch(payload(pending), ses_client=provider)
     campaign, recipient = pending
     recipient.refresh_from_db()
-    campaign.refresh_from_db()
-    assert len(provider.calls) == 1 and provider.atomic == [True]
-    assert recipient.status == "pending" and recipient.ses_message_id == ""
-    assert (recipient.tracking_token_hash, recipient.unsubscribe_token_hash) == original_tokens
-    assert campaign.sent_count == 0 and EmailEvent.objects.count() == 0
+    # The message was accepted and is never resent: the row waits for lease expiry -> UNKNOWN.
+    assert len(provider.calls) == 1
+    assert recipient.status == "sending" and recipient.ses_message_id == ""
+    assert EmailEvent.objects.count() == 0
+    assert "campaign_finalize_lost" in caplog.text and f"{recipient.pk}=synthetic-id" in caplog.text
 
 
 def test_preview_calls_injectable_sender_and_keeps_token_order(pending, monkeypatch):
@@ -219,25 +218,29 @@ def provider_error(kind):
 
 
 @pytest.mark.parametrize(
-    "kind,retryable", [("timeout", True), ("MessageRejected", False), ("unexpected", False)]
+    "kind,outcome",
+    [("timeout", "unknown"), ("MessageRejected", "permanent"), ("unexpected", "permanent")],
 )
-def test_provider_failure_logs_safe_stack_and_preserves_outcome(pending, monkeypatch, caplog, kind, retryable):
+def test_provider_failure_logs_safe_stack_and_preserves_outcome(pending, monkeypatch, caplog, kind, outcome):
     campaign, recipient = pending
     campaign.html_body = PRIVATE_CANARIES[1]
     campaign.save(update_fields=["html_body"])
     monkeypatch.setattr(sender, "generate_raw_token", lambda: PRIVATE_CANARIES[3])
     error = provider_error(kind)
     provider = FailingProvider(error)
-    if retryable:
+    if outcome == "retryable":
         with pytest.raises(sender.RetryableCampaignSendError) as caught:
             sender.send_campaign_batch(payload(pending), ses_client=provider)
         assert caught.value.__cause__ is error and str(caught.value) == str(error)
+    elif outcome == "unknown":
+        result = sender.send_campaign_batch(payload(pending), ses_client=provider)
+        assert (result.sent_count, result.skipped_count, result.failed_count, result.unknown_count) == (0, 0, 0, 1)
     else:
         result = sender.send_campaign_batch(payload(pending), ses_client=provider)
         assert (result.sent_count, result.skipped_count, result.failed_count) == (0, 0, 1)
-    assert len(provider.calls) == 1 and provider.atomic == [True]
-    assert_failure_state(campaign, recipient, error, retryable)
-    assert_safe_diagnostic(caplog, campaign, recipient, retryable)
+    assert len(provider.calls) == 1
+    assert_failure_state(campaign, recipient, error, outcome)
+    assert_safe_diagnostic(caplog, campaign, recipient, outcome)
 
 
 def test_throttling_gets_exactly_one_repermitted_retry(pending, settings, caplog):
@@ -248,38 +251,42 @@ def test_throttling_gets_exactly_one_repermitted_retry(pending, settings, caplog
     provider = FailingProvider(error)
     with pytest.raises(sender.RetryableCampaignSendError):
         sender.send_campaign_batch(payload(pending), ses_client=provider)
-    assert len(provider.calls) == 2 and provider.atomic == [True, True]
-    assert_failure_state(campaign, recipient, error, True)
-    assert_safe_diagnostic(caplog, campaign, recipient, True)
+    assert len(provider.calls) == 2
+    assert_failure_state(campaign, recipient, error, "retryable")
+    assert_safe_diagnostic(caplog, campaign, recipient, "retryable")
     feedback = [r for r in caplog.records if r.name == "mailing.ses_rate_limiter"]
     assert any("ses_rate_limit_throttling_feedback" in r.getMessage() for r in feedback)
 
 
-def assert_failure_state(campaign, recipient, error, retryable):
+def assert_failure_state(campaign, recipient, error, outcome):
     recipient.refresh_from_db()
     campaign.refresh_from_db()
     assert campaign.sent_count == 0 and recipient.ses_message_id == "" and recipient.sent_at is None
+    if outcome == "unknown":
+        # Ambiguous: never retried, tokens kept (the copy SES may have accepted carries them).
+        assert recipient.status == "unknown" and recipient.last_error == "send_outcome_unknown:TimeoutError"
+        assert recipient.tracking_token_hash and recipient.unsubscribe_token_hash
+        assert EmailEvent.objects.count() == 0
+        return
     assert recipient.last_error == str(error)
-    if retryable:
+    if outcome == "retryable":
         assert recipient.status == "pending" and EmailEvent.objects.count() == 0
         assert recipient.tracking_token_hash is None and recipient.unsubscribe_token_hash is None
+        assert recipient.claimed_at is None and recipient.claim_owner == ""
         return
     assert recipient.status == "failed"
     event = EmailEvent.objects.get(campaign_recipient=recipient)
     assert event.event_type == "failed" and event.metadata == {"error": str(error)}
 
 
-def assert_safe_diagnostic(caplog, campaign, recipient, retryable):
-    sender_records = [record for record in caplog.records if record.name == sender.__name__]
-    assert len(sender_records) == 1
-    record = sender_records[0]
+def assert_safe_diagnostic(caplog, campaign, recipient, outcome):
+    delivery = [r for r in caplog.records if "Campaign delivery failed" in r.getMessage()]
+    assert len(delivery) == 1
+    record = delivery[0]
     rendered = caplog.text
     assert record.name == sender.__name__ and record.levelname == "ERROR"
     assert f"campaign_id={campaign.pk} recipient_id={recipient.pk}" in rendered
-    classification = "permanent"
-    if retryable:
-        classification = "retryable"
-    assert f"classification={classification}" in rendered
+    assert f"classification={outcome}" in rendered
     assert "Traceback (most recent call last):" in rendered
     assert "campaign_sender.py" in rendered and "_deliver_campaign_recipient" in rendered
     assert "ses.py" in rendered and "send_email" in rendered
