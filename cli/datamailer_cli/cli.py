@@ -7,6 +7,7 @@ import getpass
 import json
 import sys
 import urllib.parse
+import uuid as uuid_module
 
 from . import __version__, auth, config
 from .api import ApiError, DatamailerClient
@@ -59,9 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_operator = sub.add_parser("operator", help="Run a supported Relay operator action through the admin API.")
     _add_connection_args(p_operator)
-    p_operator.add_argument("resource", choices=("campaigns", "contacts", "templates", "lists", "newsletters", "messages", "stats", "complaints", "archive"))
-    p_operator.add_argument("action", choices=("list", "show", "create", "edit", "delete", "stats", "queue", "cancel", "pause", "resume", "stop", "recipients", "recipient-retry", "assume-sent", "unknown-recipients", "unknown-resend", "state", "subscriptions", "tag-add", "tag-remove", "preferences", "erase", "history", "validation", "suppression", "verification", "import", "tags", "tag-create", "tag-edit", "recipient-list", "recipient-list-upsert", "members", "member-upsert", "member-remove", "members-upsert", "members-reconcile", "import-show", "list-send", "retry", "bulk-retry", "versions", "publish", "block-types", "block-add", "block-show", "block-edit", "block-delete", "preview", "test-send", "export"))
+    p_operator.add_argument("resource", choices=("campaigns", "contacts", "templates", "lists", "newsletters", "messages", "stats", "complaints", "archive", "schedules", "jobs", "dead-letters", "events"))
+    p_operator.add_argument("action", choices=("list", "show", "create", "edit", "delete", "stats", "queue", "cancel", "pause", "resume", "stop", "recipients", "recipient-retry", "assume-sent", "unknown-recipients", "unknown-resend", "state", "subscriptions", "tag-add", "tag-remove", "preferences", "erase", "history", "validation", "suppression", "verification", "import", "import-show", "csv-export", "csv-import", "overview", "workers", "tags", "tag-create", "tag-edit", "recipient-list", "recipient-list-upsert", "members", "member-upsert", "member-remove", "members-upsert", "members-reconcile", "list-send", "retry", "bulk-retry", "versions", "publish", "block-types", "block-add", "block-show", "block-edit", "block-delete", "preview", "test-send", "export"))
     p_operator.add_argument("--id", type=int, help="Record id for show or an action.")
+    p_operator.add_argument("--uuid", help="UUID of a schedule, job, or dead letter for show/retry actions.")
     p_operator.add_argument("--client-id", type=int, help="Explicit Relay client id for scoped operations.")
     p_operator.add_argument("--query", help="Text search for list actions that support it.")
     p_operator.add_argument("--suppression", choices=("global_unsubscribed", "hard_bounced", "complained"), help="Filter contacts by suppression state.")
@@ -133,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     routing = sub.add_parser("inbound", help="Manage domain routing with an admin API key.")
     _add_connection_args(routing)
-    routing.add_argument("resource", choices=("domains", "mailboxes", "deliveries", "dmarc"))
+    routing.add_argument("resource", choices=("domains", "mailboxes", "deliveries", "dmarc", "dmarc-summary"))
     routing.add_argument("--id", type=int)
     routing.add_argument("--data-file", help="Create or patch from a JSON file; use - for stdin.")
     routing.set_defaults(handler=cmd_inbound)
@@ -325,6 +327,16 @@ def cmd_operator(args) -> int:
         elif action == "export" and args.client_id:
             path = f"/api/admin/clients/{args.client_id}/contacts"
             query = {key: value for key, value in {"q": args.query, "suppression": args.suppression}.items() if value}
+        elif action == "csv-export" and args.client_id:
+            path = f"/api/admin/clients/{args.client_id}/contacts.csv"
+            query = {key: value for key, value in {"q": args.query, "suppression": args.suppression}.items() if value}
+        elif action == "csv-import" and args.client_id:
+            path = f"/api/admin/clients/{args.client_id}/contacts/imports/csv"
+            method = "POST"
+            if payload is None:
+                raise ApiError('CSV import requires --data-file with a JSON object containing a "csv" field.')
+            if not payload.get("dry_run") and not args.confirm:
+                raise ApiError("CSV import changes contacts. Set dry_run in the JSON or repeat with --confirm.")
         elif action == "import" and args.client_id:
             path = f"/api/admin/clients/{args.client_id}/contacts/imports"
             method = "POST"
@@ -499,6 +511,8 @@ def cmd_operator(args) -> int:
             path = "/api/admin/audiences"
         elif action == "show" and args.id:
             path = f"/api/admin/audiences/{args.id}"
+        elif action == "overview" and args.id:
+            path = f"/api/admin/audiences/{args.id}/overview"
         elif action in {"create", "edit"} and (action == "create" or args.id):
             path = "/api/admin/audiences"
             if args.id:
@@ -507,9 +521,50 @@ def cmd_operator(args) -> int:
         else:
             raise ApiError("List actions support list, show, create, and edit with --id.")
     elif resource == "stats":
-        if action != "list":
-            raise ApiError("Use `operator stats list` for the Relay dashboard summary.")
-        path = "/api/admin/dashboard"
+        if action == "workers":
+            path = "/api/admin/workers"
+        elif action == "list":
+            path = "/api/admin/dashboard"
+        else:
+            raise ApiError("Use `operator stats list` for the dashboard or `operator stats workers` for service health.")
+    elif resource == "schedules":
+        if action == "list":
+            path = "/api/admin/schedules"
+        elif action == "show" and args.uuid:
+            path = f"/api/admin/schedules/{_record_uuid(args.uuid)}"
+        else:
+            raise ApiError("Schedule actions support list, or show with --uuid.")
+    elif resource == "jobs":
+        if action == "list":
+            path = "/api/admin/jobs"
+        elif action == "show" and args.uuid:
+            path = f"/api/admin/jobs/{_record_uuid(args.uuid)}"
+        elif action == "retry" and args.uuid:
+            path = f"/api/admin/jobs/{_record_uuid(args.uuid)}/retry"
+            method = "POST"
+            if not args.confirm:
+                raise ApiError("Retrying a job re-runs it. Repeat with --confirm.")
+            payload = payload or {}
+        else:
+            raise ApiError("Job actions support list, show --uuid, or retry --uuid --confirm.")
+    elif resource == "dead-letters":
+        if action == "list":
+            path = "/api/admin/dead-letters"
+        elif action == "retry" and args.uuid:
+            path = f"/api/admin/dead-letters/{_record_uuid(args.uuid)}/retry"
+            method = "POST"
+            if not args.confirm:
+                raise ApiError("Retrying a dead letter re-runs it. Repeat with --confirm.")
+            payload = payload or {}
+        else:
+            raise ApiError("Dead-letter actions support list or retry --uuid --confirm.")
+    elif resource == "events":
+        if action == "list":
+            path = "/api/admin/events"
+            if args.client_id:
+                query = {"client_id": args.client_id}
+        else:
+            raise ApiError("Email activity supports list, optionally filtered with --client-id.")
     else:  # archive
         if action != "export":
             raise ApiError("Archive supports export only.")
@@ -530,6 +585,9 @@ def cmd_operator(args) -> int:
         payload.setdefault("client", args.client_slug)
         payload.setdefault("audience", args.audience)
     _, result = _client(args).request(method, path, payload=payload, query=query)
+    if isinstance(result, dict) and set(result) == {"raw"} and isinstance(result["raw"], str):
+        print(result["raw"])
+        return 0
     print(json.dumps(result, indent=2, default=str))
     return 0
 
@@ -690,6 +748,13 @@ def cmd_layout(args) -> int:
 # --- helpers --------------------------------------------------------------
 
 
+def _record_uuid(value: str) -> str:
+    try:
+        return str(uuid_module.UUID(value))
+    except (ValueError, AttributeError):
+        raise ApiError("--uuid must be a valid UUID (jobs, schedules, and dead letters use UUID ids).") from None
+
+
 def _read_body(args) -> str:
     if args.body is not None:
         return args.body
@@ -722,6 +787,10 @@ def cmd_inbound(args):
         path += f"/{args.id}"
     payload = None
     method = "GET"
+    if args.resource == "dmarc-summary":
+        _, result = _client(args).request(method, "/api/admin/inbound-dmarc-summary")
+        print(json.dumps(result, indent=2))
+        return 0
     if args.data_file:
         if args.resource in {"deliveries", "dmarc"}:
             raise ApiError("Deliveries and DMARC archives are read-only.")

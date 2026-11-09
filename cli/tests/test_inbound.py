@@ -26,3 +26,10 @@ def test_dmarc_cli_reads_parsed_report(monkeypatch, capsys):
         assert main(['inbound', 'dmarc', '--id', '16']) == 0
     request.assert_called_once_with('GET', '/api/admin/inbound-dmarc/16', payload=None)
     assert json.loads(capsys.readouterr().out)['id'] == 16
+
+
+def test_inbound_dmarc_summary_uses_summary_endpoint():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"records": 3})) as request:
+        result = main(["inbound", "dmarc-summary", "--url", "https://relay.test", "--api-key", "relay_admin_test"])
+    assert result == 0
+    request.assert_called_once_with("GET", "/api/admin/inbound-dmarc-summary")
