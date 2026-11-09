@@ -97,12 +97,21 @@ TASKS = {
         "BACKEND": os.environ.get(
             "TASKS_BACKEND", "django_tasks_db.backend.DatabaseBackend"
         ),
-        # "default" = campaign/transactional sends; "provider-events" = SES
-        # webhook + inbound mail so bounce/complaint never wait behind a send
+        # "transactional" = single sends + bulk-transactional fan-out, consumed
+        # by the `worker` service, which never runs campaign batches;
+        # "campaign" = campaign batches, consumed by exactly ONE
+        # `campaign-worker` process (the SES rate limiter is per-process, so
+        # replicas would multiply the send rate -- see worker-contracts.md).
+        # "default" stays registered and is drained by the `worker` service
+        # alongside "transactional": jobs.execute_job, campaign test sends
+        # and process_email_event still enqueue there, and pre-split READY
+        # rows are migrated off it by mailing 0049 (never deleted).
+        # "provider-events" = SES webhook + inbound mail so
+        # bounce/complaint never wait behind a send
         # fan-out (F1 / t1126u); "tracking" = recipient opens/clicks and
         # deferred unsubscribes, so the web never writes them inline and they
         # never wait behind an SES backlog. db_worker --queue-name selects the lane.
-        "QUEUES": ["default", "provider-events", "tracking"],
+        "QUEUES": ["default", "transactional", "campaign", "provider-events", "tracking"],
     }
 }
 
@@ -131,6 +140,10 @@ RELAY_SES_WEBHOOK_MAX_CONCURRENCY = max(0, int(os.environ.get("RELAY_SES_WEBHOOK
 RELAY_QUEUE_AGE_ALERT_SECONDS = {
     "provider-events": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_PROVIDER_EVENTS_SECONDS", "900")),
     "tracking": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_TRACKING_SECONDS", "300")),
+    # Transactional mail must flow in seconds even mid-blast; the campaign
+    # lane intentionally has no age alert (a READY backlog is normal during
+    # a send -- progress is tracked per-recipient, not per-task).
+    "transactional": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_TRANSACTIONAL_SECONDS", "300")),
 }
 RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS", "30")))
 RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS", "900")))

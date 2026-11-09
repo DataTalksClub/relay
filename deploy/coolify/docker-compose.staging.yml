@@ -9,7 +9,12 @@
 # Service set mirrors scripts/deploy_relay_sandbox.sh production list, minus
 # inbound is enabled by the per-domain receipt-rule migration:
 #   web                gunicorn (public; Traefik domains managed in Coolify UI)
-#   worker             django.tasks DB worker on queue "default" (sends)
+#   worker             django.tasks DB worker on queues "transactional,default"
+#                      (transactional sends + legacy default drain; never runs
+#                      campaign batches, so a blast cannot delay account mail)
+#   campaign-worker    django.tasks DB worker on queue "campaign" (exactly ONE
+#                      process: the SES rate limiter is per-process and a second
+#                      replica would multiply the send rate)
 #   provider-events-worker  django.tasks DB worker on queue "provider-events" (SES/inbound)
 #   tracking-worker    django.tasks DB worker on queue "tracking" (opens/clicks/deferred unsubscribes)
 #   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
@@ -64,9 +69,28 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    command: ["python", "manage.py", "db_worker", "--queue-name", "default", "--interval", "1"]
+    # Transactional sends on their own lane plus the legacy default drain
+    # (jobs, campaign test sends, process_email_event, and any pre-split
+    # rows the 0049 migration did not move). Never consumes "campaign", so
+    # transactional mail never waits behind a campaign batch.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional,default", "--interval", "1"]
     healthcheck:
-      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "default"]
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  campaign-worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    # The ONLY consumer of the campaign lane. Exactly one process: the SES
+    # rate limiter is per-process (see docs/worker-contracts.md); a second
+    # replica is the later global-limiter work, not this deploy.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "campaign"]
       interval: 30s
       timeout: 10s
       retries: 3
