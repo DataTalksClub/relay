@@ -96,6 +96,17 @@ def test_test_render_is_marked_and_untracked(issue):
     assert "TEST EMAIL" in rendered["html_body"] and rendered["text_body"].startswith("[TEST EMAIL")
     assert "/t/c/" not in rendered["html_body"] and "/t/o/" not in rendered["html_body"]
     assert "/unsubscribe/" not in rendered["html_body"]
+    assert rendered["html_body"].count("<a ses:no-track ") == rendered["html_body"].count("<a ")
+    assert "ses:no-track" not in svc.render_issue(issue)["html_body"]
+
+
+def test_test_delivery_skips_the_tracking_configuration_set(issue, monkeypatch):
+    captured = {}
+    monkeypatch.setattr("mailing.ses.send_email", lambda **kwargs: captured.update(kwargs) or "id-1")
+    monkeypatch.setattr("mailing.aws.ses_client", lambda: object())
+    assert svc.send_test(issue, ["alexey@datatalks.club"])["status"] == "sent"
+    assert captured["configuration_set"] == ""
+    assert captured["subject"].startswith("[TEST] ")
 
 
 def test_block_order_moves_and_deletes(issue):

@@ -540,6 +540,9 @@ def render_issue(issue, *, block=None, test=False):
     )
     text = "\n\n----\n\n".join(texts)
     if test:
+        # Belt and braces: SES leaves links marked ses:no-track alone even if a
+        # default configuration set with click tracking applies.
+        html = re.sub(r"<a(?=\s)", "<a ses:no-track", html)
         text = "[TEST EMAIL - links are not tracked; unsubscribe is disabled]\n\n" + text
     return {"subject": subject, "html_body": html, "text_body": text}
 
@@ -559,8 +562,10 @@ def _deliver(source, email, rendered):
     from mailing.aws import ses_client  # noqa: PLC0415 - patched in tests
     from mailing.ses import send_email  # noqa: PLC0415
 
+    # configuration_set="" sends outside the production configuration set, whose
+    # SES open/click tracking would otherwise wrap links in a [TEST] email.
     return send_email(ses_client=ses_client(), source=source, to_email=email, subject=rendered["subject"],
-                      html_body=rendered["html_body"], text_body=rendered["text_body"])
+                      html_body=rendered["html_body"], text_body=rendered["text_body"], configuration_set="")
 
 
 def send_test(issue, emails, *, block=None, actor=None, via="ui", deliver=None):
