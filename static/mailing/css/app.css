@@ -2148,63 +2148,28 @@ pre {
 .unsubscribe-form {
   display: grid;
   gap: var(--dk-space-4);
+  margin-top: var(--dk-space-6);
 }
 
-.unsubscribe-options {
-  display: grid;
-  gap: var(--dk-space-3);
-  margin: 0;
+.unsubscribe-email {
+  color: var(--dk-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.unsubscribe-resubscribe {
+  margin-top: var(--dk-space-4);
+  color: var(--dk-text-muted);
+}
+
+.link-button {
+  display: inline;
+  min-height: 0;
   padding: 0;
   border: 0;
-}
-
-.unsubscribe-options legend {
-  margin-bottom: var(--dk-space-3);
-  color: var(--dk-text-primary);
-  font-weight: 600;
-}
-
-.unsubscribe-option {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--dk-space-3);
-  align-items: start;
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-md);
-  padding: var(--dk-space-4);
-  color: var(--dk-text-primary);
-  background: var(--dk-bg-page);
+  background: none;
+  color: var(--dk-accent-default);
+  text-decoration: underline;
   cursor: pointer;
-}
-
-.unsubscribe-option:hover {
-  border-color: var(--dk-border-strong);
-}
-
-.unsubscribe-option:focus-within {
-  border-color: var(--dk-border-strong);
-}
-
-.unsubscribe-option:has(:focus-visible) {
-  outline: 2px solid var(--dk-focus-ring);
-  outline-offset: 0;
-}
-
-.unsubscribe-option input {
-  width: auto;
-  min-height: 0;
-  margin-top: var(--dk-space-1);
-}
-
-.unsubscribe-option strong,
-.unsubscribe-option span span {
-  display: block;
-}
-
-.unsubscribe-option span span {
-  margin-top: var(--dk-space-1);
-  color: var(--dk-text-muted);
-  font-weight: 400;
 }
 
 @media (max-width: 640px) {

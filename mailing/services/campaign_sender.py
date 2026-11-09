@@ -205,7 +205,7 @@ def _deliver_campaign_recipient(recipient, ses, tokens):
             subject=recipient.campaign.subject,
             html_body=html_body,
             text_body=text_body,
-            headers=campaign_unsubscribe_headers(tokens.unsubscribe_token),
+            headers=campaign_unsubscribe_headers(tokens.unsubscribe_token, recipient.campaign),
         )
     except Exception as exc:
         retryable = is_retryable_send_error(exc)

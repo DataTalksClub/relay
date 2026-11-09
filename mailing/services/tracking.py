@@ -7,7 +7,7 @@ from django.utils import timezone
 from mailing.models import Campaign, CampaignRecipient, CampaignRecipientStatus, EmailEvent, EmailEventType
 from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
-from mailing.services.contacts import unsubscribe_contact
+from mailing.services.contacts import subscribe_contact, unsubscribe_contact
 from mailing.services.tokens import get_recipient_by_tracking_token, get_recipient_by_unsubscribe_token
 
 TRANSPARENT_GIF = (
@@ -15,8 +15,6 @@ TRANSPARENT_GIF = (
     b"\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00"
     b"\x00\x02\x02D\x01\x00;"
 )
-
-UNSUBSCRIBE_SCOPES = {"client", "audience", "global"}
 
 
 def is_allowed_click_destination(destination_url):
@@ -93,9 +91,8 @@ def record_click(raw_token, destination_url):
 
 
 @transaction.atomic
-def apply_unsubscribe(raw_token, scope):
-    if scope not in UNSUBSCRIBE_SCOPES:
-        return None
+def apply_unsubscribe(raw_token):
+    """Unsubscribe the contact from the single audience (list) the email was sent to."""
     recipient = get_recipient_by_unsubscribe_token(raw_token)
     if recipient is None:
         return None
@@ -114,18 +111,8 @@ def apply_unsubscribe(raw_token, scope):
     )
     now = timezone.now()
     campaign = recipient.campaign
-    contact = recipient.contact
 
-    if scope == "global":
-        if contact.global_unsubscribed_at is None:
-            contact.global_unsubscribed_at = now
-            contact.save(update_fields=["global_unsubscribed_at", "updated_at"])
-    elif scope == "audience":
-        unsubscribe_contact(contact, campaign.audience, reason="public_unsubscribe", unsubscribed_at=now)
-    else:
-        unsubscribe_contact(
-            contact, campaign.audience, campaign.client, reason="public_unsubscribe", unsubscribed_at=now
-        )
+    unsubscribe_contact(recipient.contact, campaign.audience, reason="public_unsubscribe", unsubscribed_at=now)
 
     if recipient.status != CampaignRecipientStatus.UNSUBSCRIBED:
         recipient.status = CampaignRecipientStatus.UNSUBSCRIBED
@@ -134,11 +121,24 @@ def apply_unsubscribe(raw_token, scope):
     event = _create_campaign_event(
         recipient,
         EmailEventType.UNSUBSCRIBE,
-        metadata={"scope": scope},
+        metadata={"scope": "audience"},
     )
     emit_cmp_contact_event(event)
     emit_client_callback(event)
     refresh_campaign_engagement_counts(campaign)
+    return recipient
+
+
+@transaction.atomic
+def apply_resubscribe(raw_token):
+    """Undo a public unsubscribe for the same single audience (list)."""
+    recipient = get_recipient_by_unsubscribe_token(raw_token)
+    if recipient is None:
+        return None
+    campaign = recipient.campaign
+    subscribe_contact(recipient.contact, campaign.audience)
+    event = _create_campaign_event(recipient, EmailEventType.SUBSCRIBE, metadata={"scope": "audience"})
+    emit_cmp_contact_event(event)
     return recipient
 
 

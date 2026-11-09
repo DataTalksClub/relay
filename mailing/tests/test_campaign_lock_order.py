@@ -42,7 +42,7 @@ def test_campaign_writers_lock_parent_before_recipient(monkeypatch, operation):
     elif operation == "click":
         result = record_click(tokens.tracking_token, "https://example.invalid/read")
     elif operation == "unsubscribe":
-        result = apply_unsubscribe(tokens.unsubscribe_token, "global")
+        result = apply_unsubscribe(tokens.unsubscribe_token)
     elif operation == "assume-sent":
         result = assume_recipient_sent(actor=None, campaign=campaign, recipient=recipient)
     else:
