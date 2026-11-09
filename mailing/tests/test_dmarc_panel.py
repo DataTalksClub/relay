@@ -142,20 +142,27 @@ def test_import_s3_assumes_role_and_defaults_to_allowed_prefixes(domain, monkeyp
         calls.append((service, kwargs))
         return Sts() if service == "sts" else S3()
 
-    monkeypatch.setattr(aws, "_credential_cache", {})
+    def fake_role_client(service, role_arn, kwargs):
+        creds = aws._refreshable_credentials(role_arn).get_frozen_credentials()
+        calls.append((service, {**kwargs, "aws_access_key_id": creds.access_key,
+                                "aws_secret_access_key": creds.secret_key, "aws_session_token": creds.token}))
+        return S3()
+
     monkeypatch.setattr(aws.boto3, "client", fake_client)
+    monkeypatch.setattr(aws, "_role_client", fake_role_client)
     args = ["--bucket=dmarc-test", "--s3-endpoint-url=http://s3.test"]
     if cli_role:
         args.append(f"--role-arn={cli_role}")
     first = run_import(*args)
     assert first == {"scanned": 2, "imported": 2, "duplicates": 0, "skipped": 0, "errors": {}}
-    assert calls[0] == ("sts", {"region_name": "eu-west-1", "endpoint_url": None})
+    assert calls[0][0] == "sts" and calls[0][1]["region_name"] == "eu-west-1" and calls[0][1]["endpoint_url"] is None
     assert calls[1][1]["RoleArn"] == (cli_role or settings.DMARC_READER_ROLE_ARN)
-    assert calls[2] == ("s3", {
+    assert calls[2][0] == "s3"
+    assert {k: v for k, v in calls[2][1].items() if k != "config"} == {
         "region_name": "eu-west-1", "endpoint_url": "http://s3.test",
         "aws_access_key_id": "scoped-access", "aws_secret_access_key": "scoped-secret",
         "aws_session_token": "scoped-token",
-    })
+    }
     assert lists == [
         {"Bucket": "dmarc-test", "Prefix": prefix, "MaxKeys": 1000, **extra}
         for prefix in ("dmarc/", "dmarc-zips/")

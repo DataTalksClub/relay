@@ -94,7 +94,5 @@ def _clear_aws_client_caches():
     from mailing import aws  # noqa: PLC0415 - imports require Django app registry
 
     aws._client_cache.clear()
-    aws._credential_cache.clear()
     yield
     aws._client_cache.clear()
-    aws._credential_cache.clear()
