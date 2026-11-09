@@ -75,7 +75,7 @@ def describe_applications(applications: list[dict]) -> str:
     return "; ".join(parts) if parts else "<no applications>"
 
 
-def coolify_ready(applications: list[dict] | None, want_image: str) -> tuple[bool, str, bool]:
+def coolify_ready(applications: list[dict] | None, want_image: str, new_services: frozenset = frozenset()) -> tuple[bool, str, bool]:
     """Evaluate one Coolify poll.
 
     Returns (ready, reason, fatal). ``fatal`` means the deploy is
@@ -102,7 +102,11 @@ def coolify_ready(applications: list[dict] | None, want_image: str) -> tuple[boo
             problems.append(f"{label}: image {image!r} != {want_image!r}")
         if not status.startswith("running"):
             problems.append(f"{label}: status {status!r} not running")
-        if any(token in lowered for token in FATAL_SUBSTRINGS):
+        # A service added by this deploy reports "exited" until Coolify first
+        # starts it; that is not a crash. A real crash of the new container is
+        # still fatal through runtime_ready's Docker evidence.
+        fatal_tokens = tuple(t for t in FATAL_SUBSTRINGS if not (label in new_services and t == "exited"))
+        if any(token in lowered for token in fatal_tokens):
             problems.append(f"{label}: fatal status {status!r}")
             fatal = True
     if problems:
@@ -145,6 +149,7 @@ def deploy_ready(
     health_payload: dict | None,
     want_tag: str,
     want_sha: str | None = None,
+    new_services: frozenset = frozenset(),
 ) -> tuple[bool, str, bool]:
     """Combined gate: Coolify desired-state AND public release must agree.
 
@@ -154,7 +159,7 @@ def deploy_ready(
     NOT ready and NOT fatal: keep polling until the new containers
     serve, or the deadline expires.
     """
-    cool_ok, cool_reason, fatal = coolify_ready(applications, want_image)
+    cool_ok, cool_reason, fatal = coolify_ready(applications, want_image, new_services)
     if fatal:
         return False, f"coolify fatal: {cool_reason}", True
     rel_ok, rel_reason = release_matches(health_payload, want_tag, want_sha)
@@ -166,7 +171,7 @@ def deploy_ready(
 
 
 def service_ready(service: dict, want_image: str, payload: dict | None,
-                  want_tag: str, want_sha: str) -> tuple[bool, str, bool]:
+                  want_tag: str, want_sha: str, new_services: frozenset = frozenset()) -> tuple[bool, str, bool]:
     """Wait for the service rollout as well as the public rolling follower.
 
     Service deploy responses on this Coolify installation contain only a
@@ -174,7 +179,9 @@ def service_ready(service: dict, want_image: str, payload: dict | None,
     can coexist with stale per-app running metadata. Require a settled running
     aggregate, while allowing running:unknown for workers without healthchecks.
     """
-    ready, reason, fatal = deploy_ready(service.get("applications"), want_image, payload, want_tag, want_sha)
+    ready, reason, fatal = deploy_ready(
+        service.get("applications"), want_image, payload, want_tag, want_sha, new_services
+    )
     status = str(service.get("status", "") or "").lower()
     # starting:unhealthy is a normal rollout state; per-app unhealthy still
     # fails fast through deploy_ready. A settled unhealthy service is fatal.
@@ -233,6 +240,10 @@ def verify(*, timeout: float = 300, interval: float = 5) -> int:
     want = f"{os.environ['IMAGE_REF']}:{want_tag}"
     baseline = json.loads(Path(".tmp/relay-container-baseline.json").read_text())
     names = set(json.loads(os.environ["EXPECTED_SERVICES"]))
+    # Services this deploy adds (absent before it), e.g. a new worker.
+    # Without named baseline evidence nothing counts as new (keep fail-fast).
+    baseline_names = {item.get("name") for item in baseline.get("containers", [])}
+    new_services = frozenset() if None in baseline_names or not baseline_names else frozenset(names - baseline_names)
     public_url = urlsplit(os.environ["PUBLIC_READY_URL"])
     start = time.monotonic()
     deadline = start + timeout
@@ -269,7 +280,7 @@ def verify(*, timeout: float = 300, interval: float = 5) -> int:
                 }), 15)
             except Exception as exc:
                 last = f"transient public health fetch error: {type(exc).__name__}"
-            ready, reason, fatal = service_ready(service, want, payload, want_tag, want_sha)
+            ready, reason, fatal = service_ready(service, want, payload, want_tag, want_sha, new_services)
             last = reason
             try:
                 remaining = deadline - time.monotonic()

@@ -150,3 +150,19 @@ def test_deploy_failed_container_is_fatal_even_with_old_release():
     )
     assert ready is False
     assert fatal is True
+
+
+def test_newly_added_service_exited_before_first_start_is_not_fatal():
+    # 2026-11-09: the first deploy with tracking-worker failed fast because
+    # Coolify reports a just-added service as "exited" until it starts it.
+    image = "ghcr.io/datatalksclub/relay:20260101-000000-abcdef0"
+    apps = [
+        {"name": "web", "image": image, "status": "running:healthy"},
+        {"name": "tracking-worker", "image": image, "status": "exited"},
+    ]
+    ready, _, fatal = coolify_ready(apps, image, frozenset({"tracking-worker"}))
+    assert (ready, fatal) == (False, False)
+    # An existing worker that exits is still fatal, and so is a new one that is unhealthy.
+    assert coolify_ready(apps, image)[2] is True
+    apps[1]["status"] = "running:unhealthy"
+    assert coolify_ready(apps, image, frozenset({"tracking-worker"}))[2] is True
