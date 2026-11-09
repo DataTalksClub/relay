@@ -320,6 +320,7 @@ set_memory_args() {
     relay-web) memory_args=(--memory 384m) ;;
     relay-worker) memory_args=(--memory 512m) ;;
     relay-provider-events-worker) memory_args=(--memory 256m) ;;
+    relay-tracking-worker) memory_args=(--memory 256m) ;;
     relay-scheduler) memory_args=(--memory 96m) ;;
     relay-ses-ingress|relay-sandbox-ses-ingress|relay-sandbox-inbound-ingress) memory_args=(--memory 128m) ;;
     relay-cmp-callbacks) memory_args=(--memory 96m) ;;
@@ -418,13 +419,16 @@ app_container_args=(
 
 set_memory_args relay-web
 replace_container relay-web "${app_container_args[@]}" \
-  gunicorn -c gunicorn.conf.py --bind "$web_bind" --workers 3 --worker-class gthread --threads 4 --timeout 60 --access-logfile - relay.wsgi:application
+  gunicorn -c gunicorn.conf.py --bind "$web_bind" --workers 3 --worker-class gthread --threads 8 --timeout 60 --access-logfile - relay.wsgi:application
 set_memory_args relay-worker
 replace_container relay-worker "${app_container_args[@]}" \
   python manage.py db_worker --queue-name default --interval 1
 set_memory_args relay-provider-events-worker
 replace_container relay-provider-events-worker "${app_container_args[@]}" \
   python manage.py db_worker --queue-name provider-events --interval 1
+set_memory_args relay-tracking-worker
+replace_container relay-tracking-worker "${app_container_args[@]}" \
+  python manage.py db_worker --queue-name tracking --interval 1
 set_memory_args relay-scheduler
 replace_container relay-scheduler "${app_container_args[@]}" \
   python manage.py run_relay_scheduler --interval 15
@@ -478,6 +482,7 @@ if [[ "$environment" == sandbox ]]; then
     relay-web
     relay-worker
     relay-provider-events-worker
+    relay-tracking-worker
     relay-scheduler
     relay-ses-ingress
     relay-inbound-ingress
@@ -491,6 +496,7 @@ else
     relay-web
     relay-worker
     relay-provider-events-worker
+    relay-tracking-worker
     relay-scheduler
     relay-ses-ingress
     relay-cmp-callbacks

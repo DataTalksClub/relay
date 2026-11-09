@@ -99,8 +99,10 @@ TASKS = {
         ),
         # "default" = campaign/transactional sends; "provider-events" = SES
         # webhook + inbound mail so bounce/complaint never wait behind a send
-        # fan-out (F1 / t1126u). db_worker --queue-name selects the lane.
-        "QUEUES": ["default", "provider-events"],
+        # fan-out (F1 / t1126u); "tracking" = recipient opens/clicks and
+        # deferred unsubscribes, so the web never writes them inline and they
+        # never wait behind an SES backlog. db_worker --queue-name selects the lane.
+        "QUEUES": ["default", "provider-events", "tracking"],
     }
 }
 
@@ -118,6 +120,18 @@ RELAY_TRANSACTIONAL_ALERT_REPEAT_SECONDS = max(1, int(os.environ.get("RELAY_TRAN
 # leaves an event permanently FAILED. Attempts include the first one.
 RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS", "4")))
 RELAY_PROVIDER_EVENT_MAX_ATTEMPTS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_MAX_ATTEMPTS", "7")))
+# Synchronous unsubscribe waits at most this long for the recipient row lock
+# before handing the (durable) write to the tracking worker.
+RELAY_UNSUBSCRIBE_LOCK_TIMEOUT_MS = max(100, int(os.environ.get("RELAY_UNSUBSCRIBE_LOCK_TIMEOUT_MS", "2000")))
+# Max concurrent /webhooks/ses requests per web process; the rest get an
+# immediate 503 + Retry-After (SNS redelivers) so webhooks can never take every
+# thread from /t/* and /unsubscribe. 0 disables the endpoint cap.
+RELAY_SES_WEBHOOK_MAX_CONCURRENCY = max(0, int(os.environ.get("RELAY_SES_WEBHOOK_MAX_CONCURRENCY", "2")))
+# Queue-age alerting (scheduler): oldest runnable READY task per queue.
+RELAY_QUEUE_AGE_ALERT_SECONDS = {
+    "provider-events": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_PROVIDER_EVENTS_SECONDS", "900")),
+    "tracking": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_TRACKING_SECONDS", "300")),
+}
 RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS", "30")))
 RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS", "900")))
 RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL = os.environ.get("RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL", "").strip()
@@ -230,6 +244,14 @@ if DATABASES["default"]["ENGINE"].endswith("postgresql"):
         "keepalives_interval": 10,
         "keepalives_count": 3,
     } | DATABASES["default"]["OPTIONS"]
+    # Web processes only (set by gunicorn.conf.py): a request never waits more
+    # than this on a row lock. It fails loudly instead of pinning a thread
+    # until every worker is busy and the proxy serves 503 (2026-11-09).
+    _web_lock_timeout_ms = int(os.environ.get("RELAY_WEB_DB_LOCK_TIMEOUT_MS", "0") or 0)
+    if _web_lock_timeout_ms > 0:
+        DATABASES["default"]["OPTIONS"]["options"] = (
+            DATABASES["default"]["OPTIONS"].get("options", "") + f" -c lock_timeout={_web_lock_timeout_ms}"
+        ).strip()
 
 # Long-running loops touch this after every iteration that reached the
 # database; worker_healthcheck fails when it goes stale (see mailing/db_retry.py).

@@ -32,6 +32,7 @@ from mailing.services.public_urls import (
 from mailing.services.tokens import ensure_campaign_recipient_tokens, get_recipient_by_tracking_token, token_hash
 from mailing.services.tracking import TRANSPARENT_GIF
 from mailing.tests.callback_helpers import create_callback_endpoint
+from mailing.tests.task_helpers import drain_queue
 
 pytestmark = pytest.mark.django_db
 
@@ -167,6 +168,8 @@ def test_open_pixel_records_repeated_open_events_and_unique_state_once(client, r
 
     first = client.get(url)
     second = client.get(url)
+    assert recipient.open_count == 0  # the web only enqueues
+    assert drain_queue("tracking") == 2
 
     recipient.refresh_from_db()
     recipient.campaign.refresh_from_db()
@@ -201,6 +204,7 @@ def test_click_redirect_records_repeated_clicks_and_redirects(client, recipient)
 
     first = client.get(url, {"u": destination})
     second = client.get(url, {"u": destination})
+    assert drain_queue("tracking") == 2
 
     recipient.refresh_from_db()
     recipient.campaign.refresh_from_db()
@@ -231,6 +235,7 @@ def test_tracking_open_and_click_emit_cmp_callbacks_only(client, recipient, app_
         reverse("mailing:tracking_click", args=[token]),
         {"u": "https://example.com/path"},
     )
+    drain_queue("tracking")
 
     assert open_response.status_code == 200
     assert click_response.status_code == 302
@@ -302,7 +307,9 @@ def test_unsubscribe_get_renders_simple_public_page_without_login(client, recipi
     assert_no_internal_terms(html)
 
 
-def test_unsubscribe_post_unsubscribes_only_the_single_audience_and_records_event(client, recipient, contact, audience):
+def test_unsubscribe_post_unsubscribes_only_the_single_audience_and_records_event(
+    client, recipient, contact, audience, django_capture_on_commit_callbacks
+):
     other_audience = Audience.objects.create(organization=audience.organization, name="Other List", slug="other-list")
     other_subscription = Subscription.objects.create(
         contact=contact, audience=other_audience, status=SubscriptionStatus.SUBSCRIBED
@@ -310,8 +317,14 @@ def test_unsubscribe_post_unsubscribes_only_the_single_audience_and_records_even
     token = ensure_campaign_recipient_tokens(recipient).unsubscribe_token
     url = reverse("mailing:public_unsubscribe", args=[token])
 
-    first = client.post(url)
-    second = client.post(url)
+    with django_capture_on_commit_callbacks(execute=True):
+        first = client.post(url)
+        second = client.post(url)
+    # The suppression itself is written synchronously; only the counter refresh is queued.
+    assert Subscription.objects.get(contact=contact, audience=audience, client__isnull=True).status == (
+        SubscriptionStatus.UNSUBSCRIBED
+    )
+    drain_queue("tracking")
 
     recipient.refresh_from_db()
     contact.refresh_from_db()

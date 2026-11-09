@@ -283,3 +283,46 @@ def process_email_event(payload):
     """
     validate_email_event_message(payload)
     return None
+
+
+@task(queue_name="tracking")
+def process_tracking_event(payload, *, attempt=1):
+    """Persist one recipient open/click accepted by the web (/t/o, /t/c)."""
+    from mailing.services.tracking import apply_tracking_event  # noqa: PLC0415 - tracking enqueues these tasks
+
+    return _run_provider_event(
+        process_tracking_event,
+        lambda: _summarise(apply_tracking_event(payload), lambda event: {"email_event_id": event.pk}),
+        payload,
+        attempt,
+    )
+
+
+@task(queue_name="tracking", priority=50)
+def apply_deferred_unsubscribe(payload, *, attempt=1):
+    """Apply an unsubscribe the web could not write within its lock timeout.
+
+    Waits for the recipient lock instead of timing out, and retries transient DB
+    errors, so the accepted unsubscribe is not lost; a final failure leaves a
+    FAILED row that the queue monitor reports.
+    """
+    from datetime import datetime  # noqa: PLC0415
+
+    from mailing.services.tracking import apply_unsubscribe_for_recipient  # noqa: PLC0415
+
+    return _run_provider_event(
+        apply_deferred_unsubscribe,
+        lambda: _summarise(
+            apply_unsubscribe_for_recipient(payload["recipient_id"], datetime.fromisoformat(payload["occurred_at"])),
+            lambda recipient: {"campaign_recipient_id": recipient.pk},
+        ),
+        payload,
+        attempt,
+    )
+
+
+@task(queue_name="tracking")
+def refresh_campaign_engagement(campaign_id):
+    from mailing.services.tracking import refresh_campaign_engagement_counts  # noqa: PLC0415
+
+    return refresh_campaign_engagement_counts(campaign_id)
