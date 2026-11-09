@@ -33,7 +33,8 @@ list or template is not set up, 500 `internal_error`.
 - `RELAY_PUBLIC_SUBSCRIBE_ORIGINS` lists the browser origins allowed by CORS.
 - Consent evidence is stored in `ContactSourceMetadata` (source
   `website-signup`): time, IP, origin, user agent, page, list key. The
-  subscription is not marked verified.
+  subscription's `verified_at` is set to the consent time
+  (campaigns skip unverified contacts, and Mailchimp treated a form signup as a subscriber).
 
 ## Failures are loud
 

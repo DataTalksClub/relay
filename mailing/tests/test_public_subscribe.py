@@ -261,7 +261,7 @@ def test_single_optin_subscribes_records_consent_and_sends_welcome(client, welco
     assert message.email.lower() == "ada@example.com"
     subscription = Subscription.objects.get()
     assert subscription.status == SubscriptionStatus.SUBSCRIBED
-    assert subscription.verified_at is None
+    assert subscription.verified_at is not None  # campaigns skip unverified contacts
     assert CategoryPreference.objects.get().enabled is True
     consent = ContactSourceMetadata.objects.get(source="website-signup").metadata
     assert consent["consent_ip"] == "1.2.3.4"
