@@ -46,11 +46,15 @@ and the visitor sees an error, so nobody is subscribed without being told.
 
 ## Template
 
-The welcome email is a normal transactional template, edited in Relay:
-`GET/POST /api/transactional/templates`. `dtc-newsletter-welcome.html` and
-`.txt` here are the text of the Mailchimp "Welcome DataTalks.Club (form)"
-automation email ("Thanks for joining us", Slack invite
-http://join.datatalks.club/). Only Mailchimp merge tags changed: subject and
-preview text filled in, and the "view in browser", "update preferences" and
-"unsubscribe" links removed (transactional mail has no per-recipient
-Mailchimp links); the footer now says why the one-time email was sent.
+The welcome email is a normal transactional template, edited in Relay
+(`PUT /api/transactional/templates/newsletter-welcome`, then `POST .../publish`).
+`newsletter-welcome.md` here is the deployed text: the Mailchimp "Welcome
+DataTalks.Club (form)" automation email ("Thanks for joining us", Slack invite
+http://join.datatalks.club/), word for word. It is a Markdown template, so
+Relay's shared shell does the layout. Only Mailchimp-specific parts changed:
+the "view in browser", "update preferences" and "unsubscribe" links are gone
+(transactional mail has no per-recipient Mailchimp links) and the footer says
+why the one-time email was sent.
+
+The Mailchimp HTML (46 KB of inline layout) was not used: CloudFront in front
+of relay.datatalks.club answers 403 to request bodies that large.
