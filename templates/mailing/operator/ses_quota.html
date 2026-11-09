@@ -4,39 +4,41 @@
   <div class="page-header">
     <div>
       <h1>SES quota</h1>
-      <p>Every SES account and region Relay sends through. Values are cached for about a minute.</p>
+      <p>One row per SES account and region Relay can reach. Cached for about a minute.</p>
     </div>
   </div>
   <section class="section" aria-labelledby="ses-quota-rows">
-    <div class="section-header"><div><h2 id="ses-quota-rows">Accounts</h2></div></div>
     <table class="data-table">
-      <thead><tr><th>Account</th><th>Region</th><th>Used (24h)</th><th>Max 24h</th><th>% used</th><th>Max rate/s</th><th>Relay rate/s</th><th>Production</th><th>Enforcement</th><th>Routes</th></tr></thead>
+      <thead><tr><th>Account</th><th>Region</th><th>Mode</th><th>Max 24h</th><th>Max rate/s</th><th>Sent 24h</th><th>Enforcement</th><th>Verified identities</th></tr></thead>
       <tbody>
         {% for row in rows %}
           <tr>
             <td>{{ row.account }}</td>
             <td>{{ row.region }}</td>
             {% if row.status == "ok" %}
-              <td class="data-num">{{ row.sent_last_24h|default_if_none:"-" }}</td>
+              <td>{{ row.mode }}</td>
               <td class="data-num">{{ row.max_24h_send|default_if_none:"-" }}</td>
-              <td class="data-num">{% if row.percent_used is None %}-{% else %}{{ row.percent_used }}%{% endif %}</td>
               <td class="data-num">{{ row.max_send_rate|default_if_none:"-" }}</td>
-              <td class="data-num">{{ row.configured_max_send_rate }}</td>
-              <td>{% if row.production_access %}yes{% else %}no (sandbox){% endif %}</td>
+              <td class="data-num">{{ row.sent_last_24h|default_if_none:"-" }}{% if row.percent_used is not None %} ({{ row.percent_used }}%) <progress max="100" value="{{ row.percent_used }}" aria-label="{{ row.percent_used }}% of 24h quota used"></progress>{% endif %}</td>
               <td>{{ row.enforcement_status|default:"-" }}</td>
+              <td>
+                {% if row.identities_status == "no_permission" %}no permission
+                {% elif row.identities_status != "ok" %}error
+                {% else %}
+                  {% for identity in row.identities %}
+                    <div>{{ identity.name }} <small>({{ identity.type }}, {{ identity.verification|lower }}{% if not identity.sending_enabled %}, sending disabled{% endif %})</small></div>
+                  {% empty %}none{% endfor %}
+                {% endif %}
+              </td>
             {% elif row.status == "no_permission" %}
-              <td colspan="5">no permission (needs {{ row.required_iam_actions|join:", " }})</td>
-              <td class="data-num">{{ row.configured_max_send_rate }}</td>
-              <td colspan="2">no permission</td>
+              <td colspan="6">no permission (needs {{ row.required_iam_actions|join:", " }})</td>
             {% else %}
-              <td colspan="5">error: {{ row.error }}</td>
-              <td class="data-num">{{ row.configured_max_send_rate }}</td>
-              <td colspan="2">-</td>
+              <td colspan="6">error: {{ row.error }}</td>
             {% endif %}
-            <td>{{ row.sources|join:", " }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
+    <p><small>Relay send rate limit: {{ rows.0.configured_max_send_rate }}/s (RELAY_SES_MAX_SEND_RATE).</small></p>
   </section>
 {% endblock %}
