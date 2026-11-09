@@ -158,7 +158,8 @@ def _is_throttling(exc):
     return status == 429
 
 
-def send_raw_bytes(*, ses_client, source, to_email, raw_data, cc=None, bcc=None, configuration_set=None):
+def send_raw_bytes(*, ses_client, source, to_email, raw_data, cc=None, bcc=None, configuration_set=None,
+                   kind=BULK):
     """Send prebuilt MIME bytes (see mailing.mime_template.render_campaign_template).
 
     This is the same wire call as the raw branch of send_email (guard, shared
@@ -174,11 +175,9 @@ def send_raw_bytes(*, ses_client, source, to_email, raw_data, cc=None, bcc=None,
     }
     _configuration(parameters, configuration_set)
     send_phase_timings.build = 0.0
-    ensure_transport_allowed("SES send_raw_email")
-    throttle_started = time.perf_counter()
-    throttle_ses_send()
-    send_phase_timings.limiter_wait = time.perf_counter() - throttle_started
-    return ses_client.send_raw_email(**parameters)["MessageId"]
+    return _send_with_permit(
+        ses_client, parameters, raw=True, kind=kind, operation="SES send_raw_email",
+    )
 
 
 def _simple_parameters(envelope, content):
