@@ -8,21 +8,24 @@ from email.message import EmailMessage, Message
 from email.parser import BytesParser
 from email.utils import formataddr, parseaddr
 
+from botocore.exceptions import ClientError
 from django.conf import settings
 
 from mailing.calendar_mime import add_calendar_alternative, validate_calendar_alternative
 from mailing.dry_run import ensure_transport_allowed
+from mailing.ses_rate_limiter import (
+    BULK,
+    THROTTLING_CODES,
+    acquire_ses_permit,
+    report_ses_throttling,
+)
 
 logger = logging.getLogger(__name__)
 
-# Per-thread phase timings of the last send_email call, read by the campaign
-# sender for its batch log: seconds spent building the SES parameters (MIME)
-# and waiting on the rate limiter.
+# Per-thread phase timings of the last send call, read by the campaign sender
+# for its batch log: seconds spent building the SES parameters (MIME) and
+# waiting on the global rate limiter.
 send_phase_timings = threading.local()
-
-_rate_limit_lock = threading.Lock()
-_last_ses_send_monotonic = None
-
 
 @dataclass(frozen=True)
 class _Envelope:
@@ -61,6 +64,7 @@ def send_email(
     calendar_alternative=None,
     original_mime=None,
     forward_footer=None,
+    kind=BULK,
 ):
     calendar = validate_calendar_alternative(calendar_alternative, text_body, html_body, message_parts, headers)
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
@@ -75,13 +79,9 @@ def send_email(
     else:
         parameters = _raw_parameters(envelope, content) if raw else _simple_parameters(envelope, content)
     send_phase_timings.build = time.perf_counter() - build_started
-    ensure_transport_allowed("SES send_email")
-    throttle_started = time.perf_counter()
-    throttle_ses_send()
-    send_phase_timings.limiter_wait = time.perf_counter() - throttle_started
-    if raw:
-        return ses_client.send_raw_email(**parameters)["MessageId"]
-    return ses_client.send_email(**parameters)["MessageId"]
+    return _send_with_permit(
+        ses_client, parameters, raw=raw, kind=kind, operation="SES send_email",
+    )
 
 
 def send_raw_email(
@@ -99,13 +99,63 @@ def send_raw_email(
     message_parts=None,
     configuration_set=None,
     calendar_alternative=None,
+    kind=BULK,
 ):
     calendar = validate_calendar_alternative(calendar_alternative, text_body, html_body, message_parts, headers)
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
     content = _Content(subject, html_body, text_body, headers, message_parts, calendar)
+    build_started = time.perf_counter()
     parameters = _raw_parameters(envelope, content)
-    ensure_transport_allowed("SES send_raw_email")
-    return ses_client.send_raw_email(**parameters)["MessageId"]
+    send_phase_timings.build = time.perf_counter() - build_started
+    return _send_with_permit(
+        ses_client, parameters, raw=True, kind=kind, operation="SES send_raw_email",
+    )
+
+
+def _recipient_cost(parameters, raw):
+    if raw:
+        return max(1, len(parameters.get("Destinations") or []))
+    destination = parameters.get("Destination") or {}
+    return max(
+        1,
+        len(destination.get("ToAddresses") or [])
+        + len(destination.get("CcAddresses") or [])
+        + len(destination.get("BccAddresses") or []),
+    )
+
+
+def _send_with_permit(ses_client, parameters, *, raw, kind, operation):
+    cost = _recipient_cost(parameters, raw)
+    ensure_transport_allowed(operation)
+    # Every SES call acquires a global permit first, including raw sends; the
+    # SDK client is configured with standard retries (mailing/aws.py), and our
+    # layer re-acquires a permit before its single throttling retry, so retries
+    # never bypass the account budget.
+    waited = 0.0
+    started = time.perf_counter()
+    acquire_ses_permit(cost=cost, kind=kind)
+    waited += time.perf_counter() - started
+    send_phase_timings.limiter_wait = waited
+    call = ses_client.send_raw_email if raw else ses_client.send_email
+    try:
+        return call(**parameters)["MessageId"]
+    except ClientError as exc:
+        if not _is_throttling(exc):
+            raise
+        report_ses_throttling()
+        started = time.perf_counter()
+        acquire_ses_permit(cost=cost, kind=kind)
+        waited += time.perf_counter() - started
+        send_phase_timings.limiter_wait = waited
+        return call(**parameters)["MessageId"]
+
+
+def _is_throttling(exc):
+    code = exc.response.get("Error", {}).get("Code", "")
+    if code in THROTTLING_CODES:
+        return True
+    status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
+    return status == 429
 
 
 def _simple_parameters(envelope, content):
@@ -214,22 +264,13 @@ def parse_content_type(value):
     return {"maintype": maintype, "subtype": subtype, "params": dict(message.get_params()[1:])}
 
 
-def throttle_ses_send():
-    max_rate = float(getattr(settings, "SES_MAX_SEND_RATE_PER_SECOND", 0) or 0)
-    if max_rate <= 0:
-        return
+def throttle_ses_send(*, cost=1, kind=BULK, timeout=None):
+    """Acquire a global SES permit. Kept as the named send gate (WP2 scope).
 
-    min_interval = 1.0 / max_rate
-    global _last_ses_send_monotonic
-    with _rate_limit_lock:
-        now = time.monotonic()
-        if _last_ses_send_monotonic is not None:
-            elapsed = now - _last_ses_send_monotonic
-            if elapsed < min_interval:
-                wait_seconds = min_interval - elapsed
-                time.sleep(wait_seconds)
-                now += wait_seconds
-        _last_ses_send_monotonic = now
+    The old process-local 1/rate pacer is gone: every send path funnels
+    through the Postgres token bucket, so K processes share one budget.
+    """
+    acquire_ses_permit(cost=cost, kind=kind, timeout=timeout)
 
 
 def _forward_message(envelope, raw, footer=None):

@@ -89,7 +89,7 @@ def test_rows_cover_every_account_and_region(monkeypatch):
     assert rows[0]["percent_used"] == 1.0
     assert rows[0]["production_access"] is True
     assert rows[0]["enforcement_status"] == "HEALTHY"
-    assert rows[0]["configured_max_send_rate"] == 10.0
+    assert rows[0]["configured_max_send_rate"] == 45.0
 
 
 @override_settings(AWS_SES_REGION="eu-west-1", RELAY_SES_DOMAIN_ROUTES="", RELAY_TASK_ROLE_ARNS={}, RELAY_SES_QUOTA_REGIONS=[])

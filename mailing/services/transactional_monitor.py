@@ -16,6 +16,7 @@ from mailing.aws import ses_client_for_source
 from mailing.dry_run import ensure_transport_allowed
 from mailing.models import Client, TransactionalMessage, TransactionalMonitorState, TransactionalRequestMinute
 from mailing.ses import send_email
+from mailing.ses_rate_limiter import TRANSACTIONAL
 
 logger = logging.getLogger(__name__)
 _last_check = None
@@ -115,7 +116,7 @@ def send_monitor_alert(payload, *, test=False):
         return send_ops_smtp(source, destination, payload["kind"], body)
     return send_email(ses_client=ses_client_for_source(source), source=source,
                       to_email=destination, subject="[Relay transactional monitor] " + payload["kind"],
-                      text_body=body, html_body="",)
+                      text_body=body, html_body="", kind=TRANSACTIONAL)
 
 
 def send_ops_smtp(source, destination, kind, body):

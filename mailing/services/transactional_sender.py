@@ -12,6 +12,7 @@ from mailing.models import EmailEvent, EmailEventType, TransactionalMessage, Tra
 from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.ses import send_email
+from mailing.ses_rate_limiter import TRANSACTIONAL, SesRateLimiterUnavailable
 from mailing.ses_routes import configuration_set_for_source
 
 logger = logging.getLogger(__name__)
@@ -85,8 +86,14 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
                 headers=message.metadata.get("headers", {}),
                 message_parts=message.metadata.get("message_parts", []),
                 calendar_alternative=message.metadata.get("calendar_alternative"),
+                kind=TRANSACTIONAL,
                 **forward_options,
             )
+        except SesRateLimiterUnavailable as exc:
+            # Fail-closed limiter: SES never saw the message, so requeueing
+            # for a later retry cannot duplicate it.
+            _mark_retryable(message.id, str(exc))
+            raise TransientSendFailure(str(exc)) from exc
         except ClientError as exc:
             if _is_permanent_client_error(exc):
                 return _mark_failed(

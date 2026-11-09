@@ -29,7 +29,7 @@ def settings_for_campaign(settings):
     settings.PUBLIC_BASE_URL = "https://relay.example.invalid"
     settings.DEFAULT_FROM_EMAIL = "global@relay.example.invalid"
     settings.AWS_SES_CONFIGURATION_SET = "synthetic-events"
-    settings.SES_MAX_SEND_RATE_PER_SECOND = 0
+    settings.SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = 0
 
 
 @pytest.fixture
@@ -213,7 +213,7 @@ def provider_error(kind):
 
 
 @pytest.mark.parametrize(
-    "kind,retryable", [("timeout", True), ("Throttling", True), ("MessageRejected", False), ("unexpected", False)]
+    "kind,retryable", [("timeout", True), ("MessageRejected", False), ("unexpected", False)]
 )
 def test_provider_failure_logs_safe_stack_and_preserves_outcome(pending, monkeypatch, caplog, kind, retryable):
     campaign, recipient = pending
@@ -234,6 +234,21 @@ def test_provider_failure_logs_safe_stack_and_preserves_outcome(pending, monkeyp
     assert_safe_diagnostic(caplog, campaign, recipient, retryable)
 
 
+def test_throttling_gets_exactly_one_repermitted_retry(pending, settings, caplog):
+    """WP2: our layer re-acquires a permit before retrying a Throttling error."""
+    settings.SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = 45.0
+    campaign, recipient = pending
+    error = provider_error("Throttling")
+    provider = FailingProvider(error)
+    with pytest.raises(sender.RetryableCampaignSendError):
+        sender.send_campaign_batch(payload(pending), ses_client=provider)
+    assert len(provider.calls) == 2 and provider.atomic == [True, True]
+    assert_failure_state(campaign, recipient, error, True)
+    assert_safe_diagnostic(caplog, campaign, recipient, True)
+    feedback = [r for r in caplog.records if r.name == "mailing.ses_rate_limiter"]
+    assert any("ses_rate_limit_throttling_feedback" in r.getMessage() for r in feedback)
+
+
 def assert_failure_state(campaign, recipient, error, retryable):
     recipient.refresh_from_db()
     campaign.refresh_from_db()
@@ -249,8 +264,9 @@ def assert_failure_state(campaign, recipient, error, retryable):
 
 
 def assert_safe_diagnostic(caplog, campaign, recipient, retryable):
-    assert len(caplog.records) == 1
-    record = caplog.records[0]
+    sender_records = [record for record in caplog.records if record.name == sender.__name__]
+    assert len(sender_records) == 1
+    record = sender_records[0]
     rendered = caplog.text
     assert record.name == sender.__name__ and record.levelname == "ERROR"
     assert f"campaign_id={campaign.pk} recipient_id={recipient.pk}" in rendered

@@ -41,6 +41,7 @@ from mailing.services.tokens import (
     token_hash,
 )
 from mailing.ses import send_email, send_phase_timings
+from mailing.ses_rate_limiter import TRANSACTIONAL, SesRateLimiterUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ TRANSIENT_SES_ERROR_CODES = {
 }
 
 
-# A batch that delivers at less than this share of RELAY_SES_MAX_SEND_RATE is
+# A batch that delivers at less than this share of RELAY_SES_ACCOUNT_MAX_SEND_RATE is
 # logged at ERROR. Batches smaller than the minimum are too short to measure
 # and are not reported at all.
 THROUGHPUT_ALERT_RATIO = 0.5
@@ -112,6 +113,7 @@ def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=No
         subject=rendered["subject"],
         html_body=rendered["html_body"],
         text_body=rendered["text_body"],
+        kind=TRANSACTIONAL,
     )
 
 
@@ -318,7 +320,7 @@ def _report_batch_throughput(campaign_id, result, elapsed, concurrency, timings=
     if attempted < THROUGHPUT_ALERT_MIN_MESSAGES or elapsed <= 0:
         return
     rate = attempted / elapsed
-    configured = float(getattr(settings, "SES_MAX_SEND_RATE_PER_SECOND", 0) or 0)
+    configured = float(getattr(settings, "SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND", 0) or 0)
     logger.info(
         "Campaign batch sent campaign_id=%s attempted=%s elapsed_s=%.1f rate_per_s=%.1f "
         "configured_rate_per_s=%.1f concurrency=%s emails=%s worker_cpu_s=%.2f cpu_ms_per_email=%.1f "
@@ -513,6 +515,10 @@ def _complete_campaign_recipient(recipient, message_id):
 
 
 def is_retryable_send_error(exc):
+    if isinstance(exc, SesRateLimiterUnavailable):
+        # Fail-closed limiter (DB down or permit wait timed out): the message
+        # was never handed to SES, so a later retry cannot duplicate it.
+        return True
     if isinstance(exc, (TimeoutError, ConnectionError, BotoCoreError)):
         return True
     if isinstance(exc, ClientError):

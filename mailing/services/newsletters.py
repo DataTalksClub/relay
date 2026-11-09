@@ -561,11 +561,13 @@ def _sender_for(client):
 def _deliver(source, email, rendered):
     from mailing.aws import ses_client  # noqa: PLC0415 - patched in tests
     from mailing.ses import send_email  # noqa: PLC0415
+    from mailing.ses_rate_limiter import TRANSACTIONAL  # noqa: PLC0415
 
     # configuration_set="" sends outside the production configuration set, whose
     # SES open/click tracking would otherwise wrap links in a [TEST] email.
     return send_email(ses_client=ses_client(), source=source, to_email=email, subject=rendered["subject"],
-                      html_body=rendered["html_body"], text_body=rendered["text_body"], configuration_set="")
+                      html_body=rendered["html_body"], text_body=rendered["text_body"], configuration_set="",
+                      kind=TRANSACTIONAL)
 
 
 def send_test(issue, emails, *, block=None, actor=None, via="ui", deliver=None):

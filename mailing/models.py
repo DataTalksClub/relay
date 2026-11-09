@@ -1429,6 +1429,32 @@ class TransactionalMonitorState(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["client", "kind"], name="tx_monitor_client_kind_unique")]
+
+
+class SesRateLimitBucket(models.Model):
+    """One token-bucket row per SES account/region (mailing/ses_rate_limiter.py).
+
+    Every SES send path acquires a permit against this row in a short locked
+    transaction, so any number of sender processes share one account-wide
+    budget. ``tokens`` may go slightly negative: kind="transactional" sends
+    may overdraw by the configured reserve while bulk sends cannot.
+    """
+
+    key = models.CharField(max_length=128, primary_key=True)
+    tokens = models.FloatField(default=0)
+    capacity = models.FloatField(default=9)
+    base_rate = models.FloatField(default=45)
+    penalty_factor = models.FloatField(default=1.0)
+    penalty_expires_at = models.DateTimeField(null=True, blank=True)
+    last_refill = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ses_rate_limit_buckets"
+
+    def __str__(self):
+        return f"{self.key} ({self.tokens:.1f}/{self.capacity:.0f} tokens)"
 from mailing.dmarc_models import DmarcArchive, DmarcAttachment, DmarcRecord, DmarcReport  # noqa: E402,F401
 from mailing.newsletter_models import NewsletterBlock, NewsletterIssue, NewsletterTestSend  # noqa: E402,F401
 from mailing.sending_domain_models import SendingDomain  # noqa: E402,F401

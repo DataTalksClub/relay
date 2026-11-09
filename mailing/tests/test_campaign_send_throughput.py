@@ -103,7 +103,7 @@ def _campaign_with_recipients(count, html_body="<p>Hi</p>"):
 
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
-@override_settings(SES_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=16)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=16)
 def test_batch_reaches_configured_rate_with_slow_ses():
     campaign, payload = _campaign_with_recipients(60)
     ses = _SlowSes()
@@ -125,7 +125,7 @@ def test_batch_reaches_configured_rate_with_slow_ses():
 
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
-@override_settings(SES_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=8)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=8)
 def test_two_batches_of_one_campaign_send_in_parallel_without_double_sending():
     campaign, payload = _campaign_with_recipients(40)
     ids = payload["campaign_recipient_ids"]
@@ -155,7 +155,7 @@ def test_two_batches_of_one_campaign_send_in_parallel_without_double_sending():
 
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
-@override_settings(SES_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=8)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=8)
 def test_retryable_error_stops_new_sends_keeps_finished_ones_and_reraises():
     campaign, payload = _campaign_with_recipients(40)
     ses = _SlowSes(fail_on=3)
@@ -174,7 +174,7 @@ def test_retryable_error_stops_new_sends_keeps_finished_ones_and_reraises():
 
 
 @pytest.mark.django_db
-@override_settings(SES_MAX_SEND_RATE_PER_SECOND=1000.0, CAMPAIGN_SEND_CONCURRENCY=1)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=1000.0, CAMPAIGN_SEND_CONCURRENCY=1)
 def test_throughput_far_below_configured_rate_is_logged_as_error(caplog):
     campaign, payload = _campaign_with_recipients(20)
 
@@ -187,7 +187,7 @@ def test_throughput_far_below_configured_rate_is_logged_as_error(caplog):
 
 
 @pytest.mark.django_db
-@override_settings(SES_MAX_SEND_RATE_PER_SECOND=10.0, CAMPAIGN_SEND_CONCURRENCY=1)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=10.0, CAMPAIGN_SEND_CONCURRENCY=1)
 def test_throughput_near_configured_rate_logs_info_only(caplog):
     campaign, payload = _campaign_with_recipients(20)
 
@@ -210,7 +210,7 @@ def test_cached_render_matches_direct_render_for_each_recipient():
 
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
-@override_settings(SES_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=16)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=16)
 def test_realistic_newsletter_batch_reaches_40_per_second():
     # 300 recipients: the per-batch fixed cost (thread/connection setup, last
     # SES call) is amortised like a default-size (500) batch.
