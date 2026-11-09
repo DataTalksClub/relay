@@ -61,6 +61,8 @@ API_DOC_PATHS = {
     "mailing:api_campaign_pause": "/api/campaigns/{external_key}/pause",
     "mailing:api_campaign_resume": "/api/campaigns/{external_key}/resume",
     "mailing:api_campaign_stop": "/api/campaigns/{external_key}/stop",
+    "mailing:api_campaign_unknown_recipients": "/api/campaigns/{external_key}/unknown-recipients",
+    "mailing:api_campaign_unknown_resend": "/api/campaigns/{external_key}/unknown-recipients/resend",
     "mailing:api_campaign_preview": "/api/campaigns/{external_key}/preview",
     "mailing:api_campaign_test_send": "/api/campaigns/{external_key}/test-send",
     "mailing:api_campaign_recount": "/api/campaigns/{external_key}/recount",
@@ -797,6 +799,8 @@ def endpoint_groups():
                 ("POST", "/api/campaigns/{external_key}/queue", "Snapshot and queue one draft campaign."),
                 ("POST", "/api/campaigns/{external_key}/cancel", "Cancel one draft or unsent queued campaign."),
                 ("POST", "/api/campaigns/{external_key}/pause", "Pause one queued or sending campaign; resume continues with the remaining recipients."),
+                ("GET", "/api/campaigns/{external_key}/unknown-recipients", "List recipients whose SES send outcome is unknown (lost response, crash, expired claim) with a count. They are never resent automatically."),
+                ("POST", "/api/campaigns/{external_key}/unknown-recipients/resend", "Resend selected UNKNOWN recipients: body {recipient_ids: [...], confirm: true}. Without confirm=true nothing happens; the first copy may already have been delivered."),
                 ("POST", "/api/campaigns/{external_key}/resume", "Resume one paused campaign by re-queueing its remaining recipients."),
                 ("POST", "/api/campaigns/{external_key}/stop", "Stop one queued or sending campaign permanently; sent email is kept."),
                 ("POST", "/api/campaigns/{external_key}/preview", "Render one campaign without recipients."),
@@ -932,6 +936,14 @@ def route_path_map():
         ),
         API_DOC_PATHS["mailing:api_campaign_stop"]: reverse(
             "mailing:api_campaign_stop",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_unknown_recipients"]: reverse(
+            "mailing:api_campaign_unknown_recipients",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_unknown_resend"]: reverse(
+            "mailing:api_campaign_unknown_resend",
             args=["cmp-course-start-2026"],
         ),
         API_DOC_PATHS["mailing:api_campaign_preview"]: reverse(
@@ -1470,6 +1482,31 @@ OPENAPI_SPEC = {
                 "responses": bearer_responses(
                     json_response("Campaign stopped", "#/components/schemas/CampaignStopResponse")
                 ),
+            }
+        },
+        "/api/campaigns/{external_key}/unknown-recipients": {
+            "get": {
+                "tags": ["Campaigns"],
+                "summary": "List recipients with an unknown send outcome",
+                "description": "Recipients whose SES call ended ambiguously (lost response, crash, expired claim). They are never resent automatically; SES events resolve them or a person resends them.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [
+                    CAMPAIGN_EXTERNAL_KEY_PARAM,
+                    {"name": "audience", "in": "query", "required": True, "schema": {"type": "string"}},
+                    {"name": "client", "in": "query", "required": True, "schema": {"type": "string"}},
+                ],
+                "responses": bearer_responses(json_response("Unknown recipients with a count")),
+            }
+        },
+        "/api/campaigns/{external_key}/unknown-recipients/resend": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Resend selected unknown recipients",
+                "description": "Requires confirm=true: the first copy may already have been delivered, so a resend can duplicate it. Logged with the calling client.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(json_response("Recipients queued for resend")),
             }
         },
         "/api/campaigns/{external_key}/preview": {

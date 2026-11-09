@@ -348,8 +348,10 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 AWS_SES_REGION = os.environ.get("AWS_SES_REGION", AWS_REGION)
 # boto3 client transport: seconds per attempt, total attempts incl. the first (standard retry mode).
 AWS_CONNECT_TIMEOUT = int_env("RELAY_AWS_CONNECT_TIMEOUT", default=5)
-AWS_READ_TIMEOUT = int_env("RELAY_AWS_READ_TIMEOUT", default=20)
+AWS_READ_TIMEOUT = int_env("RELAY_AWS_READ_TIMEOUT", default=5)
 AWS_MAX_ATTEMPTS = int_env("RELAY_AWS_MAX_ATTEMPTS", default=3)
+# SES send calls are not idempotent: keep them at one attempt (see mailing.aws._ses_config).
+AWS_SES_SEND_MAX_ATTEMPTS = int_env("RELAY_AWS_SES_SEND_MAX_ATTEMPTS", default=1)
 AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "")
 DMARC_READER_ROLE_ARN = os.environ.get("DMARC_READER_ROLE_ARN", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
@@ -422,6 +424,12 @@ SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0
 CAMPAIGN_EMAIL_BATCH_SIZE = int_env("RELAY_CAMPAIGN_EMAIL_BATCH_SIZE", default=500)
 # SES calls in flight per batch. ~11 saturate 45/s at ~240 ms per call.
 CAMPAIGN_SEND_CONCURRENCY = int_env("RELAY_CAMPAIGN_SEND_CONCURRENCY", default=16)
+# Claim-send-finalize (mailing.services.campaign_sender): rows claimed per UPDATE, how long a
+# SENDING claim may live before it becomes UNKNOWN, and how long a SIGTERM drain waits for
+# in-flight SES calls (keep below the Docker stop timeout).
+CAMPAIGN_CLAIM_CHUNK = int_env("RELAY_CAMPAIGN_CLAIM_CHUNK", default=5)
+CAMPAIGN_SEND_LEASE_SECONDS = int_env("RELAY_CAMPAIGN_SEND_LEASE_SECONDS", default=600)
+CAMPAIGN_SEND_DRAIN_SECONDS = int_env("RELAY_CAMPAIGN_SEND_DRAIN_SECONDS", default=25)
 # MIME build once per batch (mailing.mime_template) with per-recipient byte
 # substitution. Set to 0 to use the per-message MIME builder instead.
 RELAY_MIME_TEMPLATE_ENABLED = bool_env("RELAY_MIME_TEMPLATE_ENABLED", default=True)

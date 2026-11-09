@@ -405,6 +405,13 @@ def normalize_ses_webhook_worker_payload(payload, *, received_at=None, sqs_attri
     return normalized | {"metadata": metadata}
 
 
+def _destination_hash(mail):
+    destinations = mail.get("destination") or []
+    if not destinations or not isinstance(destinations[0], str):
+        return None
+    return hashlib.sha256(destinations[0].strip().lower().encode("utf-8")).hexdigest()
+
+
 def build_ses_metadata(ses_payload, sns_payload):
     event_name = ses_payload.get("eventType") or ses_payload.get("notificationType")
     notification_type = SES_EVENT_TYPES.get(event_name, "unsupported")
@@ -427,6 +434,9 @@ def build_ses_metadata(ses_payload, sns_payload):
         "event_timestamp": detail.get("timestamp") if isinstance(detail, dict) else None,
         "mail_timestamp": mail.get("timestamp"),
         "mail_source": mail.get("source"),
+        # Hash of the first destination, so an UNKNOWN campaign recipient (send outcome
+        # lost) can be matched to its SES events without storing the address here.
+        "mail_destination_hash": _destination_hash(mail),
     }
     if notification_type == "bounce":
         metadata |= {

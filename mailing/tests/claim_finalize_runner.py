@@ -19,7 +19,7 @@ from mailing.services import campaign_sender  # noqa: E402
 from mailing.tests.claim_finalize_harness import FaultSes  # noqa: E402
 
 settings.CAMPAIGN_SEND_CONCURRENCY = int(os.environ["CF_CONCURRENCY"])
-settings.SES_MAX_SEND_RATE_PER_SECOND = float(os.environ.get("CF_RATE", "1000"))
+settings.SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = float(os.environ.get("CF_RATE", "0"))
 
 ses = FaultSes(
     latency=float(os.environ["CF_LATENCY"]),

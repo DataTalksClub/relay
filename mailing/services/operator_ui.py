@@ -56,10 +56,15 @@ RECIPIENT_FILTERS = {
     "failed": Q(status=CampaignRecipientStatus.FAILED),
     "sent": Q(status=CampaignRecipientStatus.SENT),
     "pending": Q(status=CampaignRecipientStatus.PENDING),
+    "sending": Q(status=CampaignRecipientStatus.SENDING),
+    "unknown": Q(status=CampaignRecipientStatus.UNKNOWN),
 }
 
 PROCESSED_RECIPIENT_STATUSES = {
     CampaignRecipientStatus.SENT,
+    # Outcome unknown, but the sender is done with it: it must not keep progress below 100%
+    # (the operator list shows these rows separately).
+    CampaignRecipientStatus.UNKNOWN,
     CampaignRecipientStatus.FAILED,
     CampaignRecipientStatus.BOUNCED,
     CampaignRecipientStatus.COMPLAINED,
@@ -78,6 +83,8 @@ RECIPIENT_FILTER_LABELS = {
     "failed": "Failed",
     "sent": "Sent",
     "pending": "Pending",
+    "sending": "Sending",
+    "unknown": "Unknown (send outcome lost)",
 }
 
 ENGAGEMENT_FILTER_LABELS = {
@@ -491,7 +498,7 @@ def campaign_progress_map(campaign_ids) -> dict:
         .order_by()
         .values("campaign_id")
         .annotate(
-            queued_count=Count("id", filter=Q(status=CampaignRecipientStatus.PENDING)),
+            queued_count=Count("id", filter=Q(status__in=[CampaignRecipientStatus.PENDING, CampaignRecipientStatus.SENDING])),
             processed_count=Count("id", filter=Q(status__in=PROCESSED_RECIPIENT_STATUSES)),
             sent_count=Count("id", filter=Q(sent_at__isnull=False)),
             started_at=Min("sent_at"),
@@ -506,7 +513,7 @@ def campaign_send_progress(campaign: Campaign) -> CampaignSendProgress:
         CampaignRecipient.objects.filter(campaign=campaign)
         .order_by()
         .aggregate(
-            queued_count=Count("id", filter=Q(status=CampaignRecipientStatus.PENDING)),
+            queued_count=Count("id", filter=Q(status__in=[CampaignRecipientStatus.PENDING, CampaignRecipientStatus.SENDING])),
             processed_count=Count("id", filter=Q(status__in=PROCESSED_RECIPIENT_STATUSES)),
             sent_count=Count("id", filter=Q(sent_at__isnull=False)),
             started_at=Min("sent_at"),
@@ -1329,6 +1336,8 @@ def delivery_tone(status: str) -> str:
         CampaignRecipientStatus.SKIPPED,
         TransactionalMessageStatus.SKIPPED,
         CampaignRecipientStatus.PENDING,
+        CampaignRecipientStatus.SENDING,
+        CampaignRecipientStatus.UNKNOWN,
         TransactionalMessageStatus.QUEUED,
     }:
         return "warning"

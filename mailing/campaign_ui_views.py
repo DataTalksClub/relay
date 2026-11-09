@@ -21,6 +21,7 @@ from mailing.services.api import (
 )
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaigns import campaign_send_issues
+from mailing.services.send_reconcile import ResendNotConfirmed, resend_unknown, unknown_count
 from mailing.services.task_leases import campaign_dispatch_alerts
 
 
@@ -36,6 +37,7 @@ def campaign_timing_context(campaign):
         "scheduled_label": label,
         "scheduling_error": metadata.get("scheduling_error", ""),
         "dispatch_alerts": campaign_dispatch_alerts(campaign),
+        "unknown_recipient_count": unknown_count(campaign.pk),
     }
 
 
@@ -170,3 +172,32 @@ def campaign_cancel(request, campaign_id):
         else:
             messages.info(request, "This campaign was already cancelled.")
     return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
+
+
+@staff_member_required
+@require_POST
+def campaign_unknown_resend(request, campaign_id):
+    """Operator resend of UNKNOWN recipients; nothing happens without the confirm box."""
+    from mailing.views import require_active_client  # noqa: PLC0415 - avoid routing import cycle
+
+    active_client = require_active_client(request)
+    if active_client is None:
+        return redirect("mailing:dashboard")
+    campaign = get_object_or_404(Campaign, pk=campaign_id, client=active_client)
+    back = f"{reverse('mailing:campaign_detail', args=[campaign.pk])}?filter=unknown"
+    try:
+        ids = [int(value) for value in request.POST.getlist("recipient_ids")]
+    except ValueError:
+        messages.error(request, "Invalid recipient selection.")
+        return redirect(back)
+    try:
+        count = resend_unknown(
+            campaign.pk, ids, confirm=request.POST.get("confirm_resend") == "1", actor=request.user.get_username()
+        )
+    except ResendNotConfirmed:
+        messages.error(request, "Tick the confirmation: a resend may deliver a second copy to someone who already got the first.")
+    except ApiValidationError as exc:
+        messages.error(request, f"Resend refused: {exc.errors}")
+    else:
+        messages.success(request, f"{count} recipient(s) queued for resend. The first copy may also have been delivered.")
+    return redirect(back)
