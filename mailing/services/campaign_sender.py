@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 from django.db import close_old_connections, connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from mailing.aws import ses_client as default_ses_client
@@ -26,10 +27,13 @@ from mailing.mime_template import (
 from mailing.models import (
     Campaign,
     CampaignRecipient,
+    CampaignRecipientSkipReason,
     CampaignRecipientStatus,
     CampaignStatus,
+    CategoryPreference,
     EmailEvent,
     EmailEventType,
+    Subscription,
 )
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_rendering import (
@@ -44,6 +48,7 @@ from mailing.services.campaign_rendering import (
 from mailing.services.campaign_rendering import (
     rewrite_html_links as rewrite_html_links,
 )
+from mailing.services.suppression import suppression_skip_reason
 from mailing.services.tokens import (
     CampaignRecipientTokens,
     ensure_campaign_recipient_tokens,
@@ -471,8 +476,64 @@ def _send_campaign_recipient_locked(campaign_id, recipient_id, ses, context, tim
     if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SNAPSHOTTING}:
         raise CampaignSenderError("Campaign has not been released for sending.")
 
+    suppress_reason = _suppression_recheck(recipient, context.campaign)
+    if suppress_reason:
+        return _mark_recipient_suppressed_after_snapshot(recipient, suppress_reason)
+
     tokens = _send_tokens_for_pending_recipient(recipient)
     return _deliver_campaign_recipient(recipient, ses, tokens, context.source, timing, context.mime_template)
+
+
+def _suppression_recheck(recipient, campaign):
+    """Re-check suppression right before SES using the snapshot's rules.
+
+    The snapshot may be minutes old; an unsubscribe, hard bounce or complaint
+    recorded after the snapshot must still block the send. The contact already
+    comes from the locked select_related above, so this costs one subscription
+    query (both scopes), plus one EXISTS only when the campaign has a category
+    tag and the contact is otherwise sendable.
+    """
+    contact = recipient.contact
+    subscriptions = {
+        subscription.client_id: subscription
+        for subscription in Subscription.objects.filter(
+            contact_id=contact.pk, audience_id=campaign.audience_id
+        ).filter(Q(client_id=campaign.client_id) | Q(client__isnull=True))
+    }
+    reason = suppression_skip_reason(
+        contact, subscriptions.get(None), subscriptions.get(campaign.client_id),
+    )
+    if reason or not campaign.category_tag:
+        return reason
+    if CategoryPreference.objects.filter(
+        contact_id=contact.pk,
+        audience_id=campaign.audience_id,
+        client_id=campaign.client_id,
+        tag=campaign.category_tag,
+        enabled=False,
+    ).exists():
+        return CampaignRecipientSkipReason.CLIENT_UNSUBSCRIBE
+    return ""
+
+
+def _mark_recipient_suppressed_after_snapshot(recipient, reason):
+    # SES is never called: the contact unsubscribed, bounced or complained
+    # after the snapshot (or otherwise became unsendable). skip_reason carries
+    # the shared snapshot rule; last_error marks it as post-snapshot so it is
+    # distinguishable from snapshot-time skips.
+    recipient.status = CampaignRecipientStatus.SKIPPED
+    recipient.skip_reason = reason
+    recipient.last_error = f"suppressed_after_snapshot:{reason}"[:2000]
+    recipient.save(update_fields=["status", "skip_reason", "last_error", "updated_at"])
+    _create_campaign_event(
+        recipient, EmailEventType.SKIPPED,
+        metadata={"reason": str(reason), "suppressed_after_snapshot": True},
+    )
+    logger.info(
+        "Campaign recipient suppressed after snapshot campaign_id=%s recipient_id=%s reason=%s",
+        recipient.campaign_id, recipient.pk, reason,
+    )
+    return "skipped"
 
 
 # Rendering an ~80 KB newsletter (HTML parse + link rewrite) costs ~15 ms of

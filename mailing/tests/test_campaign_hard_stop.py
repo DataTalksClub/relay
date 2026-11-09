@@ -30,6 +30,8 @@ from mailing.models import (
     Client,
     Contact,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
 from mailing.services import api as api_services
 from mailing.services import campaign_sender as sender
@@ -70,7 +72,14 @@ def campaign_setup(audience, api_client_record):
     )
     recipients = []
     for index in range(3):
-        contact = Contact.objects.create(email=f"halt-user-{index}@example.com")
+        # Verified + subscribed, so the pre-send suppression recheck lets them through.
+        contact = Contact.objects.create(email=f"halt-user-{index}@example.com", verified_at=timezone.now())
+        Subscription.objects.create(
+            contact=contact,
+            audience=audience,
+            client=api_client_record,
+            status=SubscriptionStatus.SUBSCRIBED,
+        )
         recipients.append(CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email))
     return campaign, recipients
 
@@ -232,7 +241,10 @@ def test_api_pause_resume_stop_for_sending_campaign(client, audience, api_client
     assert paused_again.status_code == 200
     assert paused_again.json()["paused"] is False
 
-    contact = Contact.objects.create(email="resume-me@example.com")
+    contact = Contact.objects.create(email="resume-me@example.com", verified_at=timezone.now())
+    Subscription.objects.create(
+        contact=contact, audience=audience, client=api_client_record, status=SubscriptionStatus.SUBSCRIBED,
+    )
     CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)
     resumed = _api_post(client, "mailing:api_campaign_resume", "live-campaign", scope)
     assert resumed.status_code == 200

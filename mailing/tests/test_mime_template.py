@@ -8,6 +8,7 @@ from email.parser import BytesParser
 import pytest
 from django.conf import settings
 from django.test import override_settings
+from django.utils import timezone
 
 from mailing.mime_template import (
     TO_SENTINEL,
@@ -24,6 +25,8 @@ from mailing.models import (
     Client,
     Contact,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
 from mailing.services import campaign_sender as sender
 from mailing.services.campaign_rendering import (
@@ -213,15 +216,18 @@ def _batch_fixture(count, html_body="<p>Hi</p>", text_body="Hi"):
     campaign = Campaign.objects.create(
         audience=audience, client=client, subject="Hi", status="queued", html_body=html_body, text_body=text_body
     )
-    recipients = CampaignRecipient.objects.bulk_create(
+    contacts = [
+        Contact.objects.create(email=f"person{i}@example.com", verified_at=timezone.now()) for i in range(count)
+    ]
+    # The pre-send suppression recheck skips anything that is not subscribed.
+    Subscription.objects.bulk_create(
         [
-            CampaignRecipient(
-                campaign=campaign,
-                contact=Contact.objects.create(email=f"person{i}@example.com"),
-                email=f"person{i}@example.com",
-            )
-            for i in range(count)
+            Subscription(contact=c, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED)
+            for c in contacts
         ]
+    )
+    recipients = CampaignRecipient.objects.bulk_create(
+        [CampaignRecipient(campaign=campaign, contact=c, email=c.email) for c in contacts]
     )
     return campaign, {
         "contract": "campaign-email",

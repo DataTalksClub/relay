@@ -7,8 +7,18 @@ import pytest
 from django.db import connection
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
-from mailing.models import Audience, Campaign, CampaignRecipient, Client, Contact, Organization
+from mailing.models import (
+    Audience,
+    Campaign,
+    CampaignRecipient,
+    Client,
+    Contact,
+    Organization,
+    Subscription,
+    SubscriptionStatus,
+)
 from mailing.services.campaign_sender import send_campaign_batch
 
 pytestmark = pytest.mark.django_db
@@ -18,8 +28,9 @@ SEND_PHASES = ("lock_sql", "render_mime", "limiter_wait", "ses_call", "commit")
 # SQLite: 9 after, 10 before (the second recipient SELECT ... FOR UPDATE in tokens.py).
 # PostgreSQL adds the one FOR SHARE campaign lock query per email to both.
 # The hard-stop halt flag adds one indexed PK SELECT per email (the drain-loop
-# check; the pre-SES check rides on the already-loaded campaign row).
-EXPECTED_QUERIES_PER_EMAIL = 10 + (1 if connection.vendor == "postgresql" else 0)
+# check); the pre-send suppression recheck adds one subscription query (both
+# scopes; contacts that fail it are skipped, never sent).
+EXPECTED_QUERIES_PER_EMAIL = 11 + (1 if connection.vendor == "postgresql" else 0)
 
 
 class _FakeSes:
@@ -40,7 +51,14 @@ def _batch(count, tag="a"):
     campaign = Campaign.objects.create(
         audience=audience, client=client, subject="Hi", status="queued", html_body="<p>Hi</p>", text_body="Hi"
     )
-    contacts = [Contact.objects.create(email=f"person{i}-{tag}@example.com") for i in range(count)]
+    contacts = [Contact.objects.create(email=f"person{i}-{tag}@example.com", verified_at=timezone.now()) for i in range(count)]
+    # The pre-send suppression recheck skips anything that is not subscribed.
+    Subscription.objects.bulk_create(
+        [
+            Subscription(contact=c, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED)
+            for c in contacts
+        ]
+    )
     recipients = CampaignRecipient.objects.bulk_create(
         [CampaignRecipient(campaign=campaign, contact=c, email=c.email) for c in contacts]
     )

@@ -17,6 +17,7 @@ import pytest
 from botocore.exceptions import ClientError
 from django.db import connection
 from django.test import override_settings
+from django.utils import timezone
 
 from mailing.models import (
     Audience,
@@ -26,6 +27,8 @@ from mailing.models import (
     Client,
     Contact,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
 from mailing.services.campaign_rendering import build_campaign_html_body, build_campaign_text_body
 from mailing.services.campaign_sender import (
@@ -87,7 +90,20 @@ def _campaign_with_recipients(count, html_body="<p>Hi</p>"):
     campaign = Campaign.objects.create(
         audience=audience, client=client, subject="Hi", status="queued", html_body=html_body, text_body="Hi https://example.com/x"
     )
-    contacts = [Contact.objects.create(email=f"person{i}@example.com") for i in range(count)]
+    now = timezone.now()
+    contacts = Contact.objects.bulk_create(
+        [
+            Contact(email=f"person{i}@example.com", normalized_email=f"person{i}@example.com", verified_at=now)
+            for i in range(count)
+        ]
+    )
+    # The pre-send suppression recheck lets only subscribed contacts through.
+    Subscription.objects.bulk_create(
+        [
+            Subscription(contact=c, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED)
+            for c in contacts
+        ]
+    )
     recipients = CampaignRecipient.objects.bulk_create(
         [CampaignRecipient(campaign=campaign, contact=c, email=c.email) for c in contacts]
     )

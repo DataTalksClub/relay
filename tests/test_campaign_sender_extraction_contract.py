@@ -6,6 +6,7 @@ import pytest
 from botocore.exceptions import ClientError
 from django.db import connection
 from django.db.models.query import QuerySet
+from django.utils import timezone
 
 from mailing.models import (
     Audience,
@@ -16,6 +17,8 @@ from mailing.models import (
     Contact,
     EmailEvent,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
 from mailing.services import campaign_sender as sender
 
@@ -41,7 +44,10 @@ def pending():
         client=client, audience=audience, subject="Café", html_body="<p>Café</p>", text_body="Café",
         status=CampaignStatus.QUEUED,
     )
-    contact = Contact.objects.create(email="recipient@example.invalid")
+    contact = Contact.objects.create(email="recipient@example.invalid", verified_at=timezone.now())
+    Subscription.objects.create(
+        contact=contact, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED,
+    )
     recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)
     return campaign, recipient
 
