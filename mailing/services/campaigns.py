@@ -721,7 +721,7 @@ def _refresh_campaign_counts(campaign):
     aggregate = CampaignRecipient.objects.filter(campaign=campaign).aggregate(
         recipient_count=Count("pk", filter=~Q(status=CampaignRecipientStatus.SKIPPED)),
         skipped_count=Count("pk", filter=Q(status=CampaignRecipientStatus.SKIPPED)),
-        sent_count=Count("pk", filter=Q(status=CampaignRecipientStatus.SENT)),
+        sent_count=Count("pk", filter=Q(sent_at__isnull=False)),
         delivered_count=Count("pk", filter=Q(delivered_at__isnull=False)),
         unique_open_count=Count("pk", filter=Q(first_opened_at__isnull=False)),
         unique_click_count=Count("pk", filter=Q(first_clicked_at__isnull=False)),

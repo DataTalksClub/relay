@@ -194,7 +194,18 @@ def send_campaign_batch(payload, *, ses_client=None):
         raise exc
 
     refresh_campaign_send_counts(campaign_id)
+    _reconcile_early_webhooks(campaign_id)
     return CampaignSendResult(**result)
+
+
+def _reconcile_early_webhooks(campaign_id):
+    """Correlate SES events that beat this batch's commit; never fails the batch."""
+    from mailing.services.ses_webhooks import reconcile_uncorrelated_ses_events  # noqa: PLC0415 - import cycle
+
+    try:
+        reconcile_uncorrelated_ses_events(campaign_id=campaign_id)
+    except Exception:  # noqa: BLE001 - sends are committed; a later batch or the task retries
+        logger.exception("ses_reconcile_failed campaign_id=%s", campaign_id)
 
 
 def _send_concurrency(recipient_count):
@@ -515,7 +526,9 @@ def is_retryable_send_error(exc):
 def refresh_campaign_send_counts(campaign_id):
     campaign = Campaign.objects.select_for_update().get(pk=campaign_id)
     recipients = CampaignRecipient.objects.filter(campaign_id=campaign_id)
-    sent_count = recipients.filter(status=CampaignRecipientStatus.SENT).count()
+    # SES-accepted, not status=SENT: a later bounce/complaint/unsubscribe moves
+    # the status away from SENT but the message was still accepted by SES.
+    sent_count = recipients.filter(sent_at__isnull=False).count()
     failed_count = recipients.filter(status=CampaignRecipientStatus.FAILED).count()
     pending_exists = recipients.filter(status=CampaignRecipientStatus.PENDING).exists()
     updates = {"sent_count": sent_count, "updated_at": timezone.now()}

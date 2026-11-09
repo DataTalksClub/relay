@@ -6,6 +6,7 @@ import logging
 import re
 import urllib.error
 from dataclasses import dataclass
+from datetime import timedelta
 from time import monotonic
 from urllib.parse import parse_qs, urlparse
 from urllib.request import urlopen
@@ -541,6 +542,12 @@ def process_ses_webhook(payload):
         event = append_provider_event(payload, source)
         if event is None:
             return None
+        if source is None:
+            logger.warning(
+                "ses_event_uncorrelated provider_event_id=%s type=%s ses_message_id=%s "
+                "(stored; reconciled once the message id is committed)",
+                provider_event_id, notification_type, payload.get("ses_message_id", ""),
+            )
         if source is not None:
             apply_correlated_updates(payload, source, event)
         refresh_campaign_id = source.campaign_id if isinstance(source, CampaignRecipient) else None
@@ -702,6 +709,79 @@ def apply_transactional_message_update(message, notification_type, occurred_at, 
         update_fields += ["status", "last_error"]
 
     message.save(update_fields=sorted(set(update_fields)))
+
+
+RECONCILE_LOOKBACK_DAYS = 7
+RECONCILE_MAX_EVENTS = 5000
+
+
+def reconcile_uncorrelated_ses_events(campaign_id=None):
+    """Correlate stored-uncorrelated SES events whose message id is now committed.
+
+    A webhook can reach us before the sender commits ses_message_id; it is
+    stored uncorrelated (deduped by provider_event_id). Each event is
+    correlated under its own row lock and only if it is still uncorrelated, so
+    its status/counter effects are applied exactly once even with concurrent
+    reconcilers. Returns counts; everything is logged.
+    """
+    events = EmailEvent.objects.filter(
+        campaign_recipient__isnull=True,
+        transactional_message__isnull=True,
+        created_at__gte=timezone.now() - timedelta(days=RECONCILE_LOOKBACK_DAYS),
+    ).exclude(provider_event_id="").exclude(metadata__ses_message_id__isnull=True).exclude(metadata__ses_message_id="")
+    if campaign_id is not None:
+        message_ids = list(
+            CampaignRecipient.objects.filter(campaign_id=campaign_id).exclude(ses_message_id="")
+            .values_list("ses_message_id", flat=True)
+        )
+        events = events.filter(metadata__ses_message_id__in=message_ids)
+    candidate_ids = list(events.order_by("id").values_list("pk", flat=True)[:RECONCILE_MAX_EVENTS])
+    result = {"candidates": len(candidate_ids), "reconciled": 0, "still_uncorrelated": 0, "errors": 0}
+    campaign_ids = set()
+    for event_id in candidate_ids:
+        try:
+            with transaction.atomic():
+                event = EmailEvent.objects.select_for_update().get(pk=event_id)
+                if event.campaign_recipient_id or event.transactional_message_id:
+                    continue  # another reconciler or the webhook path got it first
+                source = correlate_ses_message(event.metadata.get("ses_message_id", ""))
+                if source is None:
+                    result["still_uncorrelated"] += 1
+                    continue
+                notification_type = event.metadata.get("notification_type", "")
+                payload = {"notification_type": notification_type, "metadata": event.metadata,
+                           "received_at": event.metadata.get("received_at", "")}
+                if isinstance(source, CampaignRecipient):
+                    event.campaign = source.campaign
+                    event.campaign_recipient = source
+                    event.contact = source.contact
+                    event.client = source.campaign.client
+                    event.audience = source.campaign.audience
+                else:
+                    event.transactional_message = source
+                    event.contact = source.contact
+                    event.client = source.client
+                event.save()
+                if (notification_type == "click" and isinstance(source, CampaignRecipient)
+                        and is_relay_tracker_url(event.url)):
+                    pass  # Relay's redirector already counted this click
+                else:
+                    apply_correlated_updates(payload, source, event)
+                if isinstance(source, CampaignRecipient):
+                    campaign_ids.add(source.campaign_id)
+                result["reconciled"] += 1
+        except Exception:  # noqa: BLE001 - logged loudly; other events continue
+            result["errors"] += 1
+            logger.exception("ses_reconcile_event_failed event_id=%s", event_id)
+    for refresh_id in campaign_ids:
+        try:
+            refresh_campaign_provider_counts(refresh_id)
+        except Exception:  # noqa: BLE001
+            result["errors"] += 1
+            logger.exception("ses_reconcile_refresh_failed campaign_id=%s", refresh_id)
+    log = logger.warning if result["errors"] or result["still_uncorrelated"] else logger.info
+    log("ses_reconcile campaign_id=%s %s", campaign_id, result)
+    return result
 
 
 PROVIDER_COUNTS_REFRESH_INTERVAL_SECONDS = 5

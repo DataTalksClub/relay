@@ -727,7 +727,7 @@ def refresh_campaign_counts(campaigns):
     for campaign in campaigns:
         recipients = CampaignRecipient.objects.filter(campaign=campaign)
         campaign.recipient_count = recipients.exclude(status=CampaignRecipientStatus.SKIPPED).count()
-        campaign.sent_count = recipients.filter(status=CampaignRecipientStatus.SENT).count()
+        campaign.sent_count = recipients.filter(sent_at__isnull=False).count()
         campaign.skipped_count = recipients.filter(status=CampaignRecipientStatus.SKIPPED).count()
         campaign.delivered_count = recipients.filter(delivered_at__isnull=False).count()
         campaign.unique_open_count = recipients.filter(first_opened_at__isnull=False).count()
