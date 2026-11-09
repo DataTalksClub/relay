@@ -62,7 +62,7 @@ def assert_envelope(params, message):
 
 @pytest.mark.parametrize("entrypoint", [send_email, send_raw_email])
 @pytest.mark.parametrize("attachment", [False, True], ids=["header-only", "ordinary-attachment"])
-@override_settings(AWS_SES_CONFIGURATION_SET="default-configuration", SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(AWS_SES_CONFIGURATION_SET="default-configuration", SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_existing_raw_paths_preserve_bodies_envelope_and_attachment(entrypoint, attachment):
     client = RecordingSes()
     parts = []
@@ -92,7 +92,7 @@ def test_existing_raw_paths_preserve_bodies_envelope_and_attachment(entrypoint, 
 
 
 @pytest.mark.parametrize("configuration", [None, "", "explicit-configuration"])
-@override_settings(AWS_SES_CONFIGURATION_SET="default-configuration", SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(AWS_SES_CONFIGURATION_SET="default-configuration", SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_existing_simple_payload_retains_options_and_configuration_override(configuration):
     client = RecordingSes()
     result = send_email(**options(client, text_body="", configuration_set=configuration))
@@ -154,7 +154,7 @@ def assert_calendar(message, plain, html, content, method, name):
 @pytest.mark.parametrize("entrypoint", [send_email, send_raw_email])
 @pytest.mark.parametrize("method", ["REQUEST", "CANCEL"])
 @pytest.mark.parametrize("plain,html", [("Café 🧭\r\n", "<p>Café 🧭</p>"), ("", "<p>Only HTML</p>"), ("Only text", "")])
-@override_settings(AWS_SES_CONFIGURATION_SET="default-configuration", SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(AWS_SES_CONFIGURATION_SET="default-configuration", SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_calendar_is_last_literal_utf8_body_alternative(entrypoint, method, plain, html):
     client = RecordingSes()
     content = calendar_text(method)
@@ -212,7 +212,7 @@ INVALID_CALENDARS = [
 
 @pytest.mark.parametrize("entrypoint", [send_email, send_raw_email])
 @pytest.mark.parametrize("calendar,changes", INVALID_CALENDARS)
-@override_settings(AWS_SES_CONFIGURATION_SET="", SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(AWS_SES_CONFIGURATION_SET="", SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_invalid_calendar_contract_never_reaches_provider(entrypoint, calendar, changes):
     client = RecordingSes()
     with pytest.raises(ValueError) as error:
@@ -221,7 +221,7 @@ def test_invalid_calendar_contract_never_reaches_provider(entrypoint, calendar, 
     assert "canary" not in str(error.value)
 
 
-@override_settings(AWS_SES_CONFIGURATION_SET="", SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(AWS_SES_CONFIGURATION_SET="", SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_full_multibyte_character_limit_preserves_content_and_rejects_one_more():
     content = calendar_text("REQUEST")
     padded = content.replace("SUMMARY:Café 🧭", "SUMMARY:" + "🧭" * (200_000 - len(content) + len("Café 🧭")))
@@ -240,7 +240,7 @@ def test_full_multibyte_character_limit_preserves_content_and_rejects_one_more()
 
 @pytest.mark.parametrize("line_end", ["\n", "\r\n"])
 @pytest.mark.parametrize("terminal", [False, True])
-@override_settings(AWS_SES_CONFIGURATION_SET="", SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(AWS_SES_CONFIGURATION_SET="", SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_folded_method_validation_keeps_calendar_bytes_and_no_calendar_attachment(line_end, terminal):
     content = calendar_text("REQUEST").replace("METHOD:REQUEST", "METHOD:REQ\r\n UEST")
     content = content.replace("\r\n", line_end)
@@ -269,7 +269,7 @@ def test_folded_method_validation_keeps_calendar_bytes_and_no_calendar_attachmen
         ("BEGIN:BAD!NAME", "END:BAD!NAME"),
     ],
 )
-@override_settings(AWS_SES_CONFIGURATION_SET="", SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(AWS_SES_CONFIGURATION_SET="", SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_malformed_component_records_are_redacted_before_provider(entrypoint, begin, end):
     content = calendar_text("REQUEST").replace("BEGIN:VEVENT", f"{begin}\r\nX-SECRET:canary\r\n{end}\r\nBEGIN:VEVENT")
     client = RecordingSes()
@@ -280,7 +280,7 @@ def test_malformed_component_records_are_redacted_before_provider(entrypoint, be
 
 
 @pytest.mark.parametrize("entrypoint", [send_email, send_raw_email])
-@override_settings(AWS_SES_CONFIGURATION_SET="", SES_MAX_SEND_RATE_PER_SECOND=0)
+@override_settings(AWS_SES_CONFIGURATION_SET="", SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_custom_nested_components_and_series_properties_remain_literal(entrypoint):
     content = calendar_text("REQUEST").replace(
         "SEQUENCE:7", "SEQUENCE:7\r\nRECURRENCE-ID:20261025T023000\r\nX-OPAQUE:{{ literal }}"

@@ -392,6 +392,30 @@ AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 # or newlines. Domains absent from this list use email.send and the values above.
 RELAY_SES_DOMAIN_ROUTES = os.environ.get("RELAY_SES_DOMAIN_ROUTES", "")
 RELAY_SES_QUOTA_REGIONS = csv_env("RELAY_SES_QUOTA_REGIONS", "eu-west-1,us-east-1", allow_empty=True)
+# Global account-wide SES token bucket (mailing/ses_rate_limiter.py): every SES
+# send path acquires a permit here, so K sender processes share one budget.
+# The account budget defaults to 45/s against an SES MaxSendRate of 50/s and is
+# clamped to the SES MaxSendRate discovered via GetAccount when reachable.
+SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_ACCOUNT_MAX_SEND_RATE", default=45.0)
+# Burst headroom in messages; 0 means rate/5 (never more than a second of sends).
+SES_LIMITER_BURST_MESSAGES = float_env("RELAY_SES_LIMITER_BURST_MESSAGES", default=0.0)
+# Sends of kind="transactional" may overdraw the bucket by this many messages,
+# so a saturating campaign cannot starve transactional mail for longer than ~1 s.
+SES_TRANSACTIONAL_RESERVE_PER_SECOND = float_env("RELAY_SES_TRANSACTIONAL_RESERVE_PER_SECOND", default=5.0)
+# Fail-closed: a permit wait longer than this raises instead of sending.
+SES_LIMITER_WAIT_TIMEOUT_SECONDS = float_env("RELAY_SES_LIMITER_WAIT_TIMEOUT_SECONDS", default=30.0)
+SES_LIMITER_POLL_INTERVAL_SECONDS = float_env("RELAY_SES_LIMITER_POLL_INTERVAL_SECONDS", default=0.05)
+# Throttling feedback (AIMD): on a Throttling response the shared rate is
+# multiplied by 0.8 for 60 s, then recovers linearly to the base rate over 60 s.
+SES_LIMITER_THROTTLE_FACTOR = float_env("RELAY_SES_LIMITER_THROTTLE_FACTOR", default=0.8)
+SES_LIMITER_THROTTLE_PENALTY_SECONDS = float_env("RELAY_SES_LIMITER_THROTTLE_PENALTY_SECONDS", default=60.0)
+SES_LIMITER_THROTTLE_RECOVERY_SECONDS = float_env("RELAY_SES_LIMITER_THROTTLE_RECOVERY_SECONDS", default=60.0)
+SES_LIMITER_MIN_RATE_PER_SECOND = float_env("RELAY_SES_LIMITER_MIN_RATE_PER_SECOND", default=1.0)
+# Best-effort clamp of the budget to the SES MaxSendRate (cached 5 min).
+# Disabled automatically under test runners (settings.TESTING).
+SES_LIMITER_DISCOVER_SES_QUOTA = bool_env("RELAY_SES_LIMITER_DISCOVER_SES_QUOTA", default=True)
+# Legacy per-process pacer name, kept for display/tests compat; the global
+# bucket above is the enforcing limiter. Prefer RELAY_SES_ACCOUNT_MAX_SEND_RATE.
 SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0)
 # 100-message batches spent ~15% of their time in fixed per-batch overhead (thread +
 # DB connection setup, last SES call tail); 500 reaches the limiter rate.
