@@ -15,6 +15,11 @@ from mailing.dry_run import ensure_transport_allowed
 
 logger = logging.getLogger(__name__)
 
+# Per-thread phase timings of the last send_email call, read by the campaign
+# sender for its batch log: seconds spent building the SES parameters (MIME)
+# and waiting on the rate limiter.
+send_phase_timings = threading.local()
+
 _rate_limit_lock = threading.Lock()
 _last_ses_send_monotonic = None
 
@@ -61,6 +66,7 @@ def send_email(
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
     content = _Content(subject, html_body, text_body, headers, message_parts, calendar)
     raw = bool(headers or message_parts or calendar is not None)
+    build_started = time.perf_counter()
     if original_mime is not None:
         forwarded = _forward_message(envelope, original_mime, footer=forward_footer)
         parameters = {"Source": source, "Destinations": [to_email], "RawMessage": {"Data": forwarded.as_bytes()}}
@@ -68,8 +74,11 @@ def send_email(
         raw = True
     else:
         parameters = _raw_parameters(envelope, content) if raw else _simple_parameters(envelope, content)
+    send_phase_timings.build = time.perf_counter() - build_started
     ensure_transport_allowed("SES send_email")
+    throttle_started = time.perf_counter()
     throttle_ses_send()
+    send_phase_timings.limiter_wait = time.perf_counter() - throttle_started
     if raw:
         return ses_client.send_raw_email(**parameters)["MessageId"]
     return ses_client.send_email(**parameters)["MessageId"]

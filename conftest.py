@@ -96,3 +96,13 @@ def _clear_aws_client_caches():
     aws._client_cache.clear()
     yield
     aws._client_cache.clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _close_campaign_send_pool(django_db_setup):
+    # Sender threads keep their DB connections between batches; close them
+    # before pytest-django drops the test database.
+    yield
+    from mailing.services.campaign_sender import shutdown_send_pool  # noqa: PLC0415
+
+    shutdown_send_pool()
