@@ -37,6 +37,12 @@ def resolve_archive_placeholders_text(text_body, unsubscribe_token):
 # leaves the link alone, so it does not wrap it in awstrack.me or record a second click.
 _SES_NO_TRACK = "ses:no-track"
 
+_DOWNLEVEL_REVEALED_RE = re.compile(r"^\[(?:if[^\]]*|endif)\]$", flags=re.IGNORECASE)
+_CONDITIONAL_COMMENT_RE = re.compile(
+    r"(?P<open>\[if[^\]]*\]>)(?P<body>.*?)(?P<close><!\[endif\])$",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
 
 def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
     body = rewrite_html_links(resolve_archive_placeholders_html(html_body or ""), tracking_token, unsubscribe_token)
@@ -118,7 +124,22 @@ class _ClickTrackingHTMLRewriter(HTMLParser):
         self.parts.append(f"&#{name};")
 
     def handle_comment(self, data):
+        # Outlook conditional comments (<!--[if mso]>...<![endif]-->) hold real HTML that Outlook renders and
+        # SES still scans, so their links need the same rewrite and no-track mark as the visible body.
+        match = _CONDITIONAL_COMMENT_RE.match(data)
+        if match:
+            inner = rewrite_html_links(match.group("body"), self.tracking_token, self.unsubscribe_token)
+            self.parts.append(f"<!--{match.group('open')}{inner}{match.group('close')}-->")
+            return
+        if _DOWNLEVEL_REVEALED_RE.match(data):
+            # Python 3.14 reports <![if !mso]> / <![endif]> as bogus comments; keep them as written.
+            self.parts.append(f"<!{data}>")
+            return
         self.parts.append(f"<!--{data}-->")
+
+    def unknown_decl(self, data):
+        # Downlevel-revealed conditionals such as <![if !mso]> / <![endif]>.
+        self.parts.append(f"<![{data}]>")
 
     def handle_decl(self, decl):
         self.parts.append(f"<!{decl}>")
