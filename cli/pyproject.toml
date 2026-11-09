@@ -22,11 +22,12 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/DataTalksClub/datamailer"
-Repository = "https://github.com/DataTalksClub/datamailer"
+Homepage = "https://github.com/DataTalksClub/relay"
+Repository = "https://github.com/DataTalksClub/relay"
 
 [project.scripts]
 datamailer = "datamailer_cli.cli:main"
+relay = "datamailer_cli.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0.0"]

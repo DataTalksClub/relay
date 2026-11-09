@@ -6,6 +6,7 @@ from mailing import (
     block_link_views,
     campaign_ui_views,
     contact_ui_views,
+    device_login_api,
     documentation_views,
     newsletter_views,
     ops_views,
@@ -21,6 +22,11 @@ from mailing import (
 app_name = "mailing"
 
 urlpatterns = [
+    path("device", device_login_api.device_approval, name="device_login_approval"),
+    path("device/decide", device_login_api.device_approval_decide, name="device_login_decide"),
+    path("api/agent/device/start", device_login_api.device_start, name="api_device_login_start"),
+    path("api/agent/device/token", device_login_api.device_token, name="api_device_login_token"),
+    path("api/agent/device/revoke", device_login_api.device_revoke, name="api_device_login_revoke"),
     path("api/client/sending-domains", sending_domains_api.client_domains, name="api_client_sending_domains"),
     path("api-docs/workflows/<slug:workflow>/", documentation_views.api_docs_workflow, name="api_docs_workflow"),
     path("api-docs/reference/", documentation_views.api_docs_reference, name="api_docs_reference"),

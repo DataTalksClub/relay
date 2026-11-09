@@ -11,6 +11,9 @@ def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setenv("DATAMAILER_CONFIG", str(tmp_path / "config.toml"))
     monkeypatch.delenv("DATAMAILER_URL", raising=False)
     monkeypatch.delenv("DATAMAILER_API_KEY", raising=False)
+    monkeypatch.delenv("RELAY_URL", raising=False)
+    monkeypatch.delenv("RELAY_API_KEY", raising=False)
+    monkeypatch.delenv("RELAY_CONFIG", raising=False)
 
 
 class FakeResponse:

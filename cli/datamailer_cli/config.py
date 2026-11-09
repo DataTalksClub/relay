@@ -1,12 +1,11 @@
-"""Configuration resolution for the Datamailer CLI.
+"""Configuration resolution for the Relay CLI.
 
 Settings are resolved with this precedence (highest first):
 
 1. Explicit command-line flags (``--url``, ``--api-key``, ...).
-2. Environment variables ``DATAMAILER_URL`` and ``DATAMAILER_API_KEY``
-   (the same names used across the Datamailer repo and docs).
-3. The config file at ``$XDG_CONFIG_HOME/datamailer/config.toml``
-   (``~/.config/datamailer/config.toml`` by default).
+2. Environment variables ``RELAY_URL`` and ``RELAY_API_KEY`` (the legacy
+   ``DATAMAILER_*`` names remain supported).
+3. The config file at ``$XDG_CONFIG_HOME/relay/config.toml``.
 """
 
 from __future__ import annotations
@@ -17,8 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CONFIG_ENV_VAR = "DATAMAILER_CONFIG"
-URL_ENV_VAR = "DATAMAILER_URL"
-API_KEY_ENV_VAR = "DATAMAILER_API_KEY"
+RELAY_CONFIG_ENV_VAR = "RELAY_CONFIG"
+URL_ENV_VAR = "RELAY_URL"
+API_KEY_ENV_VAR = "RELAY_API_KEY"
+LEGACY_URL_ENV_VAR = "DATAMAILER_URL"
+LEGACY_API_KEY_ENV_VAR = "DATAMAILER_API_KEY"
 
 # Keys persisted in config.toml. All values are plain strings.
 _FIELDS = ("url", "api_key", "default_to", "default_from")
@@ -37,11 +39,13 @@ class Settings:
 
 
 def config_path() -> Path:
-    override = os.environ.get(CONFIG_ENV_VAR)
+    override = os.environ.get(RELAY_CONFIG_ENV_VAR) or os.environ.get(CONFIG_ENV_VAR)
     if override:
         return Path(override).expanduser()
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(Path.home(), ".config")
-    return Path(base) / "datamailer" / "config.toml"
+    relay_path = Path(base) / "relay" / "config.toml"
+    legacy_path = Path(base) / "datamailer" / "config.toml"
+    return relay_path if relay_path.exists() or not legacy_path.exists() else legacy_path
 
 
 def load_file(path: Path | None = None) -> dict:
@@ -62,10 +66,10 @@ def resolve(args, path: Path | None = None) -> Settings:
         default_from=str(data.get("default_from", "")),
     )
 
-    env_url = os.environ.get(URL_ENV_VAR)
+    env_url = os.environ.get(URL_ENV_VAR) or os.environ.get(LEGACY_URL_ENV_VAR)
     if env_url:
         settings.url = env_url
-    env_key = os.environ.get(API_KEY_ENV_VAR)
+    env_key = os.environ.get(API_KEY_ENV_VAR) or os.environ.get(LEGACY_API_KEY_ENV_VAR)
     if env_key:
         settings.api_key = env_key
 
@@ -85,7 +89,10 @@ def save_file(values: dict, path: Path | None = None) -> Path:
     merged = load_file(path)
     for key in _FIELDS:
         if key in values and values[key] is not None:
-            merged[key] = values[key]
+            if values[key] == "":
+                merged.pop(key, None)
+            else:
+                merged[key] = values[key]
 
     path.write_text(_dump_toml(merged), encoding="utf-8")
     try:
