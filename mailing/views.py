@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
@@ -162,7 +163,12 @@ from mailing.services.operator_ui import (
     metadata_summary,
     parse_contact_explorer_filters,
 )
-from mailing.services.public_lists import confirm_public_verification, public_list, request_public_verification
+from mailing.services.public_lists import (
+    confirm_public_verification,
+    load_public_client,
+    public_list,
+    request_public_signup,
+)
 from mailing.services.recipient_lists import (
     bulk_upsert_recipient_list_members_for_client,
     create_recipient_list_import_job_for_client,
@@ -205,6 +211,8 @@ from mailing.services.transactional_catalog import (
 )
 from mailing.services.worker_status import worker_status_payload
 from mailing.setup_views import client_setup_context
+
+logger = logging.getLogger(__name__)
 
 
 def health(request):
@@ -1766,9 +1774,37 @@ def _public_subscribe_response(request, payload, status):
     return response
 
 
+PUBLIC_SUBSCRIBE_HONEYPOT_FIELD = "company"
+
+
+def _public_client_ip(request):
+    forwarded = [part.strip() for part in request.META.get("HTTP_X_FORWARDED_FOR", "").split(",") if part.strip()]
+    hops = settings.RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS
+    if hops > 0 and len(forwarded) >= hops:
+        return forwarded[-hops]
+    return request.META.get("REMOTE_ADDR", "")
+
+
+def _public_subscribe_consent(request, body):
+    page = body.get("page")
+    return {
+        "consent_ip": _public_client_ip(request),
+        "origin": request.headers.get("Origin", "")[:200],
+        "user_agent": request.headers.get("User-Agent", "")[:300],
+        "page": page[:300] if isinstance(page, str) else "",
+    }
+
+
 @csrf_exempt
 def api_public_subscribe(request, list_key):
-    """Start double opt-in for one configured public list. No API key."""
+    """Start signup for one configured public list. No API key.
+
+    Double opt-in lists send a confirmation link. ``optin=single`` lists
+    subscribe at once and send the list's welcome template. A filled honeypot
+    field gets a normal-looking success with no side effects. Failures are
+    logged and, once the client is known, counted by the transactional monitor
+    so 5xx and error floods page like any other client API.
+    """
     if request.method == "OPTIONS":
         return _public_subscribe_response(request, {}, 204)
     if request.method != "POST":
@@ -1779,17 +1815,26 @@ def api_public_subscribe(request, list_key):
         )
     try:
         spec = public_list(list_key)
+        request._transactional_monitor_client_id = load_public_client(spec).id
         body = json_request_body(request)
+        if body.get(PUBLIC_SUBSCRIBE_HONEYPOT_FIELD):
+            logger.info("relay_public_subscribe_honeypot list=%s", list_key)
+            return _public_subscribe_response(request, {"status": "subscribed"}, 200)
         email = body.get("email")
         if not isinstance(email, str):
             raise ApiValidationError({"email": "required"})
-        payload = request_public_verification(spec, email)
+        payload = request_public_signup(spec, email, _public_subscribe_consent(request, body))
     except ApiValidationError as exc:
+        if exc.status_code >= 500 or exc.status_code == 404:
+            logger.error("relay_public_subscribe_failed list=%s status=%s fields=%s", list_key, exc.status_code, exc.errors)
         return _public_subscribe_response(
             request,
             {"error": {"code": "validation_error", "fields": exc.errors}},
             exc.status_code,
         )
+    except Exception:
+        logger.exception("relay_public_subscribe_failed list=%s", list_key)
+        return _public_subscribe_response(request, {"error": {"code": "internal_error"}}, 500)
     return _public_subscribe_response(request, payload, 200)
 
 

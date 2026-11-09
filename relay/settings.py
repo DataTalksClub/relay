@@ -310,6 +310,13 @@ RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_
 RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS = int(
     os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS", "3600")
 )
+# Single-opt-in public lists also limit signups per client IP. The IP is the
+# Nth entry from the right of X-Forwarded-For (N = trusted proxy hops).
+RELAY_PUBLIC_SUBSCRIBE_IP_LIMIT = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_IP_LIMIT", "10"))
+RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS = int(
+    os.environ.get("RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS", "3600")
+)
+RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS", "1"))
 AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 # domain role=<arn> region=<region> configuration_set=<name>, separated by ';'
 # or newlines. Domains absent from this list use email.send and the values above.
