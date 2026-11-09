@@ -45,12 +45,22 @@ needs_postgres = pytest.mark.skipif(connection.vendor != "postgresql", reason="n
 class _SlowSes:
     def __init__(self, latency=SES_LATENCY_SECONDS, fail_on=None, error_code="Throttling"):
         self.latency = latency
+        # A single call number or a collection: WP2 retries one Throttling
+        # internally after re-acquiring a permit, so a test that needs the
+        # batch to observe the failure must fail the retry too.
         self.fail_on = fail_on
         self.error_code = error_code
         self.calls = 0
         self.in_flight = 0
         self.max_in_flight = 0
         self._lock = threading.Lock()
+
+    def _should_fail(self, number):
+        if self.fail_on is None:
+            return False
+        if isinstance(self.fail_on, (set, frozenset, list, tuple)):
+            return number in self.fail_on
+        return number == self.fail_on
 
     def send_email(self, **params):
         return self._send()
@@ -66,7 +76,7 @@ class _SlowSes:
             self.max_in_flight = max(self.max_in_flight, self.in_flight)
         try:
             time.sleep(self.latency)
-            if self.fail_on and number == self.fail_on:
+            if self._should_fail(number):
                 raise ClientError({"Error": {"Code": self.error_code}, "ResponseMetadata": {"HTTPStatusCode": 400}}, "SendRawEmail")
             return {"MessageId": f"ses-{number}"}
         finally:
@@ -174,7 +184,7 @@ def test_two_batches_of_one_campaign_send_in_parallel_without_double_sending():
 @override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=8)
 def test_retryable_error_stops_new_sends_keeps_finished_ones_and_reraises():
     campaign, payload = _campaign_with_recipients(40)
-    ses = _SlowSes(fail_on=3)
+    ses = _SlowSes(fail_on={3, 4})  # the internal throttling retry must also fail
 
     with pytest.raises(RetryableCampaignSendError):
         send_campaign_batch(payload, ses_client=ses)

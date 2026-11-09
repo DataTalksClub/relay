@@ -366,7 +366,10 @@ def test_retryable_throttling_requeues_remaining_with_backoff(campaign_setup, se
 
         def send_raw_email(self, **params):
             self.calls.append(params.get("Destinations", [None])[0])
-            if len(self.calls) == 2:
+            # Persistent throttling across WP2's single internal re-permitted
+            # retry: the first Throttling is retried once inside mailing/ses.py,
+            # so the fake must still throttle the retry for the batch to stop.
+            if len(self.calls) in (2, 3):
                 raise ClientError(
                     {
                         "Error": {"Code": "Throttling", "Message": "Rate exceeded"},
