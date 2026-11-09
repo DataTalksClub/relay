@@ -208,7 +208,7 @@ def test_ac4_message_rejected_is_failed():
 @override_settings(CAMPAIGN_SEND_CONCURRENCY=1, **FAST)
 def test_ac4_throttling_returns_row_to_pending():
     campaign, payload = campaign_with_recipients(4)
-    ses = FaultSes(faults={2: "throttle"})
+    ses = FaultSes(faults={2: "throttle", 3: "throttle"})  # mailing.ses retries Throttling once
     try:
         send_campaign_batch(payload, ses_client=ses)
     except Exception:  # noqa: BLE001 - requeue path may raise a retryable error

@@ -101,7 +101,8 @@ def test_classify_send_error(exc, expected):
 @override_settings(CAMPAIGN_CLAIM_CHUNK=3, SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=0)
 def test_throttle_returns_claimed_rows_to_pending_and_raises_retryable():
     campaign, _, payload = make_campaign(6)
-    ses = FaultSes(faults={2: "throttle"})
+    # mailing.ses re-permits and retries a Throttling response once, so throttle twice.
+    ses = FaultSes(faults={2: "throttle", 3: "throttle"})
     with pytest.raises(sender.RetryableCampaignSendError):
         sender.send_campaign_batch(payload, ses_client=ses)
     assert counts(campaign) == {CampaignRecipientStatus.SENT: 1, PENDING: 5}
