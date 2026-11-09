@@ -377,6 +377,23 @@ def test_build_campaign_html_body_adds_tracking_pixel_click_links_and_unsubscrib
     assert 'href="https://mail.example.com/unsubscribe/unsubscribe-token"' in html
 
 
+@override_settings(PUBLIC_BASE_URL="https://mail.example.com")
+def test_build_campaign_html_body_rewrites_links_inside_outlook_conditional_comments():
+    html = build_campaign_html_body(
+        '<!--[if mso]><a href="https://example.com/mso">outlook</a><![endif]-->'
+        '<![if !mso]><a href="https://example.com/other">other</a><![endif]>',
+        "tracking-token",
+        "unsubscribe-token",
+    )
+
+    assert "https://example.com/mso" not in html.replace("%3A%2F%2Fexample.com%2Fmso", "")
+    assert '<!--[if mso]><a ses:no-track href="https://mail.example.com/t/c/tracking-token?u=' in html
+    assert "<![endif]-->" in html
+    assert "<![if !mso]>" in html and "<![endif]>" in html
+    assert html.count("ses:no-track") == 3  # mso link, downlevel link, unsubscribe footer
+    assert html.count("/t/o/tracking-token.gif") == 1
+
+
 def _payload(campaign, recipient):
     return {
         "contract": "campaign-email",
