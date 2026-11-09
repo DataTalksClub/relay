@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.hashes import SHA1, SHA256
 from django.conf import settings
 from django.db import connection, transaction
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -693,14 +694,25 @@ def apply_transactional_message_update(message, notification_type, occurred_at, 
 
 def refresh_campaign_provider_counts(campaign_id):
     campaign = Campaign.objects.get(pk=campaign_id)
-    recipients = CampaignRecipient.objects.filter(campaign_id=campaign_id)
-    campaign.delivered_count = recipients.filter(delivered_at__isnull=False).count()
-    campaign.bounce_count = recipients.filter(status=CampaignRecipientStatus.BOUNCED).count()
-    campaign.complaint_count = recipients.filter(status=CampaignRecipientStatus.COMPLAINED).count()
-    campaign.unique_open_count = recipients.filter(first_opened_at__isnull=False).count()
-    campaign.unique_click_count = recipients.filter(first_clicked_at__isnull=False).count()
-    campaign.open_count = sum(recipients.values_list("open_count", flat=True))
-    campaign.click_count = sum(recipients.values_list("click_count", flat=True))
+    # One pass over the campaign's recipients. This runs per webhook event under
+    # the campaign row lock, so seven separate scans capped provider-events
+    # throughput (~11 events/s at 6.7k recipients) during large sends.
+    totals = CampaignRecipient.objects.filter(campaign_id=campaign_id).aggregate(
+        delivered=Count("pk", filter=Q(delivered_at__isnull=False)),
+        bounced=Count("pk", filter=Q(status=CampaignRecipientStatus.BOUNCED)),
+        complained=Count("pk", filter=Q(status=CampaignRecipientStatus.COMPLAINED)),
+        unique_opens=Count("pk", filter=Q(first_opened_at__isnull=False)),
+        unique_clicks=Count("pk", filter=Q(first_clicked_at__isnull=False)),
+        opens=Sum("open_count"),
+        clicks=Sum("click_count"),
+    )
+    campaign.delivered_count = totals["delivered"]
+    campaign.bounce_count = totals["bounced"]
+    campaign.complaint_count = totals["complained"]
+    campaign.unique_open_count = totals["unique_opens"]
+    campaign.unique_click_count = totals["unique_clicks"]
+    campaign.open_count = totals["opens"] or 0
+    campaign.click_count = totals["clicks"] or 0
     campaign.save(
         update_fields=[
             "delivered_count",
