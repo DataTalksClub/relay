@@ -34,7 +34,11 @@ from mailing.models import (
 from mailing.services import ses_webhooks as ses_webhooks_service
 from mailing.services.client_callbacks import process_due_client_callbacks
 from mailing.services.contacts import is_marketing_email_allowed, is_transactional_email_allowed
-from mailing.services.ses_webhooks import SNS_MOCK_SIGNATURE, canonical_sns_message
+from mailing.services.ses_webhooks import (
+    SNS_MOCK_SIGNATURE,
+    canonical_sns_message,
+    refresh_campaign_provider_counts,
+)
 from mailing.sqs import records_from_messages
 from mailing.tests.callback_helpers import create_callback_endpoint, install_fake_opener
 from mailing.workers import ses_webhooks_handler
@@ -1275,3 +1279,22 @@ def test_http_fallback_mid_read_timeout_is_403_not_500(client, monkeypatch):
     response = client.post(reverse("mailing:ses_webhook"), data=json.dumps(payload), content_type="application/json")
 
     assert response.status_code == 403
+
+
+def test_refresh_campaign_provider_counts_is_one_recipient_scan(recipient, campaign, django_assert_num_queries):
+    now = timezone.now()
+    recipient.delivered_at = now
+    recipient.first_opened_at = now
+    recipient.open_count = 3
+    recipient.click_count = 2
+    recipient.first_clicked_at = now
+    recipient.save()
+
+    # campaign get + one aggregate + campaign save
+    with django_assert_num_queries(3):
+        refresh_campaign_provider_counts(campaign.pk)
+
+    campaign.refresh_from_db()
+    assert (campaign.delivered_count, campaign.unique_open_count, campaign.unique_click_count) == (1, 1, 1)
+    assert (campaign.open_count, campaign.click_count) == (3, 2)
+    assert (campaign.bounce_count, campaign.complaint_count) == (0, 0)
