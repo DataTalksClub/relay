@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.hashes import SHA1, SHA256
 from django.conf import settings
 from django.core.cache import cache
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -527,30 +527,21 @@ def process_ses_webhook(payload):
     if EmailEvent.objects.filter(provider_event_id=provider_event_id).exists():
         return None
 
-    with transaction.atomic():
-        if EmailEvent.objects.select_for_update().filter(provider_event_id=provider_event_id).exists():
+    try:
+        with transaction.atomic():
+            event, refresh_campaign_id = _append_and_apply_ses_event(payload, provider_event_id, notification_type)
+    except IntegrityError:
+        # No locking existence check inside the transaction: it would lock
+        # nothing (the row does not exist yet) and costs a round trip per
+        # event. Consumers racing on one provider_event_id (a redelivery
+        # picked up by a second process) are settled by the unique index: the
+        # loser fails its INSERT before applying any update and rolls back.
+        if EmailEvent.objects.filter(provider_event_id=provider_event_id).exists():
+            logger.info("ses_event_duplicate provider_event_id=%s (concurrent delivery)", provider_event_id)
             return None
-
-        source = correlate_ses_message(payload.get("ses_message_id", ""))
-        if notification_type == "click" and isinstance(source, CampaignRecipient):
-            if is_relay_tracker_url((payload.get("metadata") or {}).get("url", "")):
-                # Campaign links are double-wrapped (SES click tracking -> Relay
-                # /t/c/ -> target). Relay's redirector already recorded this
-                # human click, so the SES event on the wrapper would count twice.
-                logger.info("Ignoring SES click on Relay tracker URL for recipient %s", source.pk)
-                return None
-        event = append_provider_event(payload, source)
-        if event is None:
-            return None
-        if source is None:
-            logger.warning(
-                "ses_event_uncorrelated provider_event_id=%s type=%s ses_message_id=%s "
-                "(stored; reconciled once the message id is committed)",
-                provider_event_id, notification_type, payload.get("ses_message_id", ""),
-            )
-        if source is not None:
-            apply_correlated_updates(payload, source, event)
-        refresh_campaign_id = source.campaign_id if isinstance(source, CampaignRecipient) else None
+        raise
+    if event is None:
+        return None
 
     if refresh_campaign_id is not None:
         try:
@@ -558,6 +549,31 @@ def process_ses_webhook(payload):
         except Exception:  # noqa: BLE001 - the event is already committed; the next event or drain refreshes
             logger.exception("Refreshing provider counts for campaign %s failed", refresh_campaign_id)
     return event
+
+
+def _append_and_apply_ses_event(payload, provider_event_id, notification_type):
+    """Body of the per-event transaction: returns ``(event, campaign_id_to_refresh)``."""
+    source = correlate_ses_message(payload.get("ses_message_id", ""))
+    if notification_type == "click" and isinstance(source, CampaignRecipient):
+        if is_relay_tracker_url((payload.get("metadata") or {}).get("url", "")):
+            # Campaign links are double-wrapped (SES click tracking -> Relay
+            # /t/c/ -> target). Relay's redirector already recorded this
+            # human click, so the SES event on the wrapper would count twice.
+            logger.info("Ignoring SES click on Relay tracker URL for recipient %s", source.pk)
+            return None, None
+    event = append_provider_event(payload, source)
+    if event is None:
+        return None, None
+    if source is None:
+        logger.warning(
+            "ses_event_uncorrelated provider_event_id=%s type=%s ses_message_id=%s "
+            "(stored; reconciled once the message id is committed)",
+            provider_event_id, notification_type, payload.get("ses_message_id", ""),
+        )
+    if source is not None:
+        apply_correlated_updates(payload, source, event)
+    refresh_campaign_id = source.campaign_id if isinstance(source, CampaignRecipient) else None
+    return event, refresh_campaign_id
 
 
 def correlate_ses_message(ses_message_id):
@@ -628,7 +644,7 @@ def apply_correlated_updates(payload, source, event):
     if notification_type in {"delivery", "open", "click", "complaint"} or (
         notification_type == "bounce" and is_hard_bounce(metadata)
     ):
-        emit_cmp_contact_event(event)
+        emit_cmp_contact_event(event, in_transaction=True)
     # Every correlated transactional transition is client-visible on the
     # client callback channel, including soft bounces: reason_code carries
     # the hard/soft distinction.

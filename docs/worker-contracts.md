@@ -102,6 +102,18 @@ The Coolify templates name this service `provider-events-worker`;
 `scripts/deploy_relay_sandbox.sh` starts `relay-provider-events-worker` with the
 same command.
 
+Unlike the campaign lane, this lane scales out: the production template runs
+six consumers (`provider-events-worker`, `-2` ... `-6`; DEV runs two). Tasks are
+claimed with `SELECT ... FOR UPDATE SKIP LOCKED`, an event locks only its own
+recipient row, and the unique non-empty `EmailEvent.provider_event_id` makes a
+redelivery a no-op (the loser of a race gets an `IntegrityError`, rolls back before
+applying anything and is counted as a duplicate). One consumer drains ~30 events/s
+and N consumers scale close to linearly (`scripts/bench_provider_events.py`,
+local PostgreSQL: 1 -> 30, 2 -> 53, 3 -> 77, 4 -> 100 events/s), which is >= 2x the
+~45 msg/s send peak. Add another `provider-events-worker-N` service if the
+`provider-events` READY backlog stays high during a send. The CMP outbox row for an
+event is written in the same transaction as the event.
+
 The staff-only `/api/workers/status` retains its SES ingress entry. Individual
 SES task runs, including queued and completed states, appear in the taskdeck
 contract at `/internal/ops/status` using its configured bearer authentication.
