@@ -13,6 +13,16 @@ from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
 from mailing.aws import ses_client as default_ses_client
+from mailing.mime_template import (
+    TRACKING_SENTINEL as _TRACKING_SENTINEL,
+)
+from mailing.mime_template import (
+    UNSUBSCRIBE_SENTINEL as _UNSUBSCRIBE_SENTINEL,
+)
+from mailing.mime_template import (
+    build_campaign_template,
+    render_campaign_template,
+)
 from mailing.models import (
     Campaign,
     CampaignRecipient,
@@ -40,7 +50,7 @@ from mailing.services.tokens import (
     generate_raw_token,
     token_hash,
 )
-from mailing.ses import send_email, send_phase_timings
+from mailing.ses import send_email, send_phase_timings, send_raw_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +161,7 @@ class _BatchContext:
         # One dict of per-phase seconds per attempted recipient (list.append is
         # thread-safe); summarized into the batch log line.
         self.timings = []
+        self.mime_template = None
 
 
 SEND_PHASES = ("lock_sql", "render_mime", "limiter_wait", "ses_call", "commit")
@@ -176,6 +187,7 @@ def send_campaign_batch(payload, *, ses_client=None):
 
     _mark_campaign_sending(campaign_id, recipient_ids)
     context = _BatchContext(campaign_id)
+    context.mime_template = _build_batch_mime_template(context)
     concurrency = _send_concurrency(len(recipient_ids))
     started = time.monotonic()
     cpu_started = time.process_time()
@@ -409,20 +421,20 @@ def _send_campaign_recipient_locked(campaign_id, recipient_id, ses, context, tim
         raise CampaignSenderError("Campaign has not been released for sending.")
 
     tokens = _send_tokens_for_pending_recipient(recipient)
-    return _deliver_campaign_recipient(recipient, ses, tokens, context.source, timing)
+    return _deliver_campaign_recipient(recipient, ses, tokens, context.source, timing, context.mime_template)
 
 
 # Rendering an ~80 KB newsletter (HTML parse + link rewrite) costs ~15 ms of
 # pure-Python CPU per recipient. Threads share the GIL, so that alone caps a
 # worker near 25 msg/s however many SES calls are in flight. Render once per
 # distinct body with sentinel tokens and substitute the real tokens per recipient.
-_TRACKING_SENTINEL = "RLYTRK0SENTINEL0TOKEN"
-_UNSUBSCRIBE_SENTINEL = "RLYUNS0SENTINEL0TOKEN"
+# MIME is built once per batch on top of that (mailing.mime_template): per
+# recipient only byte substitution remains.
 _TEMPLATE_CACHE_MAX = 4
 _template_cache = {}
 
 
-def _render_recipient_bodies(campaign, tokens):
+def _template_bodies(campaign):
     key = (campaign.html_body, campaign.text_body)
     template = _template_cache.get(key)
     if template is None:
@@ -433,35 +445,83 @@ def _render_recipient_bodies(campaign, tokens):
         if len(_template_cache) >= _TEMPLATE_CACHE_MAX:
             _template_cache.clear()
         _template_cache[key] = template
-    html, text = template
+    return template
+
+
+def _render_recipient_bodies(campaign, tokens):
+    html, text = _template_bodies(campaign)
     return (
         html.replace(_TRACKING_SENTINEL, tokens.tracking_token).replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token),
         text.replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token),
     )
 
 
-def _deliver_campaign_recipient(recipient, ses, tokens, source, timing):
-    render_started = time.perf_counter()
-    html_body, text_body = _render_recipient_bodies(recipient.campaign, tokens)
-    timing["render_mime"] = time.perf_counter() - render_started
-    send_phase_timings.build = send_phase_timings.limiter_wait = 0.0
-    send_started = time.perf_counter()
+def _build_batch_mime_template(context):
+    """Build the batch's MIME once; None means use the per-message builder.
 
+    Disabled via RELAY_MIME_TEMPLATE_ENABLED=0. A build failure is loud (error
+    log) but falls back to the per-message builder so a batch is never blocked
+    by the optimization.
+    """
+    if not getattr(settings, "RELAY_MIME_TEMPLATE_ENABLED", True):
+        return None
+    try:
+        html_template, text_template = _template_bodies(context.campaign)
+        return build_campaign_template(
+            source=context.source,
+            subject=context.campaign.subject,
+            html_body=html_template,
+            text_body=text_template,
+            headers=campaign_unsubscribe_headers(_UNSUBSCRIBE_SENTINEL, context.campaign),
+        )
+    except Exception:
+        logger.exception(
+            "mime_template_build_failed campaign_id=%s; falling back to per-message builder",
+            context.campaign.id,
+        )
+        return None
+
+
+def _deliver_campaign_recipient(recipient, ses, tokens, source, timing, mime_template=None):
     # SES clients can raise transport, service, or unexpected adapter errors;
     # preserve the catch-all delivery contract at this external boundary.
+    # Template byte substitution runs inside it too: an unsafe per-recipient
+    # value fails that recipient loudly, never the batch, and never sends.
+    send_started = None
     try:
-        message_id = send_email(
-            ses_client=ses,
-            source=source,
-            to_email=recipient.email,
-            subject=recipient.campaign.subject,
-            html_body=html_body,
-            text_body=text_body,
-            headers=campaign_unsubscribe_headers(tokens.unsubscribe_token, recipient.campaign),
-        )
+        render_started = time.perf_counter()
+        if mime_template is not None:
+            raw_data = render_campaign_template(
+                mime_template,
+                to_email=recipient.email,
+                tracking_token=tokens.tracking_token,
+                unsubscribe_token=tokens.unsubscribe_token,
+            )
+            html_body = text_body = None
+        else:
+            html_body, text_body = _render_recipient_bodies(recipient.campaign, tokens)
+            raw_data = None
+        timing["render_mime"] = time.perf_counter() - render_started
+        send_phase_timings.build = send_phase_timings.limiter_wait = 0.0
+        send_started = time.perf_counter()
+        if raw_data is not None:
+            message_id = send_raw_bytes(
+                ses_client=ses, source=source, to_email=recipient.email, raw_data=raw_data
+            )
+        else:
+            message_id = send_email(
+                ses_client=ses,
+                source=source,
+                to_email=recipient.email,
+                subject=recipient.campaign.subject,
+                html_body=html_body,
+                text_body=text_body,
+                headers=campaign_unsubscribe_headers(tokens.unsubscribe_token, recipient.campaign),
+            )
         _record_send_phases(timing, time.perf_counter() - send_started)
     except Exception as exc:
-        _record_send_phases(timing, time.perf_counter() - send_started)
+        if send_started is not None:
+            _record_send_phases(timing, time.perf_counter() - send_started)
         retryable = is_retryable_send_error(exc)
         _log_campaign_delivery_error(recipient, exc, retryable)
         if retryable:
