@@ -4,6 +4,7 @@ Complaints are stored by the SES webhook as ``EmailEvent(event_type=complaint)``
 This module only reads them. Nothing here swallows errors: a failing query must
 surface as a 500 on the dashboard or a failing scheduler tick, not an empty panel.
 """
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -45,20 +46,16 @@ class CampaignComplaintRate:
         return f"{self.rate * 100:.3f}%"
 
 
+@contextmanager
 def _bounded_queries():
-    """Return a context manager capping each query at COMPLAINT_QUERY_TIMEOUT_MS (Postgres)."""
-    class _Guard:
-        def __enter__(self):
-            self.atomic = transaction.atomic()
-            self.atomic.__enter__()
-            if connection.vendor == "postgresql":
-                with connection.cursor() as cursor:
-                    cursor.execute("SET LOCAL statement_timeout = %s", [COMPLAINT_QUERY_TIMEOUT_MS])
-
-        def __exit__(self, *exc):
-            return self.atomic.__exit__(*exc)
-
-    return _Guard()
+    """Cap each query at COMPLAINT_QUERY_TIMEOUT_MS. Postgres only: SET LOCAL needs a transaction."""
+    if connection.vendor != "postgresql":
+        yield
+        return
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL statement_timeout = %s", [COMPLAINT_QUERY_TIMEOUT_MS])
+        yield
 
 
 def _events(client=None):
@@ -92,6 +89,8 @@ def campaign_complaint_rates(client=None, *, days=RATE_LOOKBACK_DAYS) -> list[Ca
             .values_list("campaign_id")
             .annotate(n=Count("contact_id", distinct=True))
         )
+        if not complaints:
+            return []
         campaigns = Campaign.objects.filter(pk__in=complaints)
         sent = dict(
             CampaignRecipient.objects.filter(campaign__in=campaigns, sent_at__isnull=False)
