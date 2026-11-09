@@ -1338,3 +1338,73 @@ def test_webhook_does_not_lock_or_rewrite_campaign_per_event(recipient, campaign
     assert event == {"batchItemFailures": []}
     assert Campaign not in locked
     assert campaign.delivered_count == 1
+
+
+# --- sent_count = SES-accepted; early-webhook reconciliation ---
+
+
+def test_sent_count_never_decreases_after_bounce_complaint_unsubscribe(campaign, recipient, audience, app_client):
+    from mailing.services.campaign_sender import refresh_campaign_send_counts
+    from mailing.services.campaigns import _refresh_campaign_counts
+
+    others = []
+    for index, status in enumerate(
+        [CampaignRecipientStatus.BOUNCED, CampaignRecipientStatus.COMPLAINED, CampaignRecipientStatus.UNSUBSCRIBED]
+    ):
+        contact = Contact.objects.create(email=f"p{index}@example.com", verified_at=timezone.now())
+        others.append(CampaignRecipient.objects.create(
+            campaign=campaign, contact=contact, email=contact.email, status=status,
+            ses_message_id=f"ses-x-{index}", sent_at=timezone.now(),
+        ))
+    pending = Contact.objects.create(email="pending@example.com", verified_at=timezone.now())
+    CampaignRecipient.objects.create(campaign=campaign, contact=pending, email=pending.email)
+
+    assert refresh_campaign_send_counts(campaign.pk)["sent_count"] == 4
+    campaign.refresh_from_db()
+    assert campaign.sent_count == 4
+
+    ses_webhooks_handler(records_from_payloads([("m1", webhook_payload(
+        "bounce", "sns-b", "ses-campaign-1", metadata={"bounce_type": "Permanent"}))]), None)
+    recipient.refresh_from_db()
+    assert recipient.status == CampaignRecipientStatus.BOUNCED
+    refresh_campaign_send_counts(campaign.pk)
+    campaign.refresh_from_db()
+    assert campaign.sent_count == 4
+    _refresh_campaign_counts(campaign)
+    assert campaign.sent_count == 4
+
+
+def test_early_webhook_is_reconciled_after_commit_exactly_once(campaign, contact):
+    from mailing.services.ses_webhooks import reconcile_uncorrelated_ses_events
+
+    recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)
+    payload = webhook_payload(
+        "bounce", "sns-early-1", "ses-early-1", metadata={"bounce_type": "Permanent", "bounce_sub_type": "General"}
+    )
+    ses_webhooks_handler(records_from_payloads([("m1", payload)]), None)
+    event = EmailEvent.objects.get(provider_event_id="sns-early-1")
+    assert event.campaign_recipient_id is None
+
+    # Sender not committed yet: stays uncorrelated, no effects.
+    result = reconcile_uncorrelated_ses_events(campaign_id=campaign.pk)
+    assert result["reconciled"] == 0
+
+    recipient.status = CampaignRecipientStatus.SENT
+    recipient.ses_message_id = "ses-early-1"
+    recipient.sent_at = timezone.now()
+    recipient.save()
+
+    assert reconcile_uncorrelated_ses_events(campaign_id=campaign.pk)["reconciled"] == 1
+    assert reconcile_uncorrelated_ses_events()["reconciled"] == 0
+    # A redelivered duplicate stays deduped by provider_event_id.
+    ses_webhooks_handler(records_from_payloads([("m2", payload)]), None)
+
+    event.refresh_from_db()
+    recipient.refresh_from_db()
+    recipient.contact.refresh_from_db()
+    campaign.refresh_from_db()
+    assert event.campaign_recipient_id == recipient.pk
+    assert recipient.status == CampaignRecipientStatus.BOUNCED
+    assert recipient.contact.hard_bounced_at is not None
+    assert campaign.bounce_count == 1
+    assert EmailEvent.objects.filter(provider_event_id="sns-early-1").count() == 1
