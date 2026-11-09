@@ -33,11 +33,16 @@ def resolve_archive_placeholders_text(text_body, unsubscribe_token):
     return text.replace("?e=[UNIQID]", "").replace("&e=[UNIQID]", "")
 
 
+# Relay counts clicks itself through /t/c/. SES strips this attribute before delivery and then
+# leaves the link alone, so it does not wrap it in awstrack.me or record a second click.
+_SES_NO_TRACK = "ses:no-track"
+
+
 def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
     body = rewrite_html_links(resolve_archive_placeholders_html(html_body or ""), tracking_token, unsubscribe_token)
     pixel = f'<img src="{escape(open_pixel_url(tracking_token), quote=True)}" width="1" height="1" alt="" />'
     unsubscribe_href = escape(unsubscribe_url(unsubscribe_token), quote=True)
-    footer = f'<p><a href="{unsubscribe_href}">Unsubscribe or manage preferences</a></p>'
+    footer = f'<p><a {_SES_NO_TRACK} href="{unsubscribe_href}">Unsubscribe or manage preferences</a></p>'
     additions = f"\n{footer}\n{pixel}\n"
     closing_body = list(re.finditer(r"</body\s*>", body, flags=re.IGNORECASE))
     if closing_body:
@@ -123,16 +128,22 @@ class _ClickTrackingHTMLRewriter(HTMLParser):
 
     def _format_tag(self, tag, attrs, *, closed):
         rewritten_attrs = []
+        relay_owned_link = False
         for name, value in attrs:
             if tag.lower() == "a" and name.lower() == "href" and value and _UNIQID in value:
                 if self.unsubscribe_token and _MAILCHIMP_ACCOUNT_LINK_RE.match(value):
                     # Relay's unsubscribe page is the single unsubscribe/preferences surface; skip click tracking.
                     rewritten_attrs.append((name, unsubscribe_url(self.unsubscribe_token)))
+                    relay_owned_link = True
                     continue
                 value = value.replace("?e=[UNIQID]", "").replace("&e=[UNIQID]", "")
             if tag.lower() == "a" and name.lower() == "href" and _is_trackable_url(value):
                 value = click_redirect_url(self.tracking_token, value)
+                relay_owned_link = True
             rewritten_attrs.append((name, value))
+
+        if relay_owned_link and not any(name.lower() == _SES_NO_TRACK for name, _ in rewritten_attrs):
+            rewritten_attrs.insert(0, (_SES_NO_TRACK, None))
 
         attr_text = "".join(_format_attr(name, value) for name, value in rewritten_attrs)
         suffix = ">"

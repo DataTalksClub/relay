@@ -68,8 +68,8 @@ def payload(pending):
 
 def test_public_rendering_preserves_exact_markup_and_actions():
     authored = '<!DOCTYPE html><p data-label="café &amp; tea">café &amp; &#169;<!--keep--><a href="https://example.invalid/read?a=1&amp;b=2">read</a><a href="/relative">rel</a><a href="mailto:help@example.invalid">mail</a><br/></p>'
-    expected = '<!DOCTYPE html><p data-label="café &amp; tea">café &amp; &#169;<!--keep--><a href="https://relay.example.invalid/t/c/track?u=https%3A%2F%2Fexample.invalid%2Fread%3Fa%3D1%26b%3D2">read</a><a href="/relative">rel</a><a href="mailto:help@example.invalid">mail</a><br /></p>'
-    footer = '<p><a href="https://relay.example.invalid/unsubscribe/unsub">Unsubscribe or manage preferences</a></p>'
+    expected = '<!DOCTYPE html><p data-label="café &amp; tea">café &amp; &#169;<!--keep--><a ses:no-track href="https://relay.example.invalid/t/c/track?u=https%3A%2F%2Fexample.invalid%2Fread%3Fa%3D1%26b%3D2">read</a><a href="/relative">rel</a><a href="mailto:help@example.invalid">mail</a><br /></p>'
+    footer = '<p><a ses:no-track href="https://relay.example.invalid/unsubscribe/unsub">Unsubscribe or manage preferences</a></p>'
     pixel = '<img src="https://relay.example.invalid/t/o/track.gif" width="1" height="1" alt="" />'
     campaign = SimpleNamespace(subject="Café", preview_text="Preview", html_body=authored, text_body="Café  \n\n")
     result = sender.render_campaign_message(campaign, tracking_token="track", unsubscribe_token="unsub")
@@ -93,7 +93,7 @@ def test_empty_plain_rendering_retains_existing_unsubscribe_only_policy(body):
 def test_empty_html_retains_footer_and_pixel_bytes():
     assert (
         sender.build_campaign_html_body(None, "track", "unsub")
-        == '\n<p><a href="https://relay.example.invalid/unsubscribe/unsub">Unsubscribe or manage preferences</a></p>\n<img src="https://relay.example.invalid/t/o/track.gif" width="1" height="1" alt="" />'
+        == '\n<p><a ses:no-track href="https://relay.example.invalid/unsubscribe/unsub">Unsubscribe or manage preferences</a></p>\n<img src="https://relay.example.invalid/t/o/track.gif" width="1" height="1" alt="" />'
     )
 
 
