@@ -108,6 +108,29 @@ def send_raw_email(
     return ses_client.send_raw_email(**parameters)["MessageId"]
 
 
+def send_raw_bytes(*, ses_client, source, to_email, raw_data, cc=None, bcc=None, configuration_set=None):
+    """Send prebuilt MIME bytes (see mailing.mime_template.render_campaign_template).
+
+    This is the same wire call as the raw branch of send_email (guard, shared
+    SES throttle, configuration set), but the MIME was built once per batch and
+    only per-recipient bytes were substituted, so there is no per-message cost.
+    The byte substitution is timed by the caller in timing["render_mime"], so
+    build is reported as 0 here and the SES-call split stays exact.
+    """
+    parameters = {
+        "Source": source,
+        "Destinations": [to_email, *(cc or []), *(bcc or [])],
+        "RawMessage": {"Data": raw_data},
+    }
+    _configuration(parameters, configuration_set)
+    send_phase_timings.build = 0.0
+    ensure_transport_allowed("SES send_raw_email")
+    throttle_started = time.perf_counter()
+    throttle_ses_send()
+    send_phase_timings.limiter_wait = time.perf_counter() - throttle_started
+    return ses_client.send_raw_email(**parameters)["MessageId"]
+
+
 def _simple_parameters(envelope, content):
     body = {"Html": {"Charset": "UTF-8", "Data": content.html}}
     if content.text:
@@ -146,7 +169,7 @@ def _configuration(params, configuration_set):
         params["ConfigurationSetName"] = configuration_set
 
 
-def _raw_message(envelope, content):
+def _raw_message(envelope, content, *, text_cte=None):
     message = EmailMessage()
     message["From"] = envelope.source
     message["To"] = envelope.to_email
@@ -160,7 +183,7 @@ def _raw_message(envelope, content):
     if content.calendar is not None:
         add_calendar_alternative(message, content.text, content.html, content.calendar)
     else:
-        _ordinary_body(message, content)
+        _ordinary_body(message, content, text_cte=text_cte)
     return message
 
 
@@ -169,7 +192,24 @@ def _raw_message(envelope, content):
 _FAST_QP_MIN_HTML = 8192
 
 
-def _add_html_alternative(message, html):
+def _add_html_alternative(message, html, *, text_cte=None):
+    if text_cte == "8bit":
+        # MIME templates (mailing.mime_template) substitute per-recipient bytes
+        # after serialization, so the payload must pass through untouched: raw
+        # UTF-8, never QP/base64-wrapped, never split mid-sentinel. The small
+        # branch goes through the content manager exactly like the per-message
+        # builder (same trailing newline); the big branch stores UTF-8 bytes
+        # directly, matching the binascii fast path's exact payload.
+        if len(html) < _FAST_QP_MIN_HTML:
+            message.add_alternative(html, subtype="html", cte="8bit")
+            return
+        message.make_alternative()
+        part = type(message)(policy=message.policy)
+        part["Content-Type"] = 'text/html; charset="utf-8"'
+        part["Content-Transfer-Encoding"] = "8bit"
+        part.set_payload(html.encode("utf-8"))
+        message.attach(part)
+        return
     if len(html) < _FAST_QP_MIN_HTML:
         message.add_alternative(html, subtype="html")
         return
@@ -181,13 +221,14 @@ def _add_html_alternative(message, html):
     message.attach(part)
 
 
-def _ordinary_body(message, content):
+def _ordinary_body(message, content, *, text_cte=None):
+    cte_kw = {} if text_cte is None else {"cte": text_cte}
     if content.text:
-        message.set_content(content.text)
+        message.set_content(content.text, **cte_kw)
         if content.html:
-            _add_html_alternative(message, content.html)
+            _add_html_alternative(message, content.html, text_cte=text_cte)
     else:
-        message.set_content(content.html, subtype="html")
+        message.set_content(content.html, subtype="html", **cte_kw)
     if content.parts:
         if message.get_content_maintype() != "multipart" or message.get_content_subtype() != "mixed":
             message.make_mixed()

@@ -391,6 +391,9 @@ SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0
 CAMPAIGN_EMAIL_BATCH_SIZE = int_env("RELAY_CAMPAIGN_EMAIL_BATCH_SIZE", default=500)
 # SES calls in flight per batch. ~11 saturate 45/s at ~240 ms per call.
 CAMPAIGN_SEND_CONCURRENCY = int_env("RELAY_CAMPAIGN_SEND_CONCURRENCY", default=16)
+# MIME build once per batch (mailing.mime_template) with per-recipient byte
+# substitution. Set to 0 to use the per-message MIME builder instead.
+RELAY_MIME_TEMPLATE_ENABLED = bool_env("RELAY_MIME_TEMPLATE_ENABLED", default=True)
 SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = os.environ.get("SQS_TRANSACTIONAL_EMAIL_QUEUE_URL", "")
 SQS_CAMPAIGN_EMAIL_QUEUE_URL = os.environ.get("SQS_CAMPAIGN_EMAIL_QUEUE_URL", "")
 SQS_EMAIL_EVENTS_QUEUE_URL = os.environ.get("SQS_EMAIL_EVENTS_QUEUE_URL", "")
