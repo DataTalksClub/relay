@@ -1,7 +1,7 @@
 import uuid
 from datetime import timedelta
-from types import SimpleNamespace
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest

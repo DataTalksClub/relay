@@ -33,8 +33,8 @@ from django_tasks_db.models import DBTaskResult
 from django_tasks_db.utils import exclusive_transaction
 
 from mailing import db_retry
-from mailing.services.task_leases import HeartbeatThread
 from mailing.db_retry import first_line, is_transient_db_error, run_loop_iteration
+from mailing.services.task_leases import HeartbeatThread
 
 logger = logging.getLogger("django_tasks_db")
 
