@@ -111,7 +111,7 @@ def test_transactional_correlation_locks_only_the_message_row(monkeypatch, recor
     assert all(of == {"self"} for model, of in scopes if model is TransactionalMessage)
 
 
-def test_campaign_correlation_locks_campaign_then_only_the_recipient_row(monkeypatch, records):
+def test_campaign_correlation_locks_only_the_recipient_row(monkeypatch, records):
     client, contact, _message_1, _message_2 = records
     audience = Audience.objects.create(organization=client.organization, name="A", slug="a")
     campaign = Campaign.objects.create(client=client, audience=audience, subject="Hello")
@@ -130,6 +130,7 @@ def test_campaign_correlation_locks_campaign_then_only_the_recipient_row(monkeyp
 
     recipient_scopes = [of for model, of in scopes if model is CampaignRecipient]
     assert recipient_scopes == [{"self"}]
+    assert not any(model is Campaign for model, _of in scopes)
 
 
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="row-lock deadlocks need PostgreSQL")

@@ -1,4 +1,4 @@
-"""All campaign writers acquire the parent before the recipient row lock.
+"""Campaign writers acquire the parent before the recipient row lock (SES webhooks lock only the recipient).
 
 SQLite cannot reproduce PostgreSQL deadlocks; this verifies the actual evaluated
 FOR UPDATE queryset order shared by sender and event/operator writers.
@@ -49,7 +49,12 @@ def test_campaign_writers_lock_parent_before_recipient(monkeypatch, operation):
         with transaction.atomic():
             result = correlate_ses_message("synthetic-provider-id")
     assert result.pk == recipient.pk
-    assert locks[:2] == [Campaign, CampaignRecipient]
+    if operation == "provider":
+        # Webhooks lock only the recipient: a per-event campaign FOR UPDATE
+        # starved the senders' FOR SHARE (2026-11-09). Counters refresh after commit.
+        assert locks == [CampaignRecipient]
+    else:
+        assert locks[:2] == [Campaign, CampaignRecipient]
     recipient.refresh_from_db()
     if operation == "open":
         assert recipient.open_count == 1

@@ -10,6 +10,8 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509.oid import NameOID
+from django.core.cache import cache
+from django.db.models.query import QuerySet
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -31,6 +33,7 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
+from mailing.services import ses_webhooks
 from mailing.services import ses_webhooks as ses_webhooks_service
 from mailing.services.client_callbacks import process_due_client_callbacks
 from mailing.services.contacts import is_marketing_email_allowed, is_transactional_email_allowed
@@ -1290,11 +1293,48 @@ def test_refresh_campaign_provider_counts_is_one_recipient_scan(recipient, campa
     recipient.first_clicked_at = now
     recipient.save()
 
-    # campaign get + one aggregate + campaign save
-    with django_assert_num_queries(3):
+    # one aggregate + one campaign UPDATE
+    with django_assert_num_queries(2):
         refresh_campaign_provider_counts(campaign.pk)
 
     campaign.refresh_from_db()
     assert (campaign.delivered_count, campaign.unique_open_count, campaign.unique_click_count) == (1, 1, 1)
     assert (campaign.open_count, campaign.click_count) == (3, 2)
     assert (campaign.bounce_count, campaign.complaint_count) == (0, 0)
+
+
+def test_provider_counts_refresh_is_debounced_until_queue_drains(recipient, campaign, monkeypatch):
+    cache.clear()
+    refreshed = []
+    monkeypatch.setattr(ses_webhooks, "refresh_campaign_provider_counts", refreshed.append)
+    pending = {"value": True}
+
+    class _Pending:
+        def exists(self):
+            return pending["value"]
+
+    monkeypatch.setattr(ses_webhooks.DBTaskResult.objects, "filter", lambda **kw: _Pending())
+
+    assert ses_webhooks.refresh_campaign_provider_counts_if_due(campaign.pk) is True  # first event
+    assert ses_webhooks.refresh_campaign_provider_counts_if_due(campaign.pk) is False  # debounced, backlog
+    pending["value"] = False
+    assert ses_webhooks.refresh_campaign_provider_counts_if_due(campaign.pk) is True  # queue drained
+    assert refreshed == [campaign.pk, campaign.pk]
+
+
+def test_webhook_does_not_lock_or_rewrite_campaign_per_event(recipient, campaign, monkeypatch):
+    locked = []
+    original = QuerySet._fetch_all
+
+    def fetch(query):
+        if query._result_cache is None and query.query.select_for_update:
+            locked.append(query.model)
+        return original(query)
+
+    monkeypatch.setattr(QuerySet, "_fetch_all", fetch)
+    event = ses_webhooks_handler(records_from_payloads([("d", webhook_payload("delivery", "sns-nolock-1", "ses-campaign-1"))]), None)
+
+    campaign.refresh_from_db()
+    assert event == {"batchItemFailures": []}
+    assert Campaign not in locked
+    assert campaign.delivered_count == 1
