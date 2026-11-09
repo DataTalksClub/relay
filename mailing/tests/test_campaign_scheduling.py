@@ -200,9 +200,10 @@ def test_due_delivery_duplicate_task_calls_provider_once(campaign, django_captur
         assert len(dispatch_due_campaigns()) == 1
     provider = Mock()
     provider.send_email.return_value = {"MessageId": "scheduled-id"}
+    provider.send_raw_email.return_value = {"MessageId": "scheduled-id"}
     assert send_campaign_batch(payloads[0], ses_client=provider).sent_count == 1
     assert send_campaign_batch(payloads[0], ses_client=provider).sent_count == 0
-    provider.send_email.assert_called_once()
+    assert provider.send_email.call_count + provider.send_raw_email.call_count == 1
     assert campaign.recipients.get().ses_message_id == "scheduled-id"
 
 
