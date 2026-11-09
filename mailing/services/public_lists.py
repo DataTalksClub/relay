@@ -209,7 +209,9 @@ def subscribe_public_single_optin(spec, email, consent):
     Matches the Mailchimp form this replaces: no confirmation step. The
     subscription is not marked verified. Already-subscribed addresses get no
     email, and an address that unsubscribed, bounced or complained is never
-    resubscribed by an anonymous form post.
+    resubscribed by an anonymous form post. ``verified_at`` is the consent time:
+    campaigns skip unverified contacts, and Mailchimp (single opt-in) treated a
+    form signup as a subscriber, so the evidence lives in ContactSourceMetadata.
     """
     client = load_public_client(spec)
     payload = {
@@ -254,6 +256,7 @@ def subscribe_public_single_optin(spec, email, consent):
             client=client,
             defaults={
                 "status": SubscriptionStatus.SUBSCRIBED,
+                "verified_at": now,
                 "unsubscribed_at": None,
                 "unsubscribe_reason": "",
             },
