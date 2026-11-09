@@ -41,6 +41,7 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
+from mailing.services.complaints import campaign_complaint_rates, recent_complaints
 from mailing.services.contacts import has_invalid_email_validation, normalize_email
 from mailing.services.worker_status import WorkerStatus, sandbox_worker_statuses
 
@@ -323,6 +324,8 @@ class DashboardContext:
     worker_waiting_count: int
     integration_clients: list[DashboardClient]
     transactional_backlog_count: int
+    complaint_rates: list
+    recent_complaints: list
 
 
 def rate(numerator: int, denominator: int) -> str:
@@ -387,6 +390,8 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
         worker_waiting_count=worker_waiting_count,
         integration_clients=integration_clients,
         transactional_backlog_count=transactional_backlog_count,
+        complaint_rates=campaign_complaint_rates(client),
+        recent_complaints=recent_complaints(client, limit=10),
     )
 
 

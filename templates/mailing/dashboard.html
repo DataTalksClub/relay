@@ -82,6 +82,39 @@
     </div>
   {% endif %}
 
+    <section class="section panel" aria-labelledby="ses-complaints">
+      {% include "_collection_header.html" with title="SES complaints" title_id="ses-complaints" extra_class="panel-header" description="Spam complaints reported by mailbox providers via SES. Complained contacts are suppressed automatically. Alert fires above 0.1% per campaign (last 30 days)." only %}
+      {% if dashboard.complaint_rates %}
+        <div class="compact-list">
+          {% for row in dashboard.complaint_rates %}
+            <div class="compact-row">
+              <div class="compact-row-main">
+                <span class="badge {% if row.over_threshold %}danger{% else %}neutral{% endif %}">{{ row.rate_display }}</span>
+                <a href="{% url 'mailing:campaign_detail' row.campaign_id %}"><strong>{{ row.campaign_name }}</strong></a>
+              </div>
+              <div class="compact-row-meta"><span class="muted">{{ row.complaints }} complaint{{ row.complaints|pluralize }} / {{ row.sent }} sent</span></div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if dashboard.recent_complaints %}
+        <div class="compact-list">
+          {% for item in dashboard.recent_complaints %}
+            <div class="compact-row">
+              <div class="compact-row-main"><strong>{{ item.recipient }}</strong></div>
+              <div class="compact-row-meta">
+                <span class="muted">{{ item.campaign_name }}</span>
+                <span class="muted">{{ item.complaint_type }}</span>
+                <span class="helptext"><span class="data-time">{{ item.occurred_at|date:"M j, Y H:i" }}</span></span>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state"><strong>No complaints recorded</strong></div>
+      {% endif %}
+    </section>
+
     <section class="section panel" aria-labelledby="deliverability-attention">
       {% url 'mailing:contact_search' as contact_search_url %}
       {% include "_collection_header.html" with title="Deliverability Attention" title_id="deliverability-attention" extra_class="panel-header" trail_url=contact_search_url trail_label="Review contacts" description="Recent failures, bounces, and complaints in this client. Open a contact to investigate." only %}
