@@ -1,4 +1,8 @@
+import json
+import threading
+import time
 from datetime import timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from botocore.credentials import RefreshableCredentials
@@ -161,3 +165,40 @@ def test_sqs_cached_client_outlasts_maximum_long_poll(monkeypatch, configured_ti
         assert ingress_client.meta.config.read_timeout == expected
         assert ingress_client.meta.config.read_timeout > 20
         assert aws.aws_client("s3").meta.config.read_timeout == configured_timeout
+
+
+@override_settings(AWS_READ_TIMEOUT=5, AWS_MAX_ATTEMPTS=1)
+def test_sqs_long_poll_survives_the_old_five_second_timeout(monkeypatch):
+    """Exercise botocore's actual socket against a delayed local SQS response."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "k")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "s")
+
+    class DelayedSqs(BaseHTTPRequestHandler):
+        def do_POST(self):
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            assert request["WaitTimeSeconds"] == 20
+            time.sleep(6)
+            response = b'{"Messages": []}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-amz-json-1.0")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            try:
+                self.wfile.write(response)
+            except BrokenPipeError:
+                pass  # A regressed client has already abandoned the receive.
+
+        def log_message(self, *args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), DelayedSqs) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            endpoint = f"http://127.0.0.1:{server.server_port}"
+            client = aws.sqs_client(endpoint_url=endpoint)
+            result = client.receive_message(QueueUrl=endpoint + "/queue", WaitTimeSeconds=20)
+            assert result["Messages"] == []
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
