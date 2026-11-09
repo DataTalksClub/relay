@@ -517,6 +517,45 @@ def test_worker_open_and_click_update_summary_fields_without_duplicate_unique_co
     assert EmailEvent.objects.filter(campaign_recipient=recipient).count() == 2
 
 
+@override_settings(PUBLIC_BASE_URL="https://relay.example.test")
+def test_worker_ignores_ses_click_on_relay_tracker_url_for_campaign_recipient(recipient):
+    tracker = "https://relay.example.test/t/c/token123?u=https%3A%2F%2Fexample.com%2Fx"
+    payloads = [("click-1", webhook_payload("click", "sns-click-t", "ses-campaign-1", metadata={"url": tracker}))]
+
+    ses_webhooks_handler(records_from_payloads(payloads), None)
+
+    recipient.refresh_from_db()
+    recipient.campaign.refresh_from_db()
+    assert recipient.click_count == 0
+    assert recipient.first_clicked_at is None
+    assert recipient.campaign.click_count == 0
+    assert recipient.campaign.unique_click_count == 0
+    assert not EmailEvent.objects.filter(campaign_recipient=recipient, event_type=EmailEventType.CLICK).exists()
+
+
+@override_settings(PUBLIC_BASE_URL="https://relay.example.test")
+def test_worker_still_counts_ses_click_on_external_url_for_campaign_recipient(recipient):
+    payloads = [
+        ("click-1", webhook_payload("click", "sns-click-e", "ses-campaign-1", metadata={"url": "https://example.com/t/c/x"})),
+    ]
+
+    ses_webhooks_handler(records_from_payloads(payloads), None)
+
+    recipient.refresh_from_db()
+    assert recipient.click_count == 1
+
+
+@override_settings(PUBLIC_BASE_URL="https://relay.example.test")
+def test_worker_counts_ses_click_on_relay_tracker_url_for_transactional_message(transactional_message):
+    tracker = "https://relay.example.test/t/c/token123?u=https%3A%2F%2Fexample.com"
+    payloads = [("click-1", webhook_payload("click", "sns-click-tx", "ses-tx-1", metadata={"url": tracker}))]
+
+    ses_webhooks_handler(records_from_payloads(payloads), None)
+
+    transactional_message.refresh_from_db()
+    assert transactional_message.click_count == 1
+
+
 def test_worker_uncorrelated_message_id_records_diagnostics_without_suppression(contact):
     payload = webhook_payload("bounce", "sns-unknown-bounce", "missing-ses-message")
 

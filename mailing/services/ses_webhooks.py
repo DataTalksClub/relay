@@ -528,6 +528,13 @@ def process_ses_webhook(payload):
             return None
 
         source = correlate_ses_message(payload.get("ses_message_id", ""))
+        if notification_type == "click" and isinstance(source, CampaignRecipient):
+            if is_relay_tracker_url((payload.get("metadata") or {}).get("url", "")):
+                # Campaign links are double-wrapped (SES click tracking -> Relay
+                # /t/c/ -> target). Relay's redirector already recorded this
+                # human click, so the SES event on the wrapper would count twice.
+                logger.info("Ignoring SES click on Relay tracker URL for recipient %s", source.pk)
+                return None
         event = append_provider_event(payload, source)
         if event is None:
             return None
@@ -719,6 +726,19 @@ def mark_complained(contact, occurred_at):
     Contact.objects.filter(pk=contact.pk, complained_at__isnull=True).update(
         complained_at=occurred_at,
         updated_at=timezone.now(),
+    )
+
+
+def is_relay_tracker_url(url):
+    """True when url is one of Relay's own /t/c/ click-redirect links."""
+    if not url:
+        return False
+    parsed = urlparse(url)
+    base = urlparse(settings.PUBLIC_BASE_URL)
+    return (
+        parsed.scheme in {"http", "https"}
+        and (parsed.hostname or "").lower() == (base.hostname or "").lower()
+        and parsed.path.startswith("/t/c/")
     )
 
 
