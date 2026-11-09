@@ -35,11 +35,14 @@ from mailing.models import (
 )
 from mailing.services import ses_webhooks
 from mailing.services import ses_webhooks as ses_webhooks_service
+from mailing.services.campaign_sender import refresh_campaign_send_counts
+from mailing.services.campaigns import _refresh_campaign_counts
 from mailing.services.client_callbacks import process_due_client_callbacks
 from mailing.services.contacts import is_marketing_email_allowed, is_transactional_email_allowed
 from mailing.services.ses_webhooks import (
     SNS_MOCK_SIGNATURE,
     canonical_sns_message,
+    reconcile_uncorrelated_ses_events,
     refresh_campaign_provider_counts,
 )
 from mailing.sqs import records_from_messages
@@ -1344,8 +1347,6 @@ def test_webhook_does_not_lock_or_rewrite_campaign_per_event(recipient, campaign
 
 
 def test_sent_count_never_decreases_after_bounce_complaint_unsubscribe(campaign, recipient, audience, app_client):
-    from mailing.services.campaign_sender import refresh_campaign_send_counts
-    from mailing.services.campaigns import _refresh_campaign_counts
 
     others = []
     for index, status in enumerate(
@@ -1375,7 +1376,6 @@ def test_sent_count_never_decreases_after_bounce_complaint_unsubscribe(campaign,
 
 
 def test_early_webhook_is_reconciled_after_commit_exactly_once(campaign, contact):
-    from mailing.services.ses_webhooks import reconcile_uncorrelated_ses_events
 
     recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)
     payload = webhook_payload(
