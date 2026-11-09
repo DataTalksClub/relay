@@ -1,10 +1,13 @@
 import logging
+import queue
+import threading
+import time
 import traceback
 from dataclasses import dataclass
 
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from mailing.aws import ses_client as default_ses_client
@@ -59,6 +62,13 @@ TRANSIENT_SES_ERROR_CODES = {
     "InternalError",
     "InternalFailure",
 }
+
+
+# A batch that delivers at less than this share of RELAY_SES_MAX_SEND_RATE is
+# logged at ERROR. Batches smaller than the minimum are too short to measure
+# and are not reported at all.
+THROUGHPUT_ALERT_RATIO = 0.5
+THROUGHPUT_ALERT_MIN_MESSAGES = 20
 
 
 class CampaignSenderError(Exception):
@@ -142,24 +152,136 @@ def send_campaign_batch(payload, *, ses_client=None):
             f"invalid campaign recipient ids: missing={missing_recipient_ids}, wrong_campaign={wrong_campaign_ids}"
         )
 
-    for recipient_id in recipient_ids:
-        try:
-            outcome = _send_campaign_recipient(campaign_id, recipient_id, ses)
-        except RetryableCampaignSendError as exc:
+    _mark_campaign_sending(campaign_id, recipient_ids)
+    concurrency = _send_concurrency(len(recipient_ids))
+    started = time.monotonic()
+    outcomes, failure = _send_recipients(campaign_id, recipient_ids, ses, concurrency)
+    for outcome in outcomes:
+        result[f"{outcome}_count"] += 1
+    _report_batch_throughput(campaign_id, result, time.monotonic() - started, concurrency)
+
+    if failure is not None:
+        recipient_id, exc = failure
+        if isinstance(exc, RetryableCampaignSendError):
             _record_retryable_error(campaign_id, recipient_id, str(exc))
             refresh_campaign_send_counts(campaign_id)
-            raise
-        result[f"{outcome}_count"] += 1
+        raise exc
 
     refresh_campaign_send_counts(campaign_id)
     return CampaignSendResult(**result)
+
+
+def _send_concurrency(recipient_count):
+    if connection.vendor != "postgresql":
+        # SQLite serializes writers (and the send transaction holds the write
+        # lock), so threads would only add "database is locked" failures.
+        return 1
+    configured = int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 1) or 1)
+    return max(1, min(configured, recipient_count))
+
+
+def _send_recipients(campaign_id, recipient_ids, ses, concurrency):
+    """Send each recipient once; return (outcomes, first_failure).
+
+    The SES call is a synchronous network round trip of roughly 200 ms, so one
+    thread tops out near 5 messages/s no matter how high the configured rate
+    is. Recipients of a batch are independent (each is guarded by its own row
+    lock), so a small pool of threads keeps enough calls in flight to reach it.
+    The first error stops further sends; calls already in flight finish.
+    """
+    outcomes = []
+    failures = []
+    if concurrency == 1:
+        for recipient_id in recipient_ids:
+            try:
+                outcomes.append(_send_campaign_recipient(campaign_id, recipient_id, ses))
+            except Exception as exc:
+                return outcomes, (recipient_id, exc)
+        return outcomes, None
+
+    pending = queue.SimpleQueue()
+    for recipient_id in recipient_ids:
+        pending.put(recipient_id)
+    stop = threading.Event()
+
+    def drain():
+        # Each thread owns a database connection; close it when the thread ends.
+        try:
+            while not stop.is_set():
+                try:
+                    recipient_id = pending.get_nowait()
+                except queue.Empty:
+                    return
+                try:
+                    outcomes.append(_send_campaign_recipient(campaign_id, recipient_id, ses))
+                except Exception as exc:
+                    failures.append((recipient_id, exc))
+                    stop.set()
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=drain, name=f"campaign-send-{index}") for index in range(concurrency)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return outcomes, (failures[0] if failures else None)
+
+
+def _report_batch_throughput(campaign_id, result, elapsed, concurrency):
+    attempted = result["sent_count"] + result["failed_count"]
+    if attempted < THROUGHPUT_ALERT_MIN_MESSAGES or elapsed <= 0:
+        return
+    rate = attempted / elapsed
+    configured = float(getattr(settings, "SES_MAX_SEND_RATE_PER_SECOND", 0) or 0)
+    logger.info(
+        "Campaign batch sent campaign_id=%s attempted=%s elapsed_s=%.1f rate_per_s=%.1f "
+        "configured_rate_per_s=%.1f concurrency=%s",
+        campaign_id, attempted, elapsed, rate, configured, concurrency,
+    )
+    if configured > 0 and rate < configured * THROUGHPUT_ALERT_RATIO:
+        logger.error(
+            "campaign_send_throughput_low campaign_id=%s attempted=%s rate_per_s=%.1f configured_rate_per_s=%.1f "
+            "concurrency=%s",
+            campaign_id, attempted, rate, configured, concurrency,
+        )
+
+
+def _mark_campaign_sending(campaign_id, recipient_ids):
+    """Move a queued campaign to SENDING once, before any recipient is sent.
+
+    Per-recipient sends only share-lock the campaign row, so none of them may
+    update it: concurrent updaters holding that lock would deadlock.
+    """
+    with transaction.atomic():
+        campaign = Campaign.objects.select_for_update().get(pk=campaign_id)
+        if campaign.status not in {CampaignStatus.QUEUED, CampaignStatus.FAILED}:
+            return
+        if campaign.scheduled_at and campaign.scheduled_at > timezone.now():
+            return
+        if not CampaignRecipient.objects.filter(pk__in=recipient_ids, status=CampaignRecipientStatus.PENDING).exists():
+            return
+        campaign.status = CampaignStatus.SENDING
+        campaign.save(update_fields=["status", "updated_at"])
+
+
+def _lock_campaign_shared(campaign_id):
+    # Cancellation and dispatch still exclude each other (cancel takes FOR UPDATE,
+    # which waits for in-flight sends), but sends no longer exclude one another.
+    if connection.vendor == "postgresql":
+        table = connection.ops.quote_name(Campaign._meta.db_table)
+        with connection.cursor() as cursor:
+            cursor.execute(f"SELECT 1 FROM {table} WHERE id = %s FOR SHARE", [campaign_id])  # noqa: S608
+            if cursor.fetchone() is None:
+                raise Campaign.DoesNotExist(f"campaign {campaign_id} does not exist")
+    return Campaign.objects.get(pk=campaign_id)
 
 
 @transaction.atomic
 def _send_campaign_recipient(campaign_id, recipient_id, ses):
     # Cancellation and dispatch share this lock; cancellation cannot race an
     # in-flight provider call and claim no message was sent.
-    campaign = Campaign.objects.select_for_update().get(pk=campaign_id)
+    campaign = _lock_campaign_shared(campaign_id)
     recipient = (
         CampaignRecipient.objects.select_for_update(of=("self",))
         .select_related("campaign", "campaign__client", "campaign__audience", "contact")
@@ -184,9 +306,6 @@ def _send_campaign_recipient(campaign_id, recipient_id, ses):
     if campaign.status in {CampaignStatus.DRAFT, CampaignStatus.SNAPSHOTTING}:
         raise CampaignSenderError("Campaign has not been released for sending.")
 
-    if campaign.status in {CampaignStatus.QUEUED, CampaignStatus.FAILED}:
-        campaign.status = CampaignStatus.SENDING
-        campaign.save(update_fields=["status", "updated_at"])
     tokens = _send_tokens_for_pending_recipient(recipient)
     return _deliver_campaign_recipient(recipient, ses, tokens)
 
