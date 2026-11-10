@@ -230,7 +230,15 @@ def inspect_runtime(timeout=30):
     return json.loads(result.stdout)
 
 
-def verify(*, timeout: float = 300, interval: float = 5) -> int:
+def resolve_timeout() -> float:
+    """Verification budget in seconds; production overrides the 300 default."""
+    try:
+        return float(os.environ.get("RELAY_VERIFY_TIMEOUT_SECONDS", "") or 300)
+    except ValueError:
+        return 300.0
+
+
+def verify(*, timeout: float | None = None, interval: float = 5) -> int:
     """Shared workflow entrypoint; monotonic deadline includes HTTP requests."""
     base = os.environ["COOLIFY_URL"].rstrip("/")
     token = os.environ["COOLIFY_TOKEN"]
@@ -245,6 +253,11 @@ def verify(*, timeout: float = 300, interval: float = 5) -> int:
     baseline_names = {item.get("name") for item in baseline.get("containers", [])}
     new_services = frozenset() if None in baseline_names or not baseline_names else frozenset(names - baseline_names)
     public_url = urlsplit(os.environ["PUBLIC_READY_URL"])
+    if timeout is None:
+        # A promotion's rolling restart (queued deploy, every service replaced,
+        # follower promoted to the public route) can outlast the historic
+        # 300-second default; production overrides it per workflow.
+        timeout = resolve_timeout()
     start = time.monotonic()
     deadline = start + timeout
     last = "no successful poll"

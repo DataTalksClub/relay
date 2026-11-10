@@ -1,4 +1,9 @@
-from scripts.coolify_verify import coolify_ready, deploy_ready, release_matches
+from scripts.coolify_verify import (
+    coolify_ready,
+    deploy_ready,
+    release_matches,
+    resolve_timeout,
+)
 
 
 def test_ready_web_healthy_plus_workers_unknown():
@@ -166,3 +171,16 @@ def test_newly_added_service_exited_before_first_start_is_not_fatal():
     assert coolify_ready(apps, image)[2] is True
     apps[1]["status"] = "running:unhealthy"
     assert coolify_ready(apps, image, frozenset({"tracking-worker"}))[2] is True
+
+
+def test_resolve_timeout_defaults_to_300(monkeypatch):
+    monkeypatch.delenv("RELAY_VERIFY_TIMEOUT_SECONDS", raising=False)
+    assert resolve_timeout() == 300.0
+
+
+def test_resolve_timeout_reads_the_workflow_override(monkeypatch):
+    monkeypatch.setenv("RELAY_VERIFY_TIMEOUT_SECONDS", "900")
+    assert resolve_timeout() == 900.0
+
+    monkeypatch.setenv("RELAY_VERIFY_TIMEOUT_SECONDS", "not-a-number")
+    assert resolve_timeout() == 300.0
