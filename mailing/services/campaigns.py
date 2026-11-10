@@ -5,7 +5,22 @@ from dataclasses import dataclass
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Case, CharField, Count, Exists, F, FilteredRelation, OuterRef, Q, Sum, Value, When
+from django.db.models import (
+    Case,
+    CharField,
+    Count,
+    Exists,
+    F,
+    FilteredRelation,
+    JSONField,
+    OuterRef,
+    Q,
+    Subquery,
+    Sum,
+    Value,
+    When,
+)
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 import taskdeck
@@ -213,13 +228,20 @@ def _annotate_snapshot_skip(campaign, queryset):
         When(complained_at__isnull=False, then=Value(reason.COMPLAINT)),
         When(global_unsubscribed_at__isnull=False, then=Value(reason.GLOBAL_UNSUBSCRIBE)),
         When(email_validation_status__in=NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES, then=Value(reason.INVALID_EMAIL)),
-        When(verified_at__isnull=True, snapshot_audience__verified_at__isnull=True,
-             snapshot_client__verified_at__isnull=True, then=Value(reason.UNVERIFIED)),
         When(snapshot_audience__status=SubscriptionStatus.UNSUBSCRIBED, then=Value(reason.AUDIENCE_UNSUBSCRIBE)),
         When(snapshot_client__status=SubscriptionStatus.UNSUBSCRIBED, then=Value(reason.CLIENT_UNSUBSCRIBE)),
         When(Q(snapshot_client__status__isnull=True) | ~Q(snapshot_client__status=SubscriptionStatus.SUBSCRIBED),
              then=Value(reason.SUPPRESSED)),
     ]
+    if not campaign.allow_unverified:
+        rules.append(
+            When(
+                verified_at__isnull=True,
+                snapshot_audience__verified_at__isnull=True,
+                snapshot_client__verified_at__isnull=True,
+                then=Value(reason.UNVERIFIED),
+            )
+        )
     if campaign.category_tag:
         candidates = candidates.annotate(snapshot_category=FilteredRelation("category_preferences", condition=Q(
             category_preferences__audience_id=campaign.audience_id,
@@ -245,8 +267,27 @@ def snapshot_campaign_recipients(campaign):
             ~Exists(CampaignRecipient.objects.filter(campaign_id=campaign.pk, contact_id=OuterRef("pk")))
         ),
     )
+    if campaign.template_key and campaign.recipient_list_key:
+        member_context = RecipientListMember.objects.filter(
+            recipient_list__audience=campaign.audience,
+            recipient_list__client=campaign.client,
+            recipient_list__key=campaign.recipient_list_key,
+            contact_id=OuterRef("pk"),
+            active=True,
+        ).order_by().values("metadata__relay_campaign_context")[:1]
+        candidates = candidates.annotate(
+            recipient_context=Coalesce(
+                Subquery(member_context, output_field=JSONField()),
+                Value({}, output_field=JSONField()),
+            )
+        )
+    else:
+        candidates = candidates.annotate(
+            recipient_context=Value({}, output_field=JSONField())
+        )
     created_count = insert_select(CampaignRecipient, candidates, {
         "campaign_id": campaign.pk, "contact_id": F("pk"), "email": F("email"),
+        "context": F("recipient_context"),
         "skip_reason": F("snapshot_skip"),
         "status": Case(When(snapshot_skip="", then=Value(CampaignRecipientStatus.PENDING)),
                        default=Value(CampaignRecipientStatus.SKIPPED)),
@@ -366,7 +407,7 @@ def campaign_send_issues(campaign):
         issues.append("Set PUBLIC_BASE_URL to HTTPS before sending campaigns.")
     if not campaign.subject.strip():
         issues.append("Add a subject before sending.")
-    if not campaign.html_body.strip() and not campaign.text_body.strip():
+    if not campaign.template_key and not campaign.html_body.strip() and not campaign.text_body.strip():
         issues.append("Add HTML or plain-text email content before sending.")
     if any(re.search(r"\*\|[^|]+\|\*", body or "") for body in (
         campaign.subject,

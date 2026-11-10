@@ -2,6 +2,7 @@ import json
 import re
 from email.parser import BytesParser
 from email.policy import default
+from urllib.parse import unquote
 
 import pytest
 from botocore.exceptions import ClientError, ConnectTimeoutError
@@ -17,6 +18,8 @@ from mailing.models import (
     Contact,
     EmailEvent,
     EmailEventType,
+    EmailTemplate,
+    EmailTemplateVersion,
     Organization,
     Subscription,
     SubscriptionStatus,
@@ -114,6 +117,63 @@ def test_campaign_sender_sends_pending_recipient_and_persists_audit_state(campai
     event = EmailEvent.objects.get(campaign_recipient=recipient)
     assert event.event_type == EmailEventType.SENT
     assert event.metadata == {"ses_message_id": "ses-message-1"}
+
+
+@override_settings(
+    AWS_REGION="us-east-1",
+    AWS_SES_CONFIGURATION_SET="campaign-events",
+    DEFAULT_FROM_EMAIL="newsletter@example.com",
+    PUBLIC_BASE_URL="https://mail.example.com",
+)
+def test_template_campaign_recipient_override_keeps_tracking_and_unsubscribe(campaign_setup):
+    campaign, recipient = campaign_setup
+    campaign.client.default_sender_id = "newsletter"
+    campaign.client.sender_emails = [{"id": "newsletter", "email": "newsletter@example.com"}]
+    campaign.client.save(update_fields=["default_sender_id", "sender_emails"])
+    template = EmailTemplate.objects.create(
+        client=campaign.client,
+        key="campaign-broadcast",
+        name="Campaign broadcast",
+        subject="{{ subject }}",
+        html_body='<p>{{ body_markdown }} <a href="{{ verify_email_url }}">Verify</a> '
+        '<a href="{{ unsubscribe_url }}">Unsubscribe</a></p>',
+        text_body="{{ body_markdown }} {{ verify_email_url }} {{ unsubscribe_url }}",
+        required_context=["subject", "body_markdown", "verify_email_url", "unsubscribe_url"],
+    )
+    EmailTemplateVersion.objects.create(
+        template=template,
+        version=1,
+        subject=template.subject,
+        html_body=template.html_body,
+        text_body=template.text_body,
+        required_context=template.required_context,
+    )
+    campaign.template_key = template.key
+    campaign.template_version = 1
+    campaign.sender_id = "newsletter"
+    campaign.context = {
+        "subject": campaign.subject,
+        "body_markdown": "Hello",
+        "verify_email_url": "https://example.test/old-verification",
+        "unsubscribe_url": "",
+    }
+    campaign.save(update_fields=["template_key", "template_version", "sender_id", "context"])
+    recipient.context = {"verify_email_url": "https://example.test/current-verification"}
+    recipient.save(update_fields=["context"])
+
+    ses = _RawSesClient()
+    send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+
+    raw_message = BytesParser(policy=default).parsebytes(ses.params["RawMessage"]["Data"])
+    html_body = raw_message.get_body(preferencelist=("html",)).get_content()
+    assert "https://example.test/current-verification" in unquote(html_body)
+    assert "https://example.test/old-verification" not in unquote(html_body)
+    assert html_body.count("/t/o/") == 1
+    assert "/t/c/" in html_body
+    assert "Unsubscribe or manage preferences" in html_body
+    assert "/unsubscribe/" in html_body
+    assert raw_message["List-Unsubscribe"].startswith("<https://mail.example.com/unsubscribe/")
+    assert raw_message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
 
 @override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")

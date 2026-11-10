@@ -181,6 +181,42 @@ def test_snapshot_can_target_active_recipient_list_members(audience, client):
     assert not CampaignRecipient.objects.filter(contact=outside).exists()
 
 
+def test_template_campaign_snapshot_keeps_member_context_and_can_include_unverified(audience, client):
+    recipient_list = RecipientList.objects.create(
+        audience=audience,
+        client=client,
+        key="aishl-campaign-1",
+        name="AISHL campaign snapshot",
+    )
+    campaign = Campaign.objects.create(
+        audience=audience,
+        client=client,
+        external_key="aishl-campaign-1",
+        subject="Verification reminder",
+        template_key="campaign-broadcast",
+        template_version=2,
+        context={"subject": "Verification reminder", "body_markdown": "Hello"},
+        sender_id="newsletter",
+        recipient_list_key=recipient_list.key,
+        allow_unverified=True,
+    )
+    unverified = create_contact("unverified@example.com", audience, client, verified=False)
+    RecipientListMember.objects.create(
+        recipient_list=recipient_list,
+        contact=unverified,
+        email=unverified.email,
+        source_object_key="website-user-42",
+        metadata={"relay_campaign_context": {"verify_email_url": "https://example.test/verify/token"}},
+    )
+
+    result = snapshot_campaign_recipients(campaign)
+
+    recipient = CampaignRecipient.objects.get(campaign=campaign, contact=unverified)
+    assert result.created_count == 1
+    assert recipient.status == CampaignRecipientStatus.PENDING
+    assert recipient.context == {"verify_email_url": "https://example.test/verify/token"}
+
+
 @pytest.mark.parametrize(
     ("email", "contact_kwargs", "subscription_status", "audience_status", "expected_reason"),
     [
