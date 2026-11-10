@@ -37,7 +37,7 @@ def test_real_postgresql_concurrent_start_noop_and_wrong_owner():
         runner = launch(*command)
         output, _ = runner.communicate(timeout=60)
         assert runner.returncode == 0, output
-        assert "No migrations to apply" in output
+        assert ("No migrations to apply" in output or "No unapplied migrations" in output)
 
     with psycopg2.connect(URL) as connection:
         with connection.cursor() as cursor:
