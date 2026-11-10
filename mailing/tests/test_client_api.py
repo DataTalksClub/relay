@@ -10,6 +10,7 @@ from mailing.models import (
     CallbackEndpoint,
     Campaign,
     CampaignRecipient,
+    CampaignRecipientSkipReason,
     CampaignRecipientStatus,
     CategoryPreference,
     Client,
@@ -266,6 +267,91 @@ def test_recipient_list_member_upsert_creates_list_and_member_idempotently(clien
     )
     assert get_response.status_code == 200
     assert get_response.json()["recipient_list"]["member_count"] == 1
+
+
+def test_member_subscribe_if_missing_creates_only_missing_client_subscription(
+    client, audience, api_client_record,
+):
+    unsubscribed = Contact.objects.create(email="leave-me@example.com", verified_at=timezone.now())
+    existing = Subscription.objects.create(
+        contact=unsubscribed,
+        audience=audience,
+        client=api_client_record,
+        status=SubscriptionStatus.UNSUBSCRIBED,
+    )
+    globally_suppressed = Contact.objects.create(
+        email="global-stop@example.com",
+        verified_at=timezone.now(),
+        global_unsubscribed_at=timezone.now(),
+    )
+    bounced = Contact.objects.create(
+        email="hard-bounce@example.com",
+        verified_at=timezone.now(),
+        hard_bounced_at=timezone.now(),
+    )
+    complained = Contact.objects.create(
+        email="complaint@example.com",
+        verified_at=timezone.now(),
+        complained_at=timezone.now(),
+    )
+    for key, email in [
+        ("new-user", "new-user@example.com"),
+        ("existing-optout", unsubscribed.email),
+        ("global-optout", globally_suppressed.email),
+        ("hard-bounce", bounced.email),
+        ("complaint", complained.email),
+    ]:
+        response = put_json(
+            client,
+            "mailing:api_recipient_list_member",
+            {
+                "audience": audience.slug,
+                "client": api_client_record.slug,
+                "list": {"name": "AISHL snapshot"},
+                "member": {
+                    "email": email,
+                    "status": "active",
+                    "subscribe_if_missing": True,
+                },
+            },
+            "aishl-test-snapshot",
+            key,
+        )
+        assert response.status_code == 200
+
+    created = Contact.objects.get(email="new-user@example.com")
+    assert Subscription.objects.get(
+        contact=created, audience=audience, client=api_client_record,
+    ).status == SubscriptionStatus.SUBSCRIBED
+    existing.refresh_from_db()
+    assert existing.status == SubscriptionStatus.UNSUBSCRIBED
+    global_subscription = Subscription.objects.get(
+        contact=globally_suppressed, audience=audience, client=api_client_record,
+    )
+    assert global_subscription.status == SubscriptionStatus.SUBSCRIBED
+    globally_suppressed.refresh_from_db()
+    assert globally_suppressed.global_unsubscribed_at is not None
+
+    campaign = Campaign.objects.create(
+        audience=audience,
+        client=api_client_record,
+        subject="AISHL test snapshot",
+        status="draft",
+        template_key="campaign-broadcast",
+        recipient_list_key="aishl-test-snapshot",
+        allow_unverified=True,
+    )
+    snapshot_campaign_recipients(campaign)
+    by_email = {
+        row.email: row
+        for row in CampaignRecipient.objects.filter(campaign=campaign)
+    }
+    assert by_email["new-user@example.com"].status == CampaignRecipientStatus.PENDING
+    assert by_email[unsubscribed.email].skip_reason == CampaignRecipientSkipReason.CLIENT_UNSUBSCRIBE
+    assert by_email[globally_suppressed.email].skip_reason == CampaignRecipientSkipReason.GLOBAL_UNSUBSCRIBE
+    assert by_email[bounced.email].skip_reason == CampaignRecipientSkipReason.HARD_BOUNCE
+    assert by_email[complained.email].skip_reason == CampaignRecipientSkipReason.COMPLAINT
+
 
 
 def test_recipient_list_members_endpoint_lists_scoped_members(client, audience, api_client_record):

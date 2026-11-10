@@ -472,6 +472,11 @@ class Campaign(TimeStampedModel):
     preview_text = models.CharField(max_length=255, blank=True)
     html_body = models.TextField(blank=True)
     text_body = models.TextField(blank=True)
+    template_key = models.CharField(max_length=120, blank=True)
+    template_version = models.PositiveIntegerField(null=True, blank=True)
+    context = models.JSONField(default=dict, blank=True)
+    sender_id = models.CharField(max_length=80, blank=True)
+    allow_unverified = models.BooleanField(default=False)
     status = models.CharField(
         max_length=20,
         choices=CampaignStatus.choices,
@@ -617,6 +622,7 @@ class CampaignRecipient(TimeStampedModel):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="recipients")
     contact = models.ForeignKey(Contact, on_delete=models.PROTECT, related_name="campaign_recipients")
     email = models.EmailField(max_length=320)
+    context = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=20,
         choices=CampaignRecipientStatus.choices,

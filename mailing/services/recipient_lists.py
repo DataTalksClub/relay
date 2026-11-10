@@ -16,6 +16,8 @@ from mailing.models import (
     RecipientListImportJobStatus,
     RecipientListMember,
     RecipientListType,
+    Subscription,
+    SubscriptionStatus,
 )
 from mailing.services.api import ApiValidationError, isoformat, validate_contact_scope
 from mailing.services.contacts import normalize_email, upsert_contact
@@ -96,6 +98,8 @@ def recipient_list_preview_payload(scope, list_key, defaults):
 
 
 def recipient_list_member_payload(member):
+    metadata = dict(member.metadata) if isinstance(member.metadata, dict) else {}
+    metadata.pop("relay_campaign_context", None)
     return {
         "source_object_key": member.source_object_key,
         "email": member.email,
@@ -103,7 +107,7 @@ def recipient_list_member_payload(member):
         "status": "active" if member.active else "removed",
         "active": member.active,
         "removed_at": isoformat(member.removed_at),
-        "metadata": member.metadata,
+        "metadata": metadata,
         "created_at": isoformat(member.created_at),
         "updated_at": isoformat(member.updated_at),
     }
@@ -184,10 +188,15 @@ def validate_member_payload(data):
     except ValidationError as exc:
         raise ApiValidationError({"member.email": "invalid"}) from exc
 
+    subscribe_if_missing = member_data.get("subscribe_if_missing", False)
+    if not isinstance(subscribe_if_missing, bool):
+        raise ApiValidationError({"member.subscribe_if_missing": "must_be_boolean"})
+
     return {
         "email": email.strip(),
         "active": validate_member_status(member_data.get("status")),
         "metadata": validate_metadata(member_data.get("metadata"), "member.metadata"),
+        "subscribe_if_missing": subscribe_if_missing,
     }
 
 
@@ -467,12 +476,21 @@ def upsert_member(recipient_list, source_object_key, member_data):
 
     if member is None:
         member = RecipientListMember.objects.create(recipient_list=recipient_list, **defaults)
-        return member, True
+        created = True
+    else:
+        for field, value in defaults.items():
+            setattr(member, field, value)
+        member.save(update_fields=[*defaults.keys(), "updated_at"])
+        created = False
 
-    for field, value in defaults.items():
-        setattr(member, field, value)
-    member.save(update_fields=[*defaults.keys(), "updated_at"])
-    return member, False
+    if member_data.get("subscribe_if_missing") and member.active:
+        Subscription.objects.get_or_create(
+            contact=contact,
+            audience=recipient_list.audience,
+            client=recipient_list.client,
+            defaults={"status": SubscriptionStatus.SUBSCRIBED},
+        )
+    return member, created
 
 
 @transaction.atomic

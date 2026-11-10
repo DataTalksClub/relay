@@ -1316,6 +1316,40 @@ Each address gets its own result: `sent` (provider accepted, with
 or `dry_run`. The response is 200 when every address was accepted and 502
 otherwise. Every attempt is logged and kept in the issue's test history.
 
+## Campaign API
+
+Client campaign definitions use `GET, PUT /api/campaigns/<external_key>` and
+`POST /api/campaigns/<external_key>/queue`. A campaign can use static
+`html_body`/`text_body`, or a published transactional template by setting
+`template_key`, `template_version`, `context`, and `sender_id`. Template
+campaigns use Relay's normal campaign worker, including its open pixel,
+click tracking, unsubscribe URL, suppression checks, and aggregate event stats.
+
+`recipient_list_key` scopes a campaign to a Relay recipient list. For an
+upstream immutable recipient snapshot, reconcile the exact members into that
+list before queueing. A member may carry private per-recipient render data in
+`metadata.relay_campaign_context`; Relay snapshots that object into the
+campaign recipient and merges it over the campaign `context` during rendering.
+That private key is omitted from recipient-list member responses. Set
+`allow_unverified: true` only for a campaign whose explicit recipient list was
+selected upstream; it bypasses the verification check while Relay still
+enforces unsubscribe, bounce, complaint, and invalid-address suppressions.
+Recipient-list members may set `subscribe_if_missing: true` when an upstream
+system provides an immutable eligibility snapshot. Relay creates a client
+subscription only when no row exists; it never changes an existing subscribed,
+pending, or unsubscribed row. Campaign snapshotting still enforces existing
+client/audience unsubscribes, global unsubscribes, bounces, complaints, and
+invalid-address suppressions.
+An upstream application may also put a non-secret opaque identifier in
+`relay_campaign_context.client_recipient_key`; Relay returns that identifier
+on campaign recipient records so the application can resolve Relay's
+recipient-level retry route without exposing other render context.
+
+Campaign GET responses include `sent_count`, `delivered_count`,
+`unique_open_count`, `open_count`, `unique_click_count`, `click_count`,
+`unsubscribe_count`, `bounce_count`, and `complaint_count` from Relay's
+campaign recipient and event records.
+
 ## Scheduled campaigns
 
 Campaign `scheduled_at` accepts a future timestamp with an explicit UTC offset.

@@ -199,6 +199,43 @@ def test_campaign_api_upserts_and_gets_by_external_key(client, audience, api_cli
     assert Campaign.objects.count() == 1
 
 
+def test_campaign_api_roundtrips_template_context_and_unverified_list_scope(
+    client, audience, api_client_record,
+):
+    payload = campaign_payload(audience, api_client_record) | {
+        "recipient_list_key": "aishl-campaign-42",
+        "allow_unverified": True,
+        "context": {
+            "subject": "Please verify",
+            "body_markdown": "Hello",
+            "verify_email_url": "",
+        },
+    }
+
+    response = put_campaign(client, "aishl-campaign-42", payload)
+
+    assert response.status_code == 201
+    saved = response.json()["campaign"]
+    assert saved["allow_unverified"] is True
+    assert saved["recipient_list_key"] == "aishl-campaign-42"
+    assert saved["context"] == payload["context"]
+
+
+def test_campaign_api_requires_recipient_list_when_allowing_unverified(
+    client, audience, api_client_record,
+):
+    response = put_campaign(
+        client,
+        "unverified-without-list",
+        campaign_payload(audience, api_client_record) | {"allow_unverified": True},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {
+        "recipient_list_key": "required_when_allowing_unverified",
+    }
+
+
 def test_campaign_api_rejects_cross_audience_update(client, organization, audience, api_client_record):
     other_audience = Audience.objects.create(
         organization=organization,
@@ -588,6 +625,7 @@ def test_campaign_api_recipients_list_dispositions_and_status_filter(
         status=CampaignRecipientStatus.SENT,
         ses_message_id="ses-1",
         sent_at=sent_at,
+        context={"client_recipient_key": "website-delivery-42"},
     )
     failed_recipient = campaign_recipient_row(
         campaign,
@@ -617,6 +655,7 @@ def test_campaign_api_recipients_list_dispositions_and_status_filter(
     sent_row = next(row for row in body["recipients"] if row["id"] == sent_recipient.id)
     assert sent_row["status"] == CampaignRecipientStatus.SENT
     assert sent_row["ses_message_id"] == "ses-1"
+    assert sent_row["client_recipient_key"] == "website-delivery-42"
     assert sent_row["sent_at"] == isoformat(sent_at)
     failed_row = next(row for row in body["recipients"] if row["id"] == failed_recipient.id)
     assert failed_row["status"] == CampaignRecipientStatus.FAILED

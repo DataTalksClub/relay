@@ -192,6 +192,11 @@ def campaign_payload(campaign):
         "preview_text": campaign.preview_text,
         "html_body": campaign.html_body,
         "text_body": campaign.text_body,
+        "template_key": campaign.template_key,
+        "template_version": campaign.template_version,
+        "context": campaign.context,
+        "sender_id": campaign.sender_id,
+        "allow_unverified": campaign.allow_unverified,
         "status": campaign.status,
         "scheduled_at": isoformat(campaign.scheduled_at),
         "sent_at": isoformat(campaign.sent_at),
@@ -268,8 +273,70 @@ def validate_campaign_payload(data, authenticated_client):
     elif not isinstance(text_body, str):
         errors["text_body"] = "must_be_string"
 
-    if not str(html_body).strip() and not str(text_body).strip():
+    template_key = data.get("template_key", "")
+    if template_key in (None, ""):
+        template_key = ""
+    elif not isinstance(template_key, str):
+        errors["template_key"] = "must_be_string"
+        template_key = ""
+    else:
+        template_key = template_key.strip()
+        if not template_key:
+            errors["template_key"] = "invalid"
+        elif len(template_key) > 120:
+            errors["template_key"] = "too_long"
+
+    template_version = data.get("template_version")
+    if template_version in (None, ""):
+        template_version = None
+    elif not isinstance(template_version, int) or isinstance(template_version, bool) or template_version <= 0:
+        errors["template_version"] = "must_be_positive_int"
+
+    context = data.get("context", {})
+    if context in (None, ""):
+        context = {}
+    elif not isinstance(context, dict):
+        errors["context"] = "must_be_object"
+        context = {}
+
+    sender_id = data.get("sender_id", "")
+    if sender_id in (None, ""):
+        sender_id = ""
+    elif not isinstance(sender_id, str):
+        errors["sender_id"] = "must_be_string"
+        sender_id = ""
+    else:
+        sender_id = sender_id.strip()
+        if len(sender_id) > 80:
+            errors["sender_id"] = "too_long"
+
+    allow_unverified = data.get("allow_unverified", False)
+    if not isinstance(allow_unverified, bool):
+        errors["allow_unverified"] = "must_be_boolean"
+        allow_unverified = False
+
+
+    if not template_key and not str(html_body).strip() and not str(text_body).strip():
         errors["body"] = "required"
+
+    if template_key:
+        from mailing.services.senders import resolve_sender_email  # noqa: PLC0415
+        from mailing.services.transactional import get_transactional_template  # noqa: PLC0415
+        from mailing.services.transactional_versions import resolve_render_source  # noqa: PLC0415
+
+        try:
+            template = get_transactional_template(scope.client, template_key)
+            source = resolve_render_source(template, template_version)
+            if source.version_number is None:
+                errors["template_version"] = "published_version_required"
+            else:
+                template_version = source.version_number
+            sender_id = resolve_sender_email(
+                scope.client,
+                sender_id or template.default_sender_id,
+            ).sender_id
+        except ApiValidationError as exc:
+            errors.update(exc.errors)
 
     scheduled_at = data.get("scheduled_at")
     if scheduled_at in (None, ""):
@@ -329,6 +396,9 @@ def validate_campaign_payload(data, authenticated_client):
         elif len(recipient_list_key) > 255:
             errors["recipient_list_key"] = "too_long"
 
+    if allow_unverified and not recipient_list_key:
+        errors["recipient_list_key"] = "required_when_allowing_unverified"
+
     if errors:
         raise ApiValidationError(errors)
 
@@ -339,6 +409,11 @@ def validate_campaign_payload(data, authenticated_client):
         "preview_text": preview_text.strip(),
         "html_body": html_body,
         "text_body": text_body,
+        "template_key": template_key,
+        "template_version": template_version,
+        "context": context,
+        "sender_id": sender_id,
+        "allow_unverified": allow_unverified,
         "scheduled_at": scheduled_at,
         "category_tag": category_tag,
         "recipient_list_key": recipient_list_key,
@@ -586,8 +661,10 @@ def test_send_campaign_for_client(external_key, data, authenticated_client):
 
 
 def campaign_recipient_payload(recipient):
+    context = recipient.context if isinstance(recipient.context, dict) else {}
     return {
         "id": recipient.id,
+        "client_recipient_key": str(context.get("client_recipient_key", "")),
         "email": recipient.email,
         "status": recipient.status,
         "skip_reason": recipient.skip_reason,

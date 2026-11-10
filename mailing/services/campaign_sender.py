@@ -67,6 +67,8 @@ from mailing.services.campaign_rendering import (
 from mailing.services.campaign_rendering import (
     rewrite_html_links as rewrite_html_links,
 )
+from mailing.services.campaign_template_rendering import render_campaign_fields
+from mailing.services.public_urls import unsubscribe_url
 from mailing.services.suppression import suppression_skip_reason
 from mailing.services.tokens import (
     CampaignRecipientTokens,
@@ -126,13 +128,19 @@ class CampaignHalted(CampaignSenderError):
 
 
 def render_campaign_message(
-    campaign, *, tracking_token="preview-tracking-token", unsubscribe_token="preview-unsubscribe-token"
+    campaign, *, tracking_token="preview-tracking-token", unsubscribe_token="preview-unsubscribe-token",
+    recipient=None,
 ):
+    fields = render_campaign_fields(
+        campaign,
+        recipient,
+        context_overrides={"unsubscribe_url": unsubscribe_url(unsubscribe_token)},
+    )
     return {
-        "subject": campaign.subject,
+        "subject": fields["subject"],
         "preview_text": campaign.preview_text,
-        "html_body": build_campaign_html_body(campaign.html_body, tracking_token, unsubscribe_token),
-        "text_body": build_campaign_text_body(campaign.text_body, unsubscribe_token),
+        "html_body": build_campaign_html_body(fields["html_body"], tracking_token, unsubscribe_token),
+        "text_body": build_campaign_text_body(fields["text_body"], unsubscribe_token),
     }
 
 
@@ -193,7 +201,7 @@ def _campaign_default_source(campaign):
     if client is None:
         return None
     try:
-        return resolve_sender_email(client).email
+        return resolve_sender_email(client, campaign.sender_id).email
     except ApiValidationError:
         return None
 
@@ -918,7 +926,7 @@ def _build_batch_mime_template(context):
     log) but falls back to the per-message builder so a batch is never blocked
     by the optimization.
     """
-    if not getattr(settings, "RELAY_MIME_TEMPLATE_ENABLED", True):
+    if context.campaign.template_key or not getattr(settings, "RELAY_MIME_TEMPLATE_ENABLED", True):
         return None
     try:
         html_template, text_template = _template_bodies(context.campaign)
@@ -998,8 +1006,21 @@ def _deliver_campaign_recipient(recipient, ses, tokens, source, timing, mime_tem
                 merge_values or {},
             )
             html_body = text_body = None
+            rendered = None
         else:
-            html_body, text_body = _render_recipient_bodies(recipient.campaign, tokens, merge_values)
+            if recipient.campaign.template_key:
+                rendered = render_campaign_message(
+                    recipient.campaign,
+                    tracking_token=tokens.tracking_token,
+                    unsubscribe_token=tokens.unsubscribe_token,
+                    recipient=recipient,
+                )
+                html_body, text_body = rendered["html_body"], rendered["text_body"]
+            else:
+                rendered = None
+                html_body, text_body = _render_recipient_bodies(
+                    recipient.campaign, tokens, merge_values
+                )
             raw_data = None
         timing["render_mime"] = time.perf_counter() - render_started
         send_phase_timings.build = send_phase_timings.limiter_wait = 0.0
@@ -1013,7 +1034,7 @@ def _deliver_campaign_recipient(recipient, ses, tokens, source, timing, mime_tem
                 ses_client=ses,
                 source=source,
                 to_email=recipient.email,
-                subject=recipient.campaign.subject,
+                subject=rendered["subject"] if rendered is not None else recipient.campaign.subject,
                 html_body=html_body,
                 text_body=text_body,
                 headers=campaign_unsubscribe_headers(tokens.unsubscribe_token, recipient.campaign),
