@@ -15,6 +15,7 @@ import taskdeck
 from jobs.models import Job, JobStatus
 from jobs.services import TASK_TYPE_ECHO, TASK_TYPE_EMAIL_SEND, TASK_TYPE_WEBHOOK, enqueue_job, retry_delay
 from mailing.services.transactional import TransactionalSendRejected, send_transactional_email_for_client
+from relay.safe_fetch import UnsafeFetchURL, safe_urlopen
 
 MAX_RESPONSE_BODY_LENGTH = 2048
 HTTP_LEASE_ACK_STATUS = 202
@@ -128,7 +129,7 @@ def _call_webhook(job):
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=job.task["timeout_seconds"]) as response:
+        with safe_urlopen(request, timeout=job.task["timeout_seconds"]) as response:
             response_body = response.read(MAX_RESPONSE_BODY_LENGTH + 1).decode("utf-8", "replace")
             status = response.status
     except urllib.error.HTTPError as exc:
@@ -144,8 +145,11 @@ def _call_webhook(job):
             response_status=exc.code,
             response_body=response_body,
         ) from exc
-    except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
-        raise RetryableJobError(f"webhook request failed: {exc}") from exc
+    except UnsafeFetchURL as exc:
+        raise PermanentJobError(f"webhook URL rejected: {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+        code = "timeout" if isinstance(exc, (TimeoutError, socket.timeout)) else "network_error"
+        raise RetryableJobError(f"webhook request failed: {code}") from exc
 
     if status == HTTP_LEASE_ACK_STATUS:
         lease_seconds = _lease_seconds_from(response_body)

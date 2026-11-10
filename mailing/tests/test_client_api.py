@@ -839,7 +839,7 @@ def test_recipient_list_import_job_fetches_jsonl_and_updates_members(
                 ]
             )
 
-    monkeypatch.setattr("mailing.services.recipient_lists.urlopen", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr("mailing.services.recipient_lists.safe_urlopen", lambda *args, **kwargs: FakeResponse())
     list_key = "ml-zoomcamp-2026:@e"
     payload = {
         "audience": audience.slug,
@@ -914,7 +914,7 @@ def test_recipient_list_import_job_records_bad_rows_without_writes(
         def read(self, _size):
             return b'{"source_object_key":"registration:1","email":"not-an-email"}'
 
-    monkeypatch.setattr("mailing.services.recipient_lists.urlopen", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr("mailing.services.recipient_lists.safe_urlopen", lambda *args, **kwargs: FakeResponse())
     list_key = "ml-zoomcamp-2026:@e"
     payload = {
         "audience": audience.slug,
@@ -935,6 +935,41 @@ def test_recipient_list_import_job_records_bad_rows_without_writes(
     assert job.failed_rows[0]["line"] == 1
     assert RecipientListImportJob.objects.count() == 1
     assert RecipientList.objects.filter(key=list_key).exists() is False
+
+
+def test_recipient_list_import_rejects_http_and_private_fetch_targets(
+    client,
+    audience,
+    api_client_record,
+):
+    list_key = "ssrf-import"
+    common_payload = {
+        "audience": audience.slug,
+        "client": api_client_record.slug,
+        "list": {"name": "SSRF test"},
+    }
+    response = client.post(
+        reverse("mailing:api_recipient_list_imports", args=[list_key]),
+        data={**common_payload, "source_url": "http://127.0.0.1:8000/health/ready"},
+        content_type="application/json",
+        **auth_headers(),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"]["source_url"] == "invalid"
+    assert RecipientListImportJob.objects.count() == 0
+
+    private_response = client.post(
+        reverse("mailing:api_recipient_list_imports", args=[list_key]),
+        data={**common_payload, "source_url": "https://127.0.0.1:8000/health/ready"},
+        content_type="application/json",
+        **auth_headers(),
+    )
+    assert private_response.status_code == 202
+    job = process_recipient_list_import_job(private_response.json()["import_job"]["id"])
+
+    assert job.status == RecipientListImportJobStatus.FAILED
+    assert job.error == "fetch_failed: non_public_address"
 
 
 def test_recipient_list_import_worker_command_processes_one_batch():
