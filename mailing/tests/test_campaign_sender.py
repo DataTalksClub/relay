@@ -137,7 +137,7 @@ def test_campaign_with_sender_unsubscribe_template_uses_sender_url(campaign_setu
     raw_message = BytesParser(policy=default).parsebytes(ses.params["RawMessage"]["Data"])
     html_body = raw_message.get_body(preferencelist=("html",)).get_content()
     text_body = raw_message.get_body(preferencelist=("plain",)).get_content()
-    list_unsubscribe = raw_message["List-Unsubscribe"]
+    list_unsubscribe = raw_message["List-Unsubscribe"].strip()
     assert list_unsubscribe.startswith("<https://courses.example.com/unsubscribe/")
     assert list_unsubscribe.endswith("/>")
     assert "{token}" not in list_unsubscribe and "RLYUNS0SENTINEL0TOKEN" not in list_unsubscribe
