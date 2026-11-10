@@ -929,3 +929,38 @@ def test_client_test_send_returns_partial_provider_outcome(client, audience, api
     assert response.json()["unconfirmed_email"] == "b@example.com"
     assert len(queries) < 20
     assert len(calls) == 2
+
+
+def test_campaign_api_stores_sender_unsubscribe_url_template(client, audience, api_client_record):
+    template = "https://courses.example.com/unsubscribe/{token}/"
+    response = put_campaign(
+        client,
+        "cmp-unsub-template",
+        campaign_payload(audience, api_client_record) | {"unsubscribe_url_template": template},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["campaign"]["unsubscribe_url_template"] == template
+    assert Campaign.objects.get().unsubscribe_url_template == template
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    [
+        ("http://courses.example.com/u/{token}/", "must_be_https_url"),
+        ("https://courses.example.com/u/", "must_contain_token_placeholder"),
+        ("https://courses.example.com/{token}/{token}", "must_contain_token_placeholder"),
+        ("https://user:pw@courses.example.com/{token}", "must_be_https_url"),
+        (123, "must_be_string"),
+    ],
+)
+def test_campaign_api_rejects_invalid_unsubscribe_url_template(client, audience, api_client_record, value, code):
+    response = put_campaign(
+        client,
+        "cmp-unsub-bad",
+        campaign_payload(audience, api_client_record) | {"unsubscribe_url_template": value},
+    )
+
+    assert response.status_code == 400
+    assert Campaign.objects.count() == 0
+    assert code in str(response.json())

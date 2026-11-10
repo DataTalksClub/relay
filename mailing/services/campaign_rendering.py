@@ -27,9 +27,9 @@ def resolve_archive_placeholders_html(html_body):
     return _FORWARD_LINK_RE.sub("", html_body)
 
 
-def resolve_archive_placeholders_text(text_body, unsubscribe_token):
+def resolve_archive_placeholders_text(text_body, unsubscribe_token, unsubscribe_template=""):
     text = _TEXT_FORWARD_LINE_RE.sub("", text_body)
-    text = _TEXT_ACCOUNT_URL_RE.sub(lambda _: unsubscribe_url(unsubscribe_token), text)
+    text = _TEXT_ACCOUNT_URL_RE.sub(lambda _: unsubscribe_url(unsubscribe_token, unsubscribe_template), text)
     return text.replace("?e=[UNIQID]", "").replace("&e=[UNIQID]", "")
 
 
@@ -44,10 +44,12 @@ _CONDITIONAL_COMMENT_RE = re.compile(
 )
 
 
-def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
-    body = rewrite_html_links(resolve_archive_placeholders_html(html_body or ""), tracking_token, unsubscribe_token)
+def build_campaign_html_body(html_body, tracking_token, unsubscribe_token, unsubscribe_template=""):
+    body = rewrite_html_links(
+        resolve_archive_placeholders_html(html_body or ""), tracking_token, unsubscribe_token, unsubscribe_template
+    )
     pixel = f'<img src="{escape(open_pixel_url(tracking_token), quote=True)}" width="1" height="1" alt="" />'
-    unsubscribe_href = escape(unsubscribe_url(unsubscribe_token), quote=True)
+    unsubscribe_href = escape(unsubscribe_url(unsubscribe_token, unsubscribe_template), quote=True)
     footer = f'<p><a {_SES_NO_TRACK} href="{unsubscribe_href}">Unsubscribe or manage preferences</a></p>'
     additions = f"\n{footer}\n{pixel}\n"
     closing_body = list(re.finditer(r"</body\s*>", body, flags=re.IGNORECASE))
@@ -57,9 +59,9 @@ def build_campaign_html_body(html_body, tracking_token, unsubscribe_token):
     return f"{body}\n{footer}\n{pixel}"
 
 
-def build_campaign_text_body(text_body, unsubscribe_token):
-    url = unsubscribe_url(unsubscribe_token)
-    body = resolve_archive_placeholders_text(text_body or "", unsubscribe_token).rstrip()
+def build_campaign_text_body(text_body, unsubscribe_token, unsubscribe_template=""):
+    url = unsubscribe_url(unsubscribe_token, unsubscribe_template)
+    body = resolve_archive_placeholders_text(text_body or "", unsubscribe_token, unsubscribe_template).rstrip()
     if body:
         return f"{body}\n\nUnsubscribe or manage preferences: {url}"
     return f"Unsubscribe or manage preferences: {url}"
@@ -73,8 +75,12 @@ def campaign_list_id(campaign, host):
 
 
 def campaign_unsubscribe_headers(unsubscribe_token, campaign=None):
-    """Build RFC 8058 one-click headers (and the per-list List-Id) when Relay has a public HTTPS URL."""
-    url = unsubscribe_url(unsubscribe_token)
+    """Build RFC 8058 one-click headers (and the per-list List-Id) when the unsubscribe URL is public HTTPS.
+
+    A campaign carrying ``unsubscribe_url_template`` points the headers at the sender's own endpoint.
+    """
+    template = campaign.unsubscribe_url_template if campaign is not None else ""
+    url = unsubscribe_url(unsubscribe_token, template)
     parsed_url = urlparse(url)
     if parsed_url.scheme.lower() != "https" or not parsed_url.netloc:
         return {}
@@ -83,22 +89,25 @@ def campaign_unsubscribe_headers(unsubscribe_token, campaign=None):
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     }
     if campaign is not None:
-        headers["List-Id"] = campaign_list_id(campaign, parsed_url.hostname)
+        # List-Id stays on Relay's host: it identifies the Relay audience, not the unsubscribe endpoint.
+        relay_host = urlparse(unsubscribe_url(unsubscribe_token)).hostname or parsed_url.hostname
+        headers["List-Id"] = campaign_list_id(campaign, relay_host)
     return headers
 
 
-def rewrite_html_links(html_body, tracking_token, unsubscribe_token=None):
-    rewriter = _ClickTrackingHTMLRewriter(tracking_token, unsubscribe_token)
+def rewrite_html_links(html_body, tracking_token, unsubscribe_token=None, unsubscribe_template=""):
+    rewriter = _ClickTrackingHTMLRewriter(tracking_token, unsubscribe_token, unsubscribe_template)
     rewriter.feed(html_body)
     rewriter.close()
     return rewriter.output
 
 
 class _ClickTrackingHTMLRewriter(HTMLParser):
-    def __init__(self, tracking_token, unsubscribe_token=None):
+    def __init__(self, tracking_token, unsubscribe_token=None, unsubscribe_template=""):
         super().__init__(convert_charrefs=False)
         self.tracking_token = tracking_token
         self.unsubscribe_token = unsubscribe_token
+        self.unsubscribe_template = unsubscribe_template
         self.parts = []
 
     @property
@@ -128,7 +137,9 @@ class _ClickTrackingHTMLRewriter(HTMLParser):
         # SES still scans, so their links need the same rewrite and no-track mark as the visible body.
         match = _CONDITIONAL_COMMENT_RE.match(data)
         if match:
-            inner = rewrite_html_links(match.group("body"), self.tracking_token, self.unsubscribe_token)
+            inner = rewrite_html_links(
+                match.group("body"), self.tracking_token, self.unsubscribe_token, self.unsubscribe_template
+            )
             self.parts.append(f"<!--{match.group('open')}{inner}{match.group('close')}-->")
             return
         if _DOWNLEVEL_REVEALED_RE.match(data):
@@ -154,7 +165,7 @@ class _ClickTrackingHTMLRewriter(HTMLParser):
             if tag.lower() == "a" and name.lower() == "href" and value and _UNIQID in value:
                 if self.unsubscribe_token and _MAILCHIMP_ACCOUNT_LINK_RE.match(value):
                     # Relay's unsubscribe page is the single unsubscribe/preferences surface; skip click tracking.
-                    rewritten_attrs.append((name, unsubscribe_url(self.unsubscribe_token)))
+                    rewritten_attrs.append((name, unsubscribe_url(self.unsubscribe_token, self.unsubscribe_template)))
                     relay_owned_link = True
                     continue
                 value = value.replace("?e=[UNIQID]", "").replace("&e=[UNIQID]", "")

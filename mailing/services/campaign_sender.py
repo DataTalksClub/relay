@@ -137,13 +137,15 @@ def render_campaign_message(
     fields = render_campaign_fields(
         campaign,
         recipient,
-        context_overrides={"unsubscribe_url": unsubscribe_url(unsubscribe_token)},
+        context_overrides={"unsubscribe_url": unsubscribe_url(unsubscribe_token, campaign.unsubscribe_url_template)},
     )
     return {
         "subject": fields["subject"],
         "preview_text": campaign.preview_text,
-        "html_body": build_campaign_html_body(fields["html_body"], tracking_token, unsubscribe_token),
-        "text_body": build_campaign_text_body(fields["text_body"], unsubscribe_token),
+        "html_body": build_campaign_html_body(
+            fields["html_body"], tracking_token, unsubscribe_token, campaign.unsubscribe_url_template
+        ),
+        "text_body": build_campaign_text_body(fields["text_body"], unsubscribe_token, campaign.unsubscribe_url_template),
     }
 
 
@@ -905,13 +907,15 @@ _CACHED_CLICK_URL_BYTES_RE = re.compile(
 
 
 def _template_bodies(campaign):
-    key = (campaign.html_body, campaign.text_body)
+    key = (campaign.html_body, campaign.text_body, campaign.unsubscribe_url_template)
     template = _template_cache.get(key)
     if template is None:
         html_body, text_body = with_sentinels(campaign.html_body, campaign.text_body)
         template = (
-            build_campaign_html_body(html_body, _TRACKING_SENTINEL, _UNSUBSCRIBE_SENTINEL),
-            build_campaign_text_body(text_body, _UNSUBSCRIBE_SENTINEL),
+            build_campaign_html_body(
+                html_body, _TRACKING_SENTINEL, _UNSUBSCRIBE_SENTINEL, campaign.unsubscribe_url_template
+            ),
+            build_campaign_text_body(text_body, _UNSUBSCRIBE_SENTINEL, campaign.unsubscribe_url_template),
         )
         if len(_template_cache) >= _TEMPLATE_CACHE_MAX:
             _template_cache.clear()
