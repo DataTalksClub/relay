@@ -11,6 +11,7 @@ from django.db import connection, transaction
 from django.db.models.query import QuerySet
 
 from mailing.models import Audience, Campaign, CampaignRecipient, CampaignRecipientStatus, Client, Contact, Organization
+from mailing.services.click_security import sign_click_redirect
 from mailing.services.operator_management import assume_recipient_sent
 from mailing.services.ses_webhooks import correlate_ses_message
 from mailing.services.tokens import ensure_campaign_recipient_tokens
@@ -44,7 +45,12 @@ def test_campaign_writers_lock_parent_before_recipient(monkeypatch, operation):
         if operation == "open":
             recipient_id = record_open(tokens.tracking_token)
         else:
-            recipient_id = record_click(tokens.tracking_token, "https://example.invalid/read")
+            destination = "https://example.invalid/read"
+            recipient_id = record_click(
+                tokens.tracking_token,
+                destination,
+                sign_click_redirect(tokens.tracking_token, destination),
+            )
         assert recipient_id == recipient.pk
         assert locks == []  # the web path takes no row lock at all
         event = apply_tracking_event(
