@@ -11,6 +11,7 @@ import time
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+from mailing.db_retry import record_db_heartbeat
 from mailing.ingress import INGRESS_WORKER_NAMES, get_ingress_config
 from mailing.sqs_worker import SqsWorker
 
@@ -47,6 +48,7 @@ class Command(BaseCommand):
         if name == "aisl-ses-webhooks" and not settings.AISL_SES_FORWARD_ENABLED:
             self.stdout.write("AISHL SES ingress standby (AISL_SES_FORWARD_ENABLED=0); no messages consumed")
             while not options["once"] and not stop_requested:
+                record_db_heartbeat()
                 time.sleep(1)
             return
         worker = SqsWorker(
@@ -67,9 +69,11 @@ class Command(BaseCommand):
         if heartbeat_every < 1:
             raise CommandError("--heartbeat-every must be >= 1")
         idle_polls = 0
+        record_db_heartbeat()
         for result in worker.run_forever(
             should_stop=lambda: stop_requested, idle_sleep=options["idle_sleep"]
         ):
+            record_db_heartbeat()
             if result.received:
                 idle_polls = 0
                 self.stdout.write(
