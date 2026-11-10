@@ -153,6 +153,7 @@ def test_oidc_error_page_is_clean_and_hardened(client):
     response = client.get("/auth/error?code=not-rendered&state=not-rendered&reason=%3Cscript%3Ealert(1)%3C/script%3E")
     assert response.status_code == 403
     assert b"not-rendered" not in response.content
+    assert b"alert(1)" not in response.content
     assert b"Sign-in error" in response.content
     # Kit auth page: styled by the vendored dakit bundle in both themes, no
     # inline light-only colours.
