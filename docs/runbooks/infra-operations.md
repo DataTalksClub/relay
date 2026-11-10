@@ -5,7 +5,7 @@
 > below are plans, not active operations. These runbooks do not describe
 > Relay's Contabo deployment; see [Relay deployment](../relay-deployment.md).
 
-Use these runbooks for staging and production operations. Commands are examples; replace stack names, regions, and host names with the active environment values.
+Use these runbooks for Datamailer's sandbox and future production operations. Commands are examples; replace stack names, regions, and host names with the active environment values.
 
 ## Staging Deploy
 
