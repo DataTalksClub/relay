@@ -22,6 +22,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django_tasks_db.models import DBTaskResult
 
+from mailing.db_retry import record_db_heartbeat
 from mailing.enqueue import enqueue_campaign_email
 from mailing.models import CampaignRecipient, CampaignRecipientStatus, CampaignTaskAlert, TaskHeartbeat
 
@@ -51,6 +52,7 @@ class HeartbeatThread:
     def _beat(self):
         try:
             record_task_heartbeat(self.task_id, self.worker_id)
+            record_db_heartbeat()
         except Exception:
             # Not swallowed: a missed beat is logged at ERROR; enough of them
             # and the task is declared stale, which is also loud.

@@ -14,8 +14,8 @@ sockets to the old IP until a manual restart. This worker:
   that re-resolves the database host name;
 * retries a transient DB error in the poll with backoff and waits out a
   longer outage instead of exiting (``--batch`` still fails loudly);
-* touches the DB heartbeat file after each successful poll, which
-  ``worker_healthcheck`` checks.
+* touches the DB heartbeat file after each successful poll. Compose checks
+  only its age; ``worker_healthcheck`` remains available for manual diagnosis.
 
 The loop body mirrors ``django_tasks_db`` 0.12 ``Worker.run`` (see
 ``tests/test_db_worker_resilience.py`` which pins its source) and keeps the
