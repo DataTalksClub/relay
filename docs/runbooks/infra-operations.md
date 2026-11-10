@@ -1,5 +1,10 @@
 # Infrastructure Runbooks
 
+> **Datamailer future-plan runbooks:** Datamailer currently has a sandbox
+> deployment only; it has no production environment. Production procedures
+> below are plans, not active operations. These runbooks do not describe
+> Relay's Contabo deployment; see [Relay deployment](../relay-deployment.md).
+
 Use these runbooks for staging and production operations. Commands are examples; replace stack names, regions, and host names with the active environment values.
 
 ## Staging Deploy
