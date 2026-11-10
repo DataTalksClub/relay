@@ -2093,7 +2093,7 @@ OPENAPI_SPEC = {
                             "html_body": {"type": "string"},
                             "text_body": {"type": "string"},
                             "unsubscribe_url_template": {"type": "string", "maxLength": 500,
-                                                         "description": "Optional sender-owned unsubscribe URL: https, with exactly one {token} placeholder. When set, the body link and the List-Unsubscribe / List-Unsubscribe-Post headers point there instead of Relay's /unsubscribe page; the sender's endpoint must apply the unsubscribe (e.g. by forwarding the token to Relay's public one-click POST)."},
+                                                         "description": "Optional sender-owned unsubscribe URL: https, with exactly one {token} placeholder. When set, the body link and the List-Unsubscribe / List-Unsubscribe-Post headers point there instead of Relay's /unsubscribe page; the sender's endpoint must apply the unsubscribe (e.g. by forwarding the recipient value to Relay's public one-click POST)."},
                             "scheduled_at": {"type": ["string", "null"], "format": "date-time",
                                              "description": "Future dispatch time with an explicit UTC offset. Queue confirms the schedule; recipients are selected at dispatch time."},
                             "category_tag": {"type": "string", "maxLength": 80},
