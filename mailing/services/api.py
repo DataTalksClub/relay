@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from email.utils import parseaddr
+from urllib.parse import urlparse
 
 from botocore.exceptions import BotoCoreError, ClientError
 from django.core.exceptions import ValidationError
@@ -59,6 +60,7 @@ from mailing.services.contacts import (
     unsubscribe_contact,
     upsert_contact,
 )
+from mailing.services.public_urls import UNSUBSCRIBE_TOKEN_PLACEHOLDER
 from mailing.services.sending_domains import validate_sender_domains
 from mailing.services.task_leases import campaign_dispatch_alerts
 
@@ -196,6 +198,7 @@ def campaign_payload(campaign):
         "template_version": campaign.template_version,
         "context": campaign.context,
         "sender_id": campaign.sender_id,
+        "unsubscribe_url_template": campaign.unsubscribe_url_template,
         "allow_unverified": campaign.allow_unverified,
         "status": campaign.status,
         "scheduled_at": isoformat(campaign.scheduled_at),
@@ -240,6 +243,24 @@ def validate_campaign_tag_filter(value, field):
     if not isinstance(value, list):
         raise ApiValidationError({field: "must_be_list"})
     return normalize_tag_filter(value)
+
+
+def _validate_unsubscribe_url_template(value, errors):
+    """Sender-owned unsubscribe URL: HTTPS, one ``{token}`` placeholder, no credentials."""
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str):
+        errors["unsubscribe_url_template"] = "must_be_string"
+        return ""
+    value = value.strip()
+    parsed = urlparse(value)
+    if len(value) > 500:
+        errors["unsubscribe_url_template"] = "too_long"
+    elif parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        errors["unsubscribe_url_template"] = "must_be_https_url"
+    elif value.count(UNSUBSCRIBE_TOKEN_PLACEHOLDER) != 1:
+        errors["unsubscribe_url_template"] = "must_contain_token_placeholder"
+    return value
 
 
 def validate_campaign_payload(data, authenticated_client):
@@ -309,6 +330,8 @@ def validate_campaign_payload(data, authenticated_client):
         sender_id = sender_id.strip()
         if len(sender_id) > 80:
             errors["sender_id"] = "too_long"
+
+    unsubscribe_url_template = _validate_unsubscribe_url_template(data.get("unsubscribe_url_template"), errors)
 
     allow_unverified = data.get("allow_unverified", False)
     if not isinstance(allow_unverified, bool):
@@ -413,6 +436,7 @@ def validate_campaign_payload(data, authenticated_client):
         "template_version": template_version,
         "context": context,
         "sender_id": sender_id,
+        "unsubscribe_url_template": unsubscribe_url_template,
         "allow_unverified": allow_unverified,
         "scheduled_at": scheduled_at,
         "category_tag": category_tag,

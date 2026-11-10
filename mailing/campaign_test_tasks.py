@@ -17,7 +17,7 @@ from taskdeck.models import TaskRun
 def enqueue_campaign_test(campaign, emails):
     emails = validate_test_recipient_emails(emails)
     snapshot = {field: getattr(campaign, field) for field in (
-        "id", "client_id", "subject", "preview_text", "html_body", "text_body",
+        "id", "client_id", "subject", "preview_text", "html_body", "text_body", "unsubscribe_url_template",
     )}
     confirmed_id = uuid.uuid4()
     # Deferred execution prevents a misconfigured immediate backend from ever

@@ -119,6 +119,44 @@ def test_campaign_sender_sends_pending_recipient_and_persists_audit_state(campai
     assert event.metadata == {"ses_message_id": "ses-message-1"}
 
 
+@pytest.mark.parametrize("mime_template_enabled", [True, False])
+def test_campaign_with_sender_unsubscribe_template_uses_sender_url(campaign_setup, mime_template_enabled):
+    campaign, recipient = campaign_setup
+    campaign.unsubscribe_url_template = "https://courses.example.com/unsubscribe/{token}/"
+    campaign.save()
+    ses = _RawSesClient()
+    with override_settings(
+        AWS_REGION="us-east-1",
+        DEFAULT_FROM_EMAIL="newsletter@example.com",
+        PUBLIC_BASE_URL="https://mail.example.com",
+        RELAY_MIME_TEMPLATE_ENABLED=mime_template_enabled,
+    ):
+        send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+
+    raw_message = BytesParser(policy=default).parsebytes(ses.params["RawMessage"]["Data"])
+    html_body = raw_message.get_body(preferencelist=("html",)).get_content()
+    text_body = raw_message.get_body(preferencelist=("plain",)).get_content()
+    list_unsubscribe = raw_message["List-Unsubscribe"]
+    assert list_unsubscribe.startswith("<https://courses.example.com/unsubscribe/")
+    assert list_unsubscribe.endswith("/>")
+    assert "{token}" not in list_unsubscribe and "RLYUNS0SENTINEL0TOKEN" not in list_unsubscribe
+    assert raw_message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+    assert "mail.example.com/unsubscribe" not in html_body + text_body
+    assert "https://courses.example.com/unsubscribe/" in html_body
+    assert "Unsubscribe or manage preferences: https://courses.example.com/unsubscribe/" in text_body
+    # List-Id still identifies the Relay audience.
+    assert ".list-id.mail.example.com" in raw_message["List-Id"]
+
+
+@override_settings(PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_without_unsubscribe_template_keeps_relay_unsubscribe(campaign_setup):
+    campaign, _recipient = campaign_setup
+    html_body = build_campaign_html_body(campaign.html_body, "track", "tok", campaign.unsubscribe_url_template)
+    text_body = build_campaign_text_body(campaign.text_body, "tok", campaign.unsubscribe_url_template)
+    assert 'href="https://mail.example.com/unsubscribe/tok"' in html_body
+    assert "https://mail.example.com/unsubscribe/tok" in text_body
+
+
 @override_settings(
     AWS_REGION="us-east-1",
     AWS_SES_CONFIGURATION_SET="campaign-events",

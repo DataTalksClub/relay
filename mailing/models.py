@@ -476,6 +476,9 @@ class Campaign(TimeStampedModel):
     template_version = models.PositiveIntegerField(null=True, blank=True)
     context = models.JSONField(default=dict, blank=True)
     sender_id = models.CharField(max_length=80, blank=True)
+    # Sender-owned unsubscribe endpoint (https, contains "{token}"). Empty means Relay's own
+    # /unsubscribe/<token> page; set, it drives the body link and List-Unsubscribe headers.
+    unsubscribe_url_template = models.CharField(max_length=500, blank=True)
     allow_unverified = models.BooleanField(default=False)
     status = models.CharField(
         max_length=20,
