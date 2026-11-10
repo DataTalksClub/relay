@@ -44,6 +44,8 @@ from mailing.urls import urlpatterns as client_patterns
 
 pytestmark = pytest.mark.django_db
 
+SESSION_SCOPED_UI_DATA_ROUTES = {"campaign_links_json"}
+
 
 @pytest.fixture
 def setup():
@@ -264,7 +266,7 @@ def test_client_api_operations_have_admin_counterparts():
             assert reverse("admin_api:scoped_" + pattern.name, args=[1, *values]).startswith("/api/admin/clients/1/")
 
 
-def test_staff_ui_capabilities_have_admin_api_routes():
+def test_staff_ui_capabilities_have_admin_api_routes_or_session_scoped_data_routes():
     staff_views = set()
     modules = (views, admin_key_views, job_views, job_operator_views, activity_ui_views,
                campaign_ui_views, contact_ui_views, documentation_views, setup_views, template_ui_views)
@@ -278,7 +280,9 @@ def test_staff_ui_capabilities_have_admin_api_routes():
         for pattern in [*client_patterns, *job_patterns]:
             if pattern.callback.__module__ == module.__name__ and pattern.callback.__name__ in declared:
                 staff_views.add(pattern.name)
-    assert staff_views == set(OPERATOR_API_PARITY)
+    # The campaign detail page loads this data over its existing staff session;
+    # client integrations use the client-authenticated campaign links API.
+    assert staff_views == set(OPERATOR_API_PARITY) | SESSION_SCOPED_UI_DATA_ROUTES
     api_names = {p.name for p in admin_patterns}
     assert set(OPERATOR_API_PARITY.values()) <= api_names
 
