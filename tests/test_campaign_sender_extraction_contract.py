@@ -79,7 +79,7 @@ def test_public_rendering_preserves_exact_markup_and_actions():
     expected = f'<!DOCTYPE html><p data-label="café &amp; tea">café &amp; &#169;<!--keep--><a ses:no-track href="{click_href}">read</a><a href="/relative">rel</a><a href="mailto:help@example.invalid">mail</a><br /></p>'
     footer = '<p><a ses:no-track href="https://relay.example.invalid/unsubscribe/unsub">Unsubscribe or manage preferences</a></p>'
     pixel = '<img src="https://relay.example.invalid/t/o/track.gif" width="1" height="1" alt="" />'
-    campaign = SimpleNamespace(subject="Café", preview_text="Preview", html_body=authored, text_body="Café  \n\n")
+    campaign = SimpleNamespace(subject="Café", preview_text="Preview", html_body=authored, text_body="Café  \n\n", unsubscribe_url_template="")
     result = sender.render_campaign_message(campaign, tracking_token="track", unsubscribe_token="unsub")
     assert result == {
         "subject": "Café",
