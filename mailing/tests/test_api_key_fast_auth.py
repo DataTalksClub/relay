@@ -97,13 +97,12 @@ def test_wrong_secret_rejected_without_match(raw_key):
     assert result.error == "invalid_api_key"
 
 
-def test_prefixless_malformed_token_does_not_check_any_stored_key(raw_key):
-    with mock.patch.object(auth_service, "check_api_key") as check_legacy:
+def test_prefixless_unknown_token_does_not_run_legacy_pbkdf2(raw_key):
+    with _forbid_pbkdf2():
         result = authenticate_bearer_token("Bearer x")
 
     assert not result.is_authenticated
     assert result.error == "invalid_api_key"
-    check_legacy.assert_not_called()
 
 
 def test_revoked_key_rejected(raw_key, api_client_record):
