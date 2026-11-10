@@ -30,6 +30,7 @@ from mailing.models import (
 )
 from mailing.queue_contracts import CAMPAIGN_EMAIL_CONTRACT, CONTRACT_VERSION, validate_campaign_email_message
 from mailing.services.campaign_composer import composer_send_issues
+from mailing.services.campaign_merge import merge_tag_issues, pending_recipient_issues
 from mailing.services.campaign_rendering import campaign_unsubscribe_headers
 from mailing.services.contacts import NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES
 from mailing.services.insert_select import insert_select
@@ -373,6 +374,7 @@ def campaign_send_issues(campaign):
         campaign.text_body,
     )):
         issues.append("Resolve Mailchimp merge tags before sending through Relay.")
+    issues.extend(merge_tag_issues(campaign))
     if campaign.scheduled_at and timezone.is_naive(campaign.scheduled_at):
         issues.append("Choose a send time with an explicit timezone.")
     return issues
@@ -423,14 +425,20 @@ def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
 
         snapshot_campaign_recipients(locked_campaign)
         locked_campaign.refresh_from_db()
-        recipient_ids = list(
+        pending = list(
             CampaignRecipient.objects.filter(
                 campaign=locked_campaign,
                 status=CampaignRecipientStatus.PENDING,
             )
             .order_by("id")
-            .values_list("id", flat=True)
+            .values_list("id", "contact_id")
         )
+        # Every pending recipient must resolve every merge var before anything
+        # is queued; raising here rolls the snapshot back with the transaction.
+        merge_issues = pending_recipient_issues(locked_campaign, [contact_id for _, contact_id in pending])
+        if merge_issues:
+            raise CampaignNotReady(" ".join(merge_issues))
+        recipient_ids = [recipient_id for recipient_id, _ in pending]
         payloads = _campaign_email_payloads(locked_campaign.id, recipient_ids, batch_size)
         locked_campaign.status = CampaignStatus.SENT if dispatching and not payloads else CampaignStatus.QUEUED
         if dispatching and not payloads:
