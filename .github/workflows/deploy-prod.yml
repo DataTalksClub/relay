@@ -252,4 +252,11 @@ jobs:
           IMAGE_TAG: ${{ needs.select.outputs.image_tag }}
           SOURCE_SHA: ${{ needs.select.outputs.source_sha }}
           PUBLIC_READY_URL: https://relay.datatalks.club/health/ready
+          # The promote step queues a full rolling restart of every service
+          # and then waits for the public follower to serve the new release;
+          # the 2026-11-10 promotion (run 42847670784) converged about three
+          # minutes after the historic 300-second deadline expired. The
+          # fail-fast Coolify states still exit early, so the larger budget
+          # only extends the patience, never the failure path.
+          RELAY_VERIFY_TIMEOUT_SECONDS: "900"
         run: bash .deploy-verifier/scripts/run_runtime_verify.sh
