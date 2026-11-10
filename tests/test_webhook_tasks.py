@@ -103,7 +103,7 @@ def test_webhook_headers_include_attempt_number(monkeypatch, relay_client):
             raise http_error(429, b"slow down")
         return WebhookResponse(204, b"ok")
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", fake_urlopen)
     job = submit_webhook(relay_client, "attempt-1", max_attempts=2)
 
     execute_job.call(str(job.pk))
@@ -123,7 +123,7 @@ def test_webhook_signature_and_task_headers_are_unchanged(monkeypatch, relay_cli
         captured["headers"] = dict(request.headers)
         return WebhookResponse(200, b"ok")
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", fake_urlopen)
     job = submit_webhook(relay_client, "headers-1")
     execute_job.call(str(job.pk))
 
@@ -139,7 +139,7 @@ def test_webhook_signature_and_task_headers_are_unchanged(monkeypatch, relay_cli
 
 @pytest.mark.parametrize("status", [429, 500, 502, 503])
 def test_webhook_retries_429_and_5xx(monkeypatch, relay_client, status):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(status)))
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(status)))
     job = submit_webhook(relay_client, f"retry-{status}")
 
     result = execute_job.call(str(job.pk))
@@ -154,7 +154,7 @@ def test_webhook_retries_429_and_5xx(monkeypatch, relay_client, status):
 
 @pytest.mark.parametrize("status", [400, 401, 404, 409, 410, 422, 408, 425])
 def test_webhook_fails_immediately_on_other_4xx(monkeypatch, relay_client, status):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(status)))
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(status)))
     job = submit_webhook(relay_client, f"permanent-{status}", max_attempts=5)
 
     result = execute_job.call(str(job.pk))
@@ -169,7 +169,7 @@ def test_webhook_retries_transport_timeout(monkeypatch, relay_client):
     def slow_receiver(_request, **_kwargs):
         raise TimeoutError("receiver did not answer in time")
 
-    monkeypatch.setattr("urllib.request.urlopen", slow_receiver)
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", slow_receiver)
     job = submit_webhook(relay_client, "timeout-1")
 
     result = execute_job.call(str(job.pk))
@@ -177,11 +177,11 @@ def test_webhook_retries_transport_timeout(monkeypatch, relay_client):
 
     assert result["status"] == JobStatus.RETRYING
     assert job.attempt == 1
-    assert "receiver did not answer in time" in job.error
+    assert job.error == "webhook request failed: timeout"
 
 
 def test_webhook_retry_uses_exponential_backoff(monkeypatch, relay_client):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(503)))
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(503)))
     job = submit_webhook(relay_client, "backoff-1", max_attempts=5)
     base = settings.RELAY_JOB_RETRY_BASE_SECONDS
 
@@ -199,7 +199,7 @@ def test_webhook_retry_uses_exponential_backoff(monkeypatch, relay_client):
 
 
 def test_webhook_default_max_attempts_is_five(monkeypatch, client, auth):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(500)))
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(500)))
     response = client.post(
         "/api/tasks",
         data={
@@ -220,7 +220,7 @@ def test_webhook_default_max_attempts_is_five(monkeypatch, client, auth):
 
 def test_webhook_failure_body_is_truncated_to_2kb(monkeypatch, relay_client):
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        "jobs.tasks.safe_urlopen",
         lambda *_, **__: (_ for _ in ()).throw(http_error(400, b"x" * 5000)),
     )
     job = submit_webhook(relay_client, "truncate-1")
@@ -234,7 +234,7 @@ def test_webhook_failure_body_is_truncated_to_2kb(monkeypatch, relay_client):
 
 def test_webhook_success_body_is_truncated_to_2kb(monkeypatch, relay_client):
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        "jobs.tasks.safe_urlopen",
         lambda *_, **__: WebhookResponse(200, b"y" * 5000),
     )
     job = submit_webhook(relay_client, "truncate-2")
@@ -253,7 +253,7 @@ def test_webhook_202_starts_a_lease_and_completion_succeeds_the_task(
     monkeypatch, relay_client, client, auth
 ):
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        "jobs.tasks.safe_urlopen",
         lambda *_, **__: WebhookResponse(202, json.dumps({"lease_seconds": 120}).encode()),
     )
     job = submit_webhook(relay_client, "lease-1")
@@ -279,7 +279,7 @@ def test_webhook_202_starts_a_lease_and_completion_succeeds_the_task(
 
 def test_webhook_lease_serialized_to_clients(monkeypatch, relay_client, client, auth):
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        "jobs.tasks.safe_urlopen",
         lambda *_, **__: WebhookResponse(202, json.dumps({"lease_seconds": 300}).encode()),
     )
     job = submit_webhook(relay_client, "lease-2")
@@ -294,7 +294,7 @@ def test_webhook_client_fail_callback_fails_the_task(
     monkeypatch, relay_client, client, auth
 ):
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        "jobs.tasks.safe_urlopen",
         lambda *_, **__: WebhookResponse(202, json.dumps({"lease_seconds": 120}).encode()),
     )
     job = submit_webhook(relay_client, "lease-3")
@@ -317,7 +317,7 @@ def test_webhook_client_fail_callback_fails_the_task(
     [b"Accepted", json.dumps({"lease_seconds": 0}).encode(), json.dumps({"lease_seconds": 99999}).encode()],
 )
 def test_webhook_202_without_a_valid_lease_fails_the_task(monkeypatch, relay_client, body):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_, **__: WebhookResponse(202, body))
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", lambda *_, **__: WebhookResponse(202, body))
     job = submit_webhook(relay_client, f"bad-lease-{body[:8].decode('latin-1')}")
 
     result = execute_job.call(str(job.pk))
@@ -357,7 +357,7 @@ def test_completion_after_lease_expiry_fails_the_task(
     monkeypatch, relay_client, client, auth
 ):
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        "jobs.tasks.safe_urlopen",
         lambda *_, **__: WebhookResponse(202, json.dumps({"lease_seconds": 5}).encode()),
     )
     job = submit_webhook(relay_client, "expired-3")
@@ -379,7 +379,7 @@ def test_callbacks_reject_conflicting_resolutions(
     monkeypatch, relay_client, client, auth
 ):
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        "jobs.tasks.safe_urlopen",
         lambda *_, **__: WebhookResponse(202, json.dumps({"lease_seconds": 120}).encode()),
     )
     job = submit_webhook(relay_client, "conflict-1")
@@ -468,7 +468,7 @@ def test_webhook_concurrency_frees_up_after_terminal_state(
 ):
     for index in range(4):
         job = submit_webhook(relay_client, f"freed-{index}")
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_, **__: WebhookResponse(204, b""))
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", lambda *_, **__: WebhookResponse(204, b""))
     execute_job.call(str(job.pk))
     job.refresh_from_db()
     assert job.status == JobStatus.SUCCEEDED
@@ -567,7 +567,7 @@ def staff_client():
 def test_webhook_dead_letter_list_shows_failed_tasks_with_retry(
     monkeypatch, relay_client, staff_client
 ):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(400)))
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(400)))
     job = submit_webhook(relay_client, "dead-1")
     execute_job.call(str(job.pk))
     job.refresh_from_db()
@@ -596,7 +596,7 @@ def test_webhook_dead_letter_list_shows_failed_tasks_with_retry(
 def test_webhook_dead_letter_retry_requeues_the_task(
     monkeypatch, relay_client, staff_client
 ):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(400)))
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", lambda *_, **__: (_ for _ in ()).throw(http_error(400)))
     job = submit_webhook(relay_client, "dead-2")
     execute_job.call(str(job.pk))
     assert Job.objects.get(pk=job.pk).status == JobStatus.FAILED
@@ -682,7 +682,7 @@ def test_webhook_reference_receiver_rejects_a_forged_signature():
 
 def leased_job(monkeypatch, relay_client, key, **extra):
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        "jobs.tasks.safe_urlopen",
         lambda *_, **__: WebhookResponse(202, json.dumps({"lease_seconds": 600}).encode()),
     )
     job = submit_webhook(relay_client, key, **extra)
@@ -715,7 +715,7 @@ def test_webhook_fail_callback_with_retryable_reenters_backoff(
     assert 3 < delay <= settings.RELAY_JOB_RETRY_BASE_SECONDS + 2
 
     monkeypatch.setattr(
-        "urllib.request.urlopen", lambda *_, **__: WebhookResponse(204, b"")
+        "jobs.tasks.safe_urlopen", lambda *_, **__: WebhookResponse(204, b"")
     )
     make_due(job)
     execute_job.call(str(job.pk))
