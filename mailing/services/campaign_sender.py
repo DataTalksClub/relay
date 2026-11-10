@@ -1,6 +1,7 @@
 import logging
 import os
 import queue
+import re
 import signal
 import statistics
 import threading
@@ -10,6 +11,7 @@ import uuid
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from urllib.parse import unquote_plus
 
 from botocore.exceptions import (
     BotoCoreError,
@@ -68,6 +70,7 @@ from mailing.services.campaign_rendering import (
     rewrite_html_links as rewrite_html_links,
 )
 from mailing.services.campaign_template_rendering import render_campaign_fields
+from mailing.services.click_security import sign_click_redirect
 from mailing.services.public_urls import unsubscribe_url
 from mailing.services.suppression import suppression_skip_reason
 from mailing.services.tokens import (
@@ -891,6 +894,14 @@ def _campaign_send_halted(campaign_id):
 # recipient only byte substitution remains.
 _TEMPLATE_CACHE_MAX = 4
 _template_cache = {}
+_CACHED_CLICK_URL_RE = re.compile(
+    r"(?P<prefix>/t/c/)(?P<tracking_token>[A-Za-z0-9_-]+)"
+    r'\?u=(?P<destination>[^"&\s]+)&amp;s=[0-9a-f]{64}'
+)
+_CACHED_CLICK_URL_BYTES_RE = re.compile(
+    rb"(?P<prefix>/t/c/)(?P<tracking_token>[A-Za-z0-9_-]+)"
+    rb'\?u=(?P<destination>[^"&\s]+)&amp;s=[0-9a-f]{64}'
+)
 
 
 def _template_bodies(campaign):
@@ -910,13 +921,47 @@ def _template_bodies(campaign):
 
 def _render_recipient_bodies(campaign, tokens, merge_values=None):
     html, text = _template_bodies(campaign)
+    html = html.replace(_TRACKING_SENTINEL, tokens.tracking_token).replace(
+        _UNSUBSCRIBE_SENTINEL,
+        tokens.unsubscribe_token,
+    )
+    html = substitute(html, merge_values or {})
+    html = _resign_cached_click_urls(html, tokens.tracking_token)
     return (
-        substitute(
-            html.replace(_TRACKING_SENTINEL, tokens.tracking_token).replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token),
-            merge_values or {},
-        ),
+        html,
         substitute(text.replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token), merge_values or {}),
     )
+
+
+def _resign_cached_click_urls(message, tracking_token):
+    """Rebind cached click links to this recipient's substituted tracking token."""
+    is_bytes = isinstance(message, bytes)
+    pattern = _CACHED_CLICK_URL_BYTES_RE if is_bytes else _CACHED_CLICK_URL_RE
+
+    def resign(match):
+        cached_token = match.group("tracking_token")
+        if is_bytes:
+            cached_token = cached_token.decode("ascii")
+        if cached_token != tracking_token:
+            raise CampaignSenderError("Cached click URL has a different recipient tracking token.")
+        destination = match.group("destination")
+        if is_bytes:
+            destination = destination.decode("ascii")
+        destination_url = unquote_plus(destination)
+        signature = sign_click_redirect(tracking_token, destination_url)
+        if is_bytes:
+            signature = signature.encode("ascii")
+            return (
+                match.group("prefix")
+                + match.group("tracking_token")
+                + b"?u="
+                + match.group("destination")
+                + b"&amp;s="
+                + signature
+            )
+        return f"{match.group('prefix')}{cached_token}?u={destination}&amp;s={signature}"
+
+    return pattern.sub(resign, message)
 
 
 def _build_batch_mime_template(context):
@@ -996,14 +1041,17 @@ def _deliver_campaign_recipient(recipient, ses, tokens, source, timing, mime_tem
         if isinstance(merge_values, MergeVarError):
             raise merge_values  # nothing sent: logged and recorded as failed below
         if mime_template is not None:
-            raw_data = substitute(
-                render_campaign_template(
-                    mime_template,
-                    to_email=recipient.email,
-                    tracking_token=tokens.tracking_token,
-                    unsubscribe_token=tokens.unsubscribe_token,
+            raw_data = _resign_cached_click_urls(
+                substitute(
+                    render_campaign_template(
+                        mime_template,
+                        to_email=recipient.email,
+                        tracking_token=tokens.tracking_token,
+                        unsubscribe_token=tokens.unsubscribe_token,
+                    ),
+                    merge_values or {},
                 ),
-                merge_values or {},
+                tokens.tracking_token,
             )
             html_body = text_body = None
             rendered = None
