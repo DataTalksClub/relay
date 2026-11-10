@@ -81,6 +81,142 @@ services:
       retries: 3
       start_period: 60s
 
+  transactional-worker-2:
+    # Transactional-lane consumer 2 of 11 (worker is 1). One process sends
+    # one message at a time (~4 msg/s measured on prod, one SES round
+    # trip each), so bulk transactional fan-out needs >=10 to reach 40/s.
+    # Replicas are safe: tasks are claimed with SKIP LOCKED, sends keep
+    # their persisted claim/terminal checks, and the SES limiter is the
+    # shared Postgres token bucket. Only "transactional": the legacy
+    # "default" drain stays on the single worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-3:
+    # Transactional-lane consumer 3 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-4:
+    # Transactional-lane consumer 4 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-5:
+    # Transactional-lane consumer 5 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-6:
+    # Transactional-lane consumer 6 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-7:
+    # Transactional-lane consumer 7 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-8:
+    # Transactional-lane consumer 8 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-9:
+    # Transactional-lane consumer 9 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-10:
+    # Transactional-lane consumer 10 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  transactional-worker-11:
+    # Transactional-lane consumer 11 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "worker_healthcheck", "--queue-name", "transactional"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   campaign-worker:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
