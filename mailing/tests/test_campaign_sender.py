@@ -2,7 +2,7 @@ import json
 import re
 from email.parser import BytesParser
 from email.policy import default
-from urllib.parse import unquote
+from urllib.parse import unquote, unquote_plus
 
 import pytest
 from botocore.exceptions import ClientError, ConnectTimeoutError
@@ -31,6 +31,7 @@ from mailing.services.campaign_sender import (
     send_campaign_test_message,
 )
 from mailing.services.campaigns import campaign_send_issues
+from mailing.services.click_security import sign_click_redirect, verify_click_redirect
 from mailing.services.tokens import token_hash
 from mailing.sqs import records_from_messages
 from mailing.workers import campaign_email_handler
@@ -389,6 +390,14 @@ def test_campaign_handler_can_retry_pending_recipient_with_token_hashes_after_tr
     assert token_hash(tracking_token) == recipient.tracking_token_hash
     assert token_hash(unsubscribe_token) == recipient.unsubscribe_token_hash
     assert f"https://mail.example.com/t/c/{tracking_token}?u=" in html_body
+    click_match = re.search(
+        r"/t/c/([A-Za-z0-9_-]+)\?u=([^\"&]+)&amp;s=([0-9a-f]{64})",
+        html_body,
+    )
+    assert click_match is not None
+    click_token, encoded_destination, click_signature = click_match.groups()
+    assert click_token == tracking_token
+    assert verify_click_redirect(click_token, unquote_plus(encoded_destination), click_signature)
     assert f"https://mail.example.com/unsubscribe/{unsubscribe_token}" in text_body
 
 
@@ -433,7 +442,11 @@ def test_build_campaign_html_body_adds_tracking_pixel_click_links_and_unsubscrib
     )
 
     assert 'src="https://mail.example.com/t/o/tracking-token.gif"' in html
-    assert 'href="https://mail.example.com/t/c/tracking-token?u=https%3A%2F%2Fexample.com%2Fpath"' in html
+    signature = sign_click_redirect("tracking-token", "https://example.com/path")
+    assert (
+        f'href="https://mail.example.com/t/c/tracking-token?u=https%3A%2F%2Fexample.com%2Fpath&amp;s={signature}"'
+        in html
+    )
     assert 'href="/relative"' in html
     assert 'href="https://mail.example.com/unsubscribe/unsubscribe-token"' in html
 
