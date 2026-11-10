@@ -3,6 +3,7 @@ import os
 import sys
 import warnings
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
@@ -41,7 +42,7 @@ def int_env(name, *, default):
     return int(value)
 
 
-DEBUG = bool_env("DEBUG", default=True)
+DEBUG = bool_env("DEBUG", default=False)
 TESTING = "test" in sys.argv or "pytest" in sys.argv[0]
 
 DEV_FALLBACK_SECRET_KEY = "django-insecure-dev-only-do-not-use-in-production"
@@ -286,6 +287,12 @@ if DATABASES["default"]["ENGINE"].endswith("postgresql"):
         DATABASES["default"]["OPTIONS"]["options"] = (
             DATABASES["default"]["OPTIONS"].get("options", "") + f" -c lock_timeout={_web_lock_timeout_ms}"
         ).strip()
+    _web_statement_timeout_ms = int(os.environ.get("RELAY_WEB_DB_STATEMENT_TIMEOUT_MS", "0") or 0)
+    if _web_statement_timeout_ms > 0:
+        DATABASES["default"]["OPTIONS"]["options"] = (
+            DATABASES["default"]["OPTIONS"].get("options", "")
+            + f" -c statement_timeout={_web_statement_timeout_ms}"
+        ).strip()
 
 # Long-running loops touch this after every iteration that reached the
 # database; worker_healthcheck fails when it goes stale (see mailing/db_retry.py).
@@ -355,6 +362,12 @@ AWS_SES_SEND_MAX_ATTEMPTS = int_env("RELAY_AWS_SES_SEND_MAX_ATTEMPTS", default=1
 AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "")
 DMARC_READER_ROLE_ARN = os.environ.get("DMARC_READER_ROLE_ARN", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+try:
+    _public_hostname = (urlsplit(PUBLIC_BASE_URL).hostname or "").lower().rstrip(".")
+except ValueError as exc:
+    raise ImproperlyConfigured("PUBLIC_BASE_URL must be a valid URL.") from exc
+if DEBUG and _public_hostname in {"relay.datatalks.club", "origin.relay.datatalks.club"}:
+    raise ImproperlyConfigured("DEBUG must be disabled when PUBLIC_BASE_URL targets Relay production.")
 API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).rstrip("/")
 # Public base URL of the client site page that receives double opt-in confirm
 # links. Relay appends `?token=...`; the token never carries a raw email.

@@ -2,6 +2,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 
+from mailing.services.click_security import sign_click_redirect
 from mailing.services.tokens import ensure_campaign_recipient_tokens
 
 
@@ -14,7 +15,8 @@ def open_pixel_url(tracking_token):
 
 
 def click_redirect_url(tracking_token, destination_url):
-    return f"{_base_url()}/t/c/{tracking_token}?{urlencode({'u': destination_url})}"
+    signature = sign_click_redirect(tracking_token, destination_url)
+    return f"{_base_url()}/t/c/{tracking_token}?{urlencode({'u': destination_url, 's': signature})}"
 
 
 def unsubscribe_url(unsubscribe_token):
