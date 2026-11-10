@@ -43,9 +43,18 @@ from mailing.models import (
     CategoryPreference,
     EmailEvent,
     EmailEventType,
+    RecipientListMember,
     Subscription,
 )
 from mailing.services.api_errors import ApiValidationError
+from mailing.services.campaign_merge import (
+    MergeVarError,
+    member_merge_values,
+    member_metadata_by_contact,
+    merge_var_names,
+    substitute,
+    with_sentinels,
+)
 from mailing.services.campaign_rendering import (
     build_campaign_html_body as build_campaign_html_body,
 )
@@ -127,19 +136,43 @@ def render_campaign_message(
     }
 
 
-def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=None):
-    rendered = render_campaign_message(
-        campaign,
-        tracking_token=generate_raw_token(),
-        unsubscribe_token=generate_raw_token(),
+def _test_send_merge_values(campaign, to_email):
+    """Merge values for a test send: the list member with that address, else fail loudly."""
+    names = merge_var_names(campaign)
+    if not names:
+        return {}
+    metadata = (
+        RecipientListMember.objects.filter(
+            recipient_list__audience_id=campaign.audience_id,
+            recipient_list__client_id=campaign.client_id,
+            recipient_list__key=campaign.recipient_list_key,
+            active=True,
+            email__iexact=to_email,
+        )
+        .values_list("metadata", flat=True)
+        .first()
     )
+    try:
+        return member_merge_values(metadata, names)
+    except MergeVarError as exc:
+        logger.error("campaign_test_send_merge_vars_invalid campaign_id=%s error=%s", campaign.pk, exc)
+        raise ApiValidationError(
+            {"merge_vars": f"Test address must be an active member of the campaign's recipient list "
+                           f"with merge vars set ({exc}); nothing was sent."}
+        ) from exc
+
+
+def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=None):
+    merge_values = _test_send_merge_values(campaign, to_email)
+    tokens = CampaignRecipientTokens(generate_raw_token(), generate_raw_token())
+    html_body, text_body = _render_recipient_bodies(campaign, tokens, merge_values)
     return send_email(
         ses_client=ses_client or default_ses_client(),
         source=source or _campaign_default_source(campaign) or settings.DEFAULT_FROM_EMAIL,
         to_email=to_email,
-        subject=rendered["subject"],
-        html_body=rendered["html_body"],
-        text_body=rendered["text_body"],
+        subject=campaign.subject,
+        html_body=html_body,
+        text_body=text_body,
         kind=TRANSACTIONAL,
     )
 
@@ -181,6 +214,7 @@ class _BatchContext:
         # thread-safe); summarized into the batch log line.
         self.timings = []
         self.mime_template = None
+        self.merge_names = merge_var_names(self.campaign)
 
 
 SEND_PHASES = ("lock_sql", "render_mime", "limiter_wait", "ses_call", "commit")
@@ -571,6 +605,7 @@ class _BatchRun:
                 self._finish(_Done(row, "skipped", error=f"suppressed_after_snapshot:{reason}", skip_reason=reason))
             else:
                 sendable.append(row)
+        merge_values = self._merge_values(sendable)
         index = 0
         delivered = False
         try:
@@ -592,7 +627,8 @@ class _BatchRun:
                     return
                 timing = {"lock_sql": sql_share + gate_seconds}
                 result = _deliver_campaign_recipient(
-                    row, self.ses, tokens[row.pk], self.context.source, timing, self.context.mime_template
+                    row, self.ses, tokens[row.pk], self.context.source, timing, self.context.mime_template,
+                    merge_values.get(row.pk),
                 )
                 delivered = True
                 if result.outcome == "retry":
@@ -614,6 +650,20 @@ class _BatchRun:
             except Exception:
                 logger.exception("campaign_release_failed campaign_id=%s rows=%d", self.campaign_id, len(rest))
             raise
+
+    def _merge_values(self, rows):
+        """One query per chunk: ``{recipient_id: values | MergeVarError}``."""
+        names = self.context.merge_names
+        if not names or not rows:
+            return {}
+        metadata = member_metadata_by_contact(self.context.campaign, {row.contact_id for row in rows})
+        values = {}
+        for row in rows:
+            try:
+                values[row.pk] = member_merge_values(metadata.get(row.contact_id), names)
+            except MergeVarError as exc:
+                values[row.pk] = exc
+        return values
 
     def _finish(self, done):
         if done.outcome in {"sent", "failed"} and done.timing is not None:
@@ -839,9 +889,10 @@ def _template_bodies(campaign):
     key = (campaign.html_body, campaign.text_body)
     template = _template_cache.get(key)
     if template is None:
+        html_body, text_body = with_sentinels(campaign.html_body, campaign.text_body)
         template = (
-            build_campaign_html_body(campaign.html_body, _TRACKING_SENTINEL, _UNSUBSCRIBE_SENTINEL),
-            build_campaign_text_body(campaign.text_body, _UNSUBSCRIBE_SENTINEL),
+            build_campaign_html_body(html_body, _TRACKING_SENTINEL, _UNSUBSCRIBE_SENTINEL),
+            build_campaign_text_body(text_body, _UNSUBSCRIBE_SENTINEL),
         )
         if len(_template_cache) >= _TEMPLATE_CACHE_MAX:
             _template_cache.clear()
@@ -849,11 +900,14 @@ def _template_bodies(campaign):
     return template
 
 
-def _render_recipient_bodies(campaign, tokens):
+def _render_recipient_bodies(campaign, tokens, merge_values=None):
     html, text = _template_bodies(campaign)
     return (
-        html.replace(_TRACKING_SENTINEL, tokens.tracking_token).replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token),
-        text.replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token),
+        substitute(
+            html.replace(_TRACKING_SENTINEL, tokens.tracking_token).replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token),
+            merge_values or {},
+        ),
+        substitute(text.replace(_UNSUBSCRIBE_SENTINEL, tokens.unsubscribe_token), merge_values or {}),
     )
 
 
@@ -920,7 +974,7 @@ def classify_send_error(exc):
     return "failed"
 
 
-def _deliver_campaign_recipient(recipient, ses, tokens, source, timing, mime_template=None):
+def _deliver_campaign_recipient(recipient, ses, tokens, source, timing, mime_template=None, merge_values=None):
     """Render and send one claimed recipient. No database access and no open transaction.
 
     SES clients can raise transport, service, or unexpected adapter errors; preserve the
@@ -931,16 +985,21 @@ def _deliver_campaign_recipient(recipient, ses, tokens, source, timing, mime_tem
     send_started = None
     try:
         render_started = time.perf_counter()
+        if isinstance(merge_values, MergeVarError):
+            raise merge_values  # nothing sent: logged and recorded as failed below
         if mime_template is not None:
-            raw_data = render_campaign_template(
-                mime_template,
-                to_email=recipient.email,
-                tracking_token=tokens.tracking_token,
-                unsubscribe_token=tokens.unsubscribe_token,
+            raw_data = substitute(
+                render_campaign_template(
+                    mime_template,
+                    to_email=recipient.email,
+                    tracking_token=tokens.tracking_token,
+                    unsubscribe_token=tokens.unsubscribe_token,
+                ),
+                merge_values or {},
             )
             html_body = text_body = None
         else:
-            html_body, text_body = _render_recipient_bodies(recipient.campaign, tokens)
+            html_body, text_body = _render_recipient_bodies(recipient.campaign, tokens, merge_values)
             raw_data = None
         timing["render_mime"] = time.perf_counter() - render_started
         send_phase_timings.build = send_phase_timings.limiter_wait = 0.0
