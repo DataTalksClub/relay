@@ -71,8 +71,9 @@ runs the full test gate, builds the release image, applies
 [`deploy/coolify/docker-compose.dev.yml`](../deploy/coolify/docker-compose.dev.yml)
 to the DEV service, and verifies the development entry point. Push to
 `main` (ignoring `docs/**` and `*.md`) and manual
-`workflow_dispatch` both trigger it; runs serialize in the `relay-dev`
-concurrency group and never cancel each other.
+`workflow_dispatch` both trigger it; development and production deploy runs
+serialize together in the `relay-deploy` concurrency group and never cancel
+each other.
 
 | Aspect | Value |
 |---|---|
