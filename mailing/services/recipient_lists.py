@@ -3,7 +3,6 @@ import json
 from json import JSONDecodeError
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import urlopen
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -22,6 +21,7 @@ from mailing.models import (
 from mailing.services.api import ApiValidationError, isoformat, validate_contact_scope
 from mailing.services.contacts import normalize_email, upsert_contact
 from mailing.services.mailchimp import emit_mailchimp_syncs_for_node
+from relay.safe_fetch import UnsafeFetchURL, safe_urlopen
 
 ROOT_LIST_KEY = "<all>"
 CASCADE_SOURCE_PREFIX = "cascade-contact:"
@@ -205,7 +205,7 @@ def validate_import_url(value):
         raise ApiValidationError({"source_url": "required"})
     source_url = value.strip()
     parsed = urlparse(source_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
         raise ApiValidationError({"source_url": "invalid"})
     if len(source_url) > 2048:
         raise ApiValidationError({"source_url": "too_long"})
@@ -775,10 +775,17 @@ def process_recipient_list_import_job(job_id, *, timeout=DEFAULT_IMPORT_FETCH_TI
 
 def fetch_import_content(source_url, *, timeout, max_bytes):
     try:
-        with urlopen(source_url, timeout=timeout) as response:
+        with safe_urlopen(source_url, timeout=timeout) as response:
             content = response.read(max_bytes + 1)
-    except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise RuntimeError(f"fetch_failed: {exc}") from exc
+    except UnsafeFetchURL as exc:
+        raise RuntimeError(f"fetch_failed: {exc.code}") from exc
+    except HTTPError as exc:
+        status = exc.code
+        exc.close()
+        raise RuntimeError(f"fetch_failed: http_{status}") from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        code = "timeout" if isinstance(exc, TimeoutError) else "network_error"
+        raise RuntimeError(f"fetch_failed: {code}") from exc
     if len(content) > max_bytes:
         raise RuntimeError("fetch_failed: response_too_large")
     return content
