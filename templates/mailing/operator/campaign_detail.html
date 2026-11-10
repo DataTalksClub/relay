@@ -134,6 +134,108 @@
           </div>
         </section>
       </div>
+      <section
+        class="section panel"
+        aria-labelledby="campaign-link-clicks-heading"
+        data-campaign-link-stats
+        data-links-url="{% url 'mailing:campaign_links_json' campaign.id %}"
+      >
+        <div class="section-header">
+          <div>
+            <h3 id="campaign-link-clicks-heading">Clicks per link</h3>
+            <p class="muted">Tracked click events grouped by destination URL. Unique clickers count recipients once per link.</p>
+          </div>
+          <button type="button" class="button secondary" data-link-stats-retry>Load link stats</button>
+        </div>
+        <p class="muted" role="status" aria-live="polite" data-link-stats-status>Link click details have not been loaded yet.</p>
+        <div class="table-wrap stack-table">
+          <table aria-label="Clicks by destination URL">
+            <thead>
+              <tr>
+                <th scope="col">URL</th>
+                <th scope="col">Total clicks</th>
+                <th scope="col">Unique clickers</th>
+              </tr>
+            </thead>
+            <tbody data-link-stats-rows></tbody>
+          </table>
+        </div>
+      </section>
+      <script>
+        (() => {
+          const panel = document.querySelector("[data-campaign-link-stats]");
+          if (!panel) return;
+
+          const status = panel.querySelector("[data-link-stats-status]");
+          const rows = panel.querySelector("[data-link-stats-rows]");
+          const retry = panel.querySelector("[data-link-stats-retry]");
+          const load = async () => {
+            retry.hidden = true;
+            status.textContent = "Loading link click stats…";
+            rows.replaceChildren();
+
+            const controller = new AbortController();
+            let timedOut = false;
+            const timeout = window.setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+            }, 10000);
+
+            try {
+              const response = await fetch(panel.dataset.linksUrl, {
+                credentials: "same-origin",
+                headers: {Accept: "application/json"},
+                signal: controller.signal,
+              });
+              if (!response.ok) throw new Error("request_failed");
+              const data = await response.json();
+              if (!Array.isArray(data.links)) throw new Error("invalid_response");
+
+              for (const link of data.links) {
+                const row = document.createElement("tr");
+                const urlCell = document.createElement("td");
+                const totalCell = document.createElement("td");
+                const uniqueCell = document.createElement("td");
+                try {
+                  const destination = new URL(link.url);
+                  if (destination.protocol === "http:" || destination.protocol === "https:") {
+                    const anchor = document.createElement("a");
+                    anchor.href = destination.href;
+                    anchor.rel = "noopener noreferrer";
+                    anchor.target = "_blank";
+                    anchor.textContent = link.url;
+                    urlCell.append(anchor);
+                  } else {
+                    urlCell.textContent = link.url;
+                  }
+                } catch (_error) {
+                  urlCell.textContent = link.url;
+                }
+                totalCell.className = "data-num";
+                totalCell.textContent = String(link.total_clicks);
+                uniqueCell.className = "data-num";
+                uniqueCell.textContent = String(link.unique_clickers);
+                row.append(urlCell, totalCell, uniqueCell);
+                rows.append(row);
+              }
+              status.textContent = data.links.length
+                ? `${data.links.length} destination link${data.links.length === 1 ? "" : "s"} with tracked clicks.`
+                : "No tracked link clicks have been recorded yet.";
+            } catch (_error) {
+              status.textContent = timedOut
+                ? "Loading link click stats timed out after 10 seconds. Try again."
+                : "Link click stats could not be loaded. Try again.";
+              retry.hidden = false;
+              retry.textContent = "Retry";
+            } finally {
+              window.clearTimeout(timeout);
+            }
+          };
+
+          retry.addEventListener("click", load);
+          load();
+        })();
+      </script>
     </section>
 
     <details class="secondary-section panel-diagnostics"><summary>What do these numbers mean?</summary>

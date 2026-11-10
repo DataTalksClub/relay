@@ -81,6 +81,16 @@ relay senders                 # list configured sender addresses
 relay senders --set 'results=Agent <agent@example.com>' --default results
 ```
 
+Campaign link clicks are available to a client API key without database access:
+
+```bash
+relay campaigns links cmp-registration-production-ai-agents-generative-media-10ac3865
+```
+
+The command groups tracked click events by destination URL and prints total clicks
+and distinct campaign recipients. Add `--json` for machine-readable output. API
+transport failures and the 30-second request timeout are reported on stderr.
+
 Operator API commands:
 
 ```bash

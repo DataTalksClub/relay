@@ -110,6 +110,7 @@ def test_openapi_uses_bearer_auth_only_and_omits_forbidden_strings():
 def test_openapi_includes_public_campaign_api():
     spec = build_openapi_spec()
     assert "/api/campaigns/{external_key}" in spec["paths"]
+    assert "/api/campaigns/{external_key}/links" in spec["paths"]
     assert "/api/campaigns/{external_key}/queue" in spec["paths"]
     assert "/api/campaigns/{external_key}/cancel" in spec["paths"]
     assert "/api/campaigns/{external_key}/preview" in spec["paths"]
