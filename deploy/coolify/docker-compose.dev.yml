@@ -59,7 +59,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     # Transactional sends on their own lane plus the legacy default drain.
     # Never consumes "campaign", so transactional mail never waits behind
@@ -77,7 +77,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.5"
+    cpus: "0.25"
     mem_limit: 512m
     # The ONLY consumer of the campaign lane (exactly one process: the SES
     # rate limiter is per-process).
@@ -99,7 +99,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
@@ -115,7 +115,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
@@ -130,7 +130,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     # Recipient opens/clicks and deferred unsubscribes accepted by the web
     # (/t/o, /t/c, /unsubscribe). Own lane: never waits behind sends or an SES backlog.
@@ -147,7 +147,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     command: ["python", "manage.py", "run_relay_scheduler", "--interval", "15"]
     healthcheck:
@@ -161,7 +161,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
     healthcheck:
@@ -175,7 +175,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     command: ["python", "manage.py", "process_client_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
     healthcheck:
@@ -189,7 +189,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
     healthcheck:
@@ -203,7 +203,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.15"
     mem_limit: 512m
     command: ["python", "manage.py", "process_inbound_deliveries"]
     healthcheck:

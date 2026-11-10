@@ -93,7 +93,9 @@ def test_production_worker_heartbeats_and_resource_budget():
     services = yaml.safe_load((Path(__file__).parents[2] / "deploy/coolify/docker-compose.staging.yml").read_text())["services"]
     workers = {name: service for name, service in services.items() if name != "web"}
     assert len(workers) == 28
-    assert sum(float(service["cpus"]) for service in workers.values()) <= 8
+    dev_services = yaml.safe_load((Path(__file__).parents[2] / "deploy/coolify/docker-compose.dev.yml").read_text())["services"]
+    dev_workers = [service for name, service in dev_services.items() if name != "web"]
+    assert sum(float(service["cpus"]) for service in [*workers.values(), *dev_workers]) <= 8
     for name, service in workers.items():
         assert service["mem_limit"] == "512m"
         probe = " ".join(service["healthcheck"]["test"])

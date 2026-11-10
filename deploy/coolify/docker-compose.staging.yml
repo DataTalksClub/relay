@@ -69,7 +69,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     # Transactional sends on their own lane plus the legacy default drain
     # (jobs, campaign test sends, process_email_event, and any pre-split
@@ -95,7 +95,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -111,7 +111,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -127,7 +127,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -143,7 +143,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -159,7 +159,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -175,7 +175,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -191,7 +191,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -207,7 +207,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -223,7 +223,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -239,7 +239,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
     healthcheck:
@@ -277,7 +277,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
@@ -293,7 +293,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
@@ -309,7 +309,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
@@ -325,7 +325,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
@@ -341,7 +341,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
@@ -357,7 +357,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
     healthcheck:
@@ -372,7 +372,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     # Recipient opens/clicks and deferred unsubscribes accepted by the web
     # (/t/o, /t/c, /unsubscribe). Own lane: never waits behind sends or an SES backlog.
@@ -389,7 +389,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     environment:
       RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG: /run/relay-ops-msmtprc
@@ -408,7 +408,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "drain_sqs_ingress", "ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
     healthcheck:
@@ -422,7 +422,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
     healthcheck:
@@ -436,7 +436,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     # AISHL is the sole mutation owner; acknowledge only after its HTTP 200.
     command: ["python", "manage.py", "drain_sqs_ingress", "aisl-ses-webhooks", "--batch-size", "1", "--wait-time", "20"]
@@ -451,7 +451,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     environment:
       AWS_ACCESS_KEY_ID: ${SANDBOX_AWS_ACCESS_KEY_ID:-}
@@ -470,7 +470,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "process_client_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
     healthcheck:
@@ -484,7 +484,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
     healthcheck:
@@ -498,7 +498,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     command: ["python", "manage.py", "process_inbound_deliveries"]
     healthcheck:
@@ -512,7 +512,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
+    cpus: "0.2"
     mem_limit: 512m
     # Stage code before receipt cutover; absence of queue is intentional standby.
     command: ["sh", "-ec", 'if [ -n "$${SQS_INBOUND_EMAIL_QUEUE_URL:-}" ]; then exec python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20; else echo "inbound ingress standby: no queue configured"; exec sleep infinity; fi']
