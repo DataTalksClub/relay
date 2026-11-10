@@ -56,6 +56,7 @@ API_DOC_PATHS = {
     "mailing:api_contact_history": "/api/contacts/{contact_id}/history",
     "mailing:api_client_senders": "/api/client/senders",
     "mailing:api_campaign": "/api/campaigns/{external_key}",
+    "mailing:api_campaign_links": "/api/campaigns/{external_key}/links",
     "mailing:api_campaign_queue": "/api/campaigns/{external_key}/queue",
     "mailing:api_campaign_cancel": "/api/campaigns/{external_key}/cancel",
     "mailing:api_campaign_pause": "/api/campaigns/{external_key}/pause",
@@ -796,6 +797,7 @@ def endpoint_groups():
             "endpoints": [
                 ("PUT", "/api/campaigns/{external_key}", "Create or update one draft campaign."),
                 ("GET", "/api/campaigns/{external_key}", "Get one campaign by external key."),
+                ("GET", "/api/campaigns/{external_key}/links", "Get per-link total clicks and unique clickers."),
                 ("POST", "/api/campaigns/{external_key}/queue", "Snapshot and queue one draft campaign."),
                 ("POST", "/api/campaigns/{external_key}/cancel", "Cancel one draft or unsent queued campaign."),
                 ("POST", "/api/campaigns/{external_key}/pause", "Pause one queued or sending campaign; resume continues with the remaining recipients."),
@@ -916,6 +918,10 @@ def route_path_map():
         API_DOC_PATHS["mailing:api_client_senders"]: reverse("mailing:api_client_senders"),
         API_DOC_PATHS["mailing:api_campaign"]: reverse(
             "mailing:api_campaign",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_links"]: reverse(
+            "mailing:api_campaign_links",
             args=["cmp-course-start-2026"],
         ),
         API_DOC_PATHS["mailing:api_campaign_queue"]: reverse(
@@ -1414,6 +1420,21 @@ OPENAPI_SPEC = {
                 )
                 | {"201": json_response("Campaign created", "#/components/schemas/CampaignUpsertResponse")},
             },
+        },
+        "/api/campaigns/{external_key}/links": {
+            "get": {
+                "tags": ["Campaigns"],
+                "summary": "Get per-link campaign click statistics",
+                "description": (
+                    "Returns tracked click totals grouped by destination URL for the campaign owned by the "
+                    "authenticated client. Unique clickers count distinct campaign recipients for each URL."
+                ),
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "responses": bearer_responses(
+                    json_response("Campaign link click statistics", "#/components/schemas/CampaignLinksResponse")
+                ),
+            }
         },
         "/api/campaigns/{external_key}/queue": {
             "post": {
@@ -2114,6 +2135,26 @@ OPENAPI_SPEC = {
             "CampaignResponse": {
                 "type": "object",
                 "properties": {"campaign": {"$ref": "#/components/schemas/Campaign"}},
+            },
+            "CampaignLinkClickStats": {
+                "type": "object",
+                "required": ["url", "total_clicks", "unique_clickers"],
+                "properties": {
+                    "url": {"type": "string", "format": "uri"},
+                    "total_clicks": {"type": "integer", "minimum": 0},
+                    "unique_clickers": {"type": "integer", "minimum": 0},
+                },
+            },
+            "CampaignLinksResponse": {
+                "type": "object",
+                "required": ["campaign", "links"],
+                "properties": {
+                    "campaign": {"type": "string"},
+                    "links": {
+                        "type": "array",
+                        "items": {"$ref": "#/components/schemas/CampaignLinkClickStats"},
+                    },
+                },
             },
             "CampaignUpsertResponse": {
                 "type": "object",

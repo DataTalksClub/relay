@@ -84,6 +84,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_operator.add_argument("--json", action="store_true", help="Print JSON (the default).")
     p_operator.set_defaults(handler=cmd_operator)
 
+    p_campaigns = sub.add_parser("campaigns", help="Inspect client-scoped campaign data.")
+    campaigns_sub = p_campaigns.add_subparsers(dest="campaigns_command", required=True)
+    p_campaign_links = campaigns_sub.add_parser("links", help="Show tracked clicks grouped by destination URL.")
+    _add_connection_args(p_campaign_links)
+    p_campaign_links.add_argument("external_key", help="Campaign external key.")
+    p_campaign_links.add_argument("--json", action="store_true", help="Print the raw JSON response.")
+    p_campaign_links.set_defaults(handler=cmd_campaign_links)
+
     # --- configure --------------------------------------------------------
     p_configure = sub.add_parser("configure", help="Save the Relay URL and client API key to the config file.")
     p_configure.add_argument("--url", help="Relay base URL, e.g. https://relay.example.com")
@@ -226,6 +234,24 @@ def cmd_api(args) -> int:
 
     _, result = _client(args).request(args.method, args.path, payload=payload)
     print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
+def cmd_campaign_links(args) -> int:
+    external_key = urllib.parse.quote(args.external_key, safe="")
+    _, result = _client(args).request("GET", f"/api/campaigns/{external_key}/links")
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+        return 0
+
+    links = result.get("links", []) if isinstance(result, dict) else []
+    if not links:
+        print("No tracked link clicks have been recorded.")
+        return 0
+
+    print("URL\tTotal clicks\tUnique clickers")
+    for link in links:
+        print(f"{link['url']}\t{link['total_clicks']}\t{link['unique_clickers']}")
     return 0
 
 

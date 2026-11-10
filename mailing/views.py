@@ -97,6 +97,7 @@ from mailing.services.api_docs import (
     workflow_examples,
 )
 from mailing.services.auth import authenticate_bearer_token
+from mailing.services.campaign_link_stats import campaign_link_click_payload
 from mailing.services.campaign_sender import render_campaign_message
 from mailing.services.campaigns import (
     CampaignNotReady,
@@ -775,6 +776,7 @@ def campaign_detail(request, campaign_id):
         pk=campaign_id,
         client=active_client,
     )
+
     active_filter = request.GET.get("filter", "")
     recipient_query = request.GET.get("recipient_q", "").strip()[:320]
     recipient_queryset = campaign_recipient_queryset(campaign, active_filter)
@@ -836,6 +838,17 @@ def campaign_detail(request, campaign_id):
             "pagination_querystring": pagination_querystring(request),
         },
     )
+
+
+@staff_member_required
+@require_GET
+def campaign_links_json(request, campaign_id):
+    """Serve per-link stats to the staff campaign page within its active client scope."""
+    active_client = require_active_client(request)
+    if active_client is None:
+        return JsonResponse({"error": {"message": "Select an active client."}}, status=403)
+    campaign = get_object_or_404(Campaign, pk=campaign_id, client=active_client)
+    return JsonResponse(campaign_link_click_payload(campaign))
 
 
 @staff_member_required
@@ -2407,6 +2420,21 @@ def api_campaign(request, external_key):
         return validation_error_response(exc)
 
     return JsonResponse(payload, status=status)
+
+
+@csrf_exempt
+def api_campaign_links(request, external_key):
+    if request.method != "GET":
+        return method_not_allowed_response(["GET"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    campaign = Campaign.objects.filter(client=client, external_key=external_key).first()
+    if campaign is None:
+        return validation_error_response(ApiValidationError({"external_key": "not_found"}, status_code=404))
+    return JsonResponse(campaign_link_click_payload(campaign))
 
 
 @csrf_exempt
