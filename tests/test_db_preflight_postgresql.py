@@ -33,11 +33,17 @@ def test_real_postgresql_concurrent_start_noop_and_wrong_owner():
     for runner in runners:
         output, _ = runner.communicate(timeout=180)
         assert runner.returncode == 0, output
-    for command in [("migrate_before_start",), ("migrate", "--noinput")]:
+    for command, expected_output in [
+        (
+            ("migrate_before_start",),
+            "No unapplied migrations; startup migration gate skipped.",
+        ),
+        (("migrate", "--noinput"), "No migrations to apply"),
+    ]:
         runner = launch(*command)
         output, _ = runner.communicate(timeout=60)
         assert runner.returncode == 0, output
-        assert "No migrations to apply" in output
+        assert expected_output in output
 
     with psycopg2.connect(URL) as connection:
         with connection.cursor() as cursor:
