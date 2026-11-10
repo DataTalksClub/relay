@@ -54,11 +54,12 @@ def test_wrong_database_or_admin_identity_fails_before_plan(identity):
 def test_success_checks_ownership_before_and_after_plan_apply_and_check():
     connection, cursor = fake_connection([("r", "public.clients", "relay_app")])
     out = StringIO()
-    with (
-        patch("mailing.management.commands.db_preflight.connections", {"default": connection}),
-        patch("mailing.management.commands.db_preflight.call_command") as migrate,
-    ):
-        Command(stdout=out).handle(expected_role="relay_app", expected_database="relay")
+    with patch("mailing.management.commands.db_preflight.call_command") as migrate:
+        with (
+            patch("mailing.management.commands.db_preflight.connections", {"default": connection}),
+            patch("mailing.management.commands.migrate_before_start.call_command", new=migrate),
+        ):
+            Command(stdout=out).handle(expected_role="relay_app", expected_database="relay")
     assert [c.kwargs for c in migrate.call_args_list] == [
         dict(plan=True, interactive=False, stdout=migrate.call_args_list[0].kwargs["stdout"], verbosity=1),
         dict(interactive=False, stdout=migrate.call_args_list[0].kwargs["stdout"], verbosity=1),

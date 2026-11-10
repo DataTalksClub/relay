@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from datetime import timezone as datetime_timezone
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -9,6 +10,7 @@ from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from mailing.models import Campaign, CampaignRecipient, CampaignRecipientStatus, EmailEvent, EmailEventType
+from mailing.services.click_security import verify_click_redirect
 from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.services.contacts import subscribe_contact, unsubscribe_contact
@@ -24,6 +26,9 @@ TRANSPARENT_GIF = (
 
 TRACKING_QUEUE = "tracking"
 ENGAGEMENT_COUNTS_REFRESH_INTERVAL_SECONDS = 5
+# Unsigned click URLs were generated before signed destinations shipped on
+# 2026-11-10. Preserve links sent through that date, based on send time.
+LEGACY_UNSIGNED_CLICK_CUTOFF = datetime(2026, 11, 11, tzinfo=datetime_timezone.utc)
 
 # Web side of the recipient-facing paths (/t/o, /t/c, /unsubscribe).
 #
@@ -75,22 +80,30 @@ def record_open(raw_token):
     return recipient_id
 
 
-def record_click(raw_token, destination_url):
+def record_click(raw_token, destination_url, signature=None):
     """Web path for the click redirect: validate the token, enqueue, return. Never locks."""
     if not is_allowed_click_destination(destination_url):
         return None
-    recipient_id = _recipient_id_for_tracking_token(raw_token)
-    if recipient_id is None:
+    hashed_token = token_hash(raw_token) if raw_token else None
+    if hashed_token is None:
+        return None
+    recipient = CampaignRecipient.objects.filter(tracking_token_hash=hashed_token).only("pk", "sent_at").first()
+    if recipient is None:
+        return None
+    if signature:
+        if not verify_click_redirect(raw_token, destination_url, signature):
+            return None
+    elif recipient.sent_at is None or recipient.sent_at >= LEGACY_UNSIGNED_CLICK_CUTOFF:
         return None
     _enqueue_tracking_event(
         {
             "kind": "click",
-            "recipient_id": recipient_id,
+            "recipient_id": recipient.pk,
             "occurred_at": timezone.now().isoformat(),
             "url": destination_url,
         }
     )
-    return recipient_id
+    return recipient.pk
 
 
 def apply_tracking_event(payload):

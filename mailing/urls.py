@@ -35,6 +35,7 @@ urlpatterns = [
     path("admin-api-keys/<int:key_id>/revoke/", admin_key_views.revoke_admin_key, name="admin_api_key_revoke"),
     path("", views.dashboard, name="dashboard"),
     path("health/", views.health, name="health"),
+    path("health/live", views.liveness, name="liveness"),
     path("health/ready", views.readiness, name="readiness"),
     path("internal/ops/status", ops_views.status, name="taskdeck_status"),
     path("internal/transfer/export", transfer_views.transfer_export, name="transfer_export"),

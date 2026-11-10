@@ -11,6 +11,15 @@ from scripts.relay_db_preflight_host import run_preflight
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_dev_and_prod_deploys_share_non_canceling_concurrency_group():
+    workflows = [
+        yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())
+        for filename in ("deploy-dev.yml", "deploy-prod.yml")
+    ]
+    assert [workflow["concurrency"]["group"] for workflow in workflows] == ["relay-deploy", "relay-deploy"]
+    assert all(workflow["concurrency"]["cancel-in-progress"] is False for workflow in workflows)
+
+
 @pytest.mark.parametrize("workflow", ["deploy-dev.yml", "deploy-prod.yml"])
 def test_candidate_preflight_failure_prevents_compose_update_and_deploy(workflow, tmp_path):
     document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())

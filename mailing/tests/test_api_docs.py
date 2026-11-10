@@ -85,6 +85,15 @@ def test_openapi_documented_paths_match_registered_routes():
         assert resolve(concrete_path).url_name is not None, documented_path
 
 
+def test_openapi_documents_signed_click_destination():
+    spec = build_openapi_spec()
+    params = spec["paths"]["/t/c/{tracking_token}"]["get"]["parameters"]
+    assert {param["name"] for param in params} == {"tracking_token", "u", "s"}
+    signature = next(param for param in params if param["name"] == "s")
+    assert signature["required"] is False
+    assert signature["schema"]["pattern"] == "^[0-9a-f]{64}$"
+
+
 def test_openapi_uses_bearer_auth_only_and_omits_forbidden_strings():
     spec_text = json.dumps(build_openapi_spec(), sort_keys=True)
 

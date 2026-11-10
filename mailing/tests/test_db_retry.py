@@ -23,6 +23,7 @@ from mailing.db_retry import deadlock_diag_lines, is_transient_db_error, run_wit
         'could not translate host name "mqimefrti7ratmaliirnikov" to address: Temporary failure in name resolution',
         'could not translate host name "db" to address: Name or service not known',
         "connection refused",
+        "connection to server was lost",
         "connection timed out",
         "timeout expired",
         "the database system is starting up",

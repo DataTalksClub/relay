@@ -31,6 +31,7 @@ from mailing.forms import (
     ContactTagRemoveForm,
     TagForm,
 )
+from mailing.middleware import database_error_response
 from mailing.models import (
     Audience,
     BlockedSender,
@@ -230,6 +231,11 @@ def health(request):
     )
 
 
+def liveness(request):
+    """DB-free process liveness endpoint for local/container probes."""
+    return JsonResponse({"status": "alive", "service": "relay"})
+
+
 def readiness(request):
     import os  # noqa: PLC0415 - read baked release identity without settings plumbing
 
@@ -241,8 +247,11 @@ def readiness(request):
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
-    except Exception:
-        return JsonResponse({"status": "not_ready", "service": "relay", **release}, status=503)
+    except DatabaseError as exc:
+        response = database_error_response(request, exc, force_json=True)
+        if response.status_code == 503:
+            response["X-Relay-503-Reason"] = "readiness_database_unavailable"
+        return response
     return JsonResponse({"status": "ready", "service": "relay", **release})
 
 
@@ -1492,7 +1501,7 @@ def tracking_open(request, tracking_token):
 @require_GET
 def tracking_click(request, tracking_token):
     destination_url = request.GET.get("u", "")
-    recipient = record_click(tracking_token, destination_url)
+    recipient = record_click(tracking_token, destination_url, request.GET.get("s", ""))
     if recipient is None:
         return JsonResponse({"error": {"code": "invalid_tracking_redirect"}}, status=400)
     return redirect(destination_url)
@@ -2712,9 +2721,10 @@ def ses_webhook(request):
     # Verify + insert only (processing runs on the provider-events worker), and
     # capped per process so a webhook burst can never take every web thread.
     if not _ses_webhook_slots.acquire(blocking=False):
-        logger.error("ses_webhook_concurrency_limited max=%s", settings.RELAY_SES_WEBHOOK_MAX_CONCURRENCY)
         return JsonResponse(
-            {"error": {"code": "webhook_busy", "message": "Retry later."}}, status=503, headers={"Retry-After": "5"}
+            {"error": {"code": "webhook_busy", "message": "Retry later."}},
+            status=503,
+            headers={"Retry-After": "5", "X-Relay-503-Reason": "webhook_busy"},
         )
     try:
         return _ses_webhook(request)

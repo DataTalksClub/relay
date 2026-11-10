@@ -18,7 +18,9 @@ on:
       - ".github/workflows/deploy-sandbox.yml"
 
 concurrency:
-  group: relay-dev
+  # Production promotion shares the same database and host. Serialize both
+  # deploy paths so a dev compose replacement cannot overlap a prod rollout.
+  group: relay-deploy
   cancel-in-progress: false
 
 permissions:

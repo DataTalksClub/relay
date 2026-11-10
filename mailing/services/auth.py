@@ -2,14 +2,17 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
+from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
+from django.db.models import Q
 from django.utils import timezone
 
 from mailing.models import Client, ClientApiKey
 
 API_KEY_PREFIX = "relay_"
+API_KEY_USAGE_WRITE_INTERVAL = timedelta(minutes=1)
 
 
 @dataclass(frozen=True)
@@ -40,8 +43,9 @@ def fast_hash_api_key(raw_api_key):
     ~240 ms PBKDF2 stretching designed for low-entropy passwords is pure
     per-request overhead (measured on prod: every authenticated API call paid
     it). HMAC-SHA256 keyed by `SECRET_KEY` with a constant-time comparison is
-    the correct verifier here. `SECRET_KEY` rotation is safe: a mismatch falls
-    back to the PBKDF2 `key_hash` and re-stores the fast hash on success.
+    the fast verifier here. PBKDF2 remains only for rows that have not yet
+    stored a fast verifier; a token that does not match a fast verifier never
+    triggers a stretching operation.
     """
     return hmac.new(
         settings.SECRET_KEY.encode("utf-8"),
@@ -91,6 +95,16 @@ def create_client_api_key(*, client, name, notes="", raw_api_key=None, public_id
     return api_key, raw_key
 
 
+def _record_api_key_usage(api_key, *, now):
+    """Avoid a write on every authenticated API request."""
+    threshold = now - API_KEY_USAGE_WRITE_INTERVAL
+    if api_key.last_used_at is not None and api_key.last_used_at > threshold:
+        return
+    ClientApiKey.objects.filter(pk=api_key.pk).filter(
+        Q(last_used_at__isnull=True) | Q(last_used_at__lte=threshold)
+    ).update(last_used_at=now, updated_at=now)
+
+
 def authenticate_bearer_token(authorization_header):
     if not authorization_header:
         return AuthResult(client=None, error="missing_authorization")
@@ -103,26 +117,29 @@ def authenticate_bearer_token(authorization_header):
     if raw_api_key.startswith("relay_admin_"):
         return AuthResult(client=None, error="invalid_api_key")
     public_id = public_id_from_raw_key(raw_api_key)
+    if not public_id:
+        return AuthResult(client=None, error="invalid_api_key")
     api_keys = ClientApiKey.objects.select_related("client", "client__organization").filter(revoked_at__isnull=True)
-    if public_id:
-        api_keys = api_keys.filter(public_id=public_id)
+    api_keys = api_keys.filter(public_id=public_id)
 
     for api_key in api_keys:
         if check_api_key_fast(raw_api_key, api_key.key_fast_hash):
             if not api_key.client.is_active:
                 return AuthResult(client=None, error="inactive_client")
-            api_key.last_used_at = timezone.now()
-            api_key.save(update_fields=["last_used_at", "updated_at"])
+            _record_api_key_usage(api_key, now=timezone.now())
             return AuthResult(client=api_key.client)
-        if check_api_key(raw_api_key, api_key.key_hash):
+        if not api_key.key_fast_hash and check_api_key(raw_api_key, api_key.key_hash):
             # Legacy PBKDF2-only key (pre-fast-hash, transfer import, or a
-            # SECRET_KEY rotation): upgrade to the fast verifier on the same
-            # write that records usage, so only this request pays PBKDF2.
+            # rollback): upgrade to the fast verifier on the same write that
+            # records usage, so only this request pays PBKDF2.
             if not api_key.client.is_active:
                 return AuthResult(client=None, error="inactive_client")
-            api_key.key_fast_hash = fast_hash_api_key(raw_api_key)
-            api_key.last_used_at = timezone.now()
-            api_key.save(update_fields=["key_fast_hash", "last_used_at", "updated_at"])
+            now = timezone.now()
+            ClientApiKey.objects.filter(pk=api_key.pk, key_fast_hash="").update(
+                key_fast_hash=fast_hash_api_key(raw_api_key),
+                last_used_at=now,
+                updated_at=now,
+            )
             return AuthResult(client=api_key.client)
 
     return AuthResult(client=None, error="invalid_api_key")

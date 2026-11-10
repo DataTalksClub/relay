@@ -1893,6 +1893,13 @@ OPENAPI_SPEC = {
                 "parameters": [
                     TRACKING_PARAM,
                     {"name": "u", "in": "query", "required": True, "schema": {"type": "string", "format": "uri"}},
+                    {
+                        "name": "s",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "description": "HMAC signature generated with the destination for links sent after 2026-11-10.",
+                    },
                 ],
                 "responses": {
                     "302": {"description": "Redirects to destination URL"},

@@ -4,7 +4,12 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connections
 
-from mailing.management.commands.migrate_before_start import MIGRATION_LOCK_ID
+from mailing.management.commands.migrate_before_start import (
+    MIGRATION_LOCK_ID,
+    MigrationLockTimeoutError,
+    _acquire_migration_lock_with_retry,
+    _apply_migrations_with_retry,
+)
 
 OBJECTS_SQL = """
 SELECT c.relkind::text, format('%I.%I', n.nspname, c.relname),
@@ -58,15 +63,23 @@ class Command(BaseCommand):
             raise CommandError("Deploy DB preflight requires PostgreSQL; refusing to skip ownership checks.")
         # Share the startup gate's session lock, including the plan and ownership
         # checks, so overlapping workflows/container starts cannot race the DDL.
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_lock(%s)", [MIGRATION_LOCK_ID])
+        _acquire_migration_lock_with_retry(connection, self.stdout)
         try:
             self.check_ownership(connection, options["expected_role"], options["expected_database"])
             self.stdout.write("Migration plan before rolling switch:")
             try:
                 call_command("migrate", plan=True, interactive=False, stdout=self.stdout, verbosity=1)
-                call_command("migrate", interactive=False, stdout=self.stdout, verbosity=1)
+                _apply_migrations_with_retry(
+                    connection,
+                    self.stdout,
+                    verbosity=1,
+                    output_stream=self.stdout,
+                )
                 call_command("migrate", check_unapplied=True, interactive=False, stdout=self.stdout, verbosity=0)
+            except MigrationLockTimeoutError as exc:
+                raise CommandError(
+                    f"DB preflight {exc} Do not replace serving containers."
+                ) from None
             except Exception as exc:
                 # Keep arbitrary data-migration exceptions/connection strings out
                 # of shared deploy logs. Ownership errors above name each object.
