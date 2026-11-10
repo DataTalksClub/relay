@@ -1,3 +1,6 @@
+import os
+import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -97,3 +100,24 @@ def test_production_worker_heartbeats_and_resource_budget():
         assert "stat -c %Y /tmp/relay-db-heartbeat" in probe
         assert "worker_healthcheck" not in probe
     assert "SQS_INBOUND_EMAIL_QUEUE_URL" in " ".join(workers["inbound-ingress"]["healthcheck"]["test"])
+
+
+def test_file_age_probe_rejects_missing_or_stale_worker(tmp_path):
+    services = yaml.safe_load((Path(__file__).parents[2] / "deploy/coolify/docker-compose.staging.yml").read_text())["services"]
+    heartbeat = tmp_path / "worker-heartbeat"
+    command = services["worker"]["healthcheck"]["test"][1].replace("$$", "$").replace("/tmp/relay-db-heartbeat", str(heartbeat))
+    def probe():
+        return subprocess.run(["sh", "-c", command], capture_output=True).returncode
+    assert probe() != 0
+    heartbeat.touch()
+    assert probe() == 0
+    os.utime(heartbeat, (time.time() - 120, time.time() - 120))
+    assert probe() != 0
+
+
+def test_large_import_parser_refreshes_progress_heartbeat(monkeypatch):
+    from mailing.services import recipient_lists  # noqa: PLC0415 - Django initialization
+    beats = []
+    monkeypatch.setattr(recipient_lists, "record_db_heartbeat", lambda: beats.append(True))
+    recipient_lists.parse_import_members(b"invalid-json\n" * 200)
+    assert len(beats) == 2

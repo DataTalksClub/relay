@@ -9,6 +9,7 @@ from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
 
+from mailing.db_retry import record_db_heartbeat
 from mailing.models import (
     RecipientList,
     RecipientListImportJob,
@@ -739,6 +740,7 @@ def process_pending_recipient_list_import_jobs(*, limit=25):
     )
     for job_id in job_ids:
         job = process_recipient_list_import_job(job_id)
+        record_db_heartbeat()
         processed += 1
         if job.status == RecipientListImportJobStatus.SUCCEEDED:
             succeeded += 1
@@ -800,6 +802,8 @@ def parse_import_members(content):
     parsed_members = []
     failed_rows = []
     for line_number, line in enumerate(text.splitlines(), start=1):
+        if line_number % 100 == 0:
+            record_db_heartbeat()
         if not line.strip():
             continue
         try:
@@ -832,6 +836,7 @@ def apply_import_members(job_id, parsed_members, *, content_sha256):
         incoming_keys.add(source_object_key)
         member, created = upsert_member(recipient_list, source_object_key, member_data)
         upsert_cascade_memberships(recipient_list, member)
+        record_db_heartbeat()
         if created:
             created_count += 1
         else:
@@ -850,6 +855,7 @@ def apply_import_members(job_id, parsed_members, *, content_sha256):
             member.removed_at = removed_at
             member.save(update_fields=["active", "removed_at", "updated_at"])
             upsert_cascade_memberships(recipient_list, member)
+            record_db_heartbeat()
         removed_count = len(absent)
         recipient_list.last_reconciled_at = timezone.now()
         recipient_list.save(update_fields=["last_reconciled_at", "updated_at"])
