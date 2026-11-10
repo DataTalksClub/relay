@@ -17,7 +17,7 @@
         <section class="dk-auth-card" aria-labelledby="auth-error-title">
           <div class="dk-auth-card__head" role="alert">
             <h1 class="dk-auth-card__title" id="auth-error-title">Sign-in error</h1>
-            <p class="dk-auth-card__lede">Authentication could not be completed. No account changes were made.</p>
+            <p class="dk-auth-card__lede">{{ message }}</p>
           </div>
           <div class="dk-auth-card__actions">
             <a class="dk-button dk-button--primary dk-button--lg" href="/auth/login?return_to=/">Try again</a>

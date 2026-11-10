@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import urllib.parse
 import urllib.request
@@ -15,6 +16,32 @@ from django.contrib.auth import get_user_model, login, logout
 from django.http import HttpResponse, HttpResponseRedirect
 from django.template.loader import render_to_string
 from django.views.decorators.http import require_GET, require_POST
+
+logger = logging.getLogger(__name__)
+
+_PROVIDER_ERROR_CODES = frozenset(
+    {
+        "access_denied",
+        "invalid_client",
+        "invalid_grant",
+        "invalid_request",
+        "invalid_scope",
+        "login_required",
+        "server_error",
+        "temporarily_unavailable",
+        "unauthorized_client",
+        "unsupported_response_type",
+    }
+)
+
+_AUTH_ERROR_MESSAGES = {
+    "provider": "The sign-in provider could not complete authentication. Try again or contact Relay support. No account changes were made.",
+    "session": "This sign-in session expired or was interrupted. Start a fresh sign-in. No account changes were made.",
+    "verification": "Relay could not verify the sign-in response. Contact Relay support. No account changes were made.",
+    "workspace": "Sign in with a verified Google Workspace account ending in @datatalks.club. No account changes were made.",
+}
+
+_DEFAULT_AUTH_ERROR_MESSAGE = "Authentication could not be completed. No account changes were made."
 
 
 def configured():
@@ -66,8 +93,13 @@ def _security_headers(response):
     return response
 
 
-def _error_redirect():
-    response = HttpResponseRedirect("/auth/error")
+def _error_redirect(reason=""):
+    if reason not in _AUTH_ERROR_MESSAGES:
+        reason = ""
+    location = "/auth/error"
+    if reason:
+        location = f"{location}?{urllib.parse.urlencode({'reason': reason})}"
+    response = HttpResponseRedirect(location)
     response.status_code = 303
     return _security_headers(response)
 
@@ -121,7 +153,7 @@ def _exchange(code, verifier):
 
 
 def _verify(id_token):
-    key = jwt.PyJWKClient(settings.AUTH_JWKS_URL).get_signing_key_from_jwt(id_token)
+    key = jwt.PyJWKClient(settings.AUTH_JWKS_URL, timeout=15).get_signing_key_from_jwt(id_token)
     return jwt.decode(
         id_token,
         key.key,
@@ -136,24 +168,58 @@ def _verify(id_token):
 def callback(request):
     pending = request.session.pop("oidc", None)
     code, state = request.GET.get("code", ""), request.GET.get("state", "")
-    if not pending or not code or not hmac.compare_digest(state, str(pending.get("state", ""))):
-        return _error_redirect()
+    if not pending or not state or not hmac.compare_digest(state, str(pending.get("state", ""))):
+        logger.warning(
+            "relay_oidc_callback_rejected reason=session_state pending=%s code_present=%s state_present=%s",
+            bool(pending),
+            bool(code),
+            bool(state),
+        )
+        return _error_redirect("session")
+    provider_error = request.GET.get("error", "")
+    if provider_error:
+        description = request.GET.get("error_description", "")[:1024].lower()
+        workspace_restriction = (
+            provider_error == "invalid_request"
+            and "verified account" in description
+            and "approved workspace domain" in description
+        )
+        category = "workspace" if workspace_restriction else "provider"
+        safe_code = provider_error if provider_error in _PROVIDER_ERROR_CODES else "other"
+        logger.warning(
+            "relay_oidc_provider_error code=%s category=%s description_present=%s",
+            safe_code,
+            category,
+            bool(description),
+        )
+        return _error_redirect(category)
+    if not code:
+        logger.warning("relay_oidc_callback_rejected reason=missing_code")
+        return _error_redirect("provider")
     try:
         claims = _verify(_exchange(code, pending["verifier"])["id_token"])
-    except Exception:
-        return _error_redirect()
+    except Exception as exc:  # provider and JWKS errors can contain credential-bearing details
+        logger.error("relay_oidc_token_verification_failed exception_type=%s", type(exc).__name__)
+        return _error_redirect("provider")
     if not hmac.compare_digest(str(claims.get("nonce", "")), str(pending.get("nonce", ""))):
-        return _error_redirect()
+        logger.warning("relay_oidc_callback_rejected reason=nonce_mismatch")
+        return _error_redirect("verification")
     email = claims.get("email")
     if not isinstance(email, str) or claims.get("email_verified") is not True:
-        return _error_redirect()
+        logger.warning(
+            "relay_oidc_callback_rejected reason=unverified_email_claim email_present=%s email_verified=%s",
+            isinstance(email, str) and bool(email),
+            claims.get("email_verified") is True,
+        )
+        return _error_redirect("verification")
     email = email.lower()
     model = get_user_model()
     user = model.objects.filter(email__iexact=email).first()
     if user is None:
         user = model.objects.create_user(username=email, email=email)
     if not user.is_active:
-        return _error_redirect()
+        logger.warning("relay_oidc_callback_rejected reason=inactive_user")
+        return _error_redirect("verification")
     changed = []
     if user.email != email:
         user.email = email
@@ -168,8 +234,14 @@ def callback(request):
 
 
 @require_GET
-def auth_error(_request):
-    response = HttpResponse(render_to_string("auth_error.html"), status=403, content_type="text/html; charset=utf-8")
+def auth_error(request):
+    reason = request.GET.get("reason", "")
+    message = _AUTH_ERROR_MESSAGES.get(reason, _DEFAULT_AUTH_ERROR_MESSAGE)
+    response = HttpResponse(
+        render_to_string("auth_error.html", {"message": message}),
+        status=403,
+        content_type="text/html; charset=utf-8",
+    )
     # Only the page's own static assets: the dakit bundle, its fonts and the
     # theme boot script.
     response["Content-Security-Policy"] = (
