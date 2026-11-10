@@ -117,10 +117,14 @@ def authenticate_bearer_token(authorization_header):
     if raw_api_key.startswith("relay_admin_"):
         return AuthResult(client=None, error="invalid_api_key")
     public_id = public_id_from_raw_key(raw_api_key)
-    if not public_id:
-        return AuthResult(client=None, error="invalid_api_key")
     api_keys = ClientApiKey.objects.select_related("client", "client__organization").filter(revoked_at__isnull=True)
-    api_keys = api_keys.filter(public_id=public_id)
+    if public_id:
+        api_keys = api_keys.filter(public_id=public_id)
+    else:
+        # Compatibility for explicitly provisioned exact tokens that predate
+        # the public-id format. Resolve them by the fast verifier only: an
+        # unknown prefixless token never scans Python rows or runs PBKDF2.
+        api_keys = api_keys.filter(key_fast_hash=fast_hash_api_key(raw_api_key))
 
     for api_key in api_keys:
         if check_api_key_fast(raw_api_key, api_key.key_fast_hash):
@@ -128,7 +132,7 @@ def authenticate_bearer_token(authorization_header):
                 return AuthResult(client=None, error="inactive_client")
             _record_api_key_usage(api_key, now=timezone.now())
             return AuthResult(client=api_key.client)
-        if not api_key.key_fast_hash and check_api_key(raw_api_key, api_key.key_hash):
+        if public_id and not api_key.key_fast_hash and check_api_key(raw_api_key, api_key.key_hash):
             # Legacy PBKDF2-only key (pre-fast-hash, transfer import, or a
             # rollback): upgrade to the fast verifier on the same write that
             # records usage, so only this request pays PBKDF2.
