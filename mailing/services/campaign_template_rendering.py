@@ -21,7 +21,7 @@ def _render_source(client_id, template_key, template_version):
 
 def render_campaign_fields(campaign, recipient=None, *, context_overrides=None):
     """Return subject and bodies for a static or template-backed campaign."""
-    if not campaign.template_key:
+    if not getattr(campaign, "template_key", None):
         return {
             "subject": campaign.subject,
             "html_body": campaign.html_body,
