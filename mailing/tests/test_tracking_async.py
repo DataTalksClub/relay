@@ -10,6 +10,7 @@ import json
 import threading
 from datetime import timedelta
 from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from django.db import DatabaseError, OperationalError
@@ -34,10 +35,15 @@ from mailing.models import (
     SubscriptionStatus,
 )
 from mailing.services import queue_monitor, tracking
+from mailing.services.public_urls import click_redirect_url
 from mailing.services.tokens import ensure_campaign_recipient_tokens
 from mailing.tests.task_helpers import drain_queue
 
 pytestmark = pytest.mark.django_db
+
+
+def _signed_click_params(token, destination):
+    return parse_qs(urlparse(click_redirect_url(token, destination)).query)
 
 
 @pytest.fixture
@@ -80,7 +86,9 @@ def test_tracking_web_path_is_lookup_plus_insert_only(client, recipient, no_row_
         if kind == "open":
             response = client.get(reverse("mailing:tracking_open", args=[token]))
         else:
-            response = client.get(reverse("mailing:tracking_click", args=[token]), {"u": "https://example.com/a"})
+            response = client.get(
+                reverse("mailing:tracking_click", args=[token]), _signed_click_params(token, "https://example.com/a")
+            )
 
     assert response.status_code == (200 if kind == "open" else 302)
     assert no_row_locks == []
@@ -95,7 +103,9 @@ def test_click_still_redirects_when_enqueue_fails(client, recipient, caplog):
     token = ensure_campaign_recipient_tokens(recipient).tracking_token
     broken = mock.Mock(**{"enqueue.side_effect": DatabaseError("down")})
     with mock.patch("mailing.tasks.process_tracking_event", broken):
-        response = client.get(reverse("mailing:tracking_click", args=[token]), {"u": "https://example.com/a"})
+        response = client.get(
+            reverse("mailing:tracking_click", args=[token]), _signed_click_params(token, "https://example.com/a")
+        )
 
     assert response.status_code == 302
     assert response.headers["Location"] == "https://example.com/a"
@@ -107,7 +117,9 @@ def test_worker_uses_request_time_and_counters_are_exact_after_drain(client, rec
     before = timezone.now()
     for _ in range(3):
         client.get(reverse("mailing:tracking_open", args=[token]))
-    client.get(reverse("mailing:tracking_click", args=[token]), {"u": "https://example.com/a"})
+    client.get(
+        reverse("mailing:tracking_click", args=[token]), _signed_click_params(token, "https://example.com/a")
+    )
 
     assert drain_queue("tracking") == 4
 
@@ -198,7 +210,9 @@ def test_ses_webhook_is_capped_per_process(client, monkeypatch, caplog):
 
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "5"
-    assert "ses_webhook_concurrency_limited" in caplog.text
+    assert response.headers["X-Relay-503-Reason"] == "webhook_busy"
+    assert '"event":"http_5xx"' in caplog.text
+    assert '"reason":"webhook_busy"' in caplog.text
     assert not DBTaskResult.objects.exists()
 
 

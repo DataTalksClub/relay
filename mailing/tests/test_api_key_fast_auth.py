@@ -90,11 +90,20 @@ def test_wrong_secret_rejected_without_match(raw_key):
         # Unknown public id: zero candidates, no hashing at all.
         unknown = authenticate_bearer_token("Bearer relay_nosuchid_abcdefghij123456")
         assert not unknown.is_authenticated
-    # Right public id, wrong secret: fast compare fails, PBKDF2 fallback runs
-    # (legacy safety net) and still rejects.
-    result = authenticate_bearer_token(f"Bearer relay_{public_id}_wrongsecretwrongsecret")
+        # A fast-hash key with the right public id and wrong secret must also
+        # avoid PBKDF2; only rows with an empty fast hash are legacy keys.
+        result = authenticate_bearer_token(f"Bearer relay_{public_id}_wrongsecretwrongsecret")
     assert not result.is_authenticated
     assert result.error == "invalid_api_key"
+
+
+def test_prefixless_malformed_token_does_not_check_any_stored_key(raw_key):
+    with mock.patch.object(auth_service, "check_api_key") as check_legacy:
+        result = authenticate_bearer_token("Bearer x")
+
+    assert not result.is_authenticated
+    assert result.error == "invalid_api_key"
+    check_legacy.assert_not_called()
 
 
 def test_revoked_key_rejected(raw_key, api_client_record):
@@ -127,6 +136,24 @@ def test_legacy_pbkdf2_key_upgrades_to_fast_hash(api_client_record):
     with _forbid_pbkdf2():
         again = authenticate_bearer_token(f"Bearer {raw}")
     assert again.is_authenticated
+
+
+def test_last_used_write_is_throttled_to_once_per_minute(raw_key, api_client_record):
+    result = authenticate_bearer_token(f"Bearer {raw_key}")
+    assert result.is_authenticated
+
+    key = ClientApiKey.objects.get(client=api_client_record)
+    first_used_at = key.last_used_at
+    assert first_used_at is not None
+
+    with CaptureQueriesContext(connection) as ctx:
+        result = authenticate_bearer_token(f"Bearer {raw_key}")
+
+    assert result.is_authenticated
+    updates = [query["sql"] for query in ctx.captured_queries if query["sql"].lstrip().upper().startswith("UPDATE")]
+    assert not updates, updates
+    key.refresh_from_db()
+    assert key.last_used_at == first_used_at
 
 
 def test_admin_key_fast_path():

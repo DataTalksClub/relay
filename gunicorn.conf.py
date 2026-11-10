@@ -11,19 +11,19 @@ web command is intentionally left untouched: the dev/prod deploy workflows
 refuse to overwrite the live web service when it differs from the template,
 and CLI flags override this file. Effective Coolify runtime is therefore
 CLI `--workers 2` + this file's gthread/threads/timeout (verified with
-`gunicorn --print-config`: workers=2, gthread, threads=4). Dockerfile and the
-sandbox deploy pin the same values explicitly.
+`gunicorn --print-config`: workers=2, gthread, threads=8). Dockerfile and the
+sandbox deploy set their own explicit flags.
 """
 
 import os
 
 from relay.gunicorn_logging import ACCESS_LOG_FORMAT
 
-# Web processes only: bound every row-lock wait (relay/settings.py turns this
-# into a Postgres lock_timeout). Workers never load this file, so long batch
-# transactions keep their normal behaviour. 2026-11-09: request threads queued
-# on one campaign row lock until all were busy and the proxy served 503.
-os.environ.setdefault("RELAY_WEB_DB_LOCK_TIMEOUT_MS", "5000")
+# Web processes only: bound row-lock and statement waits. Workers never load
+# this file, so long batch transactions keep their normal behaviour. The
+# shorter lock wait lets requests fail before they pin every web thread.
+os.environ.setdefault("RELAY_WEB_DB_LOCK_TIMEOUT_MS", "2000")
+os.environ.setdefault("RELAY_WEB_DB_STATEMENT_TIMEOUT_MS", "15000")
 
 access_log_format = ACCESS_LOG_FORMAT
 logger_class = "relay.gunicorn_logging.PrivateAccessLogger"

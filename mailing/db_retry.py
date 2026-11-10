@@ -44,6 +44,7 @@ TRANSIENT_DB_ERROR_SNIPPETS = (
     "connection is closed",
     "terminating connection",
     "connection reset",
+    "connection to server was lost",
     "ssl connection has been closed unexpectedly",
     "remaining connection slots are reserved",
     # Concurrent writers; Postgres aborts exactly one of them.

@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -30,11 +31,15 @@ from mailing.services.public_urls import (
     unsubscribe_url,
 )
 from mailing.services.tokens import ensure_campaign_recipient_tokens, get_recipient_by_tracking_token, token_hash
-from mailing.services.tracking import TRANSPARENT_GIF
+from mailing.services.tracking import LEGACY_UNSIGNED_CLICK_CUTOFF, TRANSPARENT_GIF
 from mailing.tests.callback_helpers import create_callback_endpoint
 from mailing.tests.task_helpers import drain_queue
 
 pytestmark = pytest.mark.django_db
+
+
+def _signed_click_params(tracking_token, destination):
+    return parse_qs(urlparse(click_redirect_url(tracking_token, destination)).query)
 
 
 @pytest.fixture
@@ -140,7 +145,9 @@ def test_public_url_helpers_generate_absolute_email_urls(recipient):
     assert parsed.scheme == "https"
     assert parsed.netloc == "mail.example.com"
     assert parsed.path == f"/t/c/{tracking_token}"
-    assert parse_qs(parsed.query) == {"u": [destination]}
+    params = parse_qs(parsed.query)
+    assert params["u"] == [destination]
+    assert len(params["s"][0]) == 64
 
     assert urls["open_pixel_url"].endswith(f"/t/o/{tracking_token}.gif")
     assert urls["click_redirect_url"] == click_url
@@ -202,8 +209,9 @@ def test_click_redirect_records_repeated_clicks_and_redirects(client, recipient)
     url = reverse("mailing:tracking_click", args=[token])
     destination = "https://example.com/path?x=1"
 
-    first = client.get(url, {"u": destination})
-    second = client.get(url, {"u": destination})
+    params = _signed_click_params(token, destination)
+    first = client.get(url, params)
+    second = client.get(url, params)
     assert drain_queue("tracking") == 2
 
     recipient.refresh_from_db()
@@ -233,7 +241,7 @@ def test_tracking_open_and_click_emit_cmp_callbacks_only(client, recipient, app_
     open_response = client.get(reverse("mailing:tracking_open", args=[token]))
     click_response = client.get(
         reverse("mailing:tracking_click", args=[token]),
-        {"u": "https://example.com/path"},
+        _signed_click_params(token, "https://example.com/path"),
     )
     drain_queue("tracking")
 
@@ -253,7 +261,7 @@ def test_tracking_open_and_click_emit_cmp_callbacks_only(client, recipient, app_
 )
 def test_click_redirect_rejects_missing_or_unsafe_urls(client, recipient, destination):
     token = ensure_campaign_recipient_tokens(recipient).tracking_token
-    response = client.get(reverse("mailing:tracking_click", args=[token]), {"u": destination})
+    response = client.get(reverse("mailing:tracking_click", args=[token]), _signed_click_params(token, destination))
 
     recipient.refresh_from_db()
     assert response.status_code == 400
@@ -262,10 +270,49 @@ def test_click_redirect_rejects_missing_or_unsafe_urls(client, recipient, destin
 
 
 def test_click_redirect_invalid_token_does_not_mutate(client, recipient):
-    response = client.get(reverse("mailing:tracking_click", args=["missing-token"]), {"u": "https://example.com"})
+    token = "missing-token"
+    response = client.get(
+        reverse("mailing:tracking_click", args=[token]), _signed_click_params(token, "https://example.com")
+    )
 
     assert response.status_code == 400
     assert EmailEvent.objects.count() == 0
+
+
+def test_click_redirect_rejects_foreign_destination_with_valid_token(client, recipient):
+    token = ensure_campaign_recipient_tokens(recipient).tracking_token
+    signed = _signed_click_params(token, "https://example.com/original")
+    response = client.get(
+        reverse("mailing:tracking_click", args=[token]),
+        {"u": "https://evil.example/redirect", "s": signed["s"][0]},
+    )
+
+    assert response.status_code == 400
+    assert EmailEvent.objects.count() == 0
+
+
+def test_unsigned_click_is_only_accepted_for_pre_cutoff_send(client, recipient):
+    token = ensure_campaign_recipient_tokens(recipient).tracking_token
+    destination = "https://example.com/legacy"
+    recipient.sent_at = LEGACY_UNSIGNED_CLICK_CUTOFF - timedelta(days=1)
+    recipient.save(update_fields=["sent_at", "updated_at"])
+
+    legacy = client.get(reverse("mailing:tracking_click", args=[token]), {"u": destination})
+
+    assert legacy.status_code == 302
+    assert legacy.headers["Location"] == destination
+
+
+def test_unsigned_click_is_rejected_for_recent_send(client, recipient):
+    token = ensure_campaign_recipient_tokens(recipient).tracking_token
+    recipient.sent_at = LEGACY_UNSIGNED_CLICK_CUTOFF
+    recipient.save(update_fields=["sent_at", "updated_at"])
+    response = client.get(
+        reverse("mailing:tracking_click", args=[token]),
+        {"u": "https://example.com/recent"},
+    )
+
+    assert response.status_code == 400
 
 
 FORBIDDEN_PUBLIC_TERMS = [

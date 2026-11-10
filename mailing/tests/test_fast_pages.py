@@ -14,6 +14,7 @@ from unittest import mock
 import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.sessions.backends.db import SessionStore
+from django.db import OperationalError
 from django.db import connection as _connection
 from django.test.utils import CaptureQueriesContext as _CaptureQueriesContext
 from django.urls import reverse
@@ -168,6 +169,21 @@ def test_readiness_ok(client):
         response = client.get(reverse("mailing:readiness"))
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
+
+
+def test_liveness_is_database_free(client):
+    with mock.patch("mailing.views.connection.cursor", side_effect=AssertionError("liveness must not use DB")):
+        response = client.get(reverse("mailing:liveness"))
+    assert response.status_code == 200
+    assert response.json() == {"status": "alive", "service": "relay"}
+
+
+def test_readiness_identifies_transient_database_failure(client):
+    with mock.patch("mailing.views.connection.cursor") as cursor:
+        cursor.return_value.__enter__.return_value.execute.side_effect = OperationalError("connection refused")
+        response = client.get(reverse("mailing:readiness"))
+    assert response.status_code == 503
+    assert response["X-Relay-503-Reason"] == "readiness_database_unavailable"
 
 
 def test_dashboard_query_budget(client, staff_user, client_record, seeded):

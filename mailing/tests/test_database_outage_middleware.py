@@ -18,11 +18,15 @@ class DatabaseOutageMiddlewareTests(TestCase):
 
         middleware = DatabaseOutageMiddleware(failing_view)
         request = self.factory.get("/api/tasks")
-        response = middleware(request)
+        with self.assertLogs("mailing.middleware", level="ERROR") as logs:
+            response = middleware(request)
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response["Content-Type"], "application/json")
         self.assertEqual(response["Retry-After"], "30")
+        self.assertEqual(response["X-Relay-503-Reason"], "database_unavailable")
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(json.loads(logs.records[0].getMessage())["reason"], "database_unavailable")
         self.assertEqual(
             json.loads(response.content),
             {
@@ -33,7 +37,7 @@ class DatabaseOutageMiddlewareTests(TestCase):
             },
         )
 
-    def test_api_post_database_error_returns_json_503(self):
+    def test_nontransient_api_database_error_returns_json_500(self):
         def failing_view(request):
             raise DatabaseError("relation \"mailing_clientapikey\" does not exist")
 
@@ -41,18 +45,27 @@ class DatabaseOutageMiddlewareTests(TestCase):
         request = self.factory.post("/api/transactional/send", data={"test": 1}, content_type="application/json")
         response = middleware(request)
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 500)
         self.assertEqual(response["Content-Type"], "application/json")
-        self.assertEqual(response["Retry-After"], "30")
         self.assertEqual(
             json.loads(response.content),
             {
                 "error": {
-                    "code": "service_unavailable",
-                    "message": "Database is temporarily unavailable. Please retry later.",
+                    "code": "database_error",
+                    "message": "The request failed while accessing the database.",
                 }
             },
         )
+
+    def test_database_lock_timeout_returns_json_409(self):
+        def failing_view(request):
+            raise OperationalError("canceling statement due to lock timeout")
+
+        response = DatabaseOutageMiddleware(failing_view)(self.factory.get("/api/contacts"))
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response["X-Relay-Error-Reason"], "database_lock_timeout")
+        self.assertEqual(json.loads(response.content)["error"]["code"], "database_lock_timeout")
 
     def test_json_accept_header_returns_json_503(self):
         def failing_view(request):
@@ -83,7 +96,7 @@ class DatabaseOutageMiddlewareTests(TestCase):
     def test_process_exception_handles_database_error(self):
         middleware = DatabaseOutageMiddleware(lambda req: HttpResponse("ok"))
         request = self.factory.get("/api/contacts")
-        response = middleware.process_exception(request, OperationalError("db down"))
+        response = middleware.process_exception(request, OperationalError("connection refused"))
 
         self.assertIsNotNone(response)
         self.assertEqual(response.status_code, 503)

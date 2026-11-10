@@ -25,7 +25,7 @@ on:
         type: string
 
 concurrency:
-  group: relay-production
+  group: relay-deploy
   cancel-in-progress: false
 
 permissions:

@@ -84,6 +84,13 @@ concurrency group and never cancel each other.
 The workflow needs no AWS credentials; it uses the `development` GitHub
 environment and the `COOLIFY_RELAY_DEV_SERVICE_UUID` secret.
 
+Relay exposes `/health/live` as a DB-free process liveness check and
+`/health/ready` as the DB-backed readiness check. The rolling-web sidecar,
+Traefik service labels, and their probe URL are maintained in the separate
+[machine-management rolling-web deployment](https://github.com/alexeygrigorev/machine-management/blob/main/deployments/coolify-rolling-web.md).
+Changes to that routing and probe configuration belong with the shared
+rolling-web infrastructure owner.
+
 ### Migration startup gate
 
 The release image runs `scripts/container-entrypoint.sh` before every role's
