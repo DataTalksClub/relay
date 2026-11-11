@@ -14,13 +14,13 @@ ACTIVE_CLIENT_SESSION_KEY = "operator_active_client_id"
 SERVICE_URL_NAMES = frozenset(
     {
         "service_home",
-        "inbound_list", "inbound_message_detail", "inbound_message_raw",
+        "inbound_list", "inbound_message_detail", "inbound_message_raw", "inbound_block_link", "inbound_unblock_link", "blocked_sender_delete",
         "inbound_address_list", "inbound_address_create", "inbound_address_archive",
-        "dmarc_report_list", "dmarc_report_detail", "dmarc_summary",
+        "dmarc_report_list", "dmarc_report_detail", "dmarc_summary", "dmarc_report_xml", "dmarc_report_attachment",
         "ses_quota",
         "client_list", "client_create",
         "api_docs", "api_docs_json", "api_docs_workflow", "api_docs_reference", "api_docs_legacy",
-        "admin_api_keys",
+        "admin_api_keys", "admin_api_key_revoke",
     }
 )
 SERVICE_NAMESPACES = frozenset({"jobs"})

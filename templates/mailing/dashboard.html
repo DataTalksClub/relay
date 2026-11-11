@@ -89,7 +89,7 @@
       </div>
       <div class="stat">
         <span class="stat-label"><span class="stat-dot{% if dashboard.attention_items %} warning{% endif %}"></span>Delivery incidents</span>
-        <a class="stat-link stat-value" href="#deliverability"><span class="data-num">{{ dashboard.attention_items|length }}</span></a>
+        <a class="stat-link stat-value" href="#deliverability">{% if dashboard.attention_items %}Recent incidents{% else %}None recent{% endif %}</a>
       </div>
       <div class="stat">
         <span class="stat-label">Waiting emails</span>
@@ -186,7 +186,7 @@
       {% endif %}
       {% if dashboard.recent_complaints %}
         <details class="secondary-section">
-          <summary>Recent complaints ({{ dashboard.recent_complaints|length }})</summary>
+          <summary>Latest complaints (up to 10)</summary>
           <p class="helptext">Recipient · Campaign · Type · Time</p>
           <div class="compact-list">
             {% for item in dashboard.recent_complaints %}

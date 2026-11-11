@@ -81,7 +81,7 @@ def test_dashboard_collapses_sub_threshold_complaints_and_recipients(campaign):
     add_complaint(campaign, "hidden-recipient@example.com")
     html = render_to_string("mailing/dashboard.html", {"active_client": campaign.client, "dashboard": dashboard_context(campaign.client)})
     assert "No campaign above the 0.1% alert threshold" in html
-    assert "<details" in html and "below the threshold" in html and "Recent complaints (1)" in html
+    assert "<details" in html and "below the threshold" in html and "Latest complaints (up to 10)" in html
     # Recipient and campaign rows exist only inside the collapsed <details>.
     panel = html[html.index('id="ses-complaints"') : html.index('id="background-processing"')]
     assert "hidden-recipient@example.com" not in panel.split("<details")[0]

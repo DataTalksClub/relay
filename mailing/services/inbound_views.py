@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from mailing.models import (
     BlockedSender,
-    DmarcArchive,
+    DmarcReport,
     InboundAddress,
     InboundMessage,
     InboundMessageState,
@@ -34,26 +34,29 @@ def address_domain(value):
     return normalize_address(value).partition("@")[2]
 
 
-# Subjects the big mailbox providers use for aggregate reports. Anchored at the
-# start so a person writing "question about the DMARC report" is not matched, and
-# only trusted together with an attachment (the report itself).
-DMARC_REPORT_SUBJECT_REGEX = r"^\s*(\[[^]]*\]\s*)?(report domain:|dmarc aggregate report|dmarc aggregation report)"
+# RFC 7489 section 7.2.1.1 subject: "Report Domain: <d> Submitter: <s> Report-ID: <id>".
+# Anchored at the start (an optional "[Preview]"-style tag aside) so a person writing
+# "Report domain: ... is failing" is not matched; it also has to carry an attachment.
+DMARC_REPORT_SUBJECT_REGEX = r"^\s*(\[[^]]*\]\s*)?report domain:\s*\S+.*submitter:"
 
 
 def automated_dmarc_q():
     """Messages that are automated DMARC aggregate reports (hidden from the default list, never deleted).
 
-    Deliberately narrower than the ingest heuristic in `mailing.services.dmarc`:
-    hiding a real message is worse than showing a report. A message qualifies if
-    it was archived as a DMARC report, comes from an exact known report sender
-    address, or has an anchored report subject plus at least one attachment.
+    Deliberately much narrower than the ingest heuristic in `mailing.services.dmarc`,
+    because hiding a real message is worse than showing a report. Every clause needs
+    evidence of an actual report: a successfully parsed aggregate report, or an
+    attachment together with either an exact known report sender address or the
+    RFC 7489 report subject. Returns (filter, annotations) to apply to a queryset.
     """
-    archived = Exists(DmarcArchive.objects.filter(message=OuterRef("pk")))
+    parsed = Exists(DmarcReport.objects.filter(attachment__archive__message=OuterRef("pk")))
     return (
-        Q(sender_address__in=sorted(DMARC_SENDERS))
-        | Q(archived_flag=True)
-        | (Q(subject__iregex=DMARC_REPORT_SUBJECT_REGEX) & Q(attachment_count__gt=0))
-    ), archived
+        Q(parsed_dmarc_report=True)
+        | (
+            Q(attachment_count__gt=0)
+            & (Q(sender_address__in=sorted(DMARC_SENDERS)) | Q(subject__iregex=DMARC_REPORT_SUBJECT_REGEX))
+        )
+    ), {"parsed_dmarc_report": parsed}
 
 
 def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page=50, show_automated=False):
@@ -64,14 +67,10 @@ def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page
     """
     queryset = InboundMessage.objects.select_related("inbound_address", "blocked_rule")
 
-    automated_q, archived = automated_dmarc_q()
-    queryset = queryset.annotate(archived_flag=archived)
+    automated_q, annotations = automated_dmarc_q()
+    queryset = queryset.annotate(**annotations)
     if state:
         queryset = queryset.filter(state=state)
-    hidden_count = 0
-    if not show_automated:
-        hidden_count = queryset.filter(automated_q).count()
-        queryset = queryset.exclude(automated_q)
 
     query = (query or "").strip()
     if query:
@@ -85,6 +84,12 @@ def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page
     address = normalize_address(address)
     if address:
         queryset = queryset.filter(recipient_address__iexact=address)
+
+    # Counted after every other filter, so the note matches what Show would reveal.
+    hidden_count = 0
+    if not show_automated:
+        hidden_count = queryset.filter(automated_q).count()
+        queryset = queryset.exclude(automated_q)
 
     total = queryset.count()
     per_page = max(1, min(int(per_page or 50), 200))
@@ -119,7 +124,7 @@ def unread_sender_count():
     is one sender.
     """
     return (
-        InboundMessage.objects.annotate(archived_flag=automated_dmarc_q()[1])
+        InboundMessage.objects.annotate(**automated_dmarc_q()[1])
         .filter(state=InboundMessageState.RECEIVED)
         .exclude(automated_dmarc_q()[0])
         .exclude(sender_address="")
