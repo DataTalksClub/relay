@@ -326,6 +326,8 @@ class DashboardContext:
     transactional_backlog_count: int
     complaint_rates: list
     recent_complaints: list
+    complaints_over_threshold: list
+    complaints_under_threshold: list
 
 
 def rate(numerator: int, denominator: int) -> str:
@@ -381,6 +383,7 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
         .order_by("organization__slug", "slug")[:4]
     ]
 
+    complaint_rates = campaign_complaint_rates(client)
     return DashboardContext(
         recent_campaigns=recent_campaigns,
         attention_items=dashboard_attention_items(client),
@@ -390,8 +393,10 @@ def dashboard_context(client: Client | None = None) -> DashboardContext:
         worker_waiting_count=worker_waiting_count,
         integration_clients=integration_clients,
         transactional_backlog_count=transactional_backlog_count,
-        complaint_rates=campaign_complaint_rates(client),
+        complaint_rates=complaint_rates,
         recent_complaints=recent_complaints(client, limit=10),
+        complaints_over_threshold=[row for row in complaint_rates if row.over_threshold],
+        complaints_under_threshold=[row for row in complaint_rates if not row.over_threshold],
     )
 
 

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Overview · Relay{% endblock %}
-{% block topbar_title %}{% if active_client %}{{ active_client.name }}{% else %}Datamailer{% endif %}{% endblock %}
+{% block topbar_title %}{% if active_client %}{{ active_client.name }}{% else %}Relay{% endif %}{% endblock %}
 
 {% block content %}
   <div class="page-header">
@@ -82,69 +82,24 @@
     </div>
   {% endif %}
 
-    <section class="section panel" aria-labelledby="ses-complaints">
-      {% include "_collection_header.html" with title="SES complaints" title_id="ses-complaints" extra_class="panel-header" description="Spam complaints reported by mailbox providers via SES. Complained contacts are suppressed automatically. Alert fires above 0.1% per campaign (last 30 days)." only %}
-      {% if dashboard.complaint_rates %}
-        <div class="compact-list">
-          {% for row in dashboard.complaint_rates %}
-            <div class="compact-row">
-              <div class="compact-row-main">
-                <span class="badge {% if row.over_threshold %}danger{% else %}neutral{% endif %}">{{ row.rate_display }}</span>
-                <a href="{% url 'mailing:campaign_detail' row.campaign_id %}"><strong>{{ row.campaign_name }}</strong></a>
-              </div>
-              <div class="compact-row-meta"><span class="muted">{{ row.complaints }} complaint{{ row.complaints|pluralize }} / {{ row.sent }} sent</span></div>
-            </div>
-          {% endfor %}
-        </div>
-      {% endif %}
-      {% if dashboard.recent_complaints %}
-        <div class="compact-list">
-          {% for item in dashboard.recent_complaints %}
-            <div class="compact-row">
-              <div class="compact-row-main"><strong>{{ item.recipient }}</strong></div>
-              <div class="compact-row-meta">
-                <span class="muted">{{ item.campaign_name }}</span>
-                <span class="muted">{{ item.complaint_type }}</span>
-                <span class="helptext"><span class="data-time">{{ item.occurred_at|date:"M j, Y H:i" }}</span></span>
-              </div>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="empty-state"><strong>No complaints recorded</strong></div>
-      {% endif %}
-    </section>
-
-    <section class="section panel" aria-labelledby="deliverability-attention">
-      {% url 'mailing:contact_search' as contact_search_url %}
-      {% include "_collection_header.html" with title="Deliverability Attention" title_id="deliverability-attention" extra_class="panel-header" trail_url=contact_search_url trail_label="Review contacts" description="Recent failures, bounces, and complaints in this client. Open a contact to investigate." only %}
-      {% if dashboard.attention_items %}
-        <div class="compact-list">
-          {% for item in dashboard.attention_items %}
-            <div class="compact-row">
-              <div class="compact-row-main">
-                <span class="badge {{ item.badge.tone }}">{{ item.badge.label }}</span>
-                {% if item.href %}
-                  <a href="{{ item.href }}"><strong>{{ item.title }}</strong></a>
-                {% else %}
-                  <strong>{{ item.title }}</strong>
-                {% endif %}
-              </div>
-              <div class="compact-row-meta">
-                {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
-                <span class="muted">{{ item.detail }}</span>
-                {% if item.occurred_at %}<span class="helptext"><span class="data-time">{{ item.occurred_at|date:"M j, Y H:i" }}</span></span>{% endif %}
-              </div>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="empty-state">
-          <strong>No recent delivery incidents found</strong>
-          <p>Routine subscription exclusions are not incidents. Review a contact to understand why they cannot receive marketing.</p>
-        </div>
-      {% endif %}
-    </section>
+    <div class="stats-grid dashboard-status" role="group" aria-label="Status summary">
+      <div class="stat">
+        <span class="stat-label"><span class="stat-dot{% if dashboard.complaints_over_threshold %} danger{% endif %}"></span>Complaints</span>
+        <a class="stat-link stat-value" href="#complaints">{% if dashboard.complaints_over_threshold %}{{ dashboard.complaints_over_threshold|length }} above 0.1%{% else %}None above 0.1%{% endif %}</a>
+      </div>
+      <div class="stat">
+        <span class="stat-label"><span class="stat-dot{% if dashboard.attention_items %} warning{% endif %}"></span>Delivery incidents</span>
+        <a class="stat-link stat-value" href="#deliverability"><span class="data-num">{{ dashboard.attention_items|length }}</span></a>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Waiting emails</span>
+        <a class="stat-link stat-value" href="{% url 'mailing:transactional_queue' %}"><span class="data-num">{{ dashboard.transactional_backlog_count }}</span></a>
+      </div>
+      <div class="stat">
+        <span class="stat-label"><span class="stat-dot {% if dashboard.worker_health_tone == 'success' %}success{% elif dashboard.worker_health_tone == 'danger' %}danger{% endif %}"></span>Background processing</span>
+        <a class="stat-link stat-value" href="#background-processing">{{ dashboard.worker_health_label }}</a>
+      </div>
+    </div>
 
   {% url 'mailing:campaign_create' as campaign_create_url %}
   {% url 'mailing:campaign_list' as campaign_list_url %}
@@ -178,6 +133,78 @@
       </div>
     {% endif %}
   </section>
+
+    <section class="section panel" id="deliverability" aria-labelledby="deliverability-attention">
+      {% url 'mailing:contact_search' as contact_search_url %}
+      {% include "_collection_header.html" with title="Deliverability Attention" title_id="deliverability-attention" extra_class="panel-header" trail_url=contact_search_url trail_label="Review contacts" description="Recent failures, bounces, and complaints in this client. Open a contact to investigate." only %}
+      {% if dashboard.attention_items %}
+        <div class="compact-list">
+          {% for item in dashboard.attention_items %}
+            <div class="compact-row">
+              <div class="compact-row-main">
+                <span class="badge {{ item.badge.tone }}">{{ item.badge.label }}</span>
+                {% if item.href %}
+                  <a href="{{ item.href }}"><strong>{{ item.title }}</strong></a>
+                {% else %}
+                  <strong>{{ item.title }}</strong>
+                {% endif %}
+              </div>
+              <div class="compact-row-meta">
+                {% if item.context %}<span class="muted">{{ item.context }}</span>{% endif %}
+                <span class="muted">{{ item.detail }}</span>
+                {% if item.occurred_at %}<span class="helptext"><span class="data-time">{{ item.occurred_at|date:"M j, Y H:i" }}</span></span>{% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state"><strong>No recent delivery incidents found</strong></div>
+      {% endif %}
+    </section>
+
+    <section class="section panel" id="complaints" aria-labelledby="ses-complaints">
+      {% include "_collection_header.html" with title="SES complaints" title_id="ses-complaints" extra_class="panel-header" description="Share of a campaign's recipients who marked it as spam, as reported by mailbox providers through SES. Relay alerts above 0.1% per campaign over the last 30 days." only %}
+      {% if dashboard.complaints_over_threshold %}
+        <p><span class="badge danger">{{ dashboard.complaints_over_threshold|length }} campaign{{ dashboard.complaints_over_threshold|length|pluralize }} above the 0.1% alert threshold</span></p>
+        <div class="compact-list">
+          {% for row in dashboard.complaints_over_threshold %}
+            {% include "mailing/_complaint_rate_row.html" %}
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No campaign above the 0.1% alert threshold in the last 30 days.</p>
+      {% endif %}
+      {% if dashboard.complaints_under_threshold %}
+        <details class="secondary-section">
+          <summary>{{ dashboard.complaints_under_threshold|length }} campaign{{ dashboard.complaints_under_threshold|length|pluralize }} with complaints below the threshold</summary>
+          <div class="compact-list">
+            {% for row in dashboard.complaints_under_threshold %}
+              {% include "mailing/_complaint_rate_row.html" %}
+            {% endfor %}
+          </div>
+        </details>
+      {% endif %}
+      {% if dashboard.recent_complaints %}
+        <details class="secondary-section">
+          <summary>Recent complaints ({{ dashboard.recent_complaints|length }})</summary>
+          <p class="helptext">Recipient · Campaign · Type · Time</p>
+          <div class="compact-list">
+            {% for item in dashboard.recent_complaints %}
+              <div class="compact-row">
+                <div class="compact-row-main"><strong>{{ item.recipient }}</strong></div>
+                <div class="compact-row-meta">
+                  <span class="muted">{{ item.campaign_name }}</span>
+                  <span class="muted">{{ item.complaint_type }}</span>
+                  <span class="helptext"><span class="data-time">{{ item.occurred_at|date:"M j, Y H:i" }}</span></span>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </details>
+      {% else %}
+        <div class="empty-state"><strong>No complaints recorded</strong></div>
+      {% endif %}
+    </section>
 
   <section class="section panel" aria-labelledby="background-processing">
     <div class="panel-header">
@@ -231,29 +258,5 @@
     </details>
   </section>
 
-
-
-  <section class="section panel" aria-labelledby="quick-links">
-    <div class="section-header">
-      <div>
-        <h2 id="quick-links">Quick Links</h2>
-        <p class="muted">Common operator workflows.</p>
-      </div>
-    </div>
-    <div class="compact-list">
-      <a class="compact-row" href="{% url 'mailing:audience_list' %}">
-        <strong>Audiences</strong>
-        <span class="helptext">Find members and manage subscriptions.</span>
-      </a>
-      <a class="compact-row" href="{% url 'mailing:contact_search' %}">
-        <strong>Contacts</strong>
-        <span class="helptext">Find a person and explain their email delivery.</span>
-      </a>
-      <a class="compact-row" href="{% url 'mailing:client_detail' active_client.id %}">
-        <strong>Client settings</strong>
-        <span class="helptext">Configure senders, API keys, and integrations.</span>
-      </a>
-    </div>
-  </section>
   {% endif %}
 {% endblock %}

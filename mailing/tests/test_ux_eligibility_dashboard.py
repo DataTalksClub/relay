@@ -117,11 +117,14 @@ def test_dashboard_places_tasks_before_diagnostics_and_prioritizes_open_work(sco
     context = dashboard_context(client)
     assert [item.campaign for item in context.recent_campaigns[:2]] == [working, draft]
     html = render_to_string("mailing/dashboard.html", {"active_client": client, "dashboard": context})
-    assert html.index('id="deliverability-attention"') < html.index('id="recent-campaigns"')
+    # The daily task (campaigns) leads; incidents and complaints follow, diagnostics last.
+    assert html.index('id="recent-campaigns"') < html.index('id="deliverability-attention"') < html.index('id="ses-complaints"')
+    assert html.index('Status summary') < html.index('id="recent-campaigns"')
+    assert "Quick Links" not in html
     # The attention panel uses the shared collection header (padded band, action in the trail).
     assert '<header class="dk-collection-header panel-header">' in html[: html.index('id="deliverability-attention"')][-400:]
-    assert ">Review contacts</a>" in html[html.index('id="deliverability-attention"') : html.index('id="recent-campaigns"')]
-    assert html.index('id="recent-campaigns"') < html.index("Processing diagnostics")
+    assert ">Review contacts</a>" in html[html.index('id="deliverability-attention"') : html.index('id="ses-complaints"')]
+    assert html.index('id="ses-complaints"') < html.index("Processing diagnostics")
     assert "Resume draft" in html
     assert "No recent delivery incidents found" in html
     assert worker_health([]) == ("Processing health unavailable", "neutral")
