@@ -474,13 +474,13 @@ def test_automated_dmarc_reports_are_hidden_from_the_default_list(client, operat
              sender_address="noreply-dmarc-support@google.com", attachment_count=1)
     received(message_id="<yahoo@x>", subject="Report Domain: example.com Submitter: yahoo.com Report-ID: <2>",
              sender_address="postmaster@yahoo.example", attachment_count=1)
-    received(message_id="<known@x>", subject="hello", sender_address="dmarc-noreply@google.com")
+    received(message_id="<known@x>", subject="Notice", sender_address="dmarc-noreply@google.com")  # no attachment: a plain notice
     received(message_id="<real@x>")
 
     page = _list(client, operator).content.decode()
     assert "Question about your pricing" in page
     assert "Report domain: example.com" not in page and "Report Domain: example.com" not in page
-    assert "3 automated DMARC reports hidden" in page
+    assert "2 automated DMARC reports hidden" in page and "Notice" in page
 
     shown = _list(client, operator, automated="show").content.decode()
     assert "Report domain: example.com" in shown and "Report Domain: example.com" in shown
@@ -509,3 +509,14 @@ def test_a_hidden_dmarc_report_stays_openable_by_id(client, operator, address):
     response = client.get(reverse("mailing:inbound_list"), {"message": report.pk})
     assert response.status_code == 200
     assert "Submitter: google.com" in response.content.decode()
+
+
+def test_show_automated_survives_navigation_and_the_count_follows_the_search(client, operator, address):
+    received(message_id="<r1@x>", subject="Report domain: a.example Submitter: google.com Report-ID: 1",
+             sender_address="dmarc-noreply@google.com", attachment_count=1)
+    received(message_id="<real@x>", subject="Pricing question")
+    page = _list(client, operator, q="Pricing question").content.decode()
+    assert "automated DMARC report" not in page  # nothing hidden among the search results
+    shown = _list(client, operator, automated="show").content.decode()
+    assert "automated=show" in shown.split('aria-label="Mailbox state"')[1][:900]
+    assert 'name="automated" value="show"' in shown

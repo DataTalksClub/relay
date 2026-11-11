@@ -44,7 +44,7 @@ from mailing.urls import urlpatterns as client_patterns
 
 pytestmark = pytest.mark.django_db
 
-# service_home is a navigation landing page: it links to screens that each have API parity and shows no data of its own.
+# service_home is a navigation landing page: it only summarises worker health, waiting jobs and unread inbound senders, each of which has its own API elsewhere.
 SESSION_SCOPED_UI_DATA_ROUTES = {"campaign_links_json", "service_home"}
 
 

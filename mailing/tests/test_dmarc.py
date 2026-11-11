@@ -186,3 +186,38 @@ def test_zip_multiple_reports_is_atomic_on_invalid_member(domain):
     assert not DmarcReport.objects.exists()
     assert not DmarcRecord.objects.exists()
     assert InboundDelivery.objects.get().reason == 'dmarc_archived'
+
+
+def _hidden_and_visible():
+    from mailing.services.inbound_views import list_messages  # noqa: PLC0415
+
+    visible = {row.message_id for row in list_messages(state=None)["rows"]}
+    shown = {row.message_id for row in list_messages(state=None, show_automated=True)["rows"]}
+    return shown - visible, visible
+
+
+def _human_mail(subject, sender, message_id, attach=False):
+    message = EmailMessage()
+    message['From'] = sender
+    message['To'] = 'team@example.com'
+    message['Subject'] = subject
+    message['Message-ID'] = message_id
+    message.set_content('Hello, can you look at this?')
+    if attach:
+        message.add_attachment(b'png', maintype='image', subtype='png', filename='screenshot.png')
+    return message.as_bytes()
+
+
+def test_inbox_hides_ingested_reports_but_not_human_mail_the_archiver_also_matched(domain):
+    mailbox(domain, kind='forward', local_part='team', destinations=['own@example.net'])
+    ingest(report_mail('zip', 'dmarc-noreply@google.com'), ['team@example.com'])
+    # The loose ingest heuristic archives all three of these; none is a parsed report, so none may be hidden.
+    ingest(_human_mail('Question about the DMARC report you sent us', 'jane@corp.example', '<h1@x>'), ['team@example.com'])
+    ingest(_human_mail('Notice', 'dmarc-noreply@google.com', '<h2@x>'), ['team@example.com'])
+    ingest(
+        _human_mail('Report domain: example.com is failing, screenshot attached', 'bob@corp.example', '<h3@x>', attach=True),
+        ['team@example.com'],
+    )
+    hidden, visible = _hidden_and_visible()
+    assert hidden == {'<dmarc-proof@example.net>'}
+    assert {'<h1@x>', '<h2@x>', '<h3@x>'} <= visible
