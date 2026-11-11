@@ -108,6 +108,59 @@ def test_link_stats_count_historical_contacts_and_legacy_recipient_events(client
     assert response.json()["links"] == [{"url": url, "total_clicks": 4, "unique_clickers": 2}]
 
 
+def test_link_stats_include_exact_unlinked_source_identities(client, campaign_scope):
+    url = "https://example.com/source-history"
+    legacy = record_click(campaign_scope, "one@example.com", url)
+    EmailEvent.objects.filter(pk=legacy.pk).update(contact=None)
+    record_click(campaign_scope, "one@example.com", url)
+    identities = [
+        ("us19", "list-one", "member-one"),
+        ("us19", "list-one", "member-one"),
+        ("us19", "list-one", "member-two"),
+        ("us19", "list-two", "member-one"),
+        ("us20", "list-one", "member-one"),
+    ]
+    for datacenter, list_id, email_id in identities:
+        EmailEvent.objects.create(
+            campaign=campaign_scope["campaign"], client=campaign_scope["client"],
+            audience=campaign_scope["audience"], event_type=EmailEventType.CLICK, url=url,
+            metadata={"provider": "mailchimp", "historical_import": True, "mailchimp": {
+                "datacenter": datacenter, "list_id": list_id, "email_id": email_id,
+                "identity_status": "unlinked",
+            }},
+        )
+
+    response = client.get(
+        reverse("mailing:api_campaign_links", args=[CAMPAIGN_KEY]),
+        HTTP_AUTHORIZATION=f"Bearer {API_KEY}",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["links"] == [{"url": url, "total_clicks": 7, "unique_clickers": 5}]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("datacenter", None), ("datacenter", ""), ("list_id", None),
+    ("list_id", ""), ("email_id", None), ("email_id", ""), ("email_id", "invalid/member"),
+])
+def test_link_stats_do_not_invent_identities_from_incomplete_metadata(client, campaign_scope, field, value):
+    source = {"datacenter": "us19", "list_id": "list-one", "email_id": "member-one"}
+    source[field] = value
+    EmailEvent.objects.create(
+        campaign=campaign_scope["campaign"], client=campaign_scope["client"],
+        audience=campaign_scope["audience"], event_type=EmailEventType.CLICK,
+        url="https://example.com/incomplete", metadata={
+            "provider": "mailchimp", "historical_import": True, "mailchimp": source,
+        },
+    )
+    response = client.get(
+        reverse("mailing:api_campaign_links", args=[CAMPAIGN_KEY]),
+        HTTP_AUTHORIZATION=f"Bearer {API_KEY}",
+    )
+    assert response.status_code == 200
+    assert response.json()["links"] == [{"url": "https://example.com/incomplete", "total_clicks": 1, "unique_clickers": 0}]
+
+
 def test_campaign_link_stats_api_requires_authentication_and_hides_other_clients(client, campaign_scope):
     path = reverse("mailing:api_campaign_links", args=[CAMPAIGN_KEY])
     assert client.get(path).status_code == 401

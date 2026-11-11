@@ -143,7 +143,8 @@
         <div class="section-header">
           <div>
             <h3 id="campaign-link-clicks-heading">Clicks per link</h3>
-            <p class="muted">Tracked click events grouped by destination URL. Unique clickers count recipients once per link.</p>
+            <p class="muted">Tracked click events grouped by destination URL. Unique clickers count each Relay contact or unlinked Mailchimp source identity once per link.</p>
+            {% if campaign.metadata.provider == "mailchimp" and campaign.metadata.historical_import %}<a href="{% url 'mailing:mailchimp_source_contacts' %}?linkage=all">Mailchimp source contacts and history</a>{% endif %}
           </div>
           <button type="button" class="button secondary" data-link-stats-retry>Load link stats</button>
         </div>

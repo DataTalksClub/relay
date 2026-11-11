@@ -8,6 +8,7 @@ from mailing import (
     contact_ui_views,
     device_login_api,
     documentation_views,
+    mailchimp_history_views,
     newsletter_views,
     ops_views,
     send_reconcile_views,
@@ -100,6 +101,12 @@ urlpatterns = [
         name="client_api_key_revoke",
     ),
     path("contacts/", views.contact_search, name="contact_search"),
+    path("mailchimp-history/", mailchimp_history_views.mailchimp_source_contacts, name="mailchimp_source_contacts"),
+    path(
+        "mailchimp-history/<int:audience_id>/<str:datacenter>/<str:list_id>/<str:email_id>/",
+        mailchimp_history_views.mailchimp_source_history,
+        name="mailchimp_source_history",
+    ),
     path("contacts/<str:contact_email>/", views.contact_detail, name="contact_detail"),
     path(
         "contacts/<str:contact_email>/state/",

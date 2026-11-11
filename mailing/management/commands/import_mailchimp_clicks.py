@@ -20,6 +20,8 @@ class Command(BaseCommand):
         parser.add_argument("--audience", required=True)
         parser.add_argument("--list-id", required=True, help="Exact Mailchimp audience ID to import")
         parser.add_argument("--report", required=True, help="Private JSON report path; contains contact/link details")
+        parser.add_argument("--unmatched-policy", choices=("unlinked", "archive"), default="unlinked",
+                            help="Store unmatched clicks without a Relay contact (default), or leave them archived")
         mode = parser.add_mutually_exclusive_group()
         mode.add_argument("--apply", action="store_true")
         mode.add_argument("--dry-run", action="store_true")
@@ -37,6 +39,7 @@ class Command(BaseCommand):
                     archive_path=options["archive"], campaign_map=options["campaign_map"],
                     organization=options["organization"], client_slug=options["client"],
                     audience_slug=options["audience"], list_id=options["list_id"], apply=options["apply"],
+                    unmatched_policy=options["unmatched_policy"],
                 )
                 json.dump(report, stream, sort_keys=True)
                 stream.write("\n")
