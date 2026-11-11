@@ -72,3 +72,20 @@ def test_alert_transport_failure_is_loud(campaign):
         with pytest.raises(RuntimeError):
             check_complaint_rate()
     assert not OperatorAudit.objects.filter(action="monitor.complaint_rate.reported").exists()
+
+
+def test_dashboard_collapses_sub_threshold_complaints_and_recipients(campaign):
+    from django.template.loader import render_to_string
+
+    from mailing.services.operator_ui import dashboard_context
+
+    add_sent(campaign, 1000)
+    add_complaint(campaign, "hidden-recipient@example.com")
+    html = render_to_string("mailing/dashboard.html", {"active_client": campaign.client, "dashboard": dashboard_context(campaign.client)})
+    assert "No campaign above the 0.1% alert threshold" in html
+    assert "<details" in html and "below the threshold" in html and "Recent complaints (1)" in html
+    # Recipient and campaign rows exist only inside the collapsed <details>.
+    panel = html[html.index('id="ses-complaints"') : html.index('id="background-processing"')]
+    assert "hidden-recipient@example.com" not in panel.split("<details")[0]
+    assert "None above 0.1%" in html
+    assert "% complaint rate" in html

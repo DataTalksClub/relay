@@ -2551,3 +2551,15 @@ pre {
   margin: 0;
   color: var(--dk-text-primary);
 }
+
+/* Dashboard status strip: values are short phrases as often as numbers. */
+.dashboard-status .stat-value {
+  font-size: var(--dk-text-lg, 1.125rem);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .dashboard-status .stat {
+    flex-basis: 45%;
+  }
+}
