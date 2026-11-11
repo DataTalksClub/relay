@@ -86,6 +86,28 @@ def test_campaign_link_stats_api_groups_clicks_and_counts_unique_recipients(clie
     }
 
 
+def test_link_stats_count_historical_contacts_and_legacy_recipient_events(client, campaign_scope):
+    url = "https://example.com/history"
+    legacy = record_click(campaign_scope, "one@example.com", url)
+    # Older tracking rows can identify the contact through their recipient only.
+    EmailEvent.objects.filter(pk=legacy.pk).update(contact=None)
+    for email in ("one@example.com", "two@example.com", "two@example.com"):
+        contact = Contact.objects.get_or_create(email=email, normalized_email=email)[0]
+        EmailEvent.objects.create(
+            campaign=campaign_scope["campaign"], contact=contact,
+            client=campaign_scope["client"], audience=campaign_scope["audience"],
+            event_type=EmailEventType.CLICK, url=url,
+        )
+
+    response = client.get(
+        reverse("mailing:api_campaign_links", args=[CAMPAIGN_KEY]),
+        HTTP_AUTHORIZATION=f"Bearer {API_KEY}",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["links"] == [{"url": url, "total_clicks": 4, "unique_clickers": 2}]
+
+
 def test_campaign_link_stats_api_requires_authentication_and_hides_other_clients(client, campaign_scope):
     path = reverse("mailing:api_campaign_links", args=[CAMPAIGN_KEY])
     assert client.get(path).status_code == 401

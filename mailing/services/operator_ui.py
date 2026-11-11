@@ -1211,6 +1211,7 @@ def contact_metrics(contact: Contact, client: Client | None = None) -> list[Cont
         clicked=Max("first_clicked_at"),
     )
     event_marks = event_rows.aggregate(
+        clicked=Max("created_at", filter=Q(event_type=EmailEventType.CLICK)),
         bounce=Max("created_at", filter=Q(event_type=EmailEventType.BOUNCE)),
         complaint=Max("created_at", filter=Q(event_type=EmailEventType.COMPLAINT)),
         unsubscribe=Max("created_at", filter=Q(event_type=EmailEventType.UNSUBSCRIBE)),
@@ -1228,7 +1229,7 @@ def contact_metrics(contact: Contact, client: Client | None = None) -> list[Cont
         ),
         ContactMetric(
             "Last clicked",
-            latest_datetime(campaign_marks["clicked"], transactional_marks["clicked"]),
+            latest_datetime(campaign_marks["clicked"], transactional_marks["clicked"], event_marks["clicked"]),
             "success",
         ),
         ContactMetric(

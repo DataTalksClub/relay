@@ -5,7 +5,10 @@ from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.urls import reverse
+from django.utils import timezone
 
+from mailing.context_processors import ACTIVE_CLIENT_SESSION_KEY
 from mailing.models import (
     Audience,
     Campaign,
@@ -19,6 +22,7 @@ from mailing.models import (
     SubscriptionStatus,
 )
 from mailing.services.mailchimp_click_import import ClickImportError, encoded, import_mailchimp_clicks
+from mailing.services.operator_ui import contact_metrics
 
 pytestmark = pytest.mark.django_db
 START = "2025-11-10T23:00:00Z"
@@ -237,3 +241,36 @@ def test_multiple_batches_keep_identical_click_occurrences(scope):
     assert run(scope, apply=True)["counts"]["created"] == 501
     assert EmailEvent.objects.count() == 501
     assert run(scope, apply=True)["counts"]["existing"] == 501
+
+
+def test_imported_clicks_render_in_scoped_contact_timeline(scope, client, django_user_model):
+    archive(scope)
+    run(scope, apply=True)
+    operator = django_user_model.objects.create_user(username="history-reader", is_staff=True)
+    client.force_login(operator)
+    session = client.session
+    session[ACTIVE_CLIENT_SESSION_KEY] = scope["client"].pk
+    session.save()
+
+    response = client.get(reverse("mailing:contact_detail", args=[scope["contact"].normalized_email]))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert "Campaign: History" in html
+    assert URL in html
+    source_time = timezone.localtime(datetime.fromisoformat(START.replace("Z", "+00:00")))
+    assert source_time.strftime("%Y-%m-%d %H:%M:%S") in html
+    assert len(response.context["events"].object_list) == 3
+    metrics = {metric.label: metric.value for metric in contact_metrics(scope["contact"], scope["client"])}
+    assert metrics["Last clicked"] == datetime.fromisoformat(END.replace("Z", "+00:00"))
+
+    other = Client.objects.create(organization=scope["client"].organization, name="Other", slug="other")
+    session = client.session
+    session[ACTIVE_CLIENT_SESSION_KEY] = other.pk
+    session.save()
+    response = client.get(reverse("mailing:contact_detail", args=[scope["contact"].normalized_email]))
+    assert response.status_code == 200
+    assert not response.context["events"].object_list
+    assert URL not in response.content.decode()
+    assert next(metric.value for metric in contact_metrics(scope["contact"], other)
+                if metric.label == "Last clicked") is None

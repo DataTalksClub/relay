@@ -169,6 +169,10 @@ class Archive:
                 raise ArchiveError("Raw page missing or checksum mismatch; refusing unverified resume")
             return json.loads(destination.read_text(encoding="utf-8")), relative
         payload = self.api.get(path, params)
+        if (path == "/reports" or path.endswith("/sub-reports")) and any(
+            "share_report" in report for report in payload.get("reports", [])
+        ):
+            raise ArchiveError("API did not exclude unrelated report-sharing credentials")
         data = encoded(payload)
         atomic_write(destination, data)
         with self.lock:
@@ -210,7 +214,9 @@ class Archive:
 
     def inventory(self):
         reports = {}
-        pending = [item for item, _, _ in self.paginate("/reports", "reports")]
+        pending = [item for item, _, _ in self.paginate(
+            "/reports", "reports", {"exclude_fields": "reports.share_report"}
+        )]
         while pending:
             report = pending.pop(0)
             campaign_id = report["id"]
@@ -218,8 +224,20 @@ class Archive:
                 continue
             reports[campaign_id] = report
             if report.get("type") in {"variate", "absplit"}:
-                pending.extend(item for item, _, _ in self.paginate(f"/reports/{campaign_id}/sub-reports", "reports"))
+                pending.extend(item for item, _, _ in self.paginate(
+                    f"/reports/{campaign_id}/sub-reports", "reports", {"exclude_fields": "reports.share_report"}
+                ))
         atomic_write(self.root / "campaigns.json", encoded(list(reports.values())))
+        # A resumed archive may contain an earlier inventory request shape.
+        # Keep its audit/checksum record without treating two snapshots as two
+        # pages of the same sub-report collection.
+        for key, page in list(self.manifest["pages"].items()):
+            if (page["path"] == "/reports" or page["path"].endswith("/sub-reports")) and (
+                page["params"].get("exclude_fields") != "reports.share_report"
+            ):
+                self.manifest.setdefault("superseded_inventory_pages", {})[key] = page
+                del self.manifest["pages"][key]
+        self.save()
         return reports
 
     def run(self):

@@ -1,12 +1,13 @@
 """Per-link click statistics from the campaign's tracked click events."""
 
 from django.db.models import Count
+from django.db.models.functions import Coalesce
 
 from mailing.models import Campaign, EmailEvent, EmailEventType
 
 
 def campaign_link_click_stats(campaign: Campaign) -> list[dict]:
-    """Return click totals and distinct clicked recipients for each destination URL."""
+    """Return click totals and distinct contacts, including imported history."""
     return list(
         EmailEvent.objects.filter(
             campaign=campaign,
@@ -17,7 +18,7 @@ def campaign_link_click_stats(campaign: Campaign) -> list[dict]:
         .values("url")
         .annotate(
             total_clicks=Count("id"),
-            unique_clickers=Count("campaign_recipient_id", distinct=True),
+            unique_clickers=Count(Coalesce("contact_id", "campaign_recipient__contact_id"), distinct=True),
         )
         .order_by("-total_clicks", "url")
     )

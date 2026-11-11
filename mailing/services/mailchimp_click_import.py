@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from collections import Counter
 from datetime import UTC, datetime
 from itertools import batched
@@ -60,14 +61,69 @@ class VerifiedArchive:
         for name in ("clicks.jsonl", "campaigns.json", "reconciliation.json"):
             self.verify(name, manifest["artifacts"][name]["sha256"])
         self.pages = {}
+        for page in manifest.get("superseded_inventory_pages", {}).values():
+            self.verify(page["file"], page["sha256"])
         for page in manifest["pages"].values():
             self.verify(page["file"], page["sha256"])
             self.pages[page["file"]] = page
         self.manifest_sha256 = digest_file(self.root / "manifest.json")
         self.expected = json.loads((self.root / "reconciliation.json").read_text(encoding="utf-8"))
-        self.campaign_ids = {
-            report["id"] for report in json.loads((self.root / "campaigns.json").read_text(encoding="utf-8"))
-        }
+        reports = json.loads((self.root / "campaigns.json").read_text(encoding="utf-8"))
+        self.campaign_ids = {report["id"] for report in reports}
+        self.subreport_parents = {report["id"] for report in reports if report.get("type") in {"variate", "absplit"}}
+        self.related_campaigns = self.subreport_relations()
+
+    def subreport_relations(self):
+        """Read parent/child evidence only from verified, fully paginated raw pages."""
+        groups = {}
+        for page in self.pages.values():
+            match = re.fullmatch(r"/reports/([A-Za-z0-9_-]+)/sub-reports", page["path"])
+            if match:
+                groups.setdefault(match[1], []).append(page)
+            elif page["path"].endswith("/sub-reports"):
+                raise ClickImportError("Sub-report relationship path is malformed")
+        if self.subreport_parents - groups.keys():
+            raise ClickImportError("Sub-report pagination is missing for an inventoried parent")
+        related, parents = {}, {}
+        for parent, pages in groups.items():
+            if parent not in self.campaign_ids:
+                raise ClickImportError("Sub-report parent is absent from the campaign inventory")
+            offset, expected, children = 0, None, set()
+            if any(not isinstance(page.get("params"), dict)
+                   or type(page["params"].get("offset")) is not int for page in pages):
+                raise ClickImportError("Sub-report pagination is malformed or incomplete")
+            for page in sorted(pages, key=lambda item: item["params"]["offset"]):
+                params = page["params"]
+                if (type(params.get("offset")) is not int or params["offset"] != offset
+                        or type(params.get("count")) is not int or not 1 <= params["count"] <= 1000):
+                    raise ClickImportError("Sub-report pagination is malformed or incomplete")
+                payload = json.loads(archive_path(self.root, page["file"]).read_text(encoding="utf-8"))
+                reports, total = payload.get("reports"), payload.get("total_items")
+                if (not isinstance(reports, list) or type(total) is not int or total < 0
+                        or len(reports) > params["count"] or offset + len(reports) > total
+                        or (expected is not None and expected != total)):
+                    raise ClickImportError("Sub-report pagination is malformed or incomplete")
+                expected = total
+                for report in reports:
+                    child = report.get("id") if isinstance(report, dict) else None
+                    if (not isinstance(child, str) or child not in self.campaign_ids
+                            or child == parent or child in children or child in parents):
+                        raise ClickImportError("Sub-report relationship is malformed or missing from the campaign inventory")
+                    children.add(child)
+                    parents[child] = parent
+                    related.setdefault(parent, set()).add(child)
+                    related.setdefault(child, set()).add(parent)
+                offset += len(reports)
+            if offset != expected:
+                raise ClickImportError("Sub-report pagination is malformed or incomplete")
+        for child in parents:
+            seen, current = set(), child
+            while current in parents:
+                if current in seen:
+                    raise ClickImportError("Sub-report relationship contains a cycle")
+                seen.add(current)
+                current = parents[current]
+        return related
 
     def verify(self, relative, digest):
         if digest_file(archive_path(self.root, relative)) != digest:
@@ -76,6 +132,7 @@ class VerifiedArchive:
     def rows(self):
         current_file, payload = None, None
         seen = set()
+        related_signatures = {campaign_id: set() for campaign_id in self.related_campaigns}
         counts = {key: Counter() for key in ("by_campaign", "by_contact", "by_link")}
         with (self.root / "clicks.jsonl").open(encoding="utf-8") as stream:
             for line in stream:
@@ -89,6 +146,7 @@ class VerifiedArchive:
                     current_file = raw_file
                     self.member_occurrences = {}
                 self.validate_row(row, payload)
+                self.check_parent_child_overlap(row, related_signatures)
                 if row["source_event_id"] in seen:
                     raise ClickImportError("Duplicate normalized source event")
                 seen.add(row["source_event_id"])
@@ -101,6 +159,19 @@ class VerifiedArchive:
         if len(seen) != self.manifest["totals"].get("in_window_clicks", 0):
             raise ClickImportError("Normalized click total does not match the manifest")
         self.reconcile_raw_events(seen)
+
+    def check_parent_child_overlap(self, row, signatures):
+        """Refuse ambiguous duplicate evidence; never guess which campaign owns it."""
+        campaign_id = row["campaign_id"]
+        if campaign_id not in self.related_campaigns:
+            return
+        canonical = timestamp(row["timestamp"]).isoformat().replace("+00:00", "Z")
+        signature = hashlib.sha256(encoded([
+            row["list_id"], row["email_id"], canonical, row["url"], row["occurrence"],
+        ])).digest()
+        if any(signature in signatures[other] for other in self.related_campaigns[campaign_id]):
+            raise ClickImportError("Mailchimp parent/child click histories overlap; source ownership must be resolved")
+        signatures[campaign_id].add(signature)
 
     def reconcile_raw_events(self, remaining):
         """Every available in-window raw click must have exactly one normalized row."""
@@ -152,7 +223,7 @@ class VerifiedArchive:
         occurrence = self.member_occurrences[row["raw_member_index"]][row["raw_activity_index"]]
         signature = [row["campaign_id"], row["list_id"], row["email_id"], row["timestamp"], row["url"], occurrence]
         expected_id = "mailchimp:click:" + hashlib.sha256(encoded(signature)).hexdigest()
-        if row["occurrence"] != occurrence or row["source_event_id"] != expected_id:
+        if type(row["occurrence"]) is not int or row["occurrence"] != occurrence or row["source_event_id"] != expected_id:
             raise ClickImportError("Click occurrence/source event identity is invalid")
         if not isinstance(row["url"], str) or len(row["url"]) > 2048:
             raise ClickImportError("Click URL exceeds supported storage")

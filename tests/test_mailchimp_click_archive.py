@@ -42,6 +42,30 @@ def make_archive(tmp_path, api=None, **kwargs):
     return Archive(tmp_path, api or FakeAPI(), datacenter="us19", end=END, **kwargs)
 
 
+def test_inventory_requests_no_report_sharing_credentials(tmp_path):
+    api = FakeAPI()
+    make_archive(tmp_path, api).run()
+    assert next(params for path, params in api.calls if path == "/reports")["exclude_fields"] == "reports.share_report"
+
+
+def test_unexpected_report_credentials_are_never_archived(tmp_path):
+    api = FakeAPI()
+    api.reports[0]["share_report"] = {"share_password": "unrelated-test-value"}
+    with pytest.raises(ArchiveError, match="report-sharing credentials"):
+        make_archive(tmp_path, api).run()
+    assert not any(b"unrelated-test-value" in path.read_bytes() for path in tmp_path.rglob("*") if path.is_file())
+
+
+def test_resume_preserves_superseded_inventory_audit_without_duplicate_pages(tmp_path):
+    archive = make_archive(tmp_path)
+    _, old_file = archive.page("/reports", {"count": 1000, "offset": 0})
+    archive.run()
+    assert (tmp_path / old_file).exists()
+    assert next(iter(archive.manifest["superseded_inventory_pages"].values()))["file"] == old_file
+    assert all(page["params"].get("exclude_fields") == "reports.share_report"
+               for page in archive.manifest["pages"].values() if page["path"] == "/reports")
+
+
 def test_old_campaign_and_inclusive_bounds_preserve_repeated_clicks(tmp_path):
     api = FakeAPI()
     result = make_archive(tmp_path, api).run()
