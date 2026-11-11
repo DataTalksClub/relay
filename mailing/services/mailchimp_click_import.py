@@ -22,6 +22,11 @@ from mailing.models import (
     EmailEvent,
     EmailEventType,
 )
+from mailing.services.mailchimp_source_identity import (
+    erased_source_keys,
+    lock_source_history_scope,
+    source_identity_key,
+)
 
 
 class ClickImportError(Exception):
@@ -336,10 +341,11 @@ def verify_contact_identity(row, sources):
 
 def event_values(row, contact, campaign, client, audience, archive):
     return {
-        "campaign_id": campaign.pk, "contact_id": contact.pk, "client_id": client.pk,
+        "campaign_id": campaign.pk, "contact_id": contact.pk if contact else None, "client_id": client.pk,
         "audience_id": audience.pk, "event_type": EmailEventType.CLICK, "url": row["url"],
         "metadata": {"provider": "mailchimp", "historical_import": True, "mailchimp": {
             "campaign_id": row["campaign_id"], "list_id": row["list_id"], "email_id": row["email_id"],
+            "datacenter": archive.manifest["datacenter"], "identity_status": "matched" if contact else "unlinked",
             "occurrence": row["occurrence"], "timestamp": row["timestamp"],
             "raw_file": row["raw_file"], "raw_member_index": row["raw_member_index"],
             "raw_activity_index": row["raw_activity_index"],
@@ -360,17 +366,23 @@ def verify_existing(event, values, row):
     for key in ("campaign_id", "list_id", "email_id", "occurrence", "timestamp"):
         if source.get(key) != values["metadata"]["mailchimp"][key]:
             raise ClickImportError("Existing source event provenance conflicts with the archive")
+    for key in ("datacenter", "identity_status"):
+        # Read valid legacy events without restoring or rewriting their metadata.
+        if key in source and source[key] != values["metadata"]["mailchimp"][key]:
+            raise ClickImportError("Existing source event identity decision conflicts with the archive")
 
 
 def import_mailchimp_clicks(*, archive_path, campaign_map, organization, client_slug, audience_slug,
-                            list_id, apply=False):
+                            list_id, apply=False, unmatched_policy="unlinked"):
     """Return a private detailed report; dry-run is the default. All writes are atomic."""
     try:
+        if unmatched_policy not in {"unlinked", "archive"}:
+            raise ClickImportError("Unmatched policy must be unlinked or archive")
         archive = VerifiedArchive(archive_path)
         client, audience = resolve_scope(organization, client_slug, audience_slug)
         campaigns = resolve_campaigns(campaign_map, client, audience, datacenter=archive.manifest["datacenter"],
                                      list_id=list_id)
-        return run_import(archive, campaigns, client, audience, list_id, apply)
+        return run_import(archive, campaigns, client, audience, list_id, apply, unmatched_policy)
     except ClickImportError:
         raise
     except (OSError, ValueError, KeyError, IndexError, TypeError, Client.DoesNotExist, Audience.DoesNotExist):
@@ -378,48 +390,119 @@ def import_mailchimp_clicks(*, archive_path, campaign_map, organization, client_
 
 
 @transaction.atomic
-def run_import(archive, campaigns, client, audience, list_id, apply):
+def run_import(archive, campaigns, client, audience, list_id, apply, unmatched_policy):
+    if apply:
+        # Serialize history import/erasure without locking live sender FK rows.
+        lock_source_history_scope(client, audience)
+    erased = erased_source_keys(client, audience)
+    decisions = existing_identity_decisions(archive, campaigns, client, audience, list_id, erased)
+    saved_contacts = Contact.objects.in_bulk({value for value in decisions.values() if value is not None})
     report = {"dry_run": not apply, "manifest_sha256": archive.manifest_sha256,
               "window": archive.manifest["window"], "counts": Counter(), "missing_contacts": [],
-              "missing_campaigns": [], "reconciliation": {}}
+              "missing_campaigns": [], "reconciliation": {}, "unmatched_policy": unmatched_policy}
+    report["counts"].update({"matched_events": 0, "unlinked_events": 0, "erased_source_events": 0})
     groups = {key: {} for key in ("by_campaign", "by_contact", "by_link")}
     missing_contacts, missing_campaigns = set(), set()
     contacts = {}
     sources = {}
     verified_identities = set()
     pending = []
+    identity_counts = {"matched": set(), "unlinked": set(), "erased_source": set()}
     for row in prefetch_contacts(archive.rows(), contacts, sources, client, audience):
         report["counts"]["source_clicks"] += 1
         if row["list_id"] != list_id:
             outcome = "outside_list"
         else:
+            key = source_identity_key(archive.manifest["datacenter"], row["list_id"], row["email_id"])
+            if key in erased:
+                identity_counts["erased_source"].add(key)
+                report["counts"]["erased_source_events"] += 1
+                record_outcome(row, "erased_source", report, groups)
+                continue
             email = row["email_address"].strip().casefold()
             contact, campaign = contacts[email], campaigns.get(row["campaign_id"])
-            if contact is None:
+            if key in decisions:
+                contact_id = decisions[key]
+                contact = saved_contacts.get(contact_id) if contact_id is not None else None
+                if contact_id is not None and contact is None:
+                    raise ClickImportError("Saved source identity references an unavailable Relay contact")
+            else:
+                decisions[key] = contact.pk if contact else None
+                if contact is not None:
+                    saved_contacts[contact.pk] = contact
+            if contact is not None and contact.normalized_email.endswith("@erased.invalid"):
+                raise ClickImportError("An anonymized Relay contact cannot define a source identity linkage")
+            if contact is None and contacts[email] is None:
                 missing_contacts.add(email)
             if campaign is None:
                 missing_campaigns.add(row["campaign_id"])
-            if contact is None or campaign is None:
+            if campaign is None:
                 outcome = "unmatched"
             else:
-                identity = (contact.pk, row["list_id"], row["email_id"])
-                if identity not in verified_identities:
+                identity = (contact.pk if contact else None, row["list_id"], row["email_id"])
+                if contact is not None and identity not in verified_identities:
                     verify_contact_identity(row, sources.get(contact.pk, []))
                     verified_identities.add(identity)
                 values = event_values(row, contact, campaign, client, audience, archive)
                 pending.append((row, values))
                 if len(pending) >= 500:
-                    persist_batch(pending, apply, report, groups)
+                    persist_batch(pending, apply, report, groups, unmatched_policy, identity_counts)
                     pending.clear()
                 continue
         record_outcome(row, outcome, report, groups)
-    persist_batch(pending, apply, report, groups)
+    persist_batch(pending, apply, report, groups, unmatched_policy, identity_counts)
     report["missing_contacts"] = sorted(missing_contacts)
     report["missing_campaigns"] = sorted(missing_campaigns)
     report["counts"]["missing_contacts"] = len(missing_contacts)
     report["counts"]["missing_campaigns"] = len(missing_campaigns)
+    for status, identities in identity_counts.items():
+        name = "erased_source_identities" if status == "erased_source" else status + "_source_identities"
+        report["counts"][name] = len(identities)
     report["reconciliation"] = groups
     return report
+
+
+def existing_identity_decisions(archive, campaigns, client, audience, list_id, erased):
+    """Saved source IDs outrank email lookup, including intentionally unlinked IDs."""
+    decisions = {}
+    datacenter = archive.manifest["datacenter"]
+    events = EmailEvent.objects.filter(client=client, audience=audience,
+                                       provider_event_id__startswith="mailchimp:click:")
+    for event in events.only("contact_id", "campaign_id", "metadata").iterator(chunk_size=2000):
+        metadata = event.metadata
+        if not isinstance(metadata, dict):
+            raise ClickImportError("Historical source event metadata is malformed")
+        if metadata.get("erased") or metadata.get("source_history_erased"):
+            if metadata.get("mailchimp_source_key_hash") not in erased:
+                raise ClickImportError("Erased historical source event lacks a verifiable source tombstone")
+            continue
+        if metadata.get("provider") != "mailchimp" or metadata.get("historical_import") is not True:
+            continue
+        source = metadata.get("mailchimp", {})
+        if not isinstance(source, dict):
+            raise ClickImportError("Historical source event provenance is malformed")
+        if source.get("list_id") != list_id:
+            continue
+        source_dc = source.get("datacenter")
+        if source_dc is None:
+            # Legacy imports omitted dc. Infer only from an exact campaign map
+            # independently validated by this invocation; never rewrite metadata.
+            campaign = campaigns.get(source.get("campaign_id"))
+            if campaign is None or campaign.pk != event.campaign_id:
+                raise ClickImportError("Legacy source identity lacks a verifiable account/campaign mapping")
+            source_dc = datacenter
+        if source_dc != datacenter:
+            continue
+        key = source_identity_key(source_dc, source["list_id"], source["email_id"])
+        if key in erased:
+            continue
+        expected = "matched" if event.contact_id else "unlinked"
+        if source.get("identity_status", expected) != expected:
+            raise ClickImportError("Existing source identity has a conflicting linked/unlinked decision")
+        if key in decisions and decisions[key] != event.contact_id:
+            raise ClickImportError("Existing source identity has conflicting Relay contact linkage decisions")
+        decisions[key] = event.contact_id
+    return decisions
 
 
 def prefetch_contacts(rows, contacts, sources, client, audience):
@@ -445,7 +528,7 @@ def record_outcome(row, outcome, report, groups):
         counts[outcome] += 1
 
 
-def persist_batch(pending, apply, report, groups):
+def persist_batch(pending, apply, report, groups, unmatched_policy, identity_counts):
     if not pending:
         return
     existing = {event.provider_event_id: event for event in EmailEvent.objects.filter(
@@ -457,9 +540,16 @@ def persist_batch(pending, apply, report, groups):
         if event is not None:
             verify_existing(event, values, row)
             outcome = "existing"
+        elif values["contact_id"] is None and unmatched_policy == "archive":
+            outcome = "unmatched"
         else:
             outcome = "created" if apply else "would_create"
             new.append((EmailEvent(provider_event_id=row["source_event_id"], **values), timestamp(row["timestamp"])))
+        if outcome != "unmatched":
+            source = values["metadata"]["mailchimp"]
+            status = source["identity_status"]
+            identity_counts[status].add(source_identity_key(source["datacenter"], source["list_id"], source["email_id"]))
+            report["counts"][status + "_events"] += 1
         record_outcome(row, outcome, report, groups)
     if apply and new:
         # The unique provider ID constraint rejects a concurrent competing import,

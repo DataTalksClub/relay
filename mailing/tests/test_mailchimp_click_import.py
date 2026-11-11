@@ -135,6 +135,25 @@ def test_missing_contacts_and_mapping_reported_without_creation(scope):
     assert not EmailEvent.objects.exists()
 
 
+def test_unmatched_contacts_load_as_unlinked_events_by_default(scope):
+    archive(scope, email="missing@example.com")
+    before = list(Subscription.objects.values())
+    report = run(scope, apply=True)
+    assert report["counts"]["created"] == 3
+    assert report["counts"]["unlinked_events"] == 3
+    assert report["counts"]["unlinked_source_identities"] == 1
+    assert EmailEvent.objects.filter(contact__isnull=True).count() == 3
+    assert Contact.objects.count() == 1
+    assert list(Subscription.objects.values()) == before
+
+
+def test_unmatched_archive_policy_is_explicit(scope):
+    archive(scope, email="missing@example.com")
+    report = run(scope, apply=True, unmatched_policy="archive")
+    assert report["counts"]["unmatched"] == 3
+    assert not EmailEvent.objects.exists()
+
+
 def test_mapping_cannot_cross_client_scope(scope):
     archive(scope)
     other = Client.objects.create(organization=scope["client"].organization, slug="other", name="Other")
