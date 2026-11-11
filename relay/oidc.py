@@ -43,6 +43,11 @@ _AUTH_ERROR_MESSAGES = {
 
 _DEFAULT_AUTH_ERROR_MESSAGE = "Authentication could not be completed. No account changes were made."
 
+# The operator dashboard at "/" is the canonical post-login landing page. A
+# login must only reach /admin/ when the operator deliberately asked for it
+# (a safe requested return_to), never as a side effect of signing in.
+_DEFAULT_RETURN_TO = "/"
+
 
 def configured():
     return all(
@@ -57,7 +62,7 @@ def _b64url(value):
 
 def _safe_return_to(value):
     if not isinstance(value, str) or not value:
-        return "/admin/"
+        return _DEFAULT_RETURN_TO
     candidate = value
     for _ in range(8):
         decoded = urllib.parse.unquote(candidate)
@@ -74,15 +79,15 @@ def _safe_return_to(value):
         for index in range(len(candidate))
     )
     if controls or malformed_escape or "\\" in candidate or candidate.startswith("//"):
-        return "/admin/"
+        return _DEFAULT_RETURN_TO
     try:
         parsed = urllib.parse.urlsplit(candidate)
     except ValueError:
-        return "/admin/"
+        return _DEFAULT_RETURN_TO
     if parsed.scheme or parsed.netloc or not parsed.path.startswith("/") or parsed.path.startswith("//"):
-        return "/admin/"
+        return _DEFAULT_RETURN_TO
     if parsed.path == "/login" or parsed.path == "/logout" or parsed.path.startswith("/auth/"):
-        return "/admin/"
+        return _DEFAULT_RETURN_TO
     return urllib.parse.urlunsplit(("", "", parsed.path, parsed.query, ""))
 
 
@@ -264,5 +269,10 @@ def end(request):
 
 def admin_login(request):
     if configured() and request.GET.get("local") != "1":
-        return HttpResponseRedirect("/auth/login?return_to=/admin/")
+        # staff_member_required hands unauthenticated visitors here with
+        # next=<requested page>; carry a safe next through shared auth so a
+        # deliberate /admin/ visit still lands in the admin, while a login
+        # that never asked for a page falls back to the operator dashboard.
+        return_to = _safe_return_to(request.GET.get("next"))
+        return HttpResponseRedirect(f"/auth/login?{urllib.parse.urlencode({'return_to': return_to})}")
     return admin.site.login(request)

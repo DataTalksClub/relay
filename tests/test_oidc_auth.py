@@ -67,7 +67,9 @@ def test_oidc_workspace_policy_error_is_visible_and_logged_safely(client, settin
         setattr(settings, key, value)
     start = client.get("/auth/login?return_to=/admin/")
     state = parse_qs(urlparse(start["Location"]).query)["state"][0]
-    description = "PreSignUp failed with error Sign-in is restricted to a verified account in the approved Workspace domain."
+    description = (
+        "PreSignUp failed with error Sign-in is restricted to a verified account in the approved Workspace domain."
+    )
     query = urlencode({"error": "invalid_request", "error_description": description, "state": state})
 
     with caplog.at_level(logging.WARNING, logger="relay.oidc"):
@@ -142,7 +144,8 @@ def test_oidc_jwks_lookup_has_a_bounded_timeout(settings, monkeypatch):
     ],
 )
 def test_oidc_return_to_rejects_unsafe_targets(value):
-    assert oidc._safe_return_to(value) == "/admin/"
+    # Unsafe targets must fall back to the operator dashboard, never /admin/.
+    assert oidc._safe_return_to(value) == oidc._DEFAULT_RETURN_TO == "/"
 
 
 def test_oidc_return_to_accepts_clean_local_path_and_query():
@@ -173,7 +176,127 @@ def test_admin_login_redirects_to_shared_auth_when_configured(client, settings):
         setattr(settings, key, value)
     response = client.get("/admin/login/")
     assert response.status_code == 302
-    assert response["Location"] == "/auth/login?return_to=/admin/"
+    assert response["Location"] == f"/auth/login?{urlencode({'return_to': '/'})}"
+
+
+def test_admin_login_carries_safe_next_page_into_shared_auth(client, settings):
+    # A user bounced off a specific operator page must get back to it, so
+    # admin_login must not flatten the requested page to /admin/.
+    for key, value in AUTH_SETTINGS.items():
+        setattr(settings, key, value)
+    response = client.get("/admin/login/?next=/campaigns/?page=2")
+    assert response.status_code == 302
+    assert response["Location"] == f"/auth/login?{urlencode({'return_to': '/campaigns/?page=2'})}"
+
+
+@pytest.mark.django_db
+def test_plain_login_lands_on_operator_dashboard_not_admin(client, settings, monkeypatch):
+    # t3089u: signing in must not land in /admin/ solely because login
+    # happened. No return_to requested -> the operator dashboard.
+    for key, value in AUTH_SETTINGS.items():
+        setattr(settings, key, value)
+    start = client.get("/auth/login")
+    assert client.session["oidc"]["return_to"] == "/"
+    state = parse_qs(urlparse(start["Location"]).query)["state"][0]
+    nonce = client.session["oidc"]["nonce"]
+    monkeypatch.setattr(oidc, "_exchange", lambda code, verifier: {"id_token": "signed-token"})
+    monkeypatch.setattr(
+        oidc,
+        "_verify",
+        lambda token: {"sub": "person-1", "email": "Person@DataTalks.Club", "email_verified": True, "nonce": nonce},
+    )
+    callback = client.get(f"/auth/callback?code=valid&state={state}")
+    assert callback.status_code == 302
+    assert callback["Location"] == "/"
+    assert client.get("/").status_code == 200
+
+
+@pytest.mark.django_db
+def test_login_preserves_safe_requested_return_to(client, settings, monkeypatch):
+    from mailing.models import Client, Organization  # noqa: PLC0415
+
+    organization = Organization.objects.create(name="Community", slug="auth-return")
+    Client.objects.create(organization=organization, name="News", slug="auth-return-news")
+    for key, value in AUTH_SETTINGS.items():
+        setattr(settings, key, value)
+    start = client.get("/auth/login?return_to=/campaigns/")
+    assert client.session["oidc"]["return_to"] == "/campaigns/"
+    state = parse_qs(urlparse(start["Location"]).query)["state"][0]
+    nonce = client.session["oidc"]["nonce"]
+    monkeypatch.setattr(oidc, "_exchange", lambda code, verifier: {"id_token": "signed-token"})
+    monkeypatch.setattr(
+        oidc,
+        "_verify",
+        lambda token: {"sub": "person-1", "email": "Person@DataTalks.Club", "email_verified": True, "nonce": nonce},
+    )
+    callback = client.get(f"/auth/callback?code=valid&state={state}")
+    assert callback["Location"] == "/campaigns/"
+    assert client.get("/campaigns/").status_code == 200
+
+
+@pytest.mark.django_db
+def test_deliberate_admin_access_still_works_after_login(client, settings, monkeypatch):
+    # Visiting /admin/ on purpose keeps landing in the admin for staff.
+    for key, value in AUTH_SETTINGS.items():
+        setattr(settings, key, value)
+    gate = client.get("/admin/")
+    assert gate.status_code == 302
+    assert gate["Location"] == "/admin/login/?next=/admin/"
+    handoff = client.get(gate["Location"])
+    assert handoff["Location"] == f"/auth/login?{urlencode({'return_to': '/admin/'})}"
+    start = client.get(handoff["Location"])
+    assert client.session["oidc"]["return_to"] == "/admin/"
+    state = parse_qs(urlparse(start["Location"]).query)["state"][0]
+    nonce = client.session["oidc"]["nonce"]
+    monkeypatch.setattr(oidc, "_exchange", lambda code, verifier: {"id_token": "signed-token"})
+    monkeypatch.setattr(
+        oidc,
+        "_verify",
+        lambda token: {"sub": "person-1", "email": "Person@DataTalks.Club", "email_verified": True, "nonce": nonce},
+    )
+    callback = client.get(f"/auth/callback?code=valid&state={state}")
+    assert callback["Location"] == "/admin/"
+    assert client.get("/admin/").status_code == 200
+
+
+@pytest.mark.django_db
+def test_login_rejects_external_next_from_admin_login(client, settings, monkeypatch):
+    # An off-site next must be discarded: login lands on the dashboard,
+    # never on an external host.
+    for key, value in AUTH_SETTINGS.items():
+        setattr(settings, key, value)
+    handoff = client.get("/admin/login/?next=https://evil.example/redirect")
+    assert handoff["Location"] == f"/auth/login?{urlencode({'return_to': '/'})}"
+    start = client.get(handoff["Location"])
+    state = parse_qs(urlparse(start["Location"]).query)["state"][0]
+    nonce = client.session["oidc"]["nonce"]
+    monkeypatch.setattr(oidc, "_exchange", lambda code, verifier: {"id_token": "signed-token"})
+    monkeypatch.setattr(
+        oidc,
+        "_verify",
+        lambda token: {"sub": "person-1", "email": "Person@DataTalks.Club", "email_verified": True, "nonce": nonce},
+    )
+    callback = client.get(f"/auth/callback?code=valid&state={state}")
+    assert callback["Location"] == "/"
+    assert client.get("/").status_code == 200
+
+
+@pytest.mark.django_db
+def test_login_rejects_external_return_to(client, settings, monkeypatch):
+    for key, value in AUTH_SETTINGS.items():
+        setattr(settings, key, value)
+    start = client.get("/auth/login?return_to=//evil.example/path")
+    assert client.session["oidc"]["return_to"] == "/"
+    state = parse_qs(urlparse(start["Location"]).query)["state"][0]
+    nonce = client.session["oidc"]["nonce"]
+    monkeypatch.setattr(oidc, "_exchange", lambda code, verifier: {"id_token": "signed-token"})
+    monkeypatch.setattr(
+        oidc,
+        "_verify",
+        lambda token: {"sub": "person-1", "email": "Person@DataTalks.Club", "email_verified": True, "nonce": nonce},
+    )
+    callback = client.get(f"/auth/callback?code=valid&state={state}")
+    assert callback["Location"] == "/"
 
 
 @pytest.fixture
