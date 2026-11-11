@@ -1,11 +1,13 @@
 import pytest
 from botocore.exceptions import ClientError
 from django.contrib.auth import get_user_model
+from django.template.loader import render_to_string
 from django.test import Client as HttpClient
 from django.test import override_settings
 
 from mailing.services import ses_quota
 from mailing.services.admin_auth import create_admin_api_key
+from mailing.templatetags.relay_format import trim_number, verified_domains
 
 pytestmark = pytest.mark.django_db
 
@@ -128,8 +130,6 @@ def test_staff_page_and_admin_api(monkeypatch):
 
 
 def test_format_filters_trim_whole_values_and_filter_domains():
-    from mailing.templatetags.relay_format import trim_number, verified_domains
-
     assert [trim_number(v) for v in (150000.0, 50.0, 1.0, 0.5, 14.3, None, 7)] == ["150000", "50", "1", 0.5, 14.3, None, 7]
     identities = [
         {"name": "a@x.io", "type": "email", "verification": "SUCCESS"},
@@ -141,8 +141,6 @@ def test_format_filters_trim_whole_values_and_filter_domains():
 
 
 def test_quota_template_renders_clean_numbers_and_domains_only():
-    from django.template.loader import render_to_string
-
     rows = [
         {
             "account": "1", "region": "eu-west-1", "status": "ok", "mode": "production",
@@ -166,5 +164,4 @@ def test_dead_letters_page_highlights_operations_in_nav(client):
     user = get_user_model().objects.create_user("ops", "ops@example.com", "pw", is_staff=True)
     client.force_login(user)
     html = client.get("/jobs/dead-letters/").content.decode()
-    operations = html[html.index("jobs/") - 20 :]
     assert 'aria-current="page"' in html[html.index('href="/jobs/"') : html.index('href="/jobs/"') + 200]

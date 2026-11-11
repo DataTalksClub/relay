@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pytest
+from django.template.loader import render_to_string
 from django.utils import timezone
 
 from mailing.models import (
@@ -15,6 +16,7 @@ from mailing.models import (
     Organization,
 )
 from mailing.services.complaints import campaign_complaint_rates, check_complaint_rate, recent_complaints
+from mailing.services.operator_ui import dashboard_context
 
 
 @pytest.fixture
@@ -75,10 +77,6 @@ def test_alert_transport_failure_is_loud(campaign):
 
 
 def test_dashboard_collapses_sub_threshold_complaints_and_recipients(campaign):
-    from django.template.loader import render_to_string
-
-    from mailing.services.operator_ui import dashboard_context
-
     add_sent(campaign, 1000)
     add_complaint(campaign, "hidden-recipient@example.com")
     html = render_to_string("mailing/dashboard.html", {"active_client": campaign.client, "dashboard": dashboard_context(campaign.client)})
