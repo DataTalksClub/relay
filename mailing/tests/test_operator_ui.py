@@ -2540,4 +2540,4 @@ def test_sidebar_shows_client_or_shared_service_never_both(client, path, service
     else:
         assert "Campaigns" in nav and "Contacts" in nav
         assert "Receiving addresses" not in nav and "Admin API keys" not in nav and "SES quota" not in nav
-        assert "Open shared service" in nav
+        assert "/service/" in nav

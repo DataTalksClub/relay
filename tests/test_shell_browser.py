@@ -116,10 +116,10 @@ def test_sidebar_collapses_to_a_working_rail_and_remembers_it(browser, live_serv
     assert shell.get_attribute("data-sidebar") == "collapsed"
     assert page.locator("#dk-sidebar").bounding_box()["width"] == 56
     # Every destination stays reachable, labelled by a tooltip on hover.
-    page.locator('.dk-nav-item[href="/inbound/"]').hover()
+    page.locator('.dk-nav-item[href="/service/"]').hover()
     tooltip = page.locator(".dk-tooltip")
     tooltip.wait_for(state="visible")
-    assert tooltip.text_content() == "Inbound mail"
+    assert tooltip.text_content() == "Shared service"
     page.reload()
     assert page.locator(".dk-shell").get_attribute("data-sidebar") == "collapsed"
 
