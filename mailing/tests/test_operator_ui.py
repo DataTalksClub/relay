@@ -2505,3 +2505,42 @@ def test_zero_and_range_quantities_read_as_data(client, operator, client_record)
     create_subscribed_contact("range@example.com", audience, client_record)
     contacts = client.get(reverse("mailing:contact_search")).content.decode()
     assert 'Showing <span class="data-num">1–1</span> of <span class="data-num">1</span> contacts' in contacts
+
+
+def _nav(html):
+    start = html.index('aria-label="Primary"')
+    return html[start : html.index("</nav>", start)]
+
+
+@pytest.mark.parametrize(
+    ("path", "service"),
+    [
+        ("/", False),
+        ("/campaigns/", False),
+        ("/inbound/", True),
+        ("/ses-quota/", True),
+        ("/clients/", True),
+        ("/jobs/", True),
+        ("/jobs/dead-letters/", True),
+        ("/service/", True),
+    ],
+)
+def test_sidebar_shows_client_or_shared_service_never_both(client, path, service):
+    from mailing.models import Client as ClientModel
+    from mailing.models import Organization
+
+    org = Organization.objects.create(name="Mode Org", slug="mode-org")
+    ClientModel.objects.create(organization=org, name="Mode Client", slug="mode-client")
+    user = get_user_model().objects.create_user("modeop", "m@example.com", "pw", is_staff=True)
+    client.force_login(user)
+    response = client.get(path)
+    assert response.status_code == 200
+    nav = _nav(response.content.decode())
+    if service:
+        assert "Receiving addresses" in nav and "Admin API keys" in nav
+        assert "Campaigns" not in nav and "Contacts" not in nav and "Audiences" not in nav
+        assert "Shared service</span>" in response.content.decode().split("dk-brand__scope")[1][:60] + "</span>"
+    else:
+        assert "Campaigns" in nav and "Contacts" in nav
+        assert "Receiving addresses" not in nav and "Admin API keys" not in nav and "SES quota" not in nav
+        assert "Open shared service" in nav

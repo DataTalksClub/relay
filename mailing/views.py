@@ -120,6 +120,7 @@ from mailing.services.inbound_views import (
     list_addresses,
     list_blocked_senders,
     list_messages,
+    unread_sender_count,
     mark_read,
     unblock_sender,
 )
@@ -142,7 +143,9 @@ from mailing.services.operator_management import (
     update_contact_state,
     update_subscription,
 )
+from mailing.services.worker_status import sandbox_worker_statuses
 from mailing.services.operator_ui import (
+    worker_health,
     RECIPIENT_FILTER_LABELS,
     Badge,
     audience_detail_queryset,
@@ -320,6 +323,23 @@ def ses_quota(request):
     rows = ses_quota_rows()
     configured = rows[0]["configured_max_send_rate"] if rows else settings.SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND
     return render(request, "mailing/operator/ses_quota.html", {"rows": rows, "configured_max_send_rate": configured})
+
+
+@staff_member_required
+def service_home(request):
+    """Landing page for the shared service: everything here ignores the selected client."""
+    workers = sandbox_worker_statuses()
+    health_label, health_tone = worker_health(workers)
+    return render(
+        request,
+        "mailing/operator/service_home.html",
+        {
+            "health_label": health_label,
+            "health_tone": health_tone,
+            "waiting_count": sum(worker.backlog_count or 0 for worker in workers),
+            "unread_senders": unread_sender_count(),
+        },
+    )
 
 
 @staff_member_required

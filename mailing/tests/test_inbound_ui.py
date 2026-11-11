@@ -397,7 +397,9 @@ def test_the_ses_spam_verdict_is_shown_as_a_signal_not_as_a_verdict(client, oper
 def test_the_nav_reaches_the_mailbox_and_the_addresses(client, operator, address):
     client.force_login(operator)
 
-    html = client.get(reverse("mailing:dashboard")).content.decode()
+    # Client screens link to the shared service; the shared-service nav holds the mailbox.
+    assert reverse("mailing:service_home") in client.get(reverse("mailing:dashboard")).content.decode()
+    html = client.get(reverse("mailing:service_home")).content.decode()
 
     assert reverse("mailing:inbound_list") in html
     assert reverse("mailing:inbound_address_list") in html
