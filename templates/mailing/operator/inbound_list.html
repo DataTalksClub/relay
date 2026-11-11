@@ -35,6 +35,11 @@
           </select>
           <button class="dk-button dk-button--secondary" type="submit">Filter</button>
         </form>
+        {% if hidden_automated_count %}
+          <p class="dk-hint inbox-automated-note"><small>{{ hidden_automated_count }} automated DMARC report{{ hidden_automated_count|pluralize }} hidden. <a href="?state={{ state_choice|urlencode }}&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}&amp;automated=show">Show</a></small></p>
+        {% elif show_automated %}
+          <p class="dk-hint inbox-automated-note"><small>Showing automated DMARC reports. <a href="?state={{ state_choice|urlencode }}&amp;address={{ address|urlencode }}&amp;q={{ query|urlencode }}">Hide</a></small></p>
+        {% endif %}
       </div>
       <div class="dk-split__scroll">
         {% if rows %}

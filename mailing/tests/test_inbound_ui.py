@@ -460,3 +460,50 @@ def test_a_message_action_returns_to_the_message_in_its_list(client, operator, a
     )
 
     assert response["Location"] == f"/inbound/?state=all&message={message.pk}"
+
+
+def _list(client, operator, **params):
+    client.force_login(operator)
+    return client.get(reverse("mailing:inbound_list"), params)
+
+
+def test_automated_dmarc_reports_are_hidden_from_the_default_list(client, operator, address):
+    received(message_id="<report@x>", subject="Report domain: example.com Submitter: google.com Report-ID: 1",
+             sender_address="noreply-dmarc-support@google.com", attachment_count=1)
+    received(message_id="<yahoo@x>", subject="Report Domain: example.com Submitter: yahoo.com Report-ID: <2>",
+             sender_address="postmaster@yahoo.example", attachment_count=1)
+    received(message_id="<known@x>", subject="hello", sender_address="dmarc-noreply@google.com")
+    received(message_id="<real@x>")
+
+    page = _list(client, operator).content.decode()
+    assert "Question about your pricing" in page
+    assert "Report domain: example.com" not in page and "Report Domain: example.com" not in page
+    assert "3 automated DMARC reports hidden" in page
+
+    shown = _list(client, operator, automated="show").content.decode()
+    assert "Report domain: example.com" in shown and "Report Domain: example.com" in shown
+    assert "Showing automated DMARC reports" in shown
+
+
+def test_regular_mail_mentioning_dmarc_or_xml_is_not_hidden(client, operator, address):
+    received(message_id="<a@x>", subject="Question about the DMARC report you sent")
+    received(message_id="<b@x>", subject="Please send me the XML", snippet="attached XML aggregate dmarc report?", attachment_count=1)
+    # A report-style subject without an attachment is not trusted on its own.
+    received(message_id="<c@x>", subject="Report domain: example.com please advise", sender_address="bob@corp.example")
+    # A near-miss sender is not an exact known report sender.
+    received(message_id="<d@x>", subject="Hi", sender_address="not-dmarc-noreply@google.com.evil.example")
+
+    page = _list(client, operator).content.decode()
+    for subject in ("Question about the DMARC report", "Please send me the XML", "Report domain: example.com please advise"):
+        assert subject in page
+    assert "automated DMARC report" not in page
+    assert InboundMessage.objects.count() == 4
+
+
+def test_a_hidden_dmarc_report_stays_openable_by_id(client, operator, address):
+    report = received(message_id="<report@x>", subject="Report domain: example.com Submitter: google.com Report-ID: 1",
+                      sender_address="noreply-dmarc-support@google.com", attachment_count=1)
+    client.force_login(operator)
+    response = client.get(reverse("mailing:inbound_list"), {"message": report.pk})
+    assert response.status_code == 200
+    assert "Submitter: google.com" in response.content.decode()
