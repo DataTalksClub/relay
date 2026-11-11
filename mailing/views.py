@@ -553,6 +553,7 @@ def inbound_list(request):
         address=address_filter,
         page=request.GET.get("page", 1),
         per_page=request.GET.get("per_page", 50),
+        show_automated=request.GET.get("automated") == "show",
     )
     # Whether anything narrowed this view. The template cannot infer it from
     # `state`, because the default view has a state too -- it is just the one

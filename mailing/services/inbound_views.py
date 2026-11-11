@@ -5,7 +5,7 @@ is a client-scoped operator surface, and inbound is not client-scoped, so these
 have to be the part of the mailbox that does not care which tenant is selected.
 """
 
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, OuterRef, Q
 from django.utils import timezone
 
 from mailing.models import (
@@ -14,6 +14,8 @@ from mailing.models import (
     InboundMessage,
     InboundMessageState,
 )
+from mailing.models import DmarcArchive
+from mailing.services.dmarc import DMARC_SENDERS
 
 # The default view is the unread mail, because that is what an operator opening
 # the mailbox is looking for. Read mail is still a click away and is not
@@ -32,7 +34,29 @@ def address_domain(value):
     return normalize_address(value).partition("@")[2]
 
 
-def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page=50):
+# Subjects the big mailbox providers use for aggregate reports. Anchored at the
+# start so a person writing "question about the DMARC report" is not matched, and
+# only trusted together with an attachment (the report itself).
+DMARC_REPORT_SUBJECT_REGEX = r"^\s*(\[[^]]*\]\s*)?(report domain:|dmarc aggregate report|dmarc aggregation report)"
+
+
+def automated_dmarc_q():
+    """Messages that are automated DMARC aggregate reports (hidden from the default list, never deleted).
+
+    Deliberately narrower than the ingest heuristic in `mailing.services.dmarc`:
+    hiding a real message is worse than showing a report. A message qualifies if
+    it was archived as a DMARC report, comes from an exact known report sender
+    address, or has an anchored report subject plus at least one attachment.
+    """
+    archived = Exists(DmarcArchive.objects.filter(message=OuterRef("pk")))
+    return (
+        Q(sender_address__in=sorted(DMARC_SENDERS))
+        | Q(archived_flag=True)
+        | (Q(subject__iregex=DMARC_REPORT_SUBJECT_REGEX) & Q(attachment_count__gt=0))
+    ), archived
+
+
+def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page=50, show_automated=False):
     """The mailbox list.
 
     `state=None` means every state, which is how the blocked and read mail stay
@@ -40,8 +64,14 @@ def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page
     """
     queryset = InboundMessage.objects.select_related("inbound_address", "blocked_rule")
 
+    automated_q, archived = automated_dmarc_q()
+    queryset = queryset.annotate(archived_flag=archived)
     if state:
         queryset = queryset.filter(state=state)
+    hidden_count = 0
+    if not show_automated:
+        hidden_count = queryset.filter(automated_q).count()
+        queryset = queryset.exclude(automated_q)
 
     query = (query or "").strip()
     if query:
@@ -76,6 +106,8 @@ def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page
         "state": state or "",
         "query": query,
         "address": address,
+        "show_automated": show_automated,
+        "hidden_automated_count": hidden_count,
     }
 
 
@@ -87,7 +119,9 @@ def unread_sender_count():
     is one sender.
     """
     return (
-        InboundMessage.objects.filter(state=InboundMessageState.RECEIVED)
+        InboundMessage.objects.annotate(archived_flag=automated_dmarc_q()[1])
+        .filter(state=InboundMessageState.RECEIVED)
+        .exclude(automated_dmarc_q()[0])
         .exclude(sender_address="")
         .values("sender_address")
         .distinct()
