@@ -2526,11 +2526,8 @@ def _nav(html):
     ],
 )
 def test_sidebar_shows_client_or_shared_service_never_both(client, path, service):
-    from mailing.models import Client as ClientModel
-    from mailing.models import Organization
-
     org = Organization.objects.create(name="Mode Org", slug="mode-org")
-    ClientModel.objects.create(organization=org, name="Mode Client", slug="mode-client")
+    Client.objects.create(organization=org, name="Mode Client", slug="mode-client")
     user = get_user_model().objects.create_user("modeop", "m@example.com", "pw", is_staff=True)
     client.force_login(user)
     response = client.get(path)

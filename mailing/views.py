@@ -120,9 +120,9 @@ from mailing.services.inbound_views import (
     list_addresses,
     list_blocked_senders,
     list_messages,
-    unread_sender_count,
     mark_read,
     unblock_sender,
+    unread_sender_count,
 )
 from mailing.services.mailchimp import (
     mailchimp_status_payload,
@@ -143,9 +143,7 @@ from mailing.services.operator_management import (
     update_contact_state,
     update_subscription,
 )
-from mailing.services.worker_status import sandbox_worker_statuses
 from mailing.services.operator_ui import (
-    worker_health,
     RECIPIENT_FILTER_LABELS,
     Badge,
     audience_detail_queryset,
@@ -171,6 +169,7 @@ from mailing.services.operator_ui import (
     event_context,
     metadata_summary,
     parse_contact_explorer_filters,
+    worker_health,
 )
 from mailing.services.public_lists import (
     confirm_public_verification,
@@ -218,7 +217,7 @@ from mailing.services.transactional_catalog import (
     transactional_queue_queryset,
     transactional_template_queryset,
 )
-from mailing.services.worker_status import worker_status_payload
+from mailing.services.worker_status import sandbox_worker_statuses, worker_status_payload
 from mailing.setup_views import client_setup_context
 
 logger = logging.getLogger(__name__)

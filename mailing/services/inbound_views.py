@@ -10,11 +10,11 @@ from django.utils import timezone
 
 from mailing.models import (
     BlockedSender,
+    DmarcArchive,
     InboundAddress,
     InboundMessage,
     InboundMessageState,
 )
-from mailing.models import DmarcArchive
 from mailing.services.dmarc import DMARC_SENDERS
 
 # The default view is the unread mail, because that is what an operator opening
