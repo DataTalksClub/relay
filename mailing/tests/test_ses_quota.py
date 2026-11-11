@@ -155,8 +155,16 @@ def test_quota_template_renders_clean_numbers_and_domains_only():
             ],
         }
     ]
-    html = render_to_string("mailing/operator/ses_quota.html", {"rows": rows})
+    html = render_to_string("mailing/operator/ses_quota.html", {"rows": rows, "configured_max_send_rate": 45.0})
     assert ".0" not in html
-    assert "150000" in html and "45/s" in html
+    assert "150000" in html and "at most 45 emails per second" in html
     assert "<div>x.io</div>" in html
     assert "b@x.io" not in html and "p.io" not in html and "(domain" not in html
+
+
+def test_dead_letters_page_highlights_operations_in_nav(client):
+    user = get_user_model().objects.create_user("ops", "ops@example.com", "pw", is_staff=True)
+    client.force_login(user)
+    html = client.get("/jobs/dead-letters/").content.decode()
+    operations = html[html.index("jobs/") - 20 :]
+    assert 'aria-current="page"' in html[html.index('href="/jobs/"') : html.index('href="/jobs/"') + 200]

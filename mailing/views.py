@@ -317,7 +317,9 @@ def pagination_querystring(request):
 
 @staff_member_required
 def ses_quota(request):
-    return render(request, "mailing/operator/ses_quota.html", {"rows": ses_quota_rows()})
+    rows = ses_quota_rows()
+    configured = rows[0]["configured_max_send_rate"] if rows else settings.SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND
+    return render(request, "mailing/operator/ses_quota.html", {"rows": rows, "configured_max_send_rate": configured})
 
 
 @staff_member_required
