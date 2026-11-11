@@ -125,3 +125,38 @@ def test_staff_page_and_admin_api(monkeypatch):
     response = HttpClient(HTTP_AUTHORIZATION=f"Bearer {token}").get("/api/admin/ses-quota")
     assert response.status_code == 200
     assert response.json()["results"][0]["sent_last_24h"] == 1500.0
+
+
+def test_format_filters_trim_whole_values_and_filter_domains():
+    from mailing.templatetags.relay_format import trim_number, verified_domains
+
+    assert [trim_number(v) for v in (150000.0, 50.0, 1.0, 0.5, 14.3, None, 7)] == ["150000", "50", "1", 0.5, 14.3, None, 7]
+    identities = [
+        {"name": "a@x.io", "type": "email", "verification": "SUCCESS"},
+        {"name": "x.io", "type": "domain", "verification": "SUCCESS"},
+        {"name": "pending.io", "type": "domain", "verification": "PENDING"},
+        {"name": "failed.io", "type": "domain", "verification": "FAILED"},
+    ]
+    assert verified_domains(identities) == ["x.io"]
+
+
+def test_quota_template_renders_clean_numbers_and_domains_only():
+    from django.template.loader import render_to_string
+
+    rows = [
+        {
+            "account": "1", "region": "eu-west-1", "status": "ok", "mode": "production",
+            "max_24h_send": 150000.0, "max_send_rate": 50.0, "sent_last_24h": 1500.0, "percent_used": 1.0,
+            "enforcement_status": "HEALTHY", "identities_status": "ok", "configured_max_send_rate": 45.0,
+            "identities": [
+                {"name": "b@x.io", "type": "email", "verification": "SUCCESS", "sending_enabled": True},
+                {"name": "x.io", "type": "domain", "verification": "SUCCESS", "sending_enabled": True},
+                {"name": "p.io", "type": "domain", "verification": "PENDING", "sending_enabled": True},
+            ],
+        }
+    ]
+    html = render_to_string("mailing/operator/ses_quota.html", {"rows": rows})
+    assert ".0" not in html
+    assert "150000" in html and "45/s" in html
+    assert "<div>x.io</div>" in html
+    assert "b@x.io" not in html and "p.io" not in html and "(domain" not in html

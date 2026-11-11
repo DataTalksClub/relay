@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load relay_format %}
 {% block title %}SES quota | Relay{% endblock %}
 {% block content %}
   <div class="page-header">
@@ -17,16 +18,16 @@
             <td>{{ row.region }}</td>
             {% if row.status == "ok" %}
               <td>{{ row.mode }}</td>
-              <td class="data-num">{{ row.max_24h_send|default_if_none:"-" }}</td>
-              <td class="data-num">{{ row.max_send_rate|default_if_none:"-" }}</td>
-              <td class="data-num">{{ row.sent_last_24h|default_if_none:"-" }}{% if row.percent_used is not None %} ({{ row.percent_used }}%) <progress max="100" value="{{ row.percent_used }}" aria-label="{{ row.percent_used }}% of 24h quota used"></progress>{% endif %}</td>
+              <td class="data-num">{{ row.max_24h_send|trim_number|default_if_none:"-" }}</td>
+              <td class="data-num">{{ row.max_send_rate|trim_number|default_if_none:"-" }}</td>
+              <td class="data-num">{{ row.sent_last_24h|trim_number|default_if_none:"-" }}{% if row.percent_used is not None %} ({{ row.percent_used|trim_number }}%) <progress max="100" value="{{ row.percent_used|trim_number }}" aria-label="{{ row.percent_used|trim_number }}% of 24h quota used"></progress>{% endif %}</td>
               <td>{{ row.enforcement_status|default:"-" }}</td>
               <td>
                 {% if row.identities_status == "no_permission" %}no permission
                 {% elif row.identities_status != "ok" %}error
                 {% else %}
-                  {% for identity in row.identities %}
-                    <div>{{ identity.name }} <small>({{ identity.type }}, {{ identity.verification|lower }}{% if not identity.sending_enabled %}, sending disabled{% endif %})</small></div>
+                  {% for domain in row.identities|verified_domains %}
+                    <div>{{ domain }}</div>
                   {% empty %}none{% endfor %}
                 {% endif %}
               </td>
@@ -39,6 +40,6 @@
         {% endfor %}
       </tbody>
     </table>
-    <p><small>Relay send rate limit: {{ rows.0.configured_max_send_rate }}/s (RELAY_SES_ACCOUNT_MAX_SEND_RATE).</small></p>
+    <p><small>Relay send rate limit: {{ rows.0.configured_max_send_rate|trim_number }}/s (RELAY_SES_ACCOUNT_MAX_SEND_RATE).</small></p>
   </section>
 {% endblock %}
