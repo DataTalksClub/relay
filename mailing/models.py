@@ -510,6 +510,14 @@ class Campaign(TimeStampedModel):
     unsubscribe_count = models.PositiveIntegerField(default=0)
     bounce_count = models.PositiveIntegerField(default=0)
     complaint_count = models.PositiveIntegerField(default=0)
+    # Campaign consolidation (mailing.services.campaign_consolidation): a source
+    # campaign whose recipients and events were moved into ``merged_into``. The
+    # row is kept (never deleted) with ``merge_snapshot`` holding its pre-merge
+    # counters/status so the merge can be rolled back exactly.
+    merged_into = models.ForeignKey(
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="merged_sources"
+    )
+    merge_snapshot = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "campaigns"
@@ -648,6 +656,8 @@ class CampaignRecipient(TimeStampedModel):
     last_error = models.TextField(blank=True)
     claimed_at = models.DateTimeField(null=True, blank=True)
     claim_owner = models.CharField(max_length=64, blank=True)
+    # Original campaign of a recipient moved by a campaign consolidation; used by rollback.
+    merged_from_campaign_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "campaign_recipients"
@@ -890,6 +900,8 @@ class EmailEvent(models.Model):
     url = models.URLField(max_length=2048, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Original campaign of an event moved by a campaign consolidation; used by rollback.
+    merged_from_campaign_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "email_events"

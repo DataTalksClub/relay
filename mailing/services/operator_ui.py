@@ -585,7 +585,10 @@ def campaign_stat_groups(campaign: Campaign, progress: CampaignSendProgress | No
 
 
 def campaign_queryset(client: Client | None = None) -> QuerySet[Campaign]:
-    queryset = Campaign.objects.select_related("client", "audience", "audience__organization")
+    # Batches consolidated into another campaign (merged_into) are part of it, not separate campaigns.
+    queryset = Campaign.objects.select_related("client", "audience", "audience__organization").filter(
+        merged_into__isnull=True
+    )
     if client is not None:
         queryset = queryset.filter(client=client)
     return queryset.order_by("-created_at", "-id")
