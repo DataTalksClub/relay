@@ -41,6 +41,7 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
+from mailing.services.click_security import sign_click_redirect
 from mailing.services.operator_ui import (
     ContactExplorerFilters,
     _latest_event_by_audience,
@@ -383,7 +384,9 @@ def test_tracking_open_pixel(client, seeded):
 
 def test_tracking_click_redirect(client, seeded):
     url = reverse("mailing:tracking_click", args=[seeded["tracking_token"]])
-    response = client.get(url + "?u=https://example.com/welcome")
+    destination = "https://example.com/welcome"
+    signature = sign_click_redirect(seeded["tracking_token"], destination)
+    response = client.get(url + f"?u={destination}&s={signature}")
     assert response.status_code in (301, 302)
 
 
