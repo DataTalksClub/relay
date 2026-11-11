@@ -23,6 +23,7 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 DEFAULT_START = "2025-11-10T23:00:00Z"  # 2025-11-11 midnight Europe/Berlin (CET).
+MAX_WORKERS = 8  # Mailchimp permits 10 connections per user; reserve two for other account work.
 DOCS = "https://mailchimp.com/developer/marketing/api/reports/email-activity/list-email-activity"
 CAVEATS = [
     "Mailchimp limits activity to 1000 clicks and 1000 opens per member per campaign; capped histories may be incomplete.",
@@ -122,8 +123,8 @@ class Archive:
     def __init__(self, root, api, *, datacenter, start=DEFAULT_START, end=None, page_size=1000, workers=1):
         if not 1 <= page_size <= 1000:
             raise ArchiveError("Page size must be between 1 and 1000")
-        if not 1 <= workers <= 5:
-            raise ArchiveError("Workers must be between 1 and 5")
+        if not 1 <= workers <= MAX_WORKERS:
+            raise ArchiveError(f"Workers must be between 1 and {MAX_WORKERS}")
         self.lock = RLock()
         self.workers = workers
         self.root = Path(root)
@@ -340,7 +341,7 @@ def main(argv=None):
     parser.add_argument("--start", default=DEFAULT_START, help="Inclusive ISO timestamp (default: Berlin 2025-11-11 midnight)")
     parser.add_argument("--end", help="Inclusive frozen extraction timestamp; defaults to initial invocation UTC time")
     parser.add_argument("--page-size", type=int, default=1000)
-    parser.add_argument("--workers", type=int, default=1, help="Parallel campaigns, 1 to 5 (default 1)")
+    parser.add_argument("--workers", type=int, default=1, help=f"Parallel campaigns, 1 to {MAX_WORKERS} (default 1)")
     args = parser.parse_args(argv)
     token = os.environ.get("MAILCHIMP_API_KEY", "").strip()
     if not token:

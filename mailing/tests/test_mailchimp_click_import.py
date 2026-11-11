@@ -67,7 +67,7 @@ def archive(scope, *, timestamps=(START, START, END), email="One@example.com", l
                       "by_contact": {list_id + ":member-one": len(rows)},
                       "by_link": {"mc-campaign:" + URL: len(rows)}}
     (root / "reconciliation.json").write_bytes(encoded(reconciliation))
-    manifest = {"schema_version": 1, "source": "mailchimp", "status": "complete_available_api_data",
+    manifest = {"schema_version": 1, "source": "mailchimp", "datacenter": "us19", "status": "complete_available_api_data",
                 "window": {"start_inclusive": START, "end_inclusive": END, "timezone": "Europe/Berlin"},
                 "pages": {"page": {"path": "/reports/mc-campaign/email-activity", "file": raw_file,
                                    "sha256": hashlib.sha256(encoded(raw)).hexdigest()}},

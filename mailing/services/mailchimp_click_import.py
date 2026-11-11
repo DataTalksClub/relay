@@ -12,7 +12,16 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 
-from mailing.models import Audience, Campaign, Client, Contact, ContactSourceMetadata, EmailEvent, EmailEventType
+from mailing.models import (
+    Audience,
+    Campaign,
+    CampaignStatus,
+    Client,
+    Contact,
+    ContactSourceMetadata,
+    EmailEvent,
+    EmailEventType,
+)
 
 
 class ClickImportError(Exception):
@@ -239,17 +248,79 @@ def resolve_scope(organization, client_slug, audience_slug):
     return client, audience
 
 
-def resolve_campaigns(mapping_path, client, audience):
+def validate_mapping_scope(campaign, client, audience):
+    if campaign.client_id != client.pk or campaign.audience_id != audience.pk:
+        raise ClickImportError("Mapped campaign is outside the requested client/audience scope")
+    if campaign.status != CampaignStatus.SENT:
+        raise ClickImportError("Historical clicks require an already-sent mapped campaign")
+
+
+def mapping_provenance(campaign):
+    if not isinstance(campaign.metadata, dict) or not isinstance(campaign.metadata.get("mailchimp", {}), dict):
+        raise ClickImportError("Mapped campaign has malformed Mailchimp source provenance")
+    return campaign.metadata.get("mailchimp", {})
+
+
+def conflicting_mapping_source(campaign, source_id, datacenter, list_id):
+    provenance = mapping_provenance(campaign)
+    expected_key = f"mailchimp-{datacenter}-{source_id}"
+    if campaign.external_key.startswith("mailchimp-") and campaign.external_key != expected_key:
+        return True
+    return any(provenance.get(field) and provenance[field] != expected for field, expected in (
+        ("campaign_id", source_id), ("datacenter", datacenter), ("list_id", list_id)
+    ))
+
+
+def verify_mapping_alias(alias, target, source_id, datacenter, list_id, client, audience):
+    validate_mapping_scope(alias, client, audience)
+    if conflicting_mapping_source(alias, source_id, datacenter, list_id):
+        raise ClickImportError("Source alias provenance conflicts with the Mailchimp campaign mapping")
+    current, visited = alias, set()
+    while current.merged_into_id is not None:
+        if current.pk in visited:
+            raise ClickImportError("Mapped source alias merge chain contains a cycle")
+        visited.add(current.pk)
+        current = Campaign.objects.get(pk=current.merged_into_id)
+        validate_mapping_scope(current, client, audience)
+    if current.pk != target.pk:
+        raise ClickImportError("Mapped target is unrelated to the source alias canonical campaign")
+
+
+def validate_campaign_mapping(target, source_id, datacenter, list_id, client, audience, source_campaigns):
+    validate_mapping_scope(target, client, audience)
+    if target.merged_into_id is not None:
+        raise ClickImportError("Historical clicks cannot map to a merged campaign alias")
+    expected_key = f"mailchimp-{datacenter}-{source_id}"
+    verified_alias = False
+    for candidate in source_campaigns:
+        raw_metadata = candidate.metadata if isinstance(candidate.metadata, dict) else {}
+        provenance = raw_metadata.get("mailchimp", {})
+        exact_metadata = isinstance(provenance, dict) and all(provenance.get(field) == value for field, value in (
+            ("campaign_id", source_id), ("datacenter", datacenter), ("list_id", list_id)
+        ))
+        if candidate.pk == target.pk or not (candidate.external_key == expected_key or exact_metadata):
+            continue
+        if candidate.merged_into_id is None:
+            raise ClickImportError("Another unmerged campaign claims the mapped Mailchimp source ID")
+        verify_mapping_alias(candidate, target, source_id, datacenter, list_id, client, audience)
+        verified_alias = True
+    if conflicting_mapping_source(target, source_id, datacenter, list_id) and not verified_alias:
+        raise ClickImportError("Mapped campaign source provenance conflicts with the Mailchimp source ID")
+
+
+def resolve_campaigns(mapping_path, client, audience, *, datacenter, list_id):
+    if not isinstance(datacenter, str) or not re.fullmatch(r"[a-z]{2}\d+", datacenter):
+        raise ClickImportError("Archive Mailchimp datacenter is invalid")
     mapping = json.loads(Path(mapping_path).read_text(encoding="utf-8"))
     if not isinstance(mapping, dict) or any(not isinstance(key, str) or type(value) is not int
                                             for key, value in mapping.items()):
         raise ClickImportError("Campaign map must map Mailchimp IDs to integer Relay campaign IDs")
     campaigns = {campaign.pk: campaign for campaign in Campaign.objects.filter(pk__in=mapping.values())}
-    for campaign in campaigns.values():
-        if campaign.client_id != client.pk or campaign.audience_id != audience.pk:
-            raise ClickImportError("Mapped campaign is outside the requested client/audience scope")
     if set(mapping.values()) != set(campaigns):
         raise ClickImportError("Campaign map references missing Relay campaigns")
+    source_campaigns = list(Campaign.objects.filter(client=client))
+    for source_id, relay_id in mapping.items():
+        validate_campaign_mapping(campaigns[relay_id], source_id, datacenter, list_id, client, audience, source_campaigns)
     return {source_id: campaigns[relay_id] for source_id, relay_id in mapping.items()}
 
 
@@ -297,7 +368,8 @@ def import_mailchimp_clicks(*, archive_path, campaign_map, organization, client_
     try:
         archive = VerifiedArchive(archive_path)
         client, audience = resolve_scope(organization, client_slug, audience_slug)
-        campaigns = resolve_campaigns(campaign_map, client, audience)
+        campaigns = resolve_campaigns(campaign_map, client, audience, datacenter=archive.manifest["datacenter"],
+                                     list_id=list_id)
         return run_import(archive, campaigns, client, audience, list_id, apply)
     except ClickImportError:
         raise

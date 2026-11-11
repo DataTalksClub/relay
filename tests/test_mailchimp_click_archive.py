@@ -213,4 +213,4 @@ def test_parallel_campaigns_bound_concurrency_and_keep_manifest_valid(tmp_path):
     assert json.loads((tmp_path / "manifest.json").read_text())["status"] == "complete_available_api_data"
     assert manifest["totals"]["in_window_clicks"] == 24
     with pytest.raises(ArchiveError, match="Workers"):
-        make_archive(tmp_path / "bad", workers=6)
+        make_archive(tmp_path / "bad", workers=9)
