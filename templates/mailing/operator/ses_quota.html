@@ -9,20 +9,21 @@
     </div>
   </div>
   <section class="section" aria-labelledby="ses-quota-rows">
-    <table class="data-table">
-      <thead><tr><th>Account</th><th>Region</th><th>Mode</th><th>Max 24h</th><th>Max rate/s</th><th>Sent 24h</th><th>Enforcement</th><th>Verified identities</th></tr></thead>
+    <div class="table-wrap stack-table">
+    <table>
+      <thead><tr><th>Account</th><th>Region</th><th>Mode</th><th>Max 24h</th><th>Max rate/s</th><th>Sent 24h</th><th>Enforcement</th><th>Verified domains</th></tr></thead>
       <tbody>
         {% for row in rows %}
           <tr>
-            <td>{{ row.account }}</td>
-            <td>{{ row.region }}</td>
+            <td data-label="Account">{{ row.account }}</td>
+            <td data-label="Region">{{ row.region }}</td>
             {% if row.status == "ok" %}
-              <td>{{ row.mode }}</td>
-              <td class="data-num">{{ row.max_24h_send|trim_number|default_if_none:"-" }}</td>
-              <td class="data-num">{{ row.max_send_rate|trim_number|default_if_none:"-" }}</td>
-              <td class="data-num">{{ row.sent_last_24h|trim_number|default_if_none:"-" }}{% if row.percent_used is not None %} ({{ row.percent_used|trim_number }}%) <progress max="100" value="{{ row.percent_used|trim_number }}" aria-label="{{ row.percent_used|trim_number }}% of 24h quota used"></progress>{% endif %}</td>
-              <td>{{ row.enforcement_status|default:"-" }}</td>
-              <td>
+              <td data-label="Mode">{{ row.mode }}</td>
+              <td class="data-num" data-label="Max 24h">{{ row.max_24h_send|trim_number|default_if_none:"-" }}</td>
+              <td class="data-num" data-label="Max rate/s">{{ row.max_send_rate|trim_number|default_if_none:"-" }}</td>
+              <td class="data-num" data-label="Sent 24h">{{ row.sent_last_24h|trim_number|default_if_none:"-" }}{% if row.percent_used is not None %} ({{ row.percent_used|trim_number }}%)<br><progress max="100" value="{{ row.percent_used|trim_number }}" aria-label="{{ row.percent_used|trim_number }}% of 24h quota used"></progress>{% endif %}</td>
+              <td data-label="Enforcement">{{ row.enforcement_status|default:"-" }}</td>
+              <td data-label="Verified domains">
                 {% if row.identities_status == "no_permission" %}no permission
                 {% elif row.identities_status != "ok" %}error
                 {% else %}
@@ -40,6 +41,7 @@
         {% endfor %}
       </tbody>
     </table>
-    <p><small>Relay send rate limit: {{ rows.0.configured_max_send_rate|trim_number }}/s (RELAY_SES_ACCOUNT_MAX_SEND_RATE).</small></p>
+    </div>
+    <p><small title="RELAY_SES_ACCOUNT_MAX_SEND_RATE">Relay sends at most {{ configured_max_send_rate|trim_number }} emails per second per SES account.</small></p>
   </section>
 {% endblock %}

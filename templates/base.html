@@ -117,7 +117,7 @@
               <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
               <span class="dk-nav-item__label">API docs</span>
             </a>
-            <a class="dk-nav-item" href="{% url 'jobs:job_list' %}"{% if current_url_name == "job_list" or current_url_name == "job_detail" or current_url_name == "dead_letters" or current_url_name == "schedule_list" or current_url_name == "schedule_detail_ui" or current_url_name == "service_health" %} aria-current="page"{% endif %}>
+            <a class="dk-nav-item" href="{% url 'jobs:job_list' %}"{% if current_url_name == "job_list" or current_url_name == "job_detail" or current_url_name == "dead_letter_list" or current_url_name == "schedule_list" or current_url_name == "schedule_detail_ui" or current_url_name == "service_health" %} aria-current="page"{% endif %}>
               <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
               <span class="dk-nav-item__label">Operations</span>
             </a>
