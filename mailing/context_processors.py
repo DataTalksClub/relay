@@ -9,6 +9,26 @@ from mailing.models import Client
 
 ACTIVE_CLIENT_SESSION_KEY = "operator_active_client_id"
 
+# Screens that belong to the shared service rather than the selected client.
+# The mode is derived from the route, never stored, so every URL keeps working.
+SERVICE_URL_NAMES = frozenset(
+    {
+        "service_home",
+        "inbound_list", "inbound_message_detail", "inbound_message_raw",
+        "inbound_address_list", "inbound_address_create", "inbound_address_archive",
+        "dmarc_report_list", "dmarc_report_detail", "dmarc_summary",
+        "ses_quota",
+        "client_list", "client_create",
+        "api_docs", "api_docs_json", "api_docs_workflow", "api_docs_reference", "api_docs_legacy",
+        "admin_api_keys",
+    }
+)
+SERVICE_NAMESPACES = frozenset({"jobs"})
+
+
+def is_service_route(match):
+    return bool(match) and (match.url_name in SERVICE_URL_NAMES or match.namespace in SERVICE_NAMESPACES)
+
 
 def operator_client_context(request):
     if not getattr(request, "user", None) or not request.user.is_authenticated or not request.user.is_staff:
@@ -33,6 +53,7 @@ def operator_client_context(request):
         "operator_clients": clients,
         "operator_active_client": active_client,
         "operator_active_client_session_key": ACTIVE_CLIENT_SESSION_KEY,
+        "operator_service_mode": is_service_route(getattr(request, "resolver_match", None)),
     }
 
 

@@ -119,6 +119,7 @@ urlpatterns = [
     ),
     path("api-docs/", documentation_views.api_docs, name="api_docs"),
     path("api-docs/openapi.json", views.api_docs_json, name="api_docs_json"),
+    path("service/", views.service_home, name="service_home"),
     path("ses-quota/", views.ses_quota, name="ses_quota"),
     path("api/workers/status", views.api_worker_status, name="api_worker_status"),
     path("inbound/messages/<int:message_id>/raw/", views.inbound_message_raw, name="inbound_message_raw"),

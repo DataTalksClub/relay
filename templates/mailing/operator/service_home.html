@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Shared service · Relay{% endblock %}
+{% block topbar_title %}Shared service{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Shared service</h1>
+      <p class="muted">Mail, sending and background processing that serve every client. Nothing on these screens depends on the selected client.</p>
+    </div>
+  </div>
+
+  <div class="stats-grid dashboard-status" role="group" aria-label="Service status">
+    <div class="stat">
+      <span class="stat-label"><span class="stat-dot {% if health_tone == 'success' %}success{% elif health_tone == 'danger' %}danger{% endif %}"></span>Background processing</span>
+      <a class="stat-link stat-value" href="{% url 'jobs:service_health' %}">{{ health_label }}</a>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Waiting background items</span>
+      <a class="stat-link stat-value" href="{% url 'jobs:job_list' %}"><span class="data-num">{{ waiting_count }}</span></a>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Unread inbound senders</span>
+      <a class="stat-link stat-value" href="{% url 'mailing:inbound_list' %}"><span class="data-num">{{ unread_senders }}</span></a>
+    </div>
+  </div>
+
+  <section class="section panel" aria-labelledby="service-screens">
+    <div class="panel-header"><h2 id="service-screens">Screens</h2></div>
+    <div class="compact-list">
+      <a class="compact-row" href="{% url 'mailing:inbound_list' %}"><strong>Inbound mail</strong><span class="helptext">Mail received at Relay addresses.</span></a>
+      <a class="compact-row" href="{% url 'mailing:inbound_address_list' %}"><strong>Receiving addresses</strong><span class="helptext">Addresses Relay accepts mail for.</span></a>
+      <a class="compact-row" href="{% url 'mailing:dmarc_report_list' %}"><strong>DMARC reports</strong><span class="helptext">Automated aggregate reports about sending domains.</span></a>
+      <a class="compact-row" href="{% url 'mailing:ses_quota' %}"><strong>SES quota</strong><span class="helptext">Sending limits, usage and verified domains per AWS account and region.</span></a>
+      <a class="compact-row" href="{% url 'mailing:client_list' %}"><strong>Clients</strong><span class="helptext">All clients and their organizations.</span></a>
+      <a class="compact-row" href="{% url 'jobs:job_list' %}"><strong>Operations</strong><span class="helptext">Jobs, schedules, service health and failed jobs.</span></a>
+      <a class="compact-row" href="{% url 'mailing:admin_api_keys' %}"><strong>Admin API keys</strong><span class="helptext">Service-wide API access.</span></a>
+      <a class="compact-row" href="{% url 'mailing:api_docs' %}"><strong>API docs</strong><span class="helptext">Endpoint reference and workflow examples.</span></a>
+    </div>
+  </section>
+{% endblock %}

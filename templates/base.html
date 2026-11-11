@@ -32,10 +32,10 @@
       <aside class="dk-sidebar" id="dk-sidebar" aria-label="Workspace">
         <div class="dk-sidebar__head">
           {% if operator_clients %}
-            <button class="dk-brand" type="button" data-dk-popover-trigger="dk-brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="dk-brand-menu" aria-label="Relay, client: {{ operator_active_client.name|default:'none selected' }}">
+            <button class="dk-brand" type="button" data-dk-popover-trigger="dk-brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="dk-brand-menu" aria-label="Relay, {% if operator_service_mode %}shared service{% else %}client: {{ operator_active_client.name|default:'none selected' }}{% endif %}">
               <span class="dk-brand__tile" aria-hidden="true">R</span>
               <span class="dk-brand__name">Relay</span>
-              <span class="dk-brand__scope">{{ operator_active_client.name|default:"Select client" }}</span>
+              <span class="dk-brand__scope">{% if operator_service_mode %}Shared service{% else %}{{ operator_active_client.name|default:"Select client" }}{% endif %}</span>
               <svg class="dk-brand__chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
             </button>
           {% else %}
@@ -47,6 +47,7 @@
         </div>
 
         <nav class="dk-sidebar__nav" aria-label="Primary">
+          {% if not operator_service_mode %}
           <div class="dk-nav-group" role="group" aria-labelledby="nav-daily">
             <div class="dk-nav-group__label" id="nav-daily">Daily work</div>
             <a class="dk-nav-item" href="{% url 'mailing:dashboard' %}"{% if current_url_name == "dashboard" %} aria-current="page"{% endif %}>
@@ -91,8 +92,26 @@
               </a>
             {% endif %}
           </div>
+          <div class="dk-nav-group" role="group" aria-labelledby="nav-to-service">
+            <div class="dk-nav-group__label" id="nav-to-service">Shared service</div>
+            <a class="dk-nav-item" href="{% url 'mailing:service_home' %}">
+              <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
+              <span class="dk-nav-item__label">Open shared service</span>
+            </a>
+          </div>
+          {% else %}
+          <div class="dk-nav-group" role="group" aria-label="Back to client">
+            <a class="dk-nav-item" href="{% url 'mailing:dashboard' %}">
+              <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+              <span class="dk-nav-item__label">Back to {{ operator_active_client.name|default:"clients" }}</span>
+            </a>
+          </div>
           <div class="dk-nav-group" role="group" aria-labelledby="nav-shared">
             <div class="dk-nav-group__label" id="nav-shared">Shared service</div>
+            <a class="dk-nav-item" href="{% url 'mailing:service_home' %}"{% if current_url_name == "service_home" %} aria-current="page"{% endif %}>
+              <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12 12 3l9 9"/><path d="M5 10v10h14V10"/></svg>
+              <span class="dk-nav-item__label">Overview</span>
+            </a>
             <a class="dk-nav-item" href="{% url 'mailing:inbound_list' %}"{% if current_url_name == "inbound_list" or current_url_name == "inbound_message_detail" %} aria-current="page"{% endif %}>
               <svg class="dk-nav-item__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
               <span class="dk-nav-item__label">Inbound mail</span>
@@ -126,6 +145,7 @@
               <span class="dk-nav-item__label">Admin API keys</span>
             </a>
           </div>
+          {% endif %}
         </nav>
 
         <div class="dk-sidebar__foot">
@@ -178,6 +198,8 @@
         <form class="dk-menu dk-brand-menu" id="dk-brand-menu" role="menu" aria-label="Switch client" method="post" action="{% url 'mailing:client_select' %}" data-dk-popover data-client-switcher hidden>
           {% csrf_token %}
           <input type="hidden" name="next" value="{{ request.get_full_path }}">
+          <a class="dk-menu__item" href="{% url 'mailing:service_home' %}" role="menuitem" tabindex="-1"><span class="dk-menu__text">Shared service</span></a>
+          <hr class="dk-menu__sep">
           <div class="dk-menu__label" role="presentation">Clients</div>
           {% for client in operator_clients %}
             <button class="dk-menu__item" type="submit" name="client_id" value="{{ client.id }}" role="menuitemradio" aria-checked="{% if operator_active_client and operator_active_client.id == client.id %}true{% else %}false{% endif %}" aria-label="{{ client.name }}" tabindex="-1">
