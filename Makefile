@@ -11,8 +11,12 @@ setup:
 migrate:
 	uv run python manage.py migrate
 
+DAKIT_DIR ?= ../dakit
+
+# Vendor dakit (build it first: cd $(DAKIT_DIR) && node build.mjs); commit
+# static/dakit/ together with its dakit.lock.json.
 sync-dakit:
-	scripts/sync_dakit.sh
+	node $(DAKIT_DIR)/scripts/sync.mjs --dest static/dakit
 
 run:
 	uv run python manage.py runserver

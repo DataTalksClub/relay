@@ -56,8 +56,14 @@ API_DOC_PATHS = {
     "mailing:api_contact_history": "/api/contacts/{contact_id}/history",
     "mailing:api_client_senders": "/api/client/senders",
     "mailing:api_campaign": "/api/campaigns/{external_key}",
+    "mailing:api_campaign_links": "/api/campaigns/{external_key}/links",
     "mailing:api_campaign_queue": "/api/campaigns/{external_key}/queue",
     "mailing:api_campaign_cancel": "/api/campaigns/{external_key}/cancel",
+    "mailing:api_campaign_pause": "/api/campaigns/{external_key}/pause",
+    "mailing:api_campaign_resume": "/api/campaigns/{external_key}/resume",
+    "mailing:api_campaign_stop": "/api/campaigns/{external_key}/stop",
+    "mailing:api_campaign_unknown_recipients": "/api/campaigns/{external_key}/unknown-recipients",
+    "mailing:api_campaign_unknown_resend": "/api/campaigns/{external_key}/unknown-recipients/resend",
     "mailing:api_campaign_preview": "/api/campaigns/{external_key}/preview",
     "mailing:api_campaign_test_send": "/api/campaigns/{external_key}/test-send",
     "mailing:api_campaign_recount": "/api/campaigns/{external_key}/recount",
@@ -84,6 +90,7 @@ API_DOC_PATHS = {
     "jobs:task_fail": "/api/tasks/{task_id}/fail",
     "jobs:schedules": "/api/schedules",
     "jobs:schedule_detail": "/api/schedules/{schedule_id}",
+    "mailing:api_transactional_templates": "/api/transactional/templates",
     "mailing:api_transactional_template": "/api/transactional/templates/{template_key}",
     "mailing:api_transactional_send": "/api/transactional/send",
     "mailing:api_transactional_message_status": "/api/transactional/messages/{message_id}",
@@ -779,6 +786,7 @@ def endpoint_groups():
                 ("POST", "/api/contacts/imports", "Bulk JSON import/upsert."),
                 ("POST", "/api/contacts/imports/csv", "CSV upload/import."),
                 ("PUT", "/api/transactional/templates/{template_key}", "Create or update a transactional template."),
+                ("GET", "/api/transactional/templates", "List transactional templates."),
                 ("GET", "/api/transactional/templates/{template_key}", "Get one transactional template."),
                 ("POST", "/api/transactional/send", "Queue one transactional email (dry_run renders without sending)."),
                 ("GET", "/api/transactional/messages/{message_id}", "Get transactional message status."),
@@ -789,8 +797,14 @@ def endpoint_groups():
             "endpoints": [
                 ("PUT", "/api/campaigns/{external_key}", "Create or update one draft campaign."),
                 ("GET", "/api/campaigns/{external_key}", "Get one campaign by external key."),
+                ("GET", "/api/campaigns/{external_key}/links", "Get per-link total clicks and unique clickers."),
                 ("POST", "/api/campaigns/{external_key}/queue", "Snapshot and queue one draft campaign."),
                 ("POST", "/api/campaigns/{external_key}/cancel", "Cancel one draft or unsent queued campaign."),
+                ("POST", "/api/campaigns/{external_key}/pause", "Pause one queued or sending campaign; resume continues with the remaining recipients."),
+                ("GET", "/api/campaigns/{external_key}/unknown-recipients", "List recipients whose SES send outcome is unknown (lost response, crash, expired claim) with a count. They are never resent automatically."),
+                ("POST", "/api/campaigns/{external_key}/unknown-recipients/resend", "Resend selected UNKNOWN recipients: body {recipient_ids: [...], confirm: true}. Without confirm=true nothing happens; the first copy may already have been delivered."),
+                ("POST", "/api/campaigns/{external_key}/resume", "Resume one paused campaign by re-queueing its remaining recipients."),
+                ("POST", "/api/campaigns/{external_key}/stop", "Stop one queued or sending campaign permanently; sent email is kept."),
                 ("POST", "/api/campaigns/{external_key}/preview", "Render one campaign without recipients."),
                 ("POST", "/api/campaigns/{external_key}/test-send", "Send one campaign to explicit test addresses."),
                 (
@@ -906,12 +920,36 @@ def route_path_map():
             "mailing:api_campaign",
             args=["cmp-course-start-2026"],
         ),
+        API_DOC_PATHS["mailing:api_campaign_links"]: reverse(
+            "mailing:api_campaign_links",
+            args=["cmp-course-start-2026"],
+        ),
         API_DOC_PATHS["mailing:api_campaign_queue"]: reverse(
             "mailing:api_campaign_queue",
             args=["cmp-course-start-2026"],
         ),
         API_DOC_PATHS["mailing:api_campaign_cancel"]: reverse(
             "mailing:api_campaign_cancel",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_pause"]: reverse(
+            "mailing:api_campaign_pause",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_resume"]: reverse(
+            "mailing:api_campaign_resume",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_stop"]: reverse(
+            "mailing:api_campaign_stop",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_unknown_recipients"]: reverse(
+            "mailing:api_campaign_unknown_recipients",
+            args=["cmp-course-start-2026"],
+        ),
+        API_DOC_PATHS["mailing:api_campaign_unknown_resend"]: reverse(
+            "mailing:api_campaign_unknown_resend",
             args=["cmp-course-start-2026"],
         ),
         API_DOC_PATHS["mailing:api_campaign_preview"]: reverse(
@@ -979,6 +1017,9 @@ def route_path_map():
         API_DOC_PATHS["jobs:task_fail"]: reverse("jobs:task_fail", args=[TASK_ID]),
         API_DOC_PATHS["jobs:schedules"]: reverse("jobs:schedules"),
         API_DOC_PATHS["jobs:schedule_detail"]: reverse("jobs:schedule_detail", args=[TASK_ID]),
+        API_DOC_PATHS["mailing:api_transactional_templates"]: reverse(
+            "mailing:api_transactional_templates",
+        ),
         API_DOC_PATHS["mailing:api_transactional_template"]: reverse(
             "mailing:api_transactional_template",
             args=["homework-submission-confirmation"],
@@ -1380,6 +1421,21 @@ OPENAPI_SPEC = {
                 | {"201": json_response("Campaign created", "#/components/schemas/CampaignUpsertResponse")},
             },
         },
+        "/api/campaigns/{external_key}/links": {
+            "get": {
+                "tags": ["Campaigns"],
+                "summary": "Get per-link campaign click statistics",
+                "description": (
+                    "Returns tracked click totals grouped by destination URL for the campaign owned by the "
+                    "authenticated client. Unique clickers count distinct campaign recipients for each URL."
+                ),
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "responses": bearer_responses(
+                    json_response("Campaign link click statistics", "#/components/schemas/CampaignLinksResponse")
+                ),
+            }
+        },
         "/api/campaigns/{external_key}/queue": {
             "post": {
                 "tags": ["Campaigns"],
@@ -1407,6 +1463,71 @@ OPENAPI_SPEC = {
                     json_response("Campaign cancelled", "#/components/schemas/CampaignCancelResponse")
                 )
                 | {"409": {"$ref": "#/components/responses/ValidationError"}},
+            }
+        },
+        "/api/campaigns/{external_key}/pause": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Pause campaign",
+                "description": "Halts a queued or sending campaign within one in-flight email. Remaining pending recipients are left untouched and resumable.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(
+                    json_response("Campaign paused", "#/components/schemas/CampaignPauseResponse")
+                ),
+            }
+        },
+        "/api/campaigns/{external_key}/resume": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Resume campaign",
+                "description": "Clears a pause and re-queues batches for the remaining pending recipients only. A stopped campaign stays stopped.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(
+                    json_response("Campaign resumed", "#/components/schemas/CampaignResumeResponse")
+                )
+                | {"409": {"$ref": "#/components/responses/ValidationError"}},
+            }
+        },
+        "/api/campaigns/{external_key}/stop": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Stop campaign",
+                "description": "Halts a queued or sending campaign permanently. Sent recipients are kept; remaining pending recipients are left untouched.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(
+                    json_response("Campaign stopped", "#/components/schemas/CampaignStopResponse")
+                ),
+            }
+        },
+        "/api/campaigns/{external_key}/unknown-recipients": {
+            "get": {
+                "tags": ["Campaigns"],
+                "summary": "List recipients with an unknown send outcome",
+                "description": "Recipients whose SES call ended ambiguously (lost response, crash, expired claim). They are never resent automatically; SES events resolve them or a person resends them.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [
+                    CAMPAIGN_EXTERNAL_KEY_PARAM,
+                    {"name": "audience", "in": "query", "required": True, "schema": {"type": "string"}},
+                    {"name": "client", "in": "query", "required": True, "schema": {"type": "string"}},
+                ],
+                "responses": bearer_responses(json_response("Unknown recipients with a count")),
+            }
+        },
+        "/api/campaigns/{external_key}/unknown-recipients/resend": {
+            "post": {
+                "tags": ["Campaigns"],
+                "summary": "Resend selected unknown recipients",
+                "description": "Requires confirm=true: the first copy may already have been delivered, so a resend can duplicate it. Logged with the calling client.",
+                "security": [{"BearerAuth": []}],
+                "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
+                "requestBody": json_body("#/components/schemas/ScopedMutationRequest"),
+                "responses": bearer_responses(json_response("Recipients queued for resend")),
             }
         },
         "/api/campaigns/{external_key}/preview": {
@@ -1686,6 +1807,17 @@ OPENAPI_SPEC = {
                 | {"409": json_response("Contact suppressed", "#/components/schemas/TransactionalSendResponse")},
             }
         },
+        "/api/transactional/templates": {
+            "get": {
+                "tags": ["Transactional"],
+                "summary": "List transactional templates",
+                "description": "Returns all transactional templates scoped to the authenticated client, ordered by key.",
+                "security": [{"BearerAuth": []}],
+                "responses": bearer_responses(
+                    json_response("Transactional templates", "#/components/schemas/TransactionalTemplateListResponse")
+                ),
+            }
+        },
         "/api/transactional/templates/{template_key}": {
             "get": {
                 "tags": ["Transactional"],
@@ -1761,6 +1893,13 @@ OPENAPI_SPEC = {
                 "parameters": [
                     TRACKING_PARAM,
                     {"name": "u", "in": "query", "required": True, "schema": {"type": "string", "format": "uri"}},
+                    {
+                        "name": "s",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "description": "HMAC signature generated with the destination for links sent after 2026-11-10.",
+                    },
                 ],
                 "responses": {
                     "302": {"description": "Redirects to destination URL"},
@@ -1953,6 +2092,8 @@ OPENAPI_SPEC = {
                             "preview_text": {"type": "string", "maxLength": 255},
                             "html_body": {"type": "string"},
                             "text_body": {"type": "string"},
+                            "unsubscribe_url_template": {"type": "string", "maxLength": 500,
+                                                         "description": "Optional sender-owned unsubscribe URL: https, with exactly one {token} placeholder. When set, the body link and the List-Unsubscribe / List-Unsubscribe-Post headers point there instead of Relay's /unsubscribe page; the sender's endpoint must apply the unsubscribe (e.g. by forwarding the recipient value to Relay's public one-click POST)."},
                             "scheduled_at": {"type": ["string", "null"], "format": "date-time",
                                              "description": "Future dispatch time with an explicit UTC offset. Queue confirms the schedule; recipients are selected at dispatch time."},
                             "category_tag": {"type": "string", "maxLength": 80},
@@ -1977,6 +2118,9 @@ OPENAPI_SPEC = {
                     "status": {"$ref": "#/components/schemas/CampaignStatus"},
                     "scheduled_at": {"type": ["string", "null"], "format": "date-time"},
                     "sent_at": {"type": ["string", "null"], "format": "date-time"},
+                    "send_halted_at": {"type": ["string", "null"], "format": "date-time"},
+                    "send_halt_reason": {"type": "string"},
+                    "send_halted": {"type": "boolean"},
                     "category_tag": {"type": "string"},
                     "recipient_list_key": {"type": "string"},
                     "include_tags": {"type": "array", "items": {"type": "string"}},
@@ -2000,6 +2144,26 @@ OPENAPI_SPEC = {
             "CampaignResponse": {
                 "type": "object",
                 "properties": {"campaign": {"$ref": "#/components/schemas/Campaign"}},
+            },
+            "CampaignLinkClickStats": {
+                "type": "object",
+                "required": ["url", "total_clicks", "unique_clickers"],
+                "properties": {
+                    "url": {"type": "string", "format": "uri"},
+                    "total_clicks": {"type": "integer", "minimum": 0},
+                    "unique_clickers": {"type": "integer", "minimum": 0},
+                },
+            },
+            "CampaignLinksResponse": {
+                "type": "object",
+                "required": ["campaign", "links"],
+                "properties": {
+                    "campaign": {"type": "string"},
+                    "links": {
+                        "type": "array",
+                        "items": {"$ref": "#/components/schemas/CampaignLinkClickStats"},
+                    },
+                },
             },
             "CampaignUpsertResponse": {
                 "type": "object",
@@ -2025,6 +2189,29 @@ OPENAPI_SPEC = {
                     "campaign": {"$ref": "#/components/schemas/Campaign"},
                     "cancelled": {"type": "boolean"},
                     "skipped_count": {"type": "integer"},
+                },
+            },
+            "CampaignPauseResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "paused": {"type": "boolean"},
+                },
+            },
+            "CampaignResumeResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "resumed": {"type": "boolean"},
+                    "batch_count": {"type": "integer"},
+                    "recipient_count": {"type": "integer"},
+                },
+            },
+            "CampaignStopResponse": {
+                "type": "object",
+                "properties": {
+                    "campaign": {"$ref": "#/components/schemas/Campaign"},
+                    "stopped": {"type": "boolean"},
                 },
             },
             "CampaignPreview": {
@@ -2922,6 +3109,12 @@ OPENAPI_SPEC = {
                     "subject": {"type": "string"},
                     "html_body": {"type": "string"},
                     "text_body": {"type": "string"},
+                    "markdown_body": {"type": "string"},
+                    "markdown_layout_context": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Expose only the approved footer action fields from normal template context to the client layout and matching text part. Published versions snapshot this setting.",
+                    },
                     "required_context": {"type": "array", "items": {"type": "object"}},
                     "example_context": {"type": "object"},
                     "default_sender_id": {"type": "string"},
@@ -2938,6 +3131,12 @@ OPENAPI_SPEC = {
                     "subject": {"type": "string"},
                     "html_body": {"type": "string"},
                     "text_body": {"type": "string"},
+                    "markdown_body": {"type": "string"},
+                    "markdown_layout_context": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Expose only the approved footer action fields from normal template context to the client layout and matching text part. Published versions snapshot this setting.",
+                    },
                     "required_context": {"type": "array", "items": {"type": "object"}},
                     "example_context": {"type": "object"},
                     "default_sender_id": {"type": "string"},
@@ -2950,6 +3149,12 @@ OPENAPI_SPEC = {
                 "properties": {
                     "template": {"$ref": "#/components/schemas/TransactionalTemplate"},
                     "created": {"type": "boolean"},
+                },
+            },
+            "TransactionalTemplateListResponse": {
+                "type": "object",
+                "properties": {
+                    "templates": {"type": "array", "items": {"$ref": "#/components/schemas/TransactionalTemplate"}},
                 },
             },
             "TransactionalMessageStatusResponse": {

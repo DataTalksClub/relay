@@ -1,4 +1,236 @@
-# Relay sandbox deployment
+# Relay deployment
+
+Relay development runs at `https://dev.relay.datatalks.club` (Coolify
+resource `relay-dev`, `relay_dev` database). Delivery is owned by the
+`Deploy Relay Dev (Contabo)` workflow in
+[`.github/workflows/deploy-dev.yml`](../.github/workflows/deploy-dev.yml):
+push to `main` runs the test gate, builds `linux/amd64` into GHCR, and the
+Coolify deploy API rolls the DEV service (web + DB workers + scheduler +
+callback dispatchers; no `ses-ingress` — DEV has no SQS queue and must never
+drain the production queue).
+
+Production (`https://relay.datatalks.club`, Coolify resource `relay-staging`,
+`relay` database) is promoted ONLY by the manually dispatched
+`Deploy Relay Prod (Contabo)` workflow in
+[`.github/workflows/deploy-prod.yml`](../.github/workflows/deploy-prod.yml):
+it promotes one dev-proven release (the `dev-release` artifact of a
+successful deploy-dev run on main, latest by default or a named tag for
+rollback) through the `production` GitHub environment (required reviewer).
+A push to `main` can never deploy production: deploy-dev.yml only knows the
+DEV service UUID.
+
+The old AWS EC2/SSM development path is retired. Its host
+`i-0a3d2851cb906dc69` (main account `387546586013`, `eu-west-1`, Terraform
+`DataTalksClub/aws-infra/main/dev`) was terminated on 2026-10-22 at 04:29 UTC
+(CloudTrail `TerminateInstances` by `ml-in-action`; previous state `running`),
+after the last green SSM deploy (run `39714002383`). The next push-to-main run
+(`39761744485`) then failed with
+`InvalidInstanceId: Instances not in a valid state for account` because the
+repository variable `RELAY_DEVELOPMENT_INSTANCE_ID` still pointed at the
+terminated instance. The variable was removed and the workflow below no
+longer sends SSM commands, so this failure mode cannot recur. Note for
+aws-infra: its `main/dev` root still declares `aws_instance.relay_host`, so
+the next Terraform apply would try to recreate the host — that drift belongs
+to aws-infra, not to this repo.
+
+Recovery evidence checked on 2026-10-23:
+
+- [Failed development run 39761744485](https://github.com/DataTalksClub/relay/actions/runs/39761744485)
+  passed AWS credential setup, then failed `SendCommand` at
+  `2026-10-22T10:18:37Z`. Its deploy log records the terminated instance,
+  account `387546586013`, and `eu-west-1`, consistent with the cutover
+  history above rather than an account or region mismatch.
+- Commit `74ddb69ed6162bcc51327f1e6b67166f93085731` removed the SSM calls.
+  The resulting [Deploy Relay Development run 39765630943](https://github.com/DataTalksClub/relay/actions/runs/39765630943)
+  passed both tests and public development health verification. This was a
+  health gate; image delivery was separately verified by the successful
+  [Coolify run 39765630710](https://github.com/DataTalksClub/relay/actions/runs/39765630710)
+  for the same commit.
+- Commit `410bb4fd97783990d8cb3945511e4ddff3d408e7` consolidated delivery
+  and development health verification into `deploy-dev.yml` and deleted
+  `deploy-development.yml`. The current development workflow uses Coolify
+  secrets and contains no AWS credential setup, instance variable, or SSM
+  command. It does not require access to the retired AWS host.
+
+The old sandbox host `relay.dtcdev.click` (`i-03b7cd5de0a10a889`, sandbox
+account `817685572750`) had its push-to-main auto-deploy retired on
+2026-10-05 during the dtcdev→Relay transfer (the failed run `37253575983`
+stays preserved as the record of why). That run's `InvalidInstanceId` is
+historical evidence about the SSM target at that moment, not a statement
+that the host is stopped: the same unchanged instance was later
+independently observed healthy and serving `relay.dtcdev.click`. The manual
+dispatch of `Deploy Relay Sandbox` remains, so any use of the retired
+auto-deploy is a conscious choice. The sandbox sections below describe that
+retired deployment surface.
+
+## Development deployment
+
+The `Deploy Relay Dev (Contabo)` workflow in
+[`.github/workflows/deploy-dev.yml`](../.github/workflows/deploy-dev.yml)
+runs the full test gate, builds the release image, applies
+[`deploy/coolify/docker-compose.dev.yml`](../deploy/coolify/docker-compose.dev.yml)
+to the DEV service, and verifies the development entry point. Push to
+`main` (ignoring `docs/**` and `*.md`) and manual
+`workflow_dispatch` both trigger it; development and production deploy runs
+serialize together in the `relay-deploy` concurrency group and never cancel
+each other.
+
+| Aspect | Value |
+|---|---|
+| Delivery | `Deploy Relay Dev (Contabo)` workflow (GHA → GHCR → Coolify deploy API) |
+| Public entry | `https://dev.relay.datatalks.club` served by the Contabo host |
+| Release gate | Coolify `running:healthy` + `https://dev.relay.datatalks.club/health/ready` |
+| Proven-release record | `dev-release` artifact (`image_tag`, `source_sha`, `dev_run_id`) |
+
+The workflow needs no AWS credentials; it uses the `development` GitHub
+environment and the `COOLIFY_RELAY_DEV_SERVICE_UUID` secret.
+
+Relay exposes `/health/live` as a DB-free process liveness check and
+`/health/ready` as the DB-backed readiness check. The rolling-web sidecar,
+Traefik service labels, and their probe URL are maintained in the separate
+[machine-management rolling-web deployment](https://github.com/alexeygrigorev/machine-management/blob/main/deployments/coolify-rolling-web.md).
+Changes to that routing and probe configuration belong with the shared
+rolling-web infrastructure owner.
+
+### Migration startup gate
+
+The release image runs `scripts/container-entrypoint.sh` before every role's
+command, including web, database workers, scheduler, and callback dispatchers.
+It runs `python /app/manage.py migrate_before_start` and only executes the
+application command after migrations succeed. A migration failure exits the
+container before new web code can serve or new workers can consume tasks.
+Container restarts run the gate again. Do not override the image entrypoint
+in service definitions.
+
+`migrate_before_start` holds a PostgreSQL session advisory lock while applying
+migrations, so containers starting together wait for one migration runner.
+The lock is released after success or failure (and PostgreSQL releases it if
+the connection dies). Each waiting container checks/applies migrations itself
+before starting. SQLite development/test environments run migrations without
+the PostgreSQL lock. Schema changes must still support any older containers
+that remain running during a rolling deployment.
+
+## Production promotion
+
+The `Deploy Relay Prod (Contabo)` workflow in
+[`.github/workflows/deploy-prod.yml`](../.github/workflows/deploy-prod.yml)
+is `workflow_dispatch` only (`confirm_production: true`, optional
+`image_tag`). It resolves the tag to a dev-proven release — the
+`dev-release` artifact of a successful deploy-dev run on main — refuses any
+tag no successful DEV run proved, applies
+[`deploy/coolify/docker-compose.staging.yml`](../deploy/coolify/docker-compose.staging.yml)
+to the prod service through the `production` GitHub environment (required
+reviewer), and verifies `https://relay.datatalks.club/health/ready`.
+The retired `Deploy Relay Development` SSM/health-poll workflow
+(`deploy-development.yml`) was deleted; its health-gate role is absorbed by
+deploy-dev.yml. The Coolify workflows verify their own entry point after
+each deploy.
+
+### Retired AWS EC2/SSM development path (record)
+
+Until 2026-10-22 the host below served development. It is kept
+as a record only: the instance was terminated during the Contabo cutover and
+`Deploy Relay Development` no longer uses it.
+
+| Aspect | Value (retired) |
+|---|---|
+| Region | `eu-west-1` |
+| Account | `387546586013` (main) |
+| Host | one private `t4g.micro` ARM64 instance in the website VPC, reached through SSM (`i-0a3d2851cb906dc69`, terminated 2026-10-22) |
+| Public entry | `https://dev.relay.datatalks.club` behind the dev CloudFront/ALB path on port 8000 |
+| Database | shared dev RDS Postgres `dtc_relay_dev` via `RELAY_DATABASE_URL_SECRET_ARN` |
+| Queues | one dev-owned pair, `ses-webhooks` and its DLQ; no sandbox queue drains |
+| Logs | CloudWatch group `/relay/dev/host` |
+| Secrets | Secrets Manager containers only; the deploy never populates values |
+
+The retired deploy assumed the role in the `RELAY_DEPLOYMENT_DEPLOY_ROLE_ARN`
+repository variable through the `development` GitHub environment and sent
+one SSM command to `RELAY_DEVELOPMENT_INSTANCE_ID` (since removed).
+
+The retired host checked out the exact `GITHUB_SHA` and ran
+`scripts/deploy_relay_sandbox.sh --environment development <sha>`. The
+development branch of that script:
+
+- fetches `SECRET_KEY` and `DATABASE_URL` from Secrets Manager and fails
+  loudly if either is missing;
+- pins `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` to
+  `dev.relay.datatalks.club` (dev `infrastructure.env` does not carry them);
+  `PUBLIC_BASE_URL`, `DEFAULT_FROM_EMAIL` (`relay-dev@datatalks.club`),
+  `AWS_SES_*` and `RELAY_EMAIL_SEND_ROLE_ARN` flow from
+  `infrastructure.env`;
+- also adds the private in-VPC API host to `ALLOWED_HOSTS` when
+  `infrastructure.env` exports a `RELAY_INTERNAL_URL` key — the DTC website
+  calls Relay at that URL (`aws-infra main/dev` `website_service.tf` sets the
+  website's `RELAY_BASE_URL` to it), and Django would see that hostname as
+  the request Host. Current `main/dev` exports the key
+  (`http://relay-dev.website.internal:8000`), so the website's private calls
+  are allowed; if the key is ever absent, only the public hostname stays
+  allowed. The value is never wildcarded; host names only;
+- starts no PostgreSQL and no Caddy: gunicorn binds `0.0.0.0:8000` for the
+  shared ALB target, and public TLS terminates on the CloudFront/ALB path;
+- gives every container an explicit `--memory` limit (the production limits
+  table) because the host has 1 GiB plus 2 GB swap;
+- drains only the dev-owned `ses-webhooks` queue; no `inbound-email` and no
+  `relay-sandbox-*` drains;
+- provisions the `datatalksclub`/`dtc-courses` client scope and registers the
+  generated `RELAY_BOOTSTRAP_API_KEY` as `development-deployment`, without
+  setting client senders;
+- never writes `RELAY_DRY_RUN` — the variable stays operator-owned, and no
+  email may be exercised on the development host. Enforced dry-run
+  (relay#43) must be on the deployed head before any development worker
+  starts.
+
+The retired release gate was: `/health/ready` answers, every
+required container runs, and a `system.echo` task completes through the
+worker. The retired workflow then polled
+`https://dev.relay.datatalks.club/health/ready` from outside.
+
+### First-deploy operator follow-up (website client)
+
+The first development deploy only proves the host serves and the worker
+drains. The dev website (`https://dev.datatalks.club`) becomes a working
+Relay client only after these out-of-band steps — secret values are never
+printed, committed, or pasted into chat:
+
+1. The deploy generated `RELAY_BOOTSTRAP_API_KEY` into the host-only
+   `/etc/relay/runtime.env` (mode `0600`) and registered it as the
+   `development-deployment` key. Copy that value into the dev website's
+   `website-dev/integrations` secret (`RELAY_API_KEY` JSON key), following
+   the production tenant pattern
+   (`scripts/provision_production_tenant.sh`). Alternatively, provision the
+   already-shared key into the dev database with
+   `provision_client_api_key --organization datatalksclub --client
+   dtc-courses --name <name> --raw-key-env <env>`; either way, exactly one
+   key value must match on both sides.
+2. On the dev host, set the website client row's webhook contract to the
+   website's values (Django shell; no management command owns these
+   fields):
+   `relay_webhook_allowed_origins` must include
+   `https://dev.datatalks.club`, and `relay_webhook_signing_secret` must
+   equal the website's `RELAY_WEBHOOK_SECRET`.
+3. Verify in-VPC before touching the website deploy:
+   `GET http://relay-dev.website.internal:8000/api/schedules` with the
+   website key answers `200` (any `origin_not_allowed` /
+   `origin_not_configured` / `401` here is a client-row problem, not a
+   host problem: `origin_not_configured` means the client's webhook
+   origin allowlist was never provisioned, `origin_not_allowed` means
+   the URL's origin is not on the provisioned list).
+4. Only then run the website `Deploy Dev` with an empty
+   `confirm_dev_schema_reset` — its `sync_relay_schedules` gate must stay
+   enabled and green; never skip it silently.
+
+### Roll back the development host
+
+Pick a known-good commit, then dispatch `Deploy Relay Development` for that
+ref (or run the same script through SSM):
+
+```bash
+git -C /opt/relay fetch origin <commit>
+git -C /opt/relay checkout --force <commit>
+bash /opt/relay/scripts/deploy_relay_sandbox.sh --environment development <commit>
+```
+
+## Sandbox deployment (retired)
 
 Relay runs at `https://relay.dtcdev.click` in AWS sandbox account
 `817685572750` in `eu-west-1`, and we keep its Terraform in
@@ -7,8 +239,10 @@ Relay runs at `https://relay.dtcdev.click` in AWS sandbox account
 ## Release checks
 
 The GitHub Actions workflow deploys a commit only after lint, migrations,
-Django checks and the full test suite pass. It sends one SSM command to EC2
-instance `i-03b7cd5de0a10a889`.
+Django checks and the full test suite pass. It finds the EC2 host by its
+`Name=relay-sandbox-web` tag, checks that the instance is running and its SSM
+agent is Online, then sends it one SSM command. Set the repository variable
+`RELAY_SANDBOX_INSTANCE_ID` only to pin a specific instance.
 
 The host builds one image and starts these containers:
 
@@ -31,9 +265,11 @@ worker therefore fails the release.
 Use Systems Manager instead of SSH:
 
 ```bash
-aws ssm start-session \
+instance_id=$(aws ec2 describe-instances \
   --region eu-west-1 \
-  --target i-03b7cd5de0a10a889
+  --filters Name=tag:Name,Values=relay-sandbox-web Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].InstanceId' --output text)
+aws ssm start-session --region eu-west-1 --target "$instance_id"
 ```
 
 List the running release:
@@ -106,3 +342,46 @@ client uses the `courses` sender ID, which resolves to
 Submit an email and wait for the transactional message to reach `sent`. Then
 confirm the SES event reaches `relay-sandbox-ses-webhooks` and drains without a
 DLQ message before you update a client to use Relay.
+
+## SES outcome monitoring
+
+The scheduler's AWS runtime identity needs `cloudwatch:GetMetricStatistics`.
+The additive policy is [deploy/aws/relay-ses-monitor-policy.json](../deploy/aws/relay-ses-monitor-policy.json).
+CloudWatch metric reads require `Resource: "*"`; this grants no write access.
+The SNS guard compares exact IDs from durable provider-ingress tasks with
+provider events and SES audits for its configured topic. Both sides use the
+same SNS envelope timestamp over a minute-aligned 30-minute window ending two
+minutes ago. CloudWatch publication counts remain diagnostic context because
+their service-clock buckets need not match the envelope timestamp. An aggregate
+count difference alone cannot page. Rows persisted after the window end still
+count, and unrelated IDs cannot hide loss. Preserve task-result retention longer
+than the monitoring and confirmation interval.
+A first gap sighting only logs
+`relay_ses_gap_pending`; the page fires only if the gap is still present
+after `RELAY_SNS_GAP_CONFIRM_MINUTES` (default 5, `force` bypasses it).
+Confirmation rechecks the same fixed window, allowing late persistence to
+settle while preventing new traffic or window movement from masking loss.
+Query failures preserve the pending window and are logged as
+`ses_monitor_cloudwatch_query_failed`; a failed query is not a successful guard check.
+Before durable ingress, separate checks page SNS terminal delivery failures,
+nonempty SES DLQ depth, and a source backlog whose oldest-message age is at least
+five minutes. They use the existing runtime `cloudwatch:GetMetricStatistics`
+and `sqs:GetQueueAttributes` permissions; no queue receives/deletes are needed.
+Pages carry the emitting container, immutable image tag, and source SHA.
+
+Outcome gaps use the send timestamp (creation time only for legacy rows) and
+require an SES message ID. Successful alerts create an
+`monitor.ses_outcome_gap.reported` operator audit for each message and SES send ID.
+These receipts survive restarts and deployments. A later send ID can alert
+again; failed alert delivery leaves the incident eligible for retry. Message
+row locks prevent concurrent checkers from sending the same incident.
+`check_ses_delivery_gap --force` bypasses the SNS cooldown, but preserves
+outcome receipts. An existing confirmed alert can be backfilled as an audit
+with its original send ID, delivery time and evidence; this does not invent
+a delivery or bounce outcome. SMTP acceptance followed by a database failure
+can still repeat an alert because the two systems do not share a transaction.
+
+SES `DeliveryDelay` is evidence of an ongoing attempt. It is not a terminal
+bounce. A final transactional `Bounce`, including a transient bounce after
+retry expiration, ends the message in `bounced`; only a permanent bounce
+suppresses the contact. See [SES notification semantics](https://docs.aws.amazon.com/ses/latest/dg/notification-contents.html).

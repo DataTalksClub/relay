@@ -41,6 +41,93 @@ Malformed JSON, missing required fields, unknown contract names, and unsupported
 
 Transactional and campaign work use separate queues and workers so campaign backlog cannot delay account-critical email.
 
+## Django send lanes: `transactional` vs `campaign`
+
+In the Django deployment, campaign and transactional sends use separate task
+queues so a campaign blast cannot delay account-critical email:
+`send_transactional_email` and `send_transactional_email_batch` enqueue on
+`transactional`; `send_campaign_email_batch` enqueues on `campaign`. All four
+send queues (`default`, `transactional`, `campaign`, `provider-events`,
+`tracking`) are registered in `TASKS` (`relay/settings.py`), and the backend
+refuses to enqueue on an unregistered queue, so the settings list and the
+`@task(queue_name=...)` declarations must stay in step (asserted by
+`mailing/tests/test_send_queue_split.py`).
+
+Run the send workers with explicit queue selection:
+
+```bash
+uv run python manage.py db_worker --queue-name transactional,default --interval 1
+uv run python manage.py db_worker --queue-name campaign --interval 1
+```
+
+The Coolify templates name these services `worker` and `campaign-worker`;
+`scripts/deploy_relay_sandbox.sh` starts `relay-worker` and
+`relay-campaign-worker` with the same commands. Deploy the web, ingress, and
+all workers from the same image.
+
+Rules that keep the lanes isolated:
+
+* The `campaign-worker` is the ONLY consumer of `campaign`, and it runs as
+  exactly ONE process: the SES rate limiter is per-process, so a second
+  replica would multiply the send rate. Scaling the campaign lane is the
+  later global-limiter work, not another replica.
+* The `worker` consumes `transactional` plus `default` and never `campaign`.
+  `default` still carries `jobs.execute_job`, campaign test sends and
+  `process_email_event`, and drains any pre-split rows the 0049 migration
+  did not move -- none of which is a campaign batch.
+* A worker using `--queue-name '*'` would consume every lane and remove
+  their isolation. Never run one where sends happen.
+
+Stranded-row handling on rollout: READY send tasks enqueued on `default`
+before the split are moved by migration `mailing/0049_send_queue_split.py`
+(campaign batches to `campaign`, transactional sends to `transactional`;
+RUNNING rows and non-send tasks stay). After deploy, no campaign task should
+ever sit on a queue the `campaign-worker` does not consume -- verify with a
+read-only check of the task table before and after (see the deploy note in
+the txn-queue report).
+
+## Django provider-events lane
+
+`process_ses_webhook_event` and `process_inbound_email` use
+`provider-events`, which is registered alongside the send queues in `TASKS`.
+Both the HTTP SES fallback and the SQS ingress drain enqueue the same SES task.
+SQS messages are deleted after that durable enqueue; the drain does not process
+notifications inline.
+
+```bash
+uv run python manage.py db_worker --queue-name provider-events --interval 1
+```
+
+The Coolify templates name this service `provider-events-worker`;
+`scripts/deploy_relay_sandbox.sh` starts `relay-provider-events-worker` with the
+same command.
+
+Unlike the campaign lane, this lane scales out: the production template runs
+six consumers (`provider-events-worker`, `-2` ... `-6`; DEV runs two). Tasks are
+claimed with `SELECT ... FOR UPDATE SKIP LOCKED`, an event locks only its own
+recipient row, and the unique non-empty `EmailEvent.provider_event_id` makes a
+redelivery a no-op (the loser of a race gets an `IntegrityError`, rolls back before
+applying anything and is counted as a duplicate). One consumer drains ~30 events/s
+and N consumers scale close to linearly (`scripts/bench_provider_events.py`,
+local PostgreSQL: 1 -> 30, 2 -> 53, 3 -> 77, 4 -> 100, 6 -> 96 events/s; the shared benchmark box saturates at 4-6), which is >= 2x the
+~45 msg/s send peak. Add another `provider-events-worker-N` service if the
+`provider-events` READY backlog stays high during a send. The CMP outbox row for an
+event is written in the same transaction as the event.
+
+The staff-only `/api/workers/status` retains its SES ingress entry. Individual
+SES task runs, including queued and completed states, appear in the taskdeck
+contract at `/internal/ops/status` using its configured bearer authentication.
+The isolation regression tests run the real provider worker through both HTTP
+and fake SQS ingress while 50 `send_campaign_email_batch` tasks remain ready on
+`campaign`, and check that the delivery is applied and both status endpoints
+continue to expose SES work. The send-lane test proves a transactional task is
+claimable by the `transactional` worker while a campaign batch is RUNNING on
+the campaign lane. Run them with:
+
+```bash
+uv run pytest mailing/tests/test_provider_events_queue.py mailing/tests/test_ingress.py mailing/tests/test_send_queue_split.py
+```
+
 ## `inbound-email` v1
 
 SES stores the raw MIME object under the private inbound bucket's `raw/` prefix. S3 sends an object-created notification to the `inbound-email` queue. Relay parses the message, files it in its own mailbox, and publishes one normalized SNS event naming the stored message. The published event is optional and off unless `INBOUND_EMAIL_EVENTS_TOPIC_ARN` is set.
@@ -160,7 +247,65 @@ Idempotency: the future sender must load each `campaign_recipients` row and only
 
 ## `ses-webhooks` v1
 
+### AISHL transport exception
+
+AISHL's existing SES stream uses its own `aisl-ses-webhooks` SQS queue and the
+Coolify `aisl-ses-ingress` service (`drain_sqs_ingress aisl-ses-webhooks`). It is
+an HTTP transport to AISHL's existing `POST /api/ses-events`, not the Relay
+processor described below. AISHL owns `SesEvent` and subscriber mutations; this
+adapter must not enqueue `process_ses_webhook_event` or emit client callbacks.
+
+It forwards the original signed SNS envelope and stable MessageId unchanged,
+with the existing shared secret read from Secrets Manager (five-minute cache).
+Only HTTP 200 with `status=ok` or `duplicate` deletes the SQS message; failures
+retry in SQS, then redrive to its DLQ. Redirects are refused. Configure
+`SQS_AISL_SES_WEBHOOKS_QUEUE_URL`, `AISL_SES_WEBHOOK_URL` (HTTPS),
+`AISL_SES_WEBHOOK_SECRET_ARN`, and comma-separated `AISL_SES_TOPIC_ARNS` through
+Coolify. `AISL_SES_FORWARD_ENABLED` defaults to `0` (standby without polling);
+set it to `1` only after AISHL atomic deduplication is deployed. The runtime IAM
+policy grants receive/delete/visibility/attributes on
+this queue and read of that one secret. No credential values belong in git.
+
+Keep SNS-to-Lambda subscriptions active until live AISHL audit evidence proves
+this transport. Website issue #1998 makes duplicate handling atomic before
+dual-run. The dedicated queue has exactly one owner; do not configure Relay dev
+or the standard `ses-ingress` service to consume it. See aws-infra
+`main/aisl/docs/ses-relay-migration.md` for activation, rollback and retirement.
+
 Purpose: process SES delivery, bounce, complaint, open, click, send, or reject notifications asynchronously.
+
+### Measuring ingress lag
+
+SNS normalization preserves `Timestamp` as `metadata.sns_timestamp` on both
+the HTTP and SQS paths. The Relay SQS drain normalizes before enqueueing, so
+`received_at` records arrival at Relay rather than task-worker pickup. Existing
+normalized payloads retain their original `received_at`. SQS system attributes
+are preserved verbatim as `metadata.sqs_sent_timestamp` and
+`metadata.sqs_approximate_first_receive_timestamp` (epoch milliseconds as strings).
+Only those two attributes are copied; receipt handles and message bodies are
+not added to event metadata. Missing timestamps do not prevent processing.
+
+Run this read-only query against the desired deployment's application database:
+
+```bash
+uv run python manage.py report_ses_ingress_lag --json
+```
+
+The default window is the last 24 hours by `EmailEvent.created_at`; use
+`--hours N` to change it. `p50_seconds` and `p95_seconds` measure
+`EmailEvent.created_at - sns_timestamp`, including transport, queue wait and
+processing up to event persistence. Percentiles use linear interpolation at
+`(sample_count - 1) * percentile`. The report counts SES events, valid samples,
+missing/invalid timestamps and negative lags separately. Naive timestamps and
+negative lags are excluded rather than assumed or clamped; no usable samples
+produce `null` percentiles in JSON and `unavailable` in text. Reports expose
+only aggregate counts and timing, with no message identifiers or destinations.
+
+Older event rows lack these timestamps and are not backfilled. Record sample
+coverage with each measurement; a pre-change baseline can be unavailable.
+Compare measurements before and after a queue-worker change using recorded
+deployment times and non-overlapping windows. Preserve high lag observations:
+they may reflect backlog or retries rather than steady-state ingress latency.
 
 Terraform-managed sandbox and production deployments route SES configuration-set events to SNS and subscribe that SNS topic directly to the `ses-webhooks` SQS queue. In that default path, the worker receives raw SNS `Notification` envelopes from SQS and normalizes the embedded SES `Message` into this Datamailer contract before processing it.
 

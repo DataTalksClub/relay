@@ -14,32 +14,12 @@
     </div>
     <div class="actions">
       <a class="button secondary" href="{% url 'mailing:inbound_list' %}">Inbound mail</a>
-      <a class="button" href="{% url 'mailing:inbound_address_create' %}">New address</a>
     </div>
   </div>
 
-  <div class="stats-grid">
-    <div class="stat">
-      <span class="stat-label"><span class="stat-dot success"></span>Active</span>
-      <span class="stat-value">{{ active_count }}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label"><span class="stat-dot {% if retired_count %}warning{% endif %}"></span>Retired</span>
-      <span class="stat-value">{{ retired_count }}</span>
-    </div>
-  </div>
-
+  {% url 'mailing:inbound_address_create' as address_create_url %}
   <section class="section panel" aria-labelledby="addresses-table">
-    <div class="panel-header">
-      <div>
-        <h2 id="addresses-table">Addresses</h2>
-        <p class="muted">
-          A retired address stops receiving but keeps its mail. Messages are
-          discarded, not rerouted, when they arrive for an address that does not
-          exist.
-        </p>
-      </div>
-    </div>
+    {% include "_collection_header.html" with title="Addresses" title_id="addresses-table" extra_class="panel-header" create_url=address_create_url create_label="New address" count=addresses|length count_noun="address" count_plural="es" description="A retired address stops receiving but keeps its mail. Messages are discarded, not rerouted, when they arrive for an address that does not exist." only %}
     {% if addresses %}
       <div class="table-wrap">
         <table>
@@ -49,7 +29,7 @@
               <th scope="col">Note</th>
               <th scope="col">Messages</th>
               <th scope="col">State</th>
-              <th scope="col"><span class="sr-only">Actions</span></th>
+              <th scope="col"><span class="dk-visually-hidden">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -59,9 +39,9 @@
                 <td class="truncate">{{ row.note|default:"—" }}</td>
                 <td>
                   {% if row.message_count %}
-                    <a href="{% url 'mailing:inbound_list' %}?address={{ row.address|urlencode }}&amp;state=all">{{ row.message_count }}</a>
+                    <a href="{% url 'mailing:inbound_list' %}?address={{ row.address|urlencode }}&amp;state=all"><span class="data-num">{{ row.message_count }}</span></a>
                   {% else %}
-                    <span class="muted">0</span>
+                    <span class="muted data-num">0</span>
                   {% endif %}
                 </td>
                 <td>
@@ -94,6 +74,7 @@
             Currently configured there: {{ routes|join:", " }}.
           {% endif %}
         </p>
+        {% include "_collection_create.html" with create_url=address_create_url create_label="Add the first address" create_variant="secondary" no_shortcut=True only %}
       </div>
     {% endif %}
   </section>
@@ -118,7 +99,7 @@
               <th scope="col">Value</th>
               <th scope="col">Reason</th>
               <th scope="col">Discarded</th>
-              <th scope="col"><span class="sr-only">Actions</span></th>
+              <th scope="col"><span class="dk-visually-hidden">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -127,7 +108,7 @@
                 <td>{{ rule.get_scope_display }}</td>
                 <td class="nowrap">{{ rule.value }}</td>
                 <td class="truncate">{{ rule.reason|default:"—" }}</td>
-                <td class="nowrap">{{ rule.blocked_message_count }}</td>
+                <td class="data-num nowrap">{{ rule.blocked_message_count }}</td>
                 <td>
                   <form method="post" action="{% url 'mailing:blocked_sender_delete' rule.id %}">
                     {% csrf_token %}

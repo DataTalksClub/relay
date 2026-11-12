@@ -2,7 +2,8 @@
 
 Relay's UI belongs to the **dataops design family**. The sources of truth are
 the vendored dakit bundle (`static/dakit/`, synced from `../dakit` via
-`scripts/sync_dakit.sh`), the family spec (`../dakit/docs/family.md`), and the
+`make sync-dakit`, which runs dakit's `scripts/sync.mjs` and records
+`static/dakit/dakit.lock.json`), the family spec (`../dakit/docs/family.md`), and the
 canonical implementation (`../dataops`, see `frontend/DESIGN_SYSTEM.md`).
 When this file and a template disagree, the template changes; when dakit and
 this file disagree, dakit wins.
@@ -63,10 +64,15 @@ tokens (`data-theme` + pinned `color-scheme`); nothing inverts light values.
   first, then Cancel (`.dk-form-actions`).
 - **Disclosures.** `<details>` rows are quiet rows inside their container:
   chevron icon + label, hover background, no per-item border box stack.
-- **Sidebar.** 268px (`--dk-size-sidebar`), muted surface, right border;
-  icon-plus-text nav rows (20px, stroke 1.8, 24-grid paths), radius-md rows,
-  selection = accent-soft fill + accent text only (no stripes/rails);
-  uppercase 12px group labels.
+- **Shell.** The dakit app shell (`../dakit/docs/shell.md`, `dakit/shell.js`):
+  240px navigation-only sidebar that collapses to a 56px icon rail, the
+  active client as the brand-row switcher, one account row (identity, dark
+  mode, version, Sign out), a 48px mobile bar with a navigation-only drawer.
+  No notification bell: relay has no actionable feed. Selection =
+  accent-soft fill + accent text only (no stripes/rails).
+- **List–detail.** Inbound mail is a `.dk-split` (`../dakit/docs/list-detail.md`)
+  with the open message in the URL (`?message=<id>`). Other lists are tables
+  that open full record pages.
 - **Icons.** One set, family geometry: inline SVG, 24×24 viewBox paths at
   20px, `stroke="currentColor"`, stroke-width 1.8, round caps/joins, no
   fills. The shared shapes live in `templates/mailing/operator/_icons.html`;

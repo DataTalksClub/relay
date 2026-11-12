@@ -1,4 +1,5 @@
 import pytest
+from django.conf import settings
 from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
@@ -9,11 +10,13 @@ from mailing.models import (
     CategoryPreference,
     Client,
     Contact,
+    ContactSourceMetadata,
     EmailTemplate,
     Organization,
     Subscription,
     SubscriptionStatus,
     TransactionalMessage,
+    TransactionalRequestMinute,
 )
 from mailing.services.public_lists import parse_public_lists
 
@@ -210,3 +213,174 @@ def test_provision_public_signup_adds_a_separate_list_without_renaming_pocketshe
     template = EmailTemplate.objects.get(client=lab, key="confirm-signup")
     assert template.subject == "Confirm your email"
     assert template.is_active is True
+
+
+SINGLE = "pocketshell org=pocketshell client=pocketshell audience=pocketshell category=newsletter template=welcome optin=single"
+SINGLE_SETTINGS = dict(RELAY_PUBLIC_LISTS=SINGLE, RELAY_PUBLIC_SUBSCRIBE_ORIGINS=frozenset(ORIGINS))
+
+
+@pytest.fixture
+def welcome(pocketshell):
+    EmailTemplate.objects.create(
+        client=pocketshell["client"],
+        key="welcome",
+        name="Welcome",
+        subject="Thanks for joining us",
+        html_body="<p>Join Slack: http://join.datatalks.club/</p>",
+        text_body="Join Slack: http://join.datatalks.club/",
+        is_transactional=True,
+        is_active=True,
+    )
+
+
+def post_single(django_client, payload, **extra):
+    return django_client.post(
+        reverse("mailing:api_public_subscribe", kwargs={"list_key": "pocketshell"}),
+        data=payload,
+        content_type="application/json",
+        HTTP_ORIGIN="https://pocketshell.io",
+        HTTP_USER_AGENT="pytest-browser",
+        **extra,
+    )
+
+
+@override_settings(**SINGLE_SETTINGS)
+def test_single_optin_subscribes_records_consent_and_sends_welcome(client, welcome, monkeypatch):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+
+    response = post_single(
+        client, {"email": "Ada@Example.com", "page": "https://pocketshell.io/"}, HTTP_X_FORWARDED_FOR="1.2.3.4, 9.9.9.9"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "subscribed"}
+    assert len(enqueued) == 1
+    message = TransactionalMessage.objects.get()
+    assert message.template_key == "welcome"
+    assert message.email.lower() == "ada@example.com"
+    subscription = Subscription.objects.get()
+    assert subscription.status == SubscriptionStatus.SUBSCRIBED
+    assert subscription.verified_at is not None  # campaigns skip unverified contacts
+    assert CategoryPreference.objects.get().enabled is True
+    consent = ContactSourceMetadata.objects.get(source="website-signup").metadata
+    assert consent["consent_ip"] == "1.2.3.4"
+    assert consent["origin"] == "https://pocketshell.io"
+    assert consent["user_agent"] == "pytest-browser"
+    assert consent["page"] == "https://pocketshell.io/"
+    assert consent["list"] == "pocketshell"
+    assert consent["consent_at"]
+
+
+@override_settings(**SINGLE_SETTINGS)
+def test_single_optin_existing_subscriber_gets_no_email(client, welcome, pocketshell, monkeypatch):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    contact = Contact.objects.create(email="ada@example.com")
+    Subscription.objects.create(
+        contact=contact, audience=pocketshell["audience"], client=pocketshell["client"], status=SubscriptionStatus.SUBSCRIBED
+    )
+
+    response = post_single(client, {"email": "ada@example.com"})
+
+    assert response.json() == {"status": "already_subscribed"}
+    assert enqueued == []
+
+
+@override_settings(**SINGLE_SETTINGS)
+def test_single_optin_never_resubscribes_unsubscribed_or_suppressed(client, welcome, pocketshell, monkeypatch):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+    gone = Contact.objects.create(email="gone@example.com")
+    Subscription.objects.create(
+        contact=gone, audience=pocketshell["audience"], client=pocketshell["client"], status=SubscriptionStatus.UNSUBSCRIBED
+    )
+    Contact.objects.create(email="bounced@example.com", hard_bounced_at=timezone.now())
+
+    first = post_single(client, {"email": "gone@example.com"})
+    second = post_single(client, {"email": "bounced@example.com"})
+
+    assert first.json() == {"status": "not_resubscribed"}
+    assert second.json() == {"status": "not_resubscribed"}
+    assert enqueued == []
+    assert Subscription.objects.get(contact=gone).status == SubscriptionStatus.UNSUBSCRIBED
+
+
+@override_settings(**SINGLE_SETTINGS)
+def test_single_optin_honeypot_looks_like_success_but_does_nothing(client, welcome, monkeypatch):
+    enqueued = []
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", enqueued.append)
+
+    response = post_single(client, {"email": "bot@example.com", "company": "Acme"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "subscribed"}
+    assert enqueued == []
+    assert not Contact.objects.exists()
+    assert not Subscription.objects.exists()
+
+
+@override_settings(**SINGLE_SETTINGS, RELAY_PUBLIC_SUBSCRIBE_IP_LIMIT=2)
+def test_single_optin_limits_signups_per_ip(client, welcome, monkeypatch):
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", lambda payload: None)
+
+    statuses = [
+        post_single(client, {"email": f"u{i}@example.com"}, HTTP_X_FORWARDED_FOR="5.5.5.5").status_code
+        for i in range(3)
+    ]
+    other_ip = post_single(client, {"email": "other@example.com"}, HTTP_X_FORWARDED_FOR="6.6.6.6")
+
+    assert statuses == [200, 200, 429]
+    assert other_ip.status_code == 200
+    assert not Subscription.objects.filter(contact__normalized_email="u2@example.com").exists()
+
+
+@override_settings(**SINGLE_SETTINGS)
+def test_single_optin_missing_template_fails_loud_and_leaves_nobody_subscribed(client, pocketshell, caplog):
+    with caplog.at_level("ERROR"):
+        response = post_single(client, {"email": "ada@example.com"})
+
+    assert response.status_code == 404
+    assert not Subscription.objects.exists()
+    assert "relay_public_subscribe_failed" in caplog.text
+
+
+@override_settings(**SINGLE_SETTINGS)
+def test_single_optin_unexpected_error_is_logged_and_returns_500(client, welcome, monkeypatch, caplog):
+    def boom(*args, **kwargs):
+        raise RuntimeError("queue down")
+
+    monkeypatch.setattr("mailing.services.transactional.enqueue_transactional_email", boom)
+    with caplog.at_level("ERROR"):
+        response = post_single(client, {"email": "ada@example.com"})
+
+    assert response.status_code == 500
+    assert response.json() == {"error": {"code": "internal_error"}}
+    assert "relay_public_subscribe_failed" in caplog.text
+
+
+@override_settings(**SINGLE_SETTINGS)
+def test_single_optin_errors_count_in_the_transactional_monitor(client, welcome, pocketshell):
+    post_single(client, {"email": "not-an-email"})
+
+    row = TransactionalRequestMinute.objects.get(client=pocketshell["client"])
+    assert (row.total, row.errors, row.server_errors) == (1, 1, 0)
+
+
+def test_parse_public_lists_single_optin_needs_no_confirm_base():
+    spec = parse_public_lists(SINGLE)["pocketshell"]
+
+    assert spec.optin == "single"
+    assert spec.confirm_base_url == ""
+    with pytest.raises(Exception):
+        parse_public_lists(SINGLE + " optin=bogus")
+    assert parse_public_lists(LISTS)["pocketshell"].optin == "double"
+
+
+def test_default_public_list_is_the_datatalks_newsletter():
+    spec = parse_public_lists(settings.RELAY_PUBLIC_LISTS)["dtc-newsletter"]
+
+    assert (spec.organization_slug, spec.client_slug, spec.audience_slug) == ("datatalksclub", "dtc-newsletter", "dtc")
+    assert spec.optin == "single"
+    assert spec.template_key == "newsletter-welcome"
+    assert "https://www.datatalks.club" in settings.RELAY_PUBLIC_SUBSCRIBE_ORIGINS

@@ -60,6 +60,8 @@ from mailing.models import (
     InboundMessage,
     InboundMessageState,
 )
+from mailing.services.dmarc import archive_report, is_dmarc_report, mime_message
+from mailing.services.inbound_routing import create_deliveries, match_mailboxes
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,12 @@ BLOCKED_SNIPPET_CHARS = 120
 
 def process_inbound_s3_notification(payload, *, s3=None, publisher=None):
     s3 = s3 or s3_client()
+    if payload.get("notificationType") == "Received":
+        action = payload["receipt"]["action"]
+        if action.get("type") != "S3":
+            raise ValueError("inbound receipt must store MIME in S3")
+        return [process_inbound_object(action["bucketName"], action["objectKey"], s3=s3,
+                                      recipients=payload["receipt"]["recipients"], publisher=publisher)]
     results = []
     for record in payload.get("Records", []):
         if record.get("eventSource") != "aws:s3":
@@ -84,32 +92,44 @@ def process_inbound_s3_notification(payload, *, s3=None, publisher=None):
     return results
 
 
-def process_inbound_object(bucket, key, *, s3, publisher=None):
+def process_inbound_object(bucket, key, *, s3, publisher=None, recipients=None):
     raw = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
     message = parse_mime(raw)
 
     if not message.message_id:
         raise ValueError("inbound MIME message is missing Message-ID")
 
-    recipient = match_recipient(message.recipient_addresses)
+    addresses = recipients if recipients is not None else message.recipient_addresses
+    matches = match_mailboxes(addresses)
+    if matches:
+        mailbox, address = matches[0]
+        local, _, domain = address.rpartition("@")
+        recipient = InboundAddress(local_part=local, domain=domain)
+    else:
+        recipient = match_recipient(addresses)
     if recipient is None:
         logger.info("inbound message %s matched no Relay address; discarded", message.message_id)
         return {"discarded": "no_matching_address", "message_id": message.message_id}
 
-    blocked = find_blocked_sender(message.sender_addresses)
-    if blocked is not None:
+    blocked = find_blocked_sender([*message.sender_addresses, *message.reply_to_addresses])
+    if blocked is not None and not (matches and is_dmarc_report(mime_message(raw))):
         return file_blocked(message, blocked, bucket=bucket, key=key, size_bytes=len(raw))
 
     try:
-        stored = file_message(message, bucket=bucket, key=key, size_bytes=len(raw), s3=s3, recipient=recipient)
+        with transaction.atomic():
+            stored = file_message(message, bucket=bucket, key=key, size_bytes=len(raw), s3=s3, recipient=recipient)
+            archive_report(stored, raw, matches)
+            create_deliveries(stored, message, raw, matches)
     except IntegrityError:
         # The same message delivered twice. The old path signalled this with a
         # DynamoDB conditional write; the unique constraint says the same thing
         # and cannot half-succeed, because it is in the same transaction.
+        if not InboundMessage.objects.filter(message_id=message.message_id).exists():
+            raise
         logger.info("inbound message %s was already filed; treating as replay", message.message_id)
         return {"message_id": message.message_id, "replay": True}
 
-    if stored.state == InboundMessageState.RECEIVED and settings.INBOUND_EMAIL_EVENTS_TOPIC_ARN:
+    if not matches and stored.state == InboundMessageState.RECEIVED and settings.INBOUND_EMAIL_EVENTS_TOPIC_ARN:
         publish_event(publisher, stored, recipient)
 
     return {
@@ -233,24 +253,33 @@ def file_blocked(message, rule, *, bucket, key, size_bytes):
     sender is not worth reading, and a blocklist that accumulates every pitch
     ever received is a spam archive rather than a filter.
     """
-    with transaction.atomic():
-        row = InboundMessage.objects.create(
-            message_id=message.message_id,
-            state=InboundMessageState.BLOCKED,
-            subject=message.subject[:998],
-            snippet=snippet(message.text.preview, limit=BLOCKED_SNIPPET_CHARS),
-            from_header=message.from_[:998],
-            sender_address=(message.sender_addresses[0] if message.sender_addresses else "")[:320],
-            sender_domain=sender_domain(message.sender_addresses),
-            to_header=message.to[:998],
-            cc_header=message.cc[:998],
-            recipient_address=(message.recipient_addresses[0] if message.recipient_addresses else "")[:320],
-            size_bytes=size_bytes,
-            raw_bucket=bucket,
-            raw_key=key,
-            blocked_rule=rule,
-            spam_verdict=verdict(message, "x-ses-spam-verdict"),
-        )
+    try:
+        with transaction.atomic():
+            row = InboundMessage.objects.create(
+                message_id=message.message_id,
+                state=InboundMessageState.BLOCKED,
+                subject=message.subject[:998],
+                snippet=snippet(message.text.preview, limit=BLOCKED_SNIPPET_CHARS),
+                from_header=message.from_[:998],
+                sender_address=(message.sender_addresses[0] if message.sender_addresses else "")[:320],
+                sender_domain=sender_domain(message.sender_addresses),
+                to_header=message.to[:998],
+                cc_header=message.cc[:998],
+                recipient_address=(message.recipient_addresses[0] if message.recipient_addresses else "")[:320],
+                size_bytes=size_bytes,
+                raw_bucket=bucket,
+                raw_key=key,
+                blocked_rule=rule,
+                spam_verdict=verdict(message, "x-ses-spam-verdict"),
+            )
+    except IntegrityError:
+        # Already filed: a redelivered notification, or a retry of a
+        # multi-record notification whose earlier records committed.
+        existing = InboundMessage.objects.filter(message_id=message.message_id).first()
+        if existing is None:
+            raise
+        logger.info("inbound message %s was already filed; treating as replay", message.message_id)
+        return {"message_id": existing.message_id, "inbound_message_id": existing.id, "state": existing.state, "replay": True}
     return {"message_id": row.message_id, "inbound_message_id": row.id, "state": row.state, "replay": False}
 
 

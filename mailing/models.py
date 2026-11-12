@@ -81,6 +81,11 @@ class ClientApiKey(TimeStampedModel):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="api_keys")
     name = models.CharField(max_length=120)
     key_hash = models.CharField(max_length=255)
+    # Fast HMAC-SHA256 verifier (hex digest) for high-entropy API keys.
+    # PBKDF2 `key_hash` stays as the legacy fallback (transfer files, rollback);
+    # empty means "not upgraded yet" and the first successful PBKDF2 check
+    # populates it (intake e5cd1579: PBKDF2 cost ~240 ms per API request).
+    key_fast_hash = models.CharField(max_length=128, blank=True, default="")
     public_id = models.CharField(max_length=32, unique=True)
     notes = models.TextField(blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
@@ -118,6 +123,8 @@ class AdminApiKey(TimeStampedModel):
     name = models.CharField(max_length=120)
     public_id = models.CharField(max_length=32, unique=True)
     key_hash = models.CharField(max_length=255)
+    # Fast HMAC-SHA256 verifier, same scheme as ClientApiKey.key_fast_hash.
+    key_fast_hash = models.CharField(max_length=128, blank=True, default="")
     last_used_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
 
@@ -465,6 +472,14 @@ class Campaign(TimeStampedModel):
     preview_text = models.CharField(max_length=255, blank=True)
     html_body = models.TextField(blank=True)
     text_body = models.TextField(blank=True)
+    template_key = models.CharField(max_length=120, blank=True)
+    template_version = models.PositiveIntegerField(null=True, blank=True)
+    context = models.JSONField(default=dict, blank=True)
+    sender_id = models.CharField(max_length=80, blank=True)
+    # Sender-owned unsubscribe endpoint (https, contains "{token}"). Empty means Relay's own
+    # /unsubscribe/<token> page; set, it drives the body link and List-Unsubscribe headers.
+    unsubscribe_url_template = models.CharField(max_length=500, blank=True)
+    allow_unverified = models.BooleanField(default=False)
     status = models.CharField(
         max_length=20,
         choices=CampaignStatus.choices,
@@ -480,6 +495,13 @@ class Campaign(TimeStampedModel):
     recipient_count = models.PositiveIntegerField(default=0)
     sent_count = models.PositiveIntegerField(default=0)
     skipped_count = models.PositiveIntegerField(default=0)
+    # Lock-free halt flag for pause / resume / stop of a SENDING campaign.
+    # Set and cleared by a plain UPDATE (never SELECT ... FOR UPDATE) so the
+    # operator action never waits behind the senders' FOR SHARE row locks.
+    # send_halt_reason is "" (running), "paused" (halted, resumable) or
+    # "stopped" (halted permanently; the campaign is CANCELLED).
+    send_halted_at = models.DateTimeField(null=True, blank=True)
+    send_halt_reason = models.CharField(max_length=20, blank=True, default="")
     delivered_count = models.PositiveIntegerField(default=0)
     unique_open_count = models.PositiveIntegerField(default=0)
     open_count = models.PositiveIntegerField(default=0)
@@ -488,6 +510,14 @@ class Campaign(TimeStampedModel):
     unsubscribe_count = models.PositiveIntegerField(default=0)
     bounce_count = models.PositiveIntegerField(default=0)
     complaint_count = models.PositiveIntegerField(default=0)
+    # Campaign consolidation (mailing.services.campaign_consolidation): a source
+    # campaign whose recipients and events were moved into ``merged_into``. The
+    # row is kept (never deleted) with ``merge_snapshot`` holding its pre-merge
+    # counters/status so the merge can be rolled back exactly.
+    merged_into = models.ForeignKey(
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="merged_sources"
+    )
+    merge_snapshot = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "campaigns"
@@ -495,6 +525,7 @@ class Campaign(TimeStampedModel):
         indexes = [
             models.Index(fields=["client", "audience", "status"], name="campaign_client_aud_status_idx"),
             models.Index(fields=["scheduled_at"], name="campaign_scheduled_at_idx"),
+            models.Index(fields=["client", "status", "updated_at"], name="campaign_cli_status_upd_idx"),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -527,11 +558,60 @@ class CampaignDispatch(TimeStampedModel):
         indexes = [models.Index(fields=["enqueued_at"], name="campaign_dispatch_pending_idx")]
 
 
+class CampaignDispatchBatch(models.Model):
+    """One batch task created from a dispatch intent; unique per campaign + batch index.
+
+    Written in the same transaction as the task row, so a re-run of the
+    dispatcher can never create the same batch twice.
+    """
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="dispatch_batches")
+    batch_index = models.PositiveIntegerField()
+    task_id = models.UUIDField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "campaign_dispatch_batches"
+        constraints = [
+            models.UniqueConstraint(fields=["campaign", "batch_index"], name="campaign_dispatch_batch_unique"),
+        ]
+
+
+class TaskHeartbeat(models.Model):
+    """Last liveness signal of a RUNNING task; the row is removed when the task ends."""
+    task_id = models.UUIDField(primary_key=True)
+    worker_id = models.CharField(max_length=200, blank=True)
+    beat_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "task_heartbeats"
+
+
+class CampaignTaskAlert(models.Model):
+    """Loud, durable warning on a campaign (stale batch task, recovery outcome).
+
+    Kept off the Campaign row on purpose: updating it would queue behind the
+    senders' row locks.
+    """
+    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="task_alerts")
+    task_id = models.UUIDField(unique=True)
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "campaign_task_alerts"
+        ordering = ["-created_at"]
+
+
 class CampaignRecipientStatus(models.TextChoices):
     PENDING = "pending", "Pending"
+    # Claimed by a sender; the SES call is in flight or its outcome is not yet recorded.
+    SENDING = "sending", "Sending"
     SENT = "sent", "Sent"
     SKIPPED = "skipped", "Skipped"
     FAILED = "failed", "Failed"
+    # The SES call's outcome is ambiguous (timeout after send, connection reset, crash,
+    # expired lease). Never auto-resent; reconciled from SES events or resent by an operator.
+    UNKNOWN = "unknown", "Unknown"
     BOUNCED = "bounced", "Bounced"
     COMPLAINED = "complained", "Complained"
     UNSUBSCRIBED = "unsubscribed", "Unsubscribed"
@@ -553,6 +633,7 @@ class CampaignRecipient(TimeStampedModel):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="recipients")
     contact = models.ForeignKey(Contact, on_delete=models.PROTECT, related_name="campaign_recipients")
     email = models.EmailField(max_length=320)
+    context = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=20,
         choices=CampaignRecipientStatus.choices,
@@ -573,6 +654,10 @@ class CampaignRecipient(TimeStampedModel):
     open_count = models.PositiveIntegerField(default=0)
     click_count = models.PositiveIntegerField(default=0)
     last_error = models.TextField(blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    claim_owner = models.CharField(max_length=64, blank=True)
+    # Original campaign of a recipient moved by a campaign consolidation; used by rollback.
+    merged_from_campaign_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "campaign_recipients"
@@ -582,7 +667,17 @@ class CampaignRecipient(TimeStampedModel):
         ]
         indexes = [
             models.Index(fields=["campaign", "status"], name="campaign_recip_status_idx"),
+            models.Index(fields=["campaign", "email", "id"], name="camp_recip_camp_email_id_idx"),
+            models.Index(fields=["campaign", "status", "contact"], name="camp_recip_camp_st_cnt_idx"),
+            models.Index(fields=["campaign", "skip_reason", "contact"], name="camp_recip_camp_skip_cnt_idx"),
             models.Index(fields=["contact", "sent_at"], name="camp_recip_contact_sent_idx"),
+            models.Index(fields=["contact", "created_at"], name="camp_recip_contact_created_idx"),
+            models.Index(fields=["campaign", "sent_at"], name="camp_recip_sent_idx"),
+            models.Index(
+                fields=["claimed_at"],
+                name="camp_recip_claimed_idx",
+                condition=models.Q(status__in=["sending", "unknown"]),
+            ),
         ]
 
     def __str__(self):
@@ -598,6 +693,7 @@ class EmailTemplate(TimeStampedModel):
     html_body = models.TextField(blank=True)
     text_body = models.TextField(blank=True)
     markdown_body = models.TextField(blank=True)
+    markdown_layout_context = models.BooleanField(default=False)
     category = models.CharField(max_length=80, blank=True)
     required_context = models.JSONField(default=list, blank=True)
     example_context = models.JSONField(default=dict, blank=True)
@@ -633,6 +729,7 @@ class EmailTemplateVersion(TimeStampedModel):
     html_body = models.TextField(blank=True)
     text_body = models.TextField(blank=True)
     markdown_body = models.TextField(blank=True)
+    markdown_layout_context = models.BooleanField(default=False)
     required_context = models.JSONField(default=list, blank=True)
     category = models.CharField(max_length=80, blank=True)
 
@@ -655,6 +752,40 @@ class EmailTemplateVersion(TimeStampedModel):
         return f"{self.template.key} v{self.version} ({self.template.client.slug})"
 
 
+class EmailLayout(TimeStampedModel):
+    """Per-client (per-site) email layout: own header/footer/HTML shell.
+
+    Each client/site owns its layout template; markdown templates render
+    inside their own client's layout. ``sender_id`` empty means the client
+    default; a non-empty ``sender_id`` overrides the default for that
+    sender. The shell is a full Django template receiving ``subject``,
+    ``body_html``, ``footer_note``, ``brand_name``, ``brand_website_url``
+    and ``brand_logo_url``. There is deliberately no shared Relay-branded
+    fallback: a missing layout renders a plain neutral shell.
+    """
+
+    client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="email_layouts")
+    sender_id = models.SlugField(max_length=80, blank=True, default="")
+    brand_name = models.CharField(max_length=120)
+    logo_url = models.URLField(max_length=2048, blank=True, default="")
+    website_url = models.URLField(max_length=2048, blank=True, default="")
+    layout_html = models.TextField()
+
+    class Meta:
+        db_table = "email_layouts"
+        ordering = ["client__organization__slug", "client__slug", "sender_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["client", "sender_id"], name="unique_email_layout_client_sender"),
+        ]
+        indexes = [
+            models.Index(fields=["client", "sender_id"], name="email_layout_client_sender_idx"),
+        ]
+
+    def __str__(self):
+        scope = self.sender_id or "default"
+        return f"{self.client.slug}/{scope} ({self.brand_name})"
+
+
 class TransactionalMessageStatus(models.TextChoices):
     QUEUED = "queued", "Queued"
     SENDING = "sending", "Sending"
@@ -665,7 +796,23 @@ class TransactionalMessageStatus(models.TextChoices):
     COMPLAINED = "complained", "Complained"
 
 
+class TransactionalCampaign(TimeStampedModel):
+    """One idempotent recipient-list send, delivered by transactional workers."""
+
+    client = models.ForeignKey(Client, on_delete=models.PROTECT)
+    recipient_list = models.ForeignKey(RecipientList, on_delete=models.PROTECT)
+    template_key = models.CharField(max_length=120)
+    idempotency_key = models.CharField(max_length=255)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["client", "idempotency_key"], name="unique_tx_campaign_client_key"),
+        ]
+
+
 class TransactionalMessage(TimeStampedModel):
+    inbound_source = models.ForeignKey("InboundMessage", on_delete=models.PROTECT, null=True, blank=True)
+    campaign = models.ForeignKey(TransactionalCampaign, null=True, blank=True, on_delete=models.PROTECT, related_name="messages")
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="transactional_messages")
     contact = models.ForeignKey(Contact, on_delete=models.PROTECT, related_name="transactional_messages")
     email = models.EmailField(max_length=320)
@@ -706,7 +853,9 @@ class TransactionalMessage(TimeStampedModel):
         ]
         indexes = [
             models.Index(fields=["contact", "created_at"], name="tx_msg_contact_created_idx"),
+            models.Index(fields=["status", "created_at", "id"], name="tx_msg_status_created_id_idx"),
             models.Index(fields=["client", "status", "created_at"], name="tx_msg_cli_status_created_idx"),
+            models.Index(fields=["client", "created_at"], name="tx_msg_client_created_idx"),
         ]
 
     def __str__(self):
@@ -751,15 +900,23 @@ class EmailEvent(models.Model):
     url = models.URLField(max_length=2048, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Original campaign of an event moved by a campaign consolidation; used by rollback.
+    merged_from_campaign_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "email_events"
         ordering = ["-created_at", "-id"]
         indexes = [
             models.Index(fields=["contact", "created_at"], name="email_evt_contact_created_idx"),
+            models.Index(fields=["contact", "client", "created_at"], name="email_evt_cnt_cli_created_idx"),
+            models.Index(fields=["campaign", "created_at", "id"], name="email_evt_camp_created_id_idx"),
             models.Index(fields=["campaign", "event_type", "created_at"], name="email_events_campaign_type_idx"),
             models.Index(fields=["campaign_recipient", "event_type"], name="email_evt_recipient_type_idx"),
             models.Index(fields=["client", "created_at"], name="email_evt_client_created_idx"),
+            models.Index(fields=["client", "event_type", "created_at"], name="email_evt_cli_type_created_idx"),
+            models.Index(fields=["event_type", "created_at"], name="email_evt_type_created_idx"),
+            models.Index(fields=["audience", "client", "created_at"], name="email_evt_aud_cli_created_idx"),
+            models.Index(fields=["audience", "event_type", "created_at"], name="email_evt_aud_type_created_idx"),
             models.Index(fields=["provider_event_id"], name="email_events_provider_evt_idx"),
         ]
         constraints = [
@@ -1283,3 +1440,62 @@ class BlockedSender(TimeStampedModel):
 
     def __str__(self):
         return f"{self.scope}: {self.value}"
+
+# Kept in a separate module so routing configuration stays together.
+from mailing.inbound_routing_models import InboundDelivery, InboundDomain, InboundMailbox  # noqa: E402,F401
+
+
+class TransactionalRequestMinute(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE)
+    minute = models.DateTimeField(db_index=True)
+    total = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)
+    # HTTP 5xx subset of errors. 4xx are client-side (bad input, bad key);
+    # 5xx are Relay-side and page at low volume, 4xx only as a flood.
+    server_errors = models.PositiveIntegerField(default=0)
+    # HTTP 404 template_key/template_version not_found subset of errors. Each
+    # occurrence is a client email that did not deliver, so it stays in the
+    # error total and reports as its own alert class at any volume.
+    missing_template = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["client", "minute"], name="tx_request_client_minute_unique")]
+
+
+class TransactionalMonitorState(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE)
+    kind = models.CharField(max_length=32)
+    last_alert_at = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["client", "kind"], name="tx_monitor_client_kind_unique")]
+
+
+class SesRateLimitBucket(models.Model):
+    """One token-bucket row per SES account/region (mailing/ses_rate_limiter.py).
+
+    Every SES send path acquires a permit against this row in a short locked
+    transaction, so any number of sender processes share one account-wide
+    budget. ``tokens`` may go slightly negative: kind="transactional" sends
+    may overdraw by the configured reserve while bulk sends cannot.
+    """
+
+    key = models.CharField(max_length=128, primary_key=True)
+    tokens = models.FloatField(default=0)
+    capacity = models.FloatField(default=9)
+    base_rate = models.FloatField(default=45)
+    penalty_factor = models.FloatField(default=1.0)
+    penalty_expires_at = models.DateTimeField(null=True, blank=True)
+    last_refill = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ses_rate_limit_buckets"
+
+    def __str__(self):
+        return f"{self.key} ({self.tokens:.1f}/{self.capacity:.0f} tokens)"
+from mailing.device_login_models import DeviceLogin  # noqa: E402,F401
+from mailing.dmarc_models import DmarcArchive, DmarcAttachment, DmarcRecord, DmarcReport  # noqa: E402,F401
+from mailing.newsletter_models import NewsletterBlock, NewsletterIssue, NewsletterTestSend  # noqa: E402,F401
+from mailing.sending_domain_models import SendingDomain  # noqa: E402,F401

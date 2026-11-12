@@ -1,0 +1,214 @@
+# Coolify service template for Relay DEV (Contabo, resource relay-dev).
+# Secrets (DATABASE_URL, SECRET_KEY, API keys, etc.) live in Coolify UI / API
+# environment variables — never inline them here.
+# Image tag: __IMAGE_TAG__ is substituted by .github/workflows/deploy-dev.yml
+# with the exact format YYYYMMDD-HHMMSS-<7> (never :latest, never sha-<…>).
+# CD path: push to main builds → GHCR → Coolify deploy API (no git clone on Contabo).
+#
+# Service set mirrors deploy/coolify/docker-compose.staging.yml (production),
+# minus ses-ingress:
+#   web                gunicorn (public; Traefik domains managed in Coolify UI)
+#   worker             django.tasks DB worker on queues "transactional,default"
+#                      (transactional sends + legacy default drain; never runs
+#                      campaign batches)
+#   campaign-worker    django.tasks DB worker on queue "campaign" (exactly ONE
+#                      process: the SES rate limiter is per-process)
+#   provider-events-worker[-2..2]  django.tasks DB workers on queue "provider-events" (parallel consumers)
+#   tracking-worker    django.tasks DB worker on queue "tracking" (opens/clicks/deferred unsubscribes)
+#   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
+#   cmp-callbacks      CMP webhook outbox dispatcher
+#   client-callbacks   tenant client-callback outbox dispatcher
+#   recipient-imports  recipient-list import jobs
+# There is NO ses-ingress on DEV: DEV has no SQS queue wired (EMAIL_BACKEND is
+# console, no AWS send keys) and must never drain the production
+# relay-production-ses-webhooks queue. SES/SQS dual-run proving (t1272u) lands
+# here only after a dedicated DEV queue + config set exist.
+# DEV database is relay_dev on the shared pg-relay host — never relay (prod).
+services:
+  web:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      DEBUG: "0"
+      EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+      ALLOWED_HOSTS: dev.relay.datatalks.club,origin.dev.relay.datatalks.club,localhost,127.0.0.1,169.58.124.141
+    command:
+      - gunicorn
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "2"
+      - --access-logfile
+      - "-"
+      - relay.wsgi:application
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    expose:
+      - "8000"
+
+  worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    # Transactional sends on their own lane plus the legacy default drain.
+    # Never consumes "campaign", so transactional mail never waits behind
+    # a campaign batch.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional,default", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  campaign-worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.25"
+    mem_limit: 512m
+    # The ONLY consumer of the campaign lane (exactly one process: the SES
+    # rate limiter is per-process).
+    command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 40s
+
+  provider-events-worker:
+    # Consumer 1 of 2 on the provider-events lane. Replicas are safe: tasks are
+    # claimed with SELECT ... FOR UPDATE SKIP LOCKED, events lock only their
+    # recipient row and dedupe on the unique provider_event_id, so N processes
+    # never apply an event twice. One process drains ~30 ev/s (local benchmark,
+    # scripts/bench_provider_events.py); the send peak needs >= 2x ~45 msg/s.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  provider-events-worker-2:
+    # Consumer 2 of 2; see provider-events-worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  tracking-worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    # Recipient opens/clicks and deferred unsubscribes accepted by the web
+    # (/t/o, /t/c, /unsubscribe). Own lane: never waits behind sends or an SES backlog.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "tracking", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  scheduler:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    command: ["python", "manage.py", "run_relay_scheduler", "--interval", "15"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  cmp-callbacks:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  client-callbacks:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    command: ["python", "manage.py", "process_client_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  recipient-imports:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  inbound-deliveries:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.15"
+    mem_limit: 512m
+    command: ["python", "manage.py", "process_inbound_deliveries"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s

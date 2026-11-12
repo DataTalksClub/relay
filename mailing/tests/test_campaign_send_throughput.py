@@ -1,0 +1,248 @@
+"""Campaign batch send throughput.
+
+A prod campaign sent ~4 msg/s against RELAY_SES_MAX_SEND_RATE=45: each batch
+sent its recipients one at a time, and every send held the campaign row lock
+across the ~240 ms SES call. These tests use a fake SES client with realistic
+latency; nothing leaves the machine.
+
+The concurrency tests need PostgreSQL (row locks, one connection per thread):
+    DATABASE_URL=postgresql://... uv run pytest mailing/tests/test_campaign_send_throughput.py
+"""
+
+import logging
+import threading
+import time
+
+import pytest
+from botocore.exceptions import ClientError
+from django.db import connection
+from django.test import override_settings
+from django.utils import timezone
+
+from mailing.models import (
+    Audience,
+    Campaign,
+    CampaignRecipient,
+    CampaignRecipientStatus,
+    Client,
+    Contact,
+    Organization,
+    Subscription,
+    SubscriptionStatus,
+)
+from mailing.services.campaign_rendering import build_campaign_html_body, build_campaign_text_body
+from mailing.services.campaign_sender import (
+    RetryableCampaignSendError,
+    _render_recipient_bodies,
+    send_campaign_batch,
+)
+from mailing.services.tokens import CampaignRecipientTokens, generate_raw_token
+
+SES_LATENCY_SECONDS = 0.2
+needs_postgres = pytest.mark.skipif(connection.vendor != "postgresql", reason="needs PostgreSQL")
+
+
+class _SlowSes:
+    def __init__(self, latency=SES_LATENCY_SECONDS, fail_on=None, error_code="Throttling"):
+        self.latency = latency
+        # A single call number or a collection: WP2 retries one Throttling
+        # internally after re-acquiring a permit, so a test that needs the
+        # batch to observe the failure must fail the retry too.
+        self.fail_on = fail_on
+        self.error_code = error_code
+        self.calls = 0
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self._lock = threading.Lock()
+
+    def _should_fail(self, number):
+        if self.fail_on is None:
+            return False
+        if isinstance(self.fail_on, (set, frozenset, list, tuple)):
+            return number in self.fail_on
+        return number == self.fail_on
+
+    def send_email(self, **params):
+        return self._send()
+
+    def send_raw_email(self, **params):
+        return self._send()
+
+    def _send(self):
+        with self._lock:
+            self.calls += 1
+            number = self.calls
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            time.sleep(self.latency)
+            if self._should_fail(number):
+                raise ClientError({"Error": {"Code": self.error_code}, "ResponseMetadata": {"HTTPStatusCode": 400}}, "SendRawEmail")
+            return {"MessageId": f"ses-{number}"}
+        finally:
+            with self._lock:
+                self.in_flight -= 1
+
+
+def _big_html(links=400):
+    rows = "".join(
+        f'<p>Item {i} <a href="https://example.com/post/{i}?a=1&b=2&utm_source=n">read more about topic {i}</a></p>'
+        + "<span style=\"color:#333;font-family:Arial\">padding text padding text padding text</span>" * 2
+        for i in range(links)
+    )
+    return f"<html><body>{rows}</body></html>"
+
+
+def _campaign_with_recipients(count, html_body="<p>Hi</p>"):
+    organization = Organization.objects.create(name="Org", slug="org")
+    audience = Audience.objects.create(organization=organization, name="News", slug="news")
+    client = Client.objects.create(organization=organization, name="Client", slug="client")
+    campaign = Campaign.objects.create(
+        audience=audience, client=client, subject="Hi", status="queued", html_body=html_body, text_body="Hi https://example.com/x"
+    )
+    now = timezone.now()
+    contacts = Contact.objects.bulk_create(
+        [
+            Contact(email=f"person{i}@example.com", normalized_email=f"person{i}@example.com", verified_at=now)
+            for i in range(count)
+        ]
+    )
+    # The pre-send suppression recheck lets only subscribed contacts through.
+    Subscription.objects.bulk_create(
+        [
+            Subscription(contact=c, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED)
+            for c in contacts
+        ]
+    )
+    recipients = CampaignRecipient.objects.bulk_create(
+        [CampaignRecipient(campaign=campaign, contact=c, email=c.email) for c in contacts]
+    )
+    payload = {
+        "contract": "campaign-email",
+        "version": 1,
+        "campaign_id": campaign.id,
+        "batch_id": f"campaign-{campaign.id}-batch-1",
+        "campaign_recipient_ids": [r.id for r in recipients],
+    }
+    return campaign, payload
+
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=16)
+def test_batch_reaches_configured_rate_with_slow_ses():
+    campaign, payload = _campaign_with_recipients(60)
+    ses = _SlowSes()
+
+    started = time.monotonic()
+    result = send_campaign_batch(payload, ses_client=ses)
+    elapsed = time.monotonic() - started
+
+    assert result.sent_count == 60
+    assert ses.max_in_flight > 1
+    # Sequential sending at 200 ms/call is 5/s; the 45/s limiter caps the best case.
+    assert 60 / elapsed >= 30, f"{60 / elapsed:.1f} msg/s"
+    campaign.refresh_from_db()
+    assert campaign.status == "sent"
+    assert campaign.sent_count == 60
+    assert CampaignRecipient.objects.filter(campaign=campaign, status=CampaignRecipientStatus.SENT).count() == 60
+    assert CampaignRecipient.objects.filter(campaign=campaign).exclude(ses_message_id="").count() == 60
+
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=8)
+def test_two_batches_of_one_campaign_send_in_parallel_without_double_sending():
+    campaign, payload = _campaign_with_recipients(40)
+    ids = payload["campaign_recipient_ids"]
+    first = {**payload, "campaign_recipient_ids": ids[:20]}
+    second = {**payload, "campaign_recipient_ids": ids[20:]}
+    ses = _SlowSes()
+    errors = []
+
+    def run(batch):
+        try:
+            send_campaign_batch(batch, ses_client=ses)
+        except Exception as exc:  # noqa: BLE001 - asserted below
+            errors.append(exc)
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=run, args=(batch,)) for batch in (first, second)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert ses.calls == 40
+    assert len(set(CampaignRecipient.objects.values_list("ses_message_id", flat=True))) == 40
+
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=8)
+def test_retryable_error_stops_new_sends_keeps_finished_ones_and_reraises():
+    campaign, payload = _campaign_with_recipients(40)
+    ses = _SlowSes(fail_on={3, 4})  # the internal throttling retry must also fail
+
+    with pytest.raises(RetryableCampaignSendError):
+        send_campaign_batch(payload, ses_client=ses)
+
+    sent = CampaignRecipient.objects.filter(campaign=campaign, status=CampaignRecipientStatus.SENT).count()
+    pending = CampaignRecipient.objects.filter(campaign=campaign, status=CampaignRecipientStatus.PENDING).count()
+    assert 0 < sent < 40
+    assert sent + pending == 40
+    assert CampaignRecipient.objects.filter(campaign=campaign).exclude(last_error="").count() == 1
+    campaign.refresh_from_db()
+    assert campaign.sent_count == sent
+    assert campaign.status == "sending"
+
+
+@pytest.mark.django_db
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=1000.0, CAMPAIGN_SEND_CONCURRENCY=1)
+def test_throughput_far_below_configured_rate_is_logged_as_error(caplog):
+    campaign, payload = _campaign_with_recipients(20)
+
+    with caplog.at_level(logging.INFO, logger="mailing.services.campaign_sender"):
+        send_campaign_batch(payload, ses_client=_SlowSes(latency=0.03))
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR and "campaign_send_throughput_low" in r.getMessage()]
+    assert len(errors) == 1
+    assert f"campaign_id={campaign.id}" in errors[0].getMessage()
+
+
+@pytest.mark.django_db
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=10.0, CAMPAIGN_SEND_CONCURRENCY=1)
+def test_throughput_near_configured_rate_logs_info_only(caplog):
+    campaign, payload = _campaign_with_recipients(20)
+
+    with caplog.at_level(logging.INFO, logger="mailing.services.campaign_sender"):
+        send_campaign_batch(payload, ses_client=_SlowSes(latency=0.03))
+
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("Campaign batch sent" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.django_db
+def test_cached_render_matches_direct_render_for_each_recipient():
+    campaign, _ = _campaign_with_recipients(1, html_body=_big_html(20))
+    for _ in range(3):
+        tokens = CampaignRecipientTokens(tracking_token=generate_raw_token(), unsubscribe_token=generate_raw_token())
+        html, text = _render_recipient_bodies(campaign, tokens)
+        assert html == build_campaign_html_body(campaign.html_body, tokens.tracking_token, tokens.unsubscribe_token)
+        assert text == build_campaign_text_body(campaign.text_body, tokens.unsubscribe_token)
+
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=16)
+def test_realistic_newsletter_batch_reaches_40_per_second():
+    # 300 recipients: the per-batch fixed cost (thread/connection setup, last
+    # SES call) is amortised like a default-size (500) batch.
+    campaign, payload = _campaign_with_recipients(300, html_body=_big_html())
+    started = time.monotonic()
+    result = send_campaign_batch(payload, ses_client=_SlowSes())
+    rate = 300 / (time.monotonic() - started)
+    assert result.sent_count == 300
+    assert rate >= 40, f"{rate:.1f} msg/s"

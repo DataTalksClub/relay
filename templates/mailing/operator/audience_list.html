@@ -10,19 +10,14 @@
       <p>Audience membership, history, and management entry points for {{ active_client.name }}.</p>
     </div>
     <div class="actions">
-      <a class="button" href="{% url 'mailing:audience_create' %}">Create audience</a>
       <a class="button secondary" href="{% url 'mailing:contact_search' %}">Search contacts</a>
     </div>
   </div>
 
-  {% if audiences.object_list %}
-    <section class="section panel" aria-labelledby="audiences-table">
-      <div class="section-header">
-        <div>
-          <h2 id="audiences-table">Audience Health</h2>
-          <p class="muted">Shared audience membership and history across clients. Open members to check campaign eligibility for {{ active_client.name }}.</p>
-        </div>
-      </div>
+  {% url 'mailing:audience_create' as audience_create_url %}
+  <section class="section panel" aria-labelledby="audiences-table">
+    {% if audiences.object_list %}
+      {% include "_collection_header.html" with title="Audience Health" title_id="audiences-table" extra_class="panel-header" create_url=audience_create_url create_label="Create audience" count=audiences.paginator.count count_noun="audience" description="Shared audience membership and history across clients. Open members to check campaign eligibility for "|add:active_client.name|add:"." only %}
       <div class="table-wrap audience-table triage-table">
         <table>
           <thead>
@@ -43,19 +38,19 @@
                     <div class="helptext">{{ audience.organization.name }} / {{ audience.slug }}</div>
                   </td>
                   <td class="nowrap" data-label="Membership">
-                    {{ row.member_count }} members
-                    <div class="helptext">{{ row.subscribed_count }} subscribed / {{ audience.subscription_count }} subscriptions</div>
+                    <span class="data-num">{{ row.member_count }}</span> members
+                    <div class="helptext"><span class="data-num">{{ row.subscribed_count }}</span> subscribed / <span class="data-num">{{ audience.subscription_count }}</span> subscriptions</div>
                   </td>
                   <td class="nowrap" data-label="Inactive / suppressed">
-                    {{ row.inactive_count }} inactive{% if row.suppressed_count %} / {{ row.suppressed_count }} suppressed{% endif %}
+                    <span class="data-num">{{ row.inactive_count }}</span> inactive{% if row.suppressed_count %} / <span class="data-num">{{ row.suppressed_count }}</span> suppressed{% endif %}
                   </td>
                   <td class="truncate" data-label="Recent activity">
                     {% if row.recent_campaign %}
                       <a href="{% url 'mailing:campaign_detail' row.recent_campaign.id %}">{{ row.recent_campaign.subject }}</a>
-                      <div class="helptext">{{ row.recent_campaign.get_status_display }} / {{ row.recent_campaign.updated_at|date:"Y-m-d H:i" }}</div>
+                      <div class="helptext">{{ row.recent_campaign.get_status_display }} / <span class="data-time">{{ row.recent_campaign.updated_at|date:"Y-m-d H:i" }}</span></div>
                     {% elif row.recent_event %}
                       {{ row.recent_event.get_event_type_display }}
-                      <div class="helptext">{{ row.recent_event.created_at|date:"Y-m-d H:i" }}</div>
+                      <div class="helptext"><span class="data-time">{{ row.recent_event.created_at|date:"Y-m-d H:i" }}</span></div>
                     {% else %}
                       <span class="muted">No campaign or event activity</span>
                     {% endif %}
@@ -68,12 +63,13 @@
         </table>
       </div>
       {% include "mailing/operator/_pagination.html" with page_obj=audiences querystring=pagination_querystring %}
-    </section>
-  {% else %}
-    <div class="empty-state">
-      <span class="badge neutral">EMPTY</span>
-      <p><strong>No audiences yet.</strong> Create an audience before importing contacts, assigning tags, or drafting a campaign.</p>
-      <a class="button secondary" href="{% url 'mailing:audience_create' %}">Create audience</a>
-    </div>
-  {% endif %}
+    {% else %}
+      {% include "_collection_header.html" with title="Audience Health" title_id="audiences-table" extra_class="panel-header" create_url=audience_create_url create_label="Create audience" only %}
+      <div class="empty-state">
+        <span class="badge neutral">EMPTY</span>
+        <p><strong>No audiences yet.</strong> Create an audience before importing contacts, assigning tags, or drafting a campaign.</p>
+        {% include "_collection_create.html" with create_url=audience_create_url create_label="Create the first audience" create_variant="secondary" no_shortcut=True only %}
+      </div>
+    {% endif %}
+  </section>
 {% endblock %}

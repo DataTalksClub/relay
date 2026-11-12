@@ -26,7 +26,7 @@ from mailing.models import (
     TransactionalMessage,
     TransactionalMessageStatus,
 )
-from mailing.services.auth import hash_api_key
+from mailing.services.auth import fast_hash_api_key, hash_api_key
 
 ADMIN_USERNAME = "admin"
 ADMIN_EMAIL = "admin@example.com"
@@ -212,6 +212,7 @@ def upsert_client_api_keys(clients):
             defaults={
                 "public_id": public_id,
                 "key_hash": hash_api_key(key_spec["raw_key"]),
+                "key_fast_hash": fast_hash_api_key(key_spec["raw_key"]),
                 "notes": key_spec["notes"],
                 "revoked_at": None,
             },
@@ -726,7 +727,7 @@ def refresh_campaign_counts(campaigns):
     for campaign in campaigns:
         recipients = CampaignRecipient.objects.filter(campaign=campaign)
         campaign.recipient_count = recipients.exclude(status=CampaignRecipientStatus.SKIPPED).count()
-        campaign.sent_count = recipients.filter(status=CampaignRecipientStatus.SENT).count()
+        campaign.sent_count = recipients.filter(sent_at__isnull=False).count()
         campaign.skipped_count = recipients.filter(status=CampaignRecipientStatus.SKIPPED).count()
         campaign.delivered_count = recipients.filter(delivered_at__isnull=False).count()
         campaign.unique_open_count = recipients.filter(first_opened_at__isnull=False).count()

@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib import admin
+from django.db import models
 
 from mailing.models import (
     Audience,
@@ -14,16 +15,21 @@ from mailing.models import (
     Contact,
     ContactTag,
     EmailEvent,
+    EmailLayout,
     EmailTemplate,
     InboundAddress,
     InboundMessage,
     MailchimpSync,
     MailchimpTagMapping,
     Organization,
+    SendingDomain,
     Subscription,
     Tag,
     TransactionalMessage,
 )
+from mailing.services.api import validate_sender_policy_payload
+from mailing.services.api_errors import ApiValidationError
+from mailing.services.sending_domains import refresh, validate_sender_domains
 
 
 class CreatedAtReadOnlyMixin:
@@ -45,8 +51,23 @@ class AudienceAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
     prepopulated_fields = {"slug": ("name",)}
 
 
+class ClientSenderAdminForm(forms.ModelForm):
+    def clean(self):
+        cleaned = super().clean()
+        org = cleaned.get('organization')
+        if org and cleaned.get('sender_emails'):
+            try:
+                policy = validate_sender_policy_payload({'senders': cleaned.get('sender_emails'), 'default_sender_id': cleaned.get('default_sender_id')})
+                validate_sender_domains(Client(pk=self.instance.pk, organization=org),
+                    policy['sender_emails'], previous=(self.instance.sender_emails or []) if org.pk == self.instance.organization_id else [])
+            except ApiValidationError as exc:
+                self.add_error('sender_emails', str(exc.errors))
+        return cleaned
+
+
 @admin.register(Client)
 class ClientAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
+    form = ClientSenderAdminForm
     readonly_fields = ("created_at", "updated_at")
     list_display = ("name", "slug", "organization", "default_sender_id", "is_active", "created_at")
     list_filter = ("organization", "is_active")
@@ -200,6 +221,15 @@ class CampaignRecipientAdmin(admin.ModelAdmin):
         "ses_message_id",
     )
     autocomplete_fields = ("campaign", "contact")
+
+
+@admin.register(EmailLayout)
+class EmailLayoutAdmin(admin.ModelAdmin):
+    readonly_fields = ("created_at", "updated_at")
+    list_display = ("client", "sender_id", "brand_name", "website_url", "updated_at")
+    list_filter = ("client",)
+    search_fields = ("brand_name", "client__name", "client__slug", "sender_id")
+    autocomplete_fields = ("client",)
 
 
 @admin.register(EmailTemplate)
@@ -419,3 +449,115 @@ class BlockedSenderAdmin(CreatedAtReadOnlyMixin, admin.ModelAdmin):
     list_filter = ("scope", "origin")
     search_fields = ("value", "reason")
     autocomplete_fields = ("origin_message",)
+
+
+from mailing.models import InboundDelivery, InboundDomain, InboundMailbox  # noqa: E402
+from mailing.services.operator_management import audit as routing_audit  # noqa: E402
+
+
+class RoutingAdmin(admin.ModelAdmin):
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        routing_audit(request.user, "inbound_routing.update" if change else "inbound_routing.create", obj,
+                      {"fields": sorted(form.changed_data)})
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(InboundDomain)
+class InboundDomainAdmin(RoutingAdmin):
+    list_display = ("name", "client", "from_email", "enabled")
+
+
+@admin.register(InboundMailbox)
+class InboundMailboxAdmin(RoutingAdmin):
+    list_display = ("local_part", "domain", "kind", "enabled")
+    list_filter = ("domain", "kind", "enabled")
+
+
+@admin.register(InboundDelivery)
+class InboundDeliveryAdmin(admin.ModelAdmin):
+    list_display = ("id", "message", "mailbox", "status", "reason", "attempt_count", "response_status", "outbound_message")
+    readonly_fields = tuple(field.name for field in InboundDelivery._meta.fields)
+    list_filter = ("status", "mailbox")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class SendingDomainAdminForm(forms.ModelForm):
+    def clean(self):
+        cleaned = super().clean()
+        organization = cleaned.get('organization')
+        clients = cleaned.get('clients')
+        if organization and clients is not None and clients.exclude(organization=organization).exists():
+            self.add_error('clients', 'All clients must belong to the selected organization.')
+        return cleaned
+
+
+@admin.register(SendingDomain)
+class SendingDomainAdmin(admin.ModelAdmin):
+    form = SendingDomainAdminForm
+    list_display = ('name', 'organization', 'region', 'enabled', 'checked_at')
+    readonly_fields = ('verification', 'checked_at')
+    filter_horizontal = ('clients',)
+    actions = ('verify_domains',)
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        refresh(obj, register=True)
+
+    @admin.action(description='Refresh provider verification')
+    def verify_domains(self, request, queryset):
+        for row in queryset:
+            refresh(row)
+
+
+from mailing.models import DmarcArchive, DmarcAttachment, DmarcRecord, DmarcReport  # noqa: E402
+
+
+class DmarcReadOnlyAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields if not isinstance(field, models.BinaryField))
+
+    def get_exclude(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields if isinstance(field, models.BinaryField))
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(DmarcArchive)
+class DmarcArchiveAdmin(DmarcReadOnlyAdmin):
+    list_display = ('id', 'domain', 'reporter_domain', 'message_id', 'created_at', 'retain_until', 'parse_error')
+    list_filter = ('domain', 'reporter_domain')
+    search_fields = ('message__message_id', 'reporter_domain')
+
+
+@admin.register(DmarcAttachment)
+class DmarcAttachmentAdmin(DmarcReadOnlyAdmin):
+    list_display = ('id', 'archive', 'filename', 'parse_error')
+    list_select_related = ('archive',)
+
+
+@admin.register(DmarcReport)
+class DmarcReportAdmin(DmarcReadOnlyAdmin):
+    list_display = ('id', 'reporter_org', 'report_id', 'date_begin', 'date_end', 'attachment')
+    search_fields = ('reporter_org', 'report_id')
+
+
+@admin.register(DmarcRecord)
+class DmarcRecordAdmin(DmarcReadOnlyAdmin):
+    list_display = ('id', 'report', 'source_ip', 'count', 'disposition', 'dkim', 'spf')
+    list_filter = ('disposition', 'dkim', 'spf')
+    search_fields = ('source_ip', 'report__report_id')

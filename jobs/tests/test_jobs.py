@@ -116,7 +116,7 @@ def test_webhook_is_signed_and_response_is_recorded(monkeypatch, relay_client):
         captured["timeout"] = timeout
         return Response()
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", fake_urlopen)
     job, _ = submit_job(
         {
             "type": "webhook",
@@ -162,11 +162,55 @@ def test_webhook_origin_must_be_registered(client, auth):
     assert response.json()["error"]["fields"]["url"] == "origin_not_allowed"
 
 
+def test_webhook_with_unconfigured_origins_reports_not_configured(client, relay_client):
+    # Regression cover for the 2026-10-26 client-1 page: a client whose
+    # webhook origins were never provisioned (empty allowlist) gets an
+    # actionable configuration error instead of a misleading bad-URL error.
+    relay_client.relay_webhook_allowed_origins = []
+    relay_client.save(update_fields=["relay_webhook_allowed_origins"])
+    _, raw_key = create_client_api_key(client=relay_client, name="unconfigured")
+    response = client.post(
+        "/api/tasks",
+        data={
+            "type": "webhook",
+            "idempotency_key": "unconfigured-origins",
+            "url": "https://client.example.com/work",
+            "params": {},
+        },
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {raw_key}",
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"]["url"] == "origin_not_configured"
+
+
+def test_webhook_with_unconfigured_origins_and_secret_reports_both(client, relay_client):
+    relay_client.relay_webhook_allowed_origins = []
+    relay_client.relay_webhook_signing_secret = ""
+    relay_client.save(update_fields=["relay_webhook_allowed_origins", "relay_webhook_signing_secret"])
+    _, raw_key = create_client_api_key(client=relay_client, name="bare")
+    response = client.post(
+        "/api/tasks",
+        data={
+            "type": "webhook",
+            "idempotency_key": "bare-contract",
+            "url": "https://client.example.com/work",
+            "params": {},
+        },
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {raw_key}",
+    )
+    assert response.status_code == 400
+    fields = response.json()["error"]["fields"]
+    assert fields["url"] == "origin_not_configured"
+    assert fields["type"] == "webhook_signing_secret_not_configured"
+
+
 def test_retryable_webhook_failure_is_rescheduled(monkeypatch, relay_client):
     def fail_urlopen(_request, _timeout):
         raise TimeoutError("slow client")
 
-    monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
+    monkeypatch.setattr("jobs.tasks.safe_urlopen", fail_urlopen)
     job, _ = submit_job(
         {
             "type": "webhook",
@@ -184,6 +228,27 @@ def test_retryable_webhook_failure_is_rescheduled(monkeypatch, relay_client):
     assert job.attempt == 1
     assert job.run_after > timezone.now()
     assert job.task_result_id
+
+
+def test_webhook_rejects_private_dns_target_without_leaking_url(relay_client):
+    relay_client.relay_webhook_allowed_origins = ["https://127.0.0.1:8000"]
+    relay_client.save(update_fields=["relay_webhook_allowed_origins"])
+    job, _ = submit_job(
+        {
+            "type": "webhook",
+            "idempotency_key": "private-webhook-target",
+            "url": "https://127.0.0.1:8000/health/ready?token=do-not-persist",
+            "params": {},
+        },
+        relay_client,
+    )
+
+    result = execute_job.call(str(job.pk))
+    job.refresh_from_db()
+
+    assert result["status"] == JobStatus.FAILED
+    assert job.error == "webhook URL rejected: non_public_address"
+    assert "do-not-persist" not in job.error
 
 
 def test_email_send_is_a_builtin_job(monkeypatch, relay_client):

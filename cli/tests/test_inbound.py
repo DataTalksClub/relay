@@ -1,0 +1,35 @@
+import io
+import json
+from unittest.mock import patch
+
+from datamailer_cli.cli import main
+
+
+def test_inbound_cli_uses_admin_api_and_prints_result(monkeypatch, capsys):
+    monkeypatch.setenv('DATAMAILER_URL', 'https://relay.example.net')
+    monkeypatch.setenv('DATAMAILER_API_KEY', 'admin-test')
+    with patch('datamailer_cli.api.DatamailerClient.request', return_value=(200, {'results': []})) as request:
+        assert main(['inbound', 'domains']) == 0
+    request.assert_called_once_with('GET', '/api/admin/inbound-domains', payload=None)
+    assert json.loads(capsys.readouterr().out) == {'results': []}
+    data = {'sender_allowlist': ['alexey@example.net'], 'webhook_secret_id': 'env:BOT_SECRET'}
+    monkeypatch.setattr('sys.stdin', io.StringIO(json.dumps(data)))
+    with patch('datamailer_cli.api.DatamailerClient.request', return_value=(200, {'id': 12})) as request:
+        assert main(['inbound', 'mailboxes', '--id', '12', '--data-file', '-']) == 0
+    request.assert_called_once_with('PATCH', '/api/admin/inbound-mailboxes/12', payload=data)
+
+
+def test_dmarc_cli_reads_parsed_report(monkeypatch, capsys):
+    monkeypatch.setenv('DATAMAILER_URL', 'https://relay.example.net')
+    monkeypatch.setenv('DATAMAILER_API_KEY', 'admin-test')
+    with patch('datamailer_cli.api.DatamailerClient.request', return_value=(200, {'id': 16, 'attachments': []})) as request:
+        assert main(['inbound', 'dmarc', '--id', '16']) == 0
+    request.assert_called_once_with('GET', '/api/admin/inbound-dmarc/16', payload=None)
+    assert json.loads(capsys.readouterr().out)['id'] == 16
+
+
+def test_inbound_dmarc_summary_uses_summary_endpoint():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"records": 3})) as request:
+        result = main(["inbound", "dmarc-summary", "--url", "https://relay.test", "--api-key", "relay_admin_test"])
+    assert result == 0
+    request.assert_called_once_with("GET", "/api/admin/inbound-dmarc-summary")

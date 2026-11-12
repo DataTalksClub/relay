@@ -349,6 +349,17 @@ Reconcile uses the provided member array as the current desired list. With `remo
 
 List transactional send creates one transactional message per active list member using a shared template and context. The caller must provide a base `idempotency_key`; Datamailer appends each member `source_object_key` so retrying the same list send does not duplicate per-member email.
 
+The response reports `created_count`, `enqueued_count`, `skipped_count`, and
+`idempotent_replay_count`, plus a `skipped` array with one item per member
+that was not sent. Each item has `message_id`, `contact_id`, `email`,
+`source_object_key`, and a machine-readable `reason`. The reason is the
+stored message `last_error`, for example `category_unsubscribe`,
+`global_unsubscribe`, `hard_bounce`, `complaint`, or `suppressed`. Members
+skipped by an earlier send of the same `idempotency_key` are reported again
+on replay. The transient list send
+(`POST /api/transient-recipient-lists/transactional-send`) returns the same
+array.
+
 The request can include `list` and `members`. When `members` is present, Datamailer syncs the recipient list before sending. The default `member_sync` mode is `reconcile`, which marks existing active members absent from the request as removed. Use `member_sync=upsert` to only add or update the provided members. Each member's metadata is merged into that recipient's template context and is also available under `member`.
 
 ```json
@@ -406,6 +417,7 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
   "html_body": "<p>Your homework submission for <strong>{{ homework_title }}</strong> in {{ course_title }} was saved.</p>",
   "text_body": "Your homework submission for {{ homework_title }} in {{ course_title }} was saved.",
   "markdown_body": "",
+  "markdown_layout_context": false,
   "category": "homework",
   "required_context": [
     {"name": "course_title", "description": "Course title."},
@@ -419,7 +431,7 @@ Templates are scoped to the authenticated client. Use `PUT` to create or update 
 }
 ```
 
-Set `markdown_body` to store a markdown draft instead of raw `html_body`/`text_body`. Markdown drafts are rendered at send and preview time with the shared email shell (header, footer, and external links opened in a new tab); the `text` part carries the substituted markdown source. `category` is a free-form label (for example `events` or `onboarding`). The `GET` response also reports `latest_version`, the newest published version number, or `null` when the template was never published.
+Set `markdown_body` to store a markdown draft instead of raw `html_body`/`text_body`. Markdown drafts are rendered at send and preview time with the shared email shell (header, footer, and external links opened in a new tab); the `text` part carries the substituted markdown source. Set `markdown_layout_context` to `true` only when the template should expose the allowlisted `footer_note`, `verify_email_url`, and `unsubscribe_url` values from its normal render context to the client-owned layout and matching text part. Relay never passes other context values to the layout. This opt-in is valid only for Markdown drafts and is snapshotted into every published version. `category` is a free-form label (for example `events` or `onboarding`). The `GET` response also reports `latest_version`, the newest published version number, or `null` when the template was never published.
 
 CMP transactional templates can be provisioned through the API with:
 
@@ -498,6 +510,7 @@ Publishing snapshots the current draft into a new immutable version numbered `1`
     "html_body": "",
     "text_body": "",
     "markdown_body": "Hi {{ user_name }} ...",
+    "markdown_layout_context": true,
     "required_context": [
       {"name": "user_name", "description": "Recipient name."},
       {"name": "join_url", "description": "Join link."}
@@ -538,11 +551,11 @@ POST /api/transactional/templates/{template_key}/preview
 ```json
 {
   "context": {"user_name": "Ada", "event_title": "Community Lunch", "join_url": "https://example.com/join"},
-  "template_version": 1
+  "draft": true
 }
 ```
 
-`template_version` is optional; omit it to preview the current draft, or name an explicit version. The preview writes nothing and returns the rendered message plus which required context keys would have produced values:
+Set `draft` to `true` to preview the current saved draft, or omit it and name an explicit `template_version` to preview an immutable version. The two selectors are mutually exclusive. With neither selector, Relay keeps send-like resolution (latest published version, or the draft if the template has never been published). The preview writes nothing and returns the rendered message plus which required context keys would have produced values:
 
 ```json
 {
@@ -556,7 +569,7 @@ POST /api/transactional/templates/{template_key}/preview
 }
 ```
 
-Preview rendering matches sends exactly: for the same version and context, `subject`, `html_body`, and `text_body` equal what a send stores. `published` is `false` when the preview rendered the draft of a never-published template. Missing required context keys do not fail a preview; they are listed in `missing_context` (the affected placeholders render empty).
+Preview rendering matches sends exactly: for the same published version and context, `subject`, `html_body`, and `text_body` equal what a send stores. When the selected Markdown draft or version has `markdown_layout_context=true`, preview and send both validate and render the allowlisted `footer_note`, `verify_email_url`, and `unsubscribe_url` values already present in `context`; the request has no second layout-context field. `published` is `false` for an explicit draft preview. Missing required context keys do not fail a preview; they are listed in `missing_context` (the affected placeholders render empty).
 
 ### Test Send a Template
 
@@ -598,7 +611,7 @@ POST /api/transactional/send
 
 `template_version` is optional. With it, the send renders exactly that published version; without it, the send renders the latest published version, or the draft for templates that were never published. An unknown version fails with `404 template_version: not_found`. The created message records the version it rendered, and the queue payload carries the same `template_version`.
 
-Transactional sends validate required template context before Datamailer creates a contact, message, event, or queue payload. Reusing an idempotency key returns the existing message.
+Transactional sends validate required template context before Datamailer creates a contact, message, event, or queue payload. An opted-in Markdown version additionally requires each non-empty layout value to be a string, limits `footer_note` to 500 characters, and accepts only absolute HTTP(S) verify/unsubscribe URLs up to 2048 characters. These values are rendered into both HTML and text, are never logged by validation, and remain part of the ordinary stored message context. Reusing an idempotency key returns the existing message.
 
 Local transactional send examples require the Datamailer server to be started with `SQS_TRANSACTIONAL_EMAIL_QUEUE_URL` configured, for example through LocalStack. With the default empty queue URL, the endpoint is documented but is not runnable because queueing provider work will fail.
 
@@ -1270,6 +1283,72 @@ python manage.py process_mailchimp_syncs --batch-size 25
 
 Operators can inspect recent sync status, attempt counts, next retry time, and
 the last error from the client detail page and Django admin.
+
+## Newsletter blocks
+
+Newsletter issues are built from typed blocks. Staff operators (web UI at
+`/newsletters/`) and client API keys have the same abilities on the issues of
+their client. Nothing here sends to an audience: the only delivery is a test
+copy to explicit addresses.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/newsletter-block-types` | Block types, their fields (`text`, `url`, `markdown`, `lines`, `html`), required flags and defaults |
+| GET | `/api/newsletter-issues` | Latest 100 issues of the key's client |
+| GET, PUT | `/api/newsletter-issues/<key>` | Read or create/update an issue: `subject` (required on create), `preview_text`, `issue_number`, `publication_date` (`YYYY-MM-DD`). PUT returns 201 on create |
+| POST | `/api/newsletter-issues/<key>/blocks` | Add a block: `{"type": "sponsor", "data": {...}, "position": 0}`; `position` is optional (default: append) |
+| GET, PUT, DELETE | `/api/newsletter-issues/<key>/blocks/<id>` | Read, replace `data` (and optionally `type`, `position`), or delete one block |
+| POST | `/api/newsletter-issues/<key>/preview` | Rendered `subject`, `html_body`, `text_body`; `{"block_id": 12}` previews one block |
+| POST | `/api/newsletter-issues/<key>/test-send` | `{"emails": ["alexey@datatalks.club", "sponsor@example.com"], "block_id": 12}` (block optional, max 10 addresses) |
+
+Block field values are strings. `lines` fields also accept a list of strings.
+`events` lines are `when | title | https://link | with Speaker`; `links`
+lines are `title | https://link | note`. Markdown fields escape raw HTML and
+only keep `http(s)`/`mailto` links; the `html` block type inserts HTML as is.
+Validation errors return 400 with field codes such as
+`{"data.cta_url": "invalid_url"}`.
+
+Test sends are synchronous. The subject is prefixed with `[TEST]`, links are
+not click-tracked, no open pixel is added and no unsubscribe token is minted.
+Each address gets its own result: `sent` (provider accepted, with
+`message_id`), `failed` (with the provider error), `timeout` (no answer within
+15 s; the email may still arrive, and later addresses are `not_attempted`),
+or `dry_run`. The response is 200 when every address was accepted and 502
+otherwise. Every attempt is logged and kept in the issue's test history.
+
+## Campaign API
+
+Client campaign definitions use `GET, PUT /api/campaigns/<external_key>` and
+`POST /api/campaigns/<external_key>/queue`. A campaign can use static
+`html_body`/`text_body`, or a published transactional template by setting
+`template_key`, `template_version`, `context`, and `sender_id`. Template
+campaigns use Relay's normal campaign worker, including its open pixel,
+click tracking, unsubscribe URL, suppression checks, and aggregate event stats.
+
+`recipient_list_key` scopes a campaign to a Relay recipient list. For an
+upstream immutable recipient snapshot, reconcile the exact members into that
+list before queueing. A member may carry private per-recipient render data in
+`metadata.relay_campaign_context`; Relay snapshots that object into the
+campaign recipient and merges it over the campaign `context` during rendering.
+That private key is omitted from recipient-list member responses. Set
+`allow_unverified: true` only for a campaign whose explicit recipient list was
+selected upstream; it bypasses the verification check while Relay still
+enforces unsubscribe, bounce, complaint, and invalid-address suppressions.
+Recipient-list members may set `subscribe_if_missing: true` when an upstream
+system provides an immutable eligibility snapshot. Relay creates a client
+subscription only when no row exists; it never changes an existing subscribed,
+pending, or unsubscribed row. Campaign snapshotting still enforces existing
+client/audience unsubscribes, global unsubscribes, bounces, complaints, and
+invalid-address suppressions.
+An upstream application may also put a non-secret opaque identifier in
+`relay_campaign_context.client_recipient_key`; Relay returns that identifier
+on campaign recipient records so the application can resolve Relay's
+recipient-level retry route without exposing other render context.
+
+Campaign GET responses include `sent_count`, `delivered_count`,
+`unique_open_count`, `open_count`, `unique_click_count`, `click_count`,
+`unsubscribe_count`, `bounce_count`, and `complaint_count` from Relay's
+campaign recipient and event records.
 
 ## Scheduled campaigns
 

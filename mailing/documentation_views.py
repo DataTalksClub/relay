@@ -1,6 +1,8 @@
 """Short setup guide and searchable reference built from existing API sources."""
 
 import json
+from copy import deepcopy
+from functools import lru_cache
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
@@ -11,15 +13,43 @@ from django.utils.text import slugify
 
 from mailing.services.api_docs import (
     DEMO_API_KEYS,
-    build_openapi_spec,
+    OPENAPI_SPEC,
     docs_base_url,
     endpoint_groups,
     workflow_examples,
 )
 
 
+@lru_cache(maxsize=8)
+def _workflow_base(base_url):
+    """Heavy doc strings built once per base URL; callers deepcopy before mutating."""
+    return workflow_examples(base_url)
+
+
+@lru_cache(maxsize=1)
+def _reference_operations():
+    """Spec-derived reference rows are static code: parse OPENAPI_SPEC once."""
+    operations = []
+    for path, path_item in OPENAPI_SPEC["paths"].items():
+        for verb, operation in path_item.items():
+            if verb not in {"get", "post", "put", "patch", "delete", "head", "options"}:
+                continue
+            operations.append(
+                {
+                    "method": verb.upper(),
+                    "path": path,
+                    "summary": operation.get("summary", operation.get("operationId", path)),
+                    "description": operation.get("description", ""),
+                    "contract": json.dumps(operation, indent=2),
+                    "id": operation.get("operationId", slugify(verb + path)),
+                    "tags": tuple(operation.get("tags", [])),
+                }
+            )
+    return operations
+
+
 def documentation_context():
-    groups = workflow_examples(docs_base_url())
+    groups = deepcopy(_workflow_base(docs_base_url()))
     links = []
     legacy_anchors = {
         "auth": reverse("mailing:api_docs") + "#quickstart",
@@ -67,34 +97,21 @@ def api_docs_reference(request):
     query = request.GET.get("q", "").strip()
     method = request.GET.get("method", "").upper()
     tag = request.GET.get("tag", "")
-    spec = build_openapi_spec()
     operations = []
     tags = set()
-    for path, path_item in spec["paths"].items():
-        for verb, operation in path_item.items():
-            if verb not in {"get", "post", "put", "patch", "delete", "head", "options"}:
-                continue
-            operation_tags = operation.get("tags", [])
-            tags.update(operation_tags)
-            haystack = " ".join(
-                [path, verb, operation.get("summary", ""), operation.get("description", ""), *operation_tags]
-            ).casefold()
-            if (
-                (query and query.casefold() not in haystack)
-                or (method and method != verb.upper())
-                or (tag and tag not in operation_tags)
-            ):
-                continue
-            operations.append(
-                {
-                    "method": verb.upper(),
-                    "path": path,
-                    "summary": operation.get("summary", operation.get("operationId", path)),
-                    "description": operation.get("description", ""),
-                    "contract": json.dumps(operation, indent=2),
-                    "id": operation.get("operationId", slugify(verb + path)),
-                }
-            )
+    for operation in _reference_operations():
+        operation_tags = operation["tags"]
+        tags.update(operation_tags)
+        haystack = " ".join(
+            [operation["path"], operation["method"], operation["summary"], operation["description"], *operation_tags]
+        ).casefold()
+        if (
+            (query and query.casefold() not in haystack)
+            or (method and method != operation["method"])
+            or (tag and tag not in operation_tags)
+        ):
+            continue
+        operations.append(operation)
     page = Paginator(operations, 20).get_page(request.GET.get("page"))
     params = request.GET.copy()
     params.pop("page", None)

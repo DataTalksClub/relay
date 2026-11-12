@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Mailchimp source contacts | Relay{% endblock %}
+{% block topbar_title %}Mailchimp source contacts{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div><h1>Mailchimp source contacts</h1><p>Historical clicks for {{ active_client.name }}, grouped by exact Mailchimp audience and contact IDs.</p></div>
+    <a class="button secondary" href="{% url 'mailing:contact_search' %}">Relay contacts</a>
+  </div>
+  <p class="muted">An unlinked Mailchimp contact has no verified Relay contact association. No name, email address, or subscription state is inferred.</p>
+  <form class="section panel panel-body-pad" method="get">
+    <div class="form-field"><label for="linkage">Contact linkage</label><select id="linkage" name="linkage"><option value="unlinked"{% if linkage == "unlinked" %} selected{% endif %}>Unlinked only</option><option value="all"{% if linkage == "all" %} selected{% endif %}>All source identities</option></select></div>
+    <button type="submit">Apply filter</button>
+  </form>
+  <section class="section panel">
+    <div class="panel-header"><h2>Source identities</h2><span class="muted data-num">{{ identities.paginator.count }} identities</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Mailchimp contact ID</th><th>Audience</th><th>Linkage</th><th>Campaigns</th><th>Links</th><th>Clicks</th><th>Latest click</th></tr></thead><tbody>
+      {% for row in identities %}
+        <tr><td><a href="{% url 'mailing:mailchimp_source_history' row.audience_id row.source_datacenter row.source_list_id row.source_email_id %}"><code>{{ row.source_email_id }}</code></a><div class="muted"><code>{{ row.source_datacenter }} / {{ row.source_list_id }}</code></div></td><td>{{ row.audience__name }}</td><td>{{ row.linkage_label }}{% if row.native_contact_email %}<div><a href="{% url 'mailing:contact_detail' row.native_contact_email %}">Relay contact</a></div>{% endif %}</td><td class="data-num">{{ row.campaign_count }}</td><td class="data-num">{{ row.link_count }}</td><td class="data-num">{{ row.click_count }}</td><td class="data-time">{{ row.latest_at|date:"Y-m-d H:i:s T" }}</td></tr>
+      {% empty %}<tr><td colspan="7" class="empty-state">No Mailchimp source identities match this filter.</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% if identities.has_other_pages %}<nav class="pagination" aria-label="Source contact pages">{% if identities.has_previous %}<a class="button secondary" href="?{{ pagination.querystring }}&amp;page={{ identities.previous_page_number }}">Previous</a>{% endif %}<span>Page {{ identities.number }} of {{ identities.paginator.num_pages }}</span>{% if identities.has_next %}<a class="button secondary" href="?{{ pagination.querystring }}&amp;page={{ identities.next_page_number }}">Next</a>{% endif %}</nav>{% endif %}
+  </section>
+{% endblock %}

@@ -6,9 +6,12 @@ fed by AWS itself.
 """
 
 import signal
+import time
 
-from django.core.management.base import BaseCommand
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 
+from mailing.db_retry import record_db_heartbeat
 from mailing.ingress import INGRESS_WORKER_NAMES, get_ingress_config
 from mailing.sqs_worker import SqsWorker
 
@@ -24,6 +27,12 @@ class Command(BaseCommand):
         parser.add_argument("--batch-size", type=int, default=10)
         parser.add_argument("--wait-time", type=int, default=20)
         parser.add_argument("--idle-sleep", type=float, default=0)
+        parser.add_argument(
+            "--heartbeat-every",
+            type=int,
+            default=30,
+            help="Log a heartbeat line every N consecutive idle polls.",
+        )
 
     def handle(self, *args, **options):
         stop_requested = False
@@ -36,6 +45,12 @@ class Command(BaseCommand):
         signal.signal(signal.SIGINT, request_stop)
 
         name = options["worker"]
+        if name == "aisl-ses-webhooks" and not settings.AISL_SES_FORWARD_ENABLED:
+            self.stdout.write("AISHL SES ingress standby (AISL_SES_FORWARD_ENABLED=0); no messages consumed")
+            while not options["once"] and not stop_requested:
+                record_db_heartbeat()
+                time.sleep(1)
+            return
         worker = SqsWorker(
             get_ingress_config(name),
             batch_size=options["batch_size"],
@@ -50,12 +65,26 @@ class Command(BaseCommand):
             )
             return
 
+        heartbeat_every = options["heartbeat_every"]
+        if heartbeat_every < 1:
+            raise CommandError("--heartbeat-every must be >= 1")
+        idle_polls = 0
+        record_db_heartbeat()
         for result in worker.run_forever(
             should_stop=lambda: stop_requested, idle_sleep=options["idle_sleep"]
         ):
+            record_db_heartbeat()
             if result.received:
+                idle_polls = 0
                 self.stdout.write(
                     f"received={result.received} deleted={result.deleted} failed={result.failed}"
                 )
+            else:
+                idle_polls += 1
+                if idle_polls % heartbeat_every == 0:
+                    self.stdout.write(
+                        f"heartbeat {name} idle_polls={idle_polls} "
+                        f"received={result.received} deleted={result.deleted} failed={result.failed}"
+                    )
 
         self.stdout.write(f"Stopped {name} ingress drain")

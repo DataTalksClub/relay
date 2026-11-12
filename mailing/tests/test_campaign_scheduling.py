@@ -1,5 +1,7 @@
+import uuid
 from datetime import timedelta
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -42,7 +44,7 @@ def campaign():
 
 
 def test_schedule_acceptance_no_snapshot_no_enqueue_and_idempotent(campaign):
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         result = queue_campaign(campaign)
         repeat = queue_campaign(campaign)
     campaign.refresh_from_db()
@@ -58,7 +60,7 @@ def test_dispatch_not_early_then_due_once_with_send_time_snapshot(campaign, djan
     queue_campaign(campaign)
     late_contact = Contact.objects.create(email="late@example.com", verified_at=timezone.now())
     Subscription.objects.create(contact=late_contact, audience=campaign.audience, client=campaign.client, status="subscribed")
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         assert dispatch_due_campaigns(now=campaign.scheduled_at - timedelta(seconds=1)) == []
         with django_capture_on_commit_callbacks(execute=True):
             results = dispatch_due_campaigns(now=campaign.scheduled_at)
@@ -75,7 +77,7 @@ def test_dispatch_not_early_then_due_once_with_send_time_snapshot(campaign, djan
 def test_cancel_scheduled_prevents_dispatch(campaign):
     queue_campaign(campaign)
     assert cancel_campaign_instance(campaign)["cancelled"]
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         assert dispatch_due_campaigns(now=campaign.scheduled_at + timedelta(hours=1)) == []
     enqueue.assert_not_called()
     assert not campaign.recipients.exists()
@@ -102,7 +104,7 @@ def test_outbox_recovers_interrupted_commit_callback_without_resnapshot(campaign
     dispatch_due_campaigns(now=campaign.scheduled_at)
     dispatch = CampaignDispatch.objects.get()
     assert dispatch.enqueued_at is None
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         assert recover_campaign_dispatches() == 1
         assert recover_campaign_dispatches() == 0
     assert enqueue.call_count == 1
@@ -117,7 +119,7 @@ def test_outbox_enqueue_error_retries_and_retains_intent(campaign):
     dispatch = CampaignDispatch.objects.get()
     assert dispatch.enqueued_at is None
     assert "offline" in dispatch.last_error
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         assert recover_campaign_dispatches() == 1
     enqueue.assert_called_once()
     dispatch.refresh_from_db()
@@ -126,7 +128,7 @@ def test_outbox_enqueue_error_retries_and_retains_intent(campaign):
 
 def test_due_dispatch_rollback_sends_nothing(campaign, django_capture_on_commit_callbacks):
     queue_campaign(campaign)
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         with pytest.raises(ValueError), django_capture_on_commit_callbacks(execute=True), transaction.atomic():
             dispatch_due_campaigns(now=campaign.scheduled_at)
             raise ValueError("rollback")
@@ -162,7 +164,7 @@ def test_existing_scheduler_command_dispatches_due_campaigns(campaign):
 def test_changed_scheduled_content_fails_visibly_without_repeated_dispatch(campaign):
     queue_campaign(campaign)
     Campaign.objects.filter(pk=campaign.pk).update(subject="")
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         assert dispatch_due_campaigns(now=campaign.scheduled_at) == []
         assert dispatch_due_campaigns(now=campaign.scheduled_at) == []
     enqueue.assert_not_called()
@@ -176,7 +178,7 @@ def test_cancel_after_due_commit_but_before_outbox_dispatch_stops_tasks(campaign
     queue_campaign(campaign)
     dispatch_due_campaigns(now=campaign.scheduled_at)
     assert cancel_campaign_instance(campaign)["cancelled"]
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         assert recover_campaign_dispatches() == 1
     enqueue.assert_not_called()
     assert not campaign.recipients.filter(status="pending").exists()
@@ -200,16 +202,17 @@ def test_due_delivery_duplicate_task_calls_provider_once(campaign, django_captur
         assert len(dispatch_due_campaigns()) == 1
     provider = Mock()
     provider.send_email.return_value = {"MessageId": "scheduled-id"}
+    provider.send_raw_email.return_value = {"MessageId": "scheduled-id"}
     assert send_campaign_batch(payloads[0], ses_client=provider).sent_count == 1
     assert send_campaign_batch(payloads[0], ses_client=provider).sent_count == 0
-    provider.send_email.assert_called_once()
+    assert provider.send_email.call_count + provider.send_raw_email.call_count == 1
     assert campaign.recipients.get().ses_message_id == "scheduled-id"
 
 
 def test_due_snapshot_rechecks_unsubscribe_and_completes_empty(campaign, django_capture_on_commit_callbacks):
     queue_campaign(campaign)
     Subscription.objects.filter(client=campaign.client).update(status="unsubscribed")
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue, \
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue, \
          django_capture_on_commit_callbacks(execute=True):
         result = dispatch_due_campaigns(now=campaign.scheduled_at)[0]
     enqueue.assert_not_called()
@@ -230,7 +233,7 @@ def test_review_revision_rejects_changed_content_or_send_time_before_snapshot(ca
         campaign.scheduled_at += timedelta(hours=2)
     campaign.save()
     with patch("mailing.services.campaigns.snapshot_campaign_recipients") as snapshot, \
-         patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+         patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         with pytest.raises(CampaignNotReady, match="changed after review"):
             queue_campaign(campaign, expected_revision=reviewed_revision, reject_past_schedule=True)
     snapshot.assert_not_called()
@@ -243,7 +246,7 @@ def test_review_revision_rejects_changed_content_or_send_time_before_snapshot(ca
 @pytest.mark.parametrize("seconds_after", [0, 1])
 def test_operator_expired_schedule_never_becomes_immediate_send(campaign, seconds_after):
     with patch("mailing.services.campaigns.snapshot_campaign_recipients") as snapshot, \
-         patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue:
+         patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue:
         with pytest.raises(CampaignNotReady, match="Choose a future time"):
             queue_campaign(campaign, expected_revision=campaign.updated_at.isoformat(),
                            reject_past_schedule=True, now=campaign.scheduled_at + timedelta(seconds=seconds_after))
@@ -263,7 +266,7 @@ def test_matching_review_accepts_future_schedule(campaign):
 
 
 def test_default_api_past_schedule_keeps_immediate_queue_semantics(campaign, django_capture_on_commit_callbacks):
-    with patch("mailing.services.campaigns.enqueue_campaign_email") as enqueue, \
+    with patch("mailing.services.campaigns.enqueue_campaign_email", return_value=SimpleNamespace(id=uuid.uuid4())) as enqueue, \
          django_capture_on_commit_callbacks(execute=True):
         result = queue_campaign(campaign, now=campaign.scheduled_at + timedelta(seconds=1))
     assert result.queued and not result.scheduled

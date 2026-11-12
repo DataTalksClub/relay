@@ -1,0 +1,285 @@
+name: Deploy Relay Dev (Contabo)
+
+# Auto-DEV: push to main builds linux/amd64 → GHCR → Coolify relay-dev deploy.
+# No git SSH / deploy keys / git clone on Contabo.
+# Production is NEVER touched here: manual promote only via deploy-prod.yml
+# (workflow_dispatch + production environment). A push must not be able to
+# deploy the prod UUID: this workflow only knows COOLIFY_RELAY_DEV_SERVICE_UUID.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "deploy/coolify/docker-compose.staging.yml"
+      - ".github/workflows/deploy-prod.yml"
+      - ".github/workflows/deploy-sandbox.yml"
+
+concurrency:
+  # Production promotion shares the same database and host. Serialize both
+  # deploy paths so a dev compose replacement cannot overlap a prod rollout.
+  group: relay-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: datatalksclub/relay
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    env:
+      SECRET_KEY: django-insecure-ci-only-not-for-deployment
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+      - name: Lint and Django checks
+        run: |
+          uv run ruff check .
+          uv run python manage.py makemigrations --check --dry-run
+          uv run python manage.py check
+      - name: Tests
+        run: uv run pytest
+
+  database-preflight-test:
+    runs-on: ubuntu-24.04
+    env:
+      SECRET_KEY: django-insecure-ci-only-not-for-deployment
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: relay_test
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: relay_preflight_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U relay_test -d relay_preflight_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen --dev
+      - name: Concurrent migrations and restore-owner rejection on real PostgreSQL
+        env:
+          RELAY_TEST_POSTGRES_URL: postgresql://relay_test:test-only@localhost:5432/relay_preflight_test
+        run: uv run pytest tests/test_db_preflight_postgresql.py -q
+
+  build-and-push:
+    needs: [test, database-preflight-test]
+    runs-on: ubuntu-24.04
+    outputs:
+      image_tag: ${{ steps.identity.outputs.version }}
+      image_digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Construct release identity (exact ECR tag format)
+        id: identity
+        run: |
+          set -euo pipefail
+          # Same construction as website .github/workflows/deploy-dev.yml:
+          #   version="$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA:0:7}"
+          # CMP/AISHL deploy-dev: DATE=$(date +'%Y%m%d-%H%M%S'); SHORT_SHA=…; TAG=${DATE}-${SHORT_SHA}
+          # Live ECR example (CMP): 20261021-094333-f922dc4
+          version="$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA:0:7}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Exact ECR production tag only (YYYYMMDD-HHMMSS-<7>). Never :latest. Never sha-<…>.
+          tags: |
+            type=raw,value=${{ steps.identity.outputs.version }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (linux/amd64)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Bake the release identity so /health/ready proves the NEW
+          # release is serving (intake 2f3aed4b: per-app image is Coolify
+          # desired-state and flips instantly, so it cannot prove this).
+          build-args: |
+            RELAY_IMAGE_TAG=${{ steps.identity.outputs.version }}
+            RELAY_SOURCE_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Packages stay private; Contabo pulls via Coolify Registries read:packages PAT.
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-24.04
+    # DEV only (relay-dev, dev.relay.datatalks.club). Production promotion is
+    # the separate, manually dispatched deploy-prod.yml workflow.
+    environment: development
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Candidate database ownership and migration preflight (before rolling switch)
+        env:
+          PREFLIGHT_SSH_KEY: ${{ secrets.RELAY_PREFLIGHT_SSH_KEY }}
+          PREFLIGHT_KNOWN_HOSTS: ${{ secrets.RELAY_PREFLIGHT_KNOWN_HOSTS }}
+          PREFLIGHT_TARGET: ${{ secrets.RELAY_PREFLIGHT_TARGET }}
+          PREFLIGHT_ENVIRONMENT: development
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/run_db_preflight.sh
+
+      - name: Apply Coolify DEV compose template and deploy
+        env:
+          PREFLIGHT_SSH_KEY: ${{ secrets.RELAY_PREFLIGHT_SSH_KEY }}
+          PREFLIGHT_KNOWN_HOSTS: ${{ secrets.RELAY_PREFLIGHT_KNOWN_HOSTS }}
+          PREFLIGHT_TARGET: ${{ secrets.RELAY_PREFLIGHT_TARGET }}
+          PREFLIGHT_ENVIRONMENT: development
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_DEV_SERVICE_UUID }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          bash scripts/run_runtime_verify.sh snapshot
+          if [[ -z "${COOLIFY_URL:-}" || -z "${COOLIFY_TOKEN:-}" || -z "${COOLIFY_SERVICE_UUID:-}" ]]; then
+            echo "Missing Coolify secrets: COOLIFY_URL, COOLIFY_TOKEN, COOLIFY_RELAY_DEV_SERVICE_UUID" >&2
+            exit 1
+          fi
+          python3 -c "import yaml" 2>/dev/null || uv pip install --system --quiet pyyaml
+          python3 - <<'PY'
+          import base64, json, os, re, urllib.request
+          import yaml
+
+          base = os.environ["COOLIFY_URL"].rstrip("/")
+          token = os.environ["COOLIFY_TOKEN"]
+          uuid = os.environ["COOLIFY_SERVICE_UUID"]
+          image_ref = os.environ["IMAGE_REF"]
+          image_tag = os.environ["IMAGE_TAG"]
+          prefix = f"{image_ref}:"
+          template_path = "deploy/coolify/docker-compose.dev.yml"
+
+          def call(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  f"{base}{path}",
+                  data=data,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/json",
+                      "Content-Type": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req) as resp:
+                  body = resp.read()
+                  return resp.status, (json.loads(body) if body else {})
+
+          with open(template_path) as fh:
+              template_text = fh.read()
+          assert "__IMAGE_TAG__" in template_text, "compose template has no __IMAGE_TAG__ placeholder"
+          rendered = template_text.replace("__IMAGE_TAG__", image_tag)
+          assert "__IMAGE_TAG__" not in rendered
+          wanted = yaml.safe_load(rendered)
+          assert set(wanted) == {"services"}, f"unexpected top-level keys: {sorted(wanted)}"
+          for name, svc in wanted["services"].items():
+              assert svc.get("image", "").startswith(prefix), f"service {name} image not pinned to {prefix}*"
+              assert re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{7}", svc["image"][len(prefix):] or ""), (
+                  f"service {name} image tag is not exact YYYYMMDD-HHMMSS-<7>: {svc['image']}"
+              )
+
+          _st, svc = call("GET", f"/api/v1/services/{uuid}")
+          live = yaml.safe_load(svc["docker_compose_raw"])
+          live_services = live.get("services", {})
+          wanted_services = wanted["services"]
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("EXPECTED_SERVICES=" + json.dumps(sorted(wanted_services)) + "\n")
+
+          # Fail closed instead of clobbering human-managed routing: the live
+          # web service must match the template except for the image tag, and
+          # the live compose must not contain services the template doesn't.
+          live_web = dict(live_services.get("web", {}))
+          wanted_web = dict(wanted_services["web"])
+          assert live_web.get("image", "").startswith(prefix), "live web image is not a relay GHCR image; refusing to overwrite"
+          live_web.pop("image", None)
+          wanted_web.pop("image", None)
+          assert live_web == wanted_web, (
+              "live web service differs from the template (domains/labels managed outside git?). "
+              "Refusing to overwrite; reconcile Coolify UI state with deploy/coolify/docker-compose.dev.yml first."
+          )
+          unknown = sorted(set(live_services) - set(wanted_services))
+          assert not unknown, f"live compose has services not in the template {unknown}; refusing to overwrite"
+          added = sorted(set(wanted_services) - set(live_services))
+          print(f"compose guard OK; services to add on Coolify: {added or ['(none)']}")
+
+          call(
+              "PATCH",
+              f"/api/v1/services/{uuid}",
+              {"docker_compose_raw": base64.b64encode(rendered.encode()).decode()},
+          )
+          _st, out = call("POST", f"/api/v1/deploy?uuid={uuid}&force=true")
+          print(json.dumps(out))
+          print(f"Applied template with {prefix}{image_tag} on all {len(wanted_services)} services and triggered deploy for {uuid}")
+          PY
+
+      - name: Verify Coolify status and DEV web health
+        env:
+          PREFLIGHT_SSH_KEY: ${{ secrets.RELAY_PREFLIGHT_SSH_KEY }}
+          PREFLIGHT_KNOWN_HOSTS: ${{ secrets.RELAY_PREFLIGHT_KNOWN_HOSTS }}
+          PREFLIGHT_TARGET: ${{ secrets.RELAY_PREFLIGHT_TARGET }}
+          PREFLIGHT_ENVIRONMENT: development
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_RELAY_DEV_SERVICE_UUID }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          SOURCE_SHA: ${{ github.sha }}
+          PUBLIC_READY_URL: https://dev.relay.datatalks.club/health/ready
+        run: bash scripts/run_runtime_verify.sh
+
+      - name: Record the release proven in dev
+        # deploy-prod.yml promotes exactly one of these records: the image tag
+        # plus the source SHA of the dev run that proved it. A record whose
+        # source SHA does not match its run is refused at promote time.
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp
+          jq -n \
+            --arg image_tag "${{ needs.build-and-push.outputs.image_tag }}" \
+            --arg source_sha "$GITHUB_SHA" \
+            --arg dev_run_id "${{ github.run_id }}" \
+            '{image_tag: $image_tag, source_sha: $source_sha, dev_run_id: $dev_run_id}' \
+            > .tmp/dev-release.json
+          cat .tmp/dev-release.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dev-release
+          path: .tmp/dev-release.json
+          if-no-files-found: error
+          retention-days: 90

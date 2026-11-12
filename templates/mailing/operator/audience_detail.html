@@ -12,15 +12,12 @@
     </div>
     <div class="actions">
       <a class="button secondary" href="{% url 'mailing:contact_search' %}?audience={{ audience.id }}">Search contacts</a>
-      <a class="button secondary" href="{% url 'mailing:tag_create' audience.id %}">Create tag</a>
       <a class="button secondary" href="{% url 'mailing:audience_edit' audience.id %}">Edit audience</a>
     </div>
   </div>
 
   <p class="scope-note">Members and campaign eligibility for <strong>{{ active_client.name }}</strong>. This audience belongs to {{ audience.organization.name }}.</p>
-  <div class="stats-grid" aria-label="Audience eligibility summary">{% for stat in eligibility_summary %}<div class="stat"><span class="stat-label"><span class="stat-dot {{ stat.tone }}"></span>{{ stat.label }}</span><a class="stat-value stat-link" href="{{ stat.url }}">{{ stat.value }}</a></div>{% endfor %}</div>
-  <p class="helptext">Counts cover members with a subscription for {{ active_client.name }} in this audience, before search filters. Eligibility includes consent, verification, address validation, and global suppression. Campaign tags and category preferences can reduce the final send count.</p>
-  <nav class="local-nav" aria-label="Audience sections">{% for item in sections %}<a href="{{ item.url }}"{% if item.current %} aria-current="page"{% endif %}>{{ item.label }}</a>{% endfor %}</nav>
+  <nav class="dk-tabs" aria-label="Audience sections">{% for item in sections %}<a class="dk-tab" href="{{ item.url }}"{% if item.current %} aria-current="page"{% endif %}>{{ item.label }}</a>{% endfor %}</nav>
 
   {% if section == 'members' %}
   <section class="section panel" aria-labelledby="audience-members">
@@ -30,7 +27,10 @@
         <p class="muted">Find a member and see whether they can receive a campaign from {{ active_client.name }}.</p>
       </div>
     </div>
-    <p>{{ members.paginator.count }} matching member{{ members.paginator.count|pluralize }}.</p>
+    {# Eligibility is a filter on this list, not a stat strip; the list's one count is below it. #}
+    <nav class="dk-tabs dk-tabs--sm audience-eligibility" aria-label="Marketing eligibility">{% for choice in eligibility_summary %}<a class="dk-tab" href="{{ choice.url }}"{% if choice.current %} aria-current="page"{% endif %}>{{ choice.label }}</a>{% endfor %}</nav>
+    <p class="helptext">Members with a subscription for {{ active_client.name }} in this audience. Eligibility includes consent, verification, address validation, and global suppression; campaign tags and category preferences can reduce the final send count.</p>
+    <p class="audience-member-count"><span class="data-num">{{ members.paginator.count }}</span> matching member{{ members.paginator.count|pluralize }}</p>
     {% if filter_chips %}<div class="badge-row" aria-label="Applied filters">{% for chip in filter_chips %}<a class="badge neutral" href="{{ chip.url }}" aria-label="Remove {{ chip.label }}: {{ chip.value }}">{{ chip.label }}: {{ chip.value }} ×</a>{% endfor %}</div>{% endif %}
     <form class="contact-explorer-form audience-member-form" method="get"><input type="hidden" name="section" value="members">{% if eligibility == 'eligible' or eligibility == 'excluded' %}<input type="hidden" name="eligibility" value="{{ eligibility }}">{% endif %}
       <div class="section-header">
@@ -136,8 +136,8 @@
           <div class="filter-group">
             <h3>Tags</h3>
             <div class="filter-grid tag-filter-grid">
-              <div class="form-field">
-                <label>Include tags</label>
+              <div class="form-field" data-tag-input="include_tags">
+                <label id="include-tags-label">Include tags</label>
                 <div class="checkbox-list">
                   {% for tag in breakdowns.tags %}
                     <label><input type="checkbox" name="include_tags" value="{{ tag.slug }}"{% if tag.slug in filters.include_tags %} checked{% endif %}>{{ tag.slug }}</label>
@@ -146,8 +146,8 @@
                   {% endfor %}
                 </div>
               </div>
-              <div class="form-field">
-                <label>Exclude tags</label>
+              <div class="form-field" data-tag-input="exclude_tags">
+                <label id="exclude-tags-label">Exclude tags</label>
                 <div class="checkbox-list">
                   {% for tag in breakdowns.tags %}
                     <label><input type="checkbox" name="exclude_tags" value="{{ tag.slug }}"{% if tag.slug in filters.exclude_tags %} checked{% endif %}>{{ tag.slug }}</label>
@@ -192,9 +192,9 @@
                   <span class="helptext">Subscription: {{ row.subscription_badge.label }}</span>
                 </td>
                 <td data-label="Activity">
-                  <div class="nowrap">Sent: {{ row.last_sent_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Opened: {{ row.last_opened_at|date:"Y-m-d H:i"|default:"-" }}</div>
-                  <div class="nowrap">Clicked: {{ row.last_clicked_at|date:"Y-m-d H:i"|default:"-" }}</div>
+                  <div class="nowrap">Sent: <span class="data-time">{{ row.last_sent_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
+                  <div class="nowrap">Opened: <span class="data-time">{{ row.last_opened_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
+                  <div class="nowrap">Clicked: <span class="data-time">{{ row.last_clicked_at|date:"Y-m-d H:i"|default:"-" }}</span></div>
                 </td>
                 <td data-label="Recent issue"><span class="data-truncate" title="{{ row.recent_issue|default:'-' }}">{{ row.recent_issue|default:"-" }}</span></td>
               </tr>
@@ -210,25 +210,20 @@
 
   {% elif section == 'segments' %}
   <section class="section panel" id="audience-segments">
-
-    <div class="section-header">
-      <div>
-        <h2 id="audience-segmentation">Segmentation</h2>
-        <p class="muted">Member counts by tags, address validation, campaign outcomes, and skip reasons for {{ active_client.name }}. A member may appear in several historical outcomes.</p>
-      </div>
-    </div>
+    {% url 'mailing:tag_create' audience.id as tag_create_url %}
+    {% include "_collection_header.html" with title="Segmentation" title_id="audience-segmentation" extra_class="panel-header" create_url=tag_create_url create_label="Create tag" description="Member counts by tags, address validation, campaign outcomes, and skip reasons for "|add:active_client.name|add:". A member may appear in several historical outcomes." only %}
     <div class="meta-grid">
       <div class="meta-item">
         <span class="meta-label">Validation</span>
         <div class="badge-row">
-          {% for row in segment_links.validation %}<a class="badge neutral" href="{{ row.url }}">{{ row.label }} {{ row.count }}</a>{% empty %}<span class="badge neutral">No contacts</span>{% endfor %}
+          {% for row in segment_links.validation %}<a class="badge neutral" href="{{ row.url }}">{{ row.label }} <span class="data-num">{{ row.count }}</span></a>{% empty %}<span class="badge neutral">No contacts</span>{% endfor %}
         </div>
       </div>
       <div class="meta-item">
         <span class="meta-label">Tags</span>
         <div class="tag-cloud">
           {% for tag in breakdowns.tags %}
-            <div><a class="badge neutral" href="?section=members&amp;include_tags={{ tag.slug|urlencode }}">{{ tag.slug }}: {{ tag.count }}</a> <a href="{% url 'mailing:tag_detail' tag.id %}">Manage tag</a></div>
+            <div><a class="badge neutral" href="?section=members&amp;include_tags={{ tag.slug|urlencode }}">{{ tag.slug }}: <span class="data-num">{{ tag.count }}</span></a> <a href="{% url 'mailing:tag_detail' tag.id %}">Manage tag</a></div>
           {% empty %}
             <span class="badge neutral">No tags</span>
           {% endfor %}
@@ -237,13 +232,13 @@
       <div class="meta-item">
         <span class="meta-label">Campaign statuses</span>
         <div class="badge-row">
-          {% for row in segment_links.campaign_statuses %}<a class="badge neutral" href="{{ row.url }}">{{ row.label }} {{ row.count }}</a>{% empty %}<span class="badge neutral">No campaign recipients</span>{% endfor %}
+          {% for row in segment_links.campaign_statuses %}<a class="badge neutral" href="{{ row.url }}">{{ row.label }} <span class="data-num">{{ row.count }}</span></a>{% empty %}<span class="badge neutral">No campaign recipients</span>{% endfor %}
         </div>
       </div>
       <div class="meta-item">
         <span class="meta-label">Skip reasons</span>
         <div class="badge-row">
-          {% for row in segment_links.skip_reasons %}<a class="badge warning" href="{{ row.url }}">{{ row.label }} {{ row.count }}</a>{% empty %}<span class="badge success">No skips</span>{% endfor %}
+          {% for row in segment_links.skip_reasons %}<a class="badge warning" href="{{ row.url }}">{{ row.label }} <span class="data-num">{{ row.count }}</span></a>{% empty %}<span class="badge success">No skips</span>{% endfor %}
         </div>
       </div>
     </div>
@@ -277,14 +272,14 @@
               <tr>
                 <td data-label="Campaign" class="truncate">
                   <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject }}</a>
-                  <div class="helptext">{{ campaign.updated_at|date:"Y-m-d H:i" }}</div>
+                  <div class="helptext"><span class="data-time">{{ campaign.updated_at|date:"Y-m-d H:i" }}</span></div>
                 </td>
                 <td data-label="Client">{{ campaign.client.name }}</td>
                 <td data-label="Status"><span class="badge">{{ campaign.get_status_display }}</span></td>
-                <td data-label="Sent">{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</td>
-                <td data-label="Recipients">{{ campaign.recipient_count }}</td>
-                <td data-label="Opens">{{ campaign.unique_open_count }} / {{ campaign.open_count }}</td>
-                <td data-label="Clicks">{{ campaign.unique_click_count }} / {{ campaign.click_count }}</td>
+                <td data-label="Sent"><span class="data-time">{{ campaign.sent_at|date:"Y-m-d H:i"|default:"-" }}</span></td>
+                <td data-label="Recipients" class="data-num">{{ campaign.recipient_count }}</td>
+                <td data-label="Opens" class="data-num">{{ campaign.unique_open_count }} / {{ campaign.open_count }}</td>
+                <td data-label="Clicks" class="data-num">{{ campaign.unique_click_count }} / {{ campaign.click_count }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -322,7 +317,7 @@
         {% for row in event_rows %}
           <article class="timeline-item">
             <span class="badge {% if row.event.event_type == "delivered" or row.event.event_type == "sent" %}success{% elif row.event.event_type == "bounce" or row.event.event_type == "complaint" or row.event.event_type == "failed" %}danger{% elif row.event.event_type == "unsubscribe" %}warning{% endif %}">{{ row.event.get_event_type_display }}</span>
-            <span class="muted">{{ row.event.created_at|date:"Y-m-d H:i:s" }}</span>
+            <span class="muted"><span class="data-time">{{ row.event.created_at|date:"Y-m-d H:i:s" }}</span></span>
             <div>{{ row.context }}</div>
             {% if row.event.contact %}
               <div><a href="{% url 'mailing:contact_detail' row.event.contact.normalized_email %}">{{ row.event.contact.email }}</a></div>
@@ -357,18 +352,13 @@
         <p class="muted">Subscription and validation counts are separate from campaign eligibility. Counts below cover members and campaign history for {{ active_client.name }} in this audience. Inactive means previously sent a campaign with no recorded campaign open or click; it does not prove the person ignored the message. Verified and unverified counts refer to contact-level verification; audience or client subscription verification can still make a member eligible.</p>
       </div>
     </div>
-    <div class="stats-grid">
+    {# A report of counts, each linking to its members: a definition list, not KPI tiles. #}
+    <dl class="dk-dl dk-dl--divided audience-health-counts">
       {% for stat in summary %}
-        <div class="stat">
-          <span class="stat-label"><span class="stat-dot {{ stat.tone }}"></span>{{ stat.label }}</span>
-          {% if stat.href %}
-            <a class="stat-value stat-link" href="{{ stat.href }}">{{ stat.value }}</a>
-          {% else %}
-            <span class="stat-value">{{ stat.value }}</span>
-          {% endif %}
-        </div>
+        <dt>{{ stat.label }}</dt>
+        <dd>{% if stat.href %}<a class="data-num" href="{{ stat.href }}">{{ stat.value }}</a>{% else %}<span class="data-num">{{ stat.value }}</span>{% endif %}</dd>
       {% endfor %}
-    </div>
+    </dl>
   </section>
 
   <details class="detail-section secondary-section panel-diagnostics"><summary><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>Audit</summary>{% include "mailing/operator/_audit.html" with audit_rows=audit_rows %}</details>

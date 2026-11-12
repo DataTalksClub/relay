@@ -95,6 +95,22 @@ def test_the_list_defaults_to_unread_and_read_mail_is_reachable(client, operator
     assert read.subject.encode() in read_page.content
 
 
+def test_the_state_links_mark_the_chosen_view_and_paging_keeps_it(client, operator, address):
+    for index in range(3):
+        received(message_id=f"<m{index}@example.com>", state=InboundMessageState.READ)
+    client.force_login(operator)
+
+    def current(response):
+        nav = response.content.decode().split('aria-label="Mailbox state"', 1)[1].split("</nav>", 1)[0]
+        return [part.rsplit(">", 1)[1] for part in nav.split("</a>")[:-1] if 'aria-current="page"' in part]
+
+    assert current(client.get(reverse("mailing:inbound_list"))) == ["Unread"]
+    assert current(client.get(reverse("mailing:inbound_list"), {"state": "read"})) == ["Read"]
+    everything = client.get(reverse("mailing:inbound_list"), {"state": "all", "per_page": 2})
+    assert current(everything) == ["Everything"]
+    assert b'href="?state=all&amp;address=&amp;q=&amp;page=2"' in everything.content
+
+
 def test_search_matches_the_sender_the_subject_and_the_body(client, operator, address):
     received()
     client.force_login(operator)
@@ -132,7 +148,7 @@ def test_opening_a_message_marks_it_read(client, operator, address):
     message = received()
     client.force_login(operator)
 
-    client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
+    client.get(reverse("mailing:inbound_message_detail", args=[message.pk]), follow=True)
     message.refresh_from_db()
 
     assert message.state == InboundMessageState.READ
@@ -206,7 +222,7 @@ def test_a_blocked_message_offers_unblocking(client, operator, address):
     message = received(state=InboundMessageState.BLOCKED, blocked_rule=rule)
     client.force_login(operator)
 
-    response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
+    response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]), follow=True)
 
     assert b"Remove this block rule" in response.content
     assert b"will keep future mail" not in response.content
@@ -221,7 +237,7 @@ def test_a_blocked_message_explains_that_its_body_was_not_kept(client, operator,
     )
     client.force_login(operator)
 
-    response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]))
+    response = client.get(reverse("mailing:inbound_message_detail", args=[message.pk]), follow=True)
 
     assert b"its body was not kept" in response.content
     # A blocked message must not render a body even if one is somehow present.
@@ -381,7 +397,126 @@ def test_the_ses_spam_verdict_is_shown_as_a_signal_not_as_a_verdict(client, oper
 def test_the_nav_reaches_the_mailbox_and_the_addresses(client, operator, address):
     client.force_login(operator)
 
-    html = client.get(reverse("mailing:dashboard")).content.decode()
+    # Client screens link to the shared service; the shared-service nav holds the mailbox.
+    assert reverse("mailing:service_home") in client.get(reverse("mailing:dashboard")).content.decode()
+    html = client.get(reverse("mailing:service_home")).content.decode()
 
     assert reverse("mailing:inbound_list") in html
     assert reverse("mailing:inbound_address_list") in html
+
+
+def test_a_message_opens_in_the_mailbox_split_with_its_id_in_the_url(client, operator, address):
+    """dakit list–detail: the open message is ?message=<id> on the list URL,
+    so the list keeps its filters and the selection is linkable."""
+    message = received()
+    other = received(subject="Second thread", message_id="<two@example.com>")
+    client.force_login(operator)
+
+    response = client.get(reverse("mailing:inbound_list"), {"state": "all", "message": message.pk})
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert response.context["selected"] == message
+    assert 'class="dk-split inbox-split"' in html
+    assert 'data-view="detail"' in html
+    selected = f'href="/inbound/?state=all&amp;message={message.pk}" aria-current="true"'
+    assert selected in html
+    assert f'href="/inbound/?state=all&amp;message={other.pk}">' in html
+    # Back (phones) returns to the same filtered list without the message.
+    assert 'class="dk-split__back" href="/inbound/?state=all" aria-label="Back to Messages"' in html
+    # Actions post to the message and return to this list view.
+    target = reverse("mailing:inbound_message_detail", args=[message.pk])
+    assert f'action="{target}?return=/inbound/%3Fstate%3Dall"' in html
+
+
+def test_the_mailbox_without_a_selection_says_what_to_do(client, operator, address):
+    received()
+    client.force_login(operator)
+
+    html = client.get(reverse("mailing:inbound_list")).content.decode()
+
+    assert 'data-view="list"' in html
+    assert "aria-current=\"true\"" not in html
+    assert "Select a message" in html
+
+
+def test_the_old_message_url_opens_it_in_the_split(client, operator, address):
+    message = received()
+    client.force_login(operator)
+
+    response = client.get(
+        reverse("mailing:inbound_message_detail", args=[message.pk]) + "?return=/inbound/%3Fstate%3Dread"
+    )
+
+    assert response.status_code == 302
+    assert response["Location"] == f"/inbound/?state=read&message={message.pk}"
+
+
+def test_a_message_action_returns_to_the_message_in_its_list(client, operator, address):
+    message = received()
+    client.force_login(operator)
+
+    response = client.post(
+        reverse("mailing:inbound_message_detail", args=[message.pk]) + "?return=/inbound/%3Fstate%3Dall",
+        {"action": "mark_read"},
+    )
+
+    assert response["Location"] == f"/inbound/?state=all&message={message.pk}"
+
+
+def _list(client, operator, **params):
+    client.force_login(operator)
+    return client.get(reverse("mailing:inbound_list"), params)
+
+
+def test_automated_dmarc_reports_are_hidden_from_the_default_list(client, operator, address):
+    received(message_id="<report@x>", subject="Report domain: example.com Submitter: google.com Report-ID: 1",
+             sender_address="noreply-dmarc-support@google.com", attachment_count=1)
+    received(message_id="<yahoo@x>", subject="Report Domain: example.com Submitter: yahoo.com Report-ID: <2>",
+             sender_address="postmaster@yahoo.example", attachment_count=1)
+    received(message_id="<known@x>", subject="Notice", sender_address="dmarc-noreply@google.com")  # no attachment: a plain notice
+    received(message_id="<real@x>")
+
+    page = _list(client, operator).content.decode()
+    assert "Question about your pricing" in page
+    assert "Report domain: example.com" not in page and "Report Domain: example.com" not in page
+    assert "2 automated DMARC reports hidden" in page and "Notice" in page
+
+    shown = _list(client, operator, automated="show").content.decode()
+    assert "Report domain: example.com" in shown and "Report Domain: example.com" in shown
+    assert "Showing automated DMARC reports" in shown
+
+
+def test_regular_mail_mentioning_dmarc_or_xml_is_not_hidden(client, operator, address):
+    received(message_id="<a@x>", subject="Question about the DMARC report you sent")
+    received(message_id="<b@x>", subject="Please send me the XML", snippet="attached XML aggregate dmarc report?", attachment_count=1)
+    # A report-style subject without an attachment is not trusted on its own.
+    received(message_id="<c@x>", subject="Report domain: example.com please advise", sender_address="bob@corp.example")
+    # A near-miss sender is not an exact known report sender.
+    received(message_id="<d@x>", subject="Hi", sender_address="not-dmarc-noreply@google.com.evil.example")
+
+    page = _list(client, operator).content.decode()
+    for subject in ("Question about the DMARC report", "Please send me the XML", "Report domain: example.com please advise"):
+        assert subject in page
+    assert "automated DMARC report" not in page
+    assert InboundMessage.objects.count() == 4
+
+
+def test_a_hidden_dmarc_report_stays_openable_by_id(client, operator, address):
+    report = received(message_id="<report@x>", subject="Report domain: example.com Submitter: google.com Report-ID: 1",
+                      sender_address="noreply-dmarc-support@google.com", attachment_count=1)
+    client.force_login(operator)
+    response = client.get(reverse("mailing:inbound_list"), {"message": report.pk})
+    assert response.status_code == 200
+    assert "Submitter: google.com" in response.content.decode()
+
+
+def test_show_automated_survives_navigation_and_the_count_follows_the_search(client, operator, address):
+    received(message_id="<r1@x>", subject="Report domain: a.example Submitter: google.com Report-ID: 1",
+             sender_address="dmarc-noreply@google.com", attachment_count=1)
+    received(message_id="<real@x>", subject="Pricing question")
+    page = _list(client, operator, q="Pricing question").content.decode()
+    assert "automated DMARC report" not in page  # nothing hidden among the search results
+    shown = _list(client, operator, automated="show").content.decode()
+    assert "automated=show" in shown.split('aria-label="Mailbox state"')[1][:900]
+    assert 'name="automated" value="show"' in shown

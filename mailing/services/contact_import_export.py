@@ -62,6 +62,13 @@ def base_counts():
 def bulk_import_contacts_for_client(data, authenticated_client):
     if not isinstance(data.get("contacts"), list):
         raise ApiValidationError({"contacts": "must_be_list"})
+    # Bound the synchronous request under ~2 s: larger imports run through
+    # the import_audience_csv management command (background/CLI home).
+    if len(data["contacts"]) > 200:
+        raise ApiValidationError(
+            {"contacts": "too_many_for_sync_request_max_200_use_import_audience_csv"},
+            status_code=413,
+        )
 
     dry_run = validate_bool(data.get("dry_run"), "dry_run", default=False)
     if "idempotency_key" in data and not isinstance(data.get("idempotency_key"), str):
@@ -447,7 +454,9 @@ def export_contact_payload(contact, audience, client):
 
 def export_contacts_csv_for_client(data, authenticated_client):
     queryset, scope = filtered_contact_queryset(data, authenticated_client)
-    limit = validate_export_limit(data.get("limit"), default=10000, maximum=10000)
+    # Bound the synchronous CSV under ~2 s: larger extracts run through the
+    # export_contacts_csv management command (background/CLI home).
+    limit = validate_export_limit(data.get("limit"), default=1000, maximum=2000)
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=CSV_COLUMNS)
     writer.writeheader()

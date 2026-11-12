@@ -14,6 +14,7 @@ INSTALLED_APPS = [
 TASKS = {
     "default": {
         "BACKEND": "django_tasks_db.backend.DatabaseBackend",
+        "QUEUES": ["default", "provider-events"],
     }
 }
 TASKDECK_PROJECT = "testproj"

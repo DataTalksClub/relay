@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Newsletter blocks | Relay{% endblock %}
+{% block topbar_title %}Newsletter blocks{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div><h1>Newsletter issues</h1><p>Build newsletter issues from blocks for {{ active_client.name }}, preview them and send [TEST] copies. Nothing here sends to the audience.</p></div>
+  </div>
+  <section class="section panel" aria-labelledby="newsletter-create-heading">
+    <div class="section-header"><div><h2 id="newsletter-create-heading">New issue</h2></div></div>
+    <form method="post">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+      <div class="meta-grid">
+        <div><label for="nl-key">Key</label><input id="nl-key" name="key" required placeholder="weekly-303" maxlength="120"><p class="helptext">Short id, also used by the API (e.g. weekly-303).</p></div>
+        <div><label for="nl-subject">Subject</label><input id="nl-subject" name="subject" required maxlength="255"></div>
+        <div><label for="nl-number">Issue number</label><input id="nl-number" name="issue_number" inputmode="numeric"></div>
+        <div><label for="nl-date">Publication date</label><input id="nl-date" name="publication_date" type="date"></div>
+      </div>
+      <label for="nl-preview">Preview text</label><input id="nl-preview" name="preview_text" maxlength="255">
+      <button type="submit" class="primary">Create issue</button>
+    </form>
+  </section>
+  <section class="section panel" aria-labelledby="newsletter-issues-heading">
+    <div class="section-header"><div><h2 id="newsletter-issues-heading">Issues</h2></div></div>
+    {% if issues %}
+      <div class="table-wrap stack-table"><table>
+        <thead><tr><th scope="col">Issue</th><th scope="col">Key</th><th scope="col">Date</th><th scope="col">Blocks</th><th scope="col">Last edit</th></tr></thead>
+        <tbody>{% for issue in issues %}
+          <tr><td data-label="Issue"><a href="{% url 'mailing:newsletter_detail' issue.id %}">{% if issue.issue_number %}#{{ issue.issue_number }} · {% endif %}{{ issue.subject }}</a></td>
+            <td data-label="Key"><code>{{ issue.key }}</code></td>
+            <td data-label="Date">{{ issue.publication_date|date:"Y-m-d"|default:"-" }}</td>
+            <td data-label="Blocks" class="data-num">{{ issue.blocks.count }}</td>
+            <td data-label="Last edit"><span class="data-time">{{ issue.updated_at|date:"Y-m-d H:i" }}</span> {{ issue.updated_by }}</td></tr>
+        {% endfor %}</tbody></table></div>
+    {% else %}<p class="empty-state">No issues yet. Create the first one above.</p>{% endif %}
+  </section>
+{% endblock %}

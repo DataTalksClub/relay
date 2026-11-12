@@ -1,6 +1,9 @@
+import re
 from dataclasses import dataclass
 from email.utils import parseaddr
+from urllib.parse import urlparse
 
+from botocore.exceptions import BotoCoreError, ClientError
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email, validate_slug
 from django.db import transaction
@@ -8,6 +11,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from mailing.dry_run import DryRunSuppressed
 from mailing.models import (
     Audience,
     Campaign,
@@ -38,8 +42,8 @@ from mailing.services.campaign_sender import render_campaign_message, send_campa
 from mailing.services.campaigns import (
     CampaignNotReady,
     CampaignRecipientConflict,
-    queue_campaign,
     recount_campaign_audience,
+    request_campaign_queue,
     retry_campaign_recipient,
 )
 from mailing.services.categories import TRANSACTIONAL_CATEGORY, category_label, validate_canonical_category
@@ -56,6 +60,9 @@ from mailing.services.contacts import (
     unsubscribe_contact,
     upsert_contact,
 )
+from mailing.services.public_urls import UNSUBSCRIBE_TOKEN_PLACEHOLDER
+from mailing.services.sending_domains import validate_sender_domains
+from mailing.services.task_leases import campaign_dispatch_alerts
 
 
 @dataclass(frozen=True)
@@ -76,6 +83,7 @@ def template_payload(template):
         "html_body": template.html_body,
         "text_body": template.text_body,
         "markdown_body": template.markdown_body,
+        "markdown_layout_context": template.markdown_layout_context,
         "category": template.category,
         "required_context": template.required_context,
         "example_context": template.example_context,
@@ -186,14 +194,24 @@ def campaign_payload(campaign):
         "preview_text": campaign.preview_text,
         "html_body": campaign.html_body,
         "text_body": campaign.text_body,
+        "template_key": campaign.template_key,
+        "template_version": campaign.template_version,
+        "context": campaign.context,
+        "sender_id": campaign.sender_id,
+        "unsubscribe_url_template": campaign.unsubscribe_url_template,
+        "allow_unverified": campaign.allow_unverified,
         "status": campaign.status,
         "scheduled_at": isoformat(campaign.scheduled_at),
         "sent_at": isoformat(campaign.sent_at),
+        "send_halted_at": isoformat(campaign.send_halted_at),
+        "send_halt_reason": campaign.send_halt_reason or "",
+        "send_halted": bool(campaign.send_halted_at),
         "category_tag": campaign.category_tag,
         "recipient_list_key": campaign.recipient_list_key,
         "include_tags": campaign.include_tags,
         "exclude_tags": campaign.exclude_tags,
         "metadata": campaign.metadata,
+        "dispatch_alerts": campaign_dispatch_alerts(campaign) if campaign.pk else [],
         "recipient_count": campaign.recipient_count,
         "sent_count": campaign.sent_count,
         "skipped_count": campaign.skipped_count,
@@ -227,6 +245,24 @@ def validate_campaign_tag_filter(value, field):
     return normalize_tag_filter(value)
 
 
+def _validate_unsubscribe_url_template(value, errors):
+    """Sender-owned unsubscribe URL: HTTPS, one ``{token}`` placeholder, no credentials."""
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str):
+        errors["unsubscribe_url_template"] = "must_be_string"
+        return ""
+    value = value.strip()
+    parsed = urlparse(value)
+    if len(value) > 500:
+        errors["unsubscribe_url_template"] = "too_long"
+    elif parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        errors["unsubscribe_url_template"] = "must_be_https_url"
+    elif value.count(UNSUBSCRIBE_TOKEN_PLACEHOLDER) != 1:
+        errors["unsubscribe_url_template"] = "must_contain_token_placeholder"
+    return value
+
+
 def validate_campaign_payload(data, authenticated_client):
     scope = validate_contact_scope(data, authenticated_client, require_email=False)
     errors = {}
@@ -258,8 +294,72 @@ def validate_campaign_payload(data, authenticated_client):
     elif not isinstance(text_body, str):
         errors["text_body"] = "must_be_string"
 
-    if not str(html_body).strip() and not str(text_body).strip():
+    template_key = data.get("template_key", "")
+    if template_key in (None, ""):
+        template_key = ""
+    elif not isinstance(template_key, str):
+        errors["template_key"] = "must_be_string"
+        template_key = ""
+    else:
+        template_key = template_key.strip()
+        if not template_key:
+            errors["template_key"] = "invalid"
+        elif len(template_key) > 120:
+            errors["template_key"] = "too_long"
+
+    template_version = data.get("template_version")
+    if template_version in (None, ""):
+        template_version = None
+    elif not isinstance(template_version, int) or isinstance(template_version, bool) or template_version <= 0:
+        errors["template_version"] = "must_be_positive_int"
+
+    context = data.get("context", {})
+    if context in (None, ""):
+        context = {}
+    elif not isinstance(context, dict):
+        errors["context"] = "must_be_object"
+        context = {}
+
+    sender_id = data.get("sender_id", "")
+    if sender_id in (None, ""):
+        sender_id = ""
+    elif not isinstance(sender_id, str):
+        errors["sender_id"] = "must_be_string"
+        sender_id = ""
+    else:
+        sender_id = sender_id.strip()
+        if len(sender_id) > 80:
+            errors["sender_id"] = "too_long"
+
+    unsubscribe_url_template = _validate_unsubscribe_url_template(data.get("unsubscribe_url_template"), errors)
+
+    allow_unverified = data.get("allow_unverified", False)
+    if not isinstance(allow_unverified, bool):
+        errors["allow_unverified"] = "must_be_boolean"
+        allow_unverified = False
+
+
+    if not template_key and not str(html_body).strip() and not str(text_body).strip():
         errors["body"] = "required"
+
+    if template_key:
+        from mailing.services.senders import resolve_sender_email  # noqa: PLC0415
+        from mailing.services.transactional import get_transactional_template  # noqa: PLC0415
+        from mailing.services.transactional_versions import resolve_render_source  # noqa: PLC0415
+
+        try:
+            template = get_transactional_template(scope.client, template_key)
+            source = resolve_render_source(template, template_version)
+            if source.version_number is None:
+                errors["template_version"] = "published_version_required"
+            else:
+                template_version = source.version_number
+            sender_id = resolve_sender_email(
+                scope.client,
+                sender_id or template.default_sender_id,
+            ).sender_id
+        except ApiValidationError as exc:
+            errors.update(exc.errors)
 
     scheduled_at = data.get("scheduled_at")
     if scheduled_at in (None, ""):
@@ -319,6 +419,9 @@ def validate_campaign_payload(data, authenticated_client):
         elif len(recipient_list_key) > 255:
             errors["recipient_list_key"] = "too_long"
 
+    if allow_unverified and not recipient_list_key:
+        errors["recipient_list_key"] = "required_when_allowing_unverified"
+
     if errors:
         raise ApiValidationError(errors)
 
@@ -329,6 +432,12 @@ def validate_campaign_payload(data, authenticated_client):
         "preview_text": preview_text.strip(),
         "html_body": html_body,
         "text_body": text_body,
+        "template_key": template_key,
+        "template_version": template_version,
+        "context": context,
+        "sender_id": sender_id,
+        "unsubscribe_url_template": unsubscribe_url_template,
+        "allow_unverified": allow_unverified,
         "scheduled_at": scheduled_at,
         "category_tag": category_tag,
         "recipient_list_key": recipient_list_key,
@@ -386,17 +495,19 @@ def upsert_campaign_for_client(external_key, data, authenticated_client):
 def queue_campaign_for_client(external_key, data, authenticated_client):
     campaign = campaign_for_client(external_key, data, authenticated_client)
     try:
-        result = queue_campaign(campaign)
+        result = request_campaign_queue(campaign)
     except CampaignNotReady as exc:
         raise ApiValidationError({"campaign": str(exc)}, status_code=409) from exc
     campaign.refresh_from_db()
     return {
         "campaign": campaign_payload(campaign),
-        "queued": result.queued,
+        "queued": result.accepted,
+        "already_queued": result.already_queued,
+        "snapshotting": result.snapshotting,
         "scheduled": result.scheduled,
         "batch_count": result.batch_count,
-        "recipient_count": result.recipient_count,
-        "skipped_count": result.skipped_count,
+        "recipient_count": campaign.recipient_count,
+        "skipped_count": campaign.skipped_count,
     }
 
 
@@ -437,6 +548,85 @@ def cancel_campaign_instance(campaign):
     raise ApiValidationError({"status": "not_cancellable"}, status_code=409)
 
 
+# Pause / resume / stop for SENDING (and QUEUED) campaigns.
+#
+# The halt flag is set and cleared by a plain UPDATE with no
+# SELECT ... FOR UPDATE: senders hold FOR SHARE locks on the campaign row for
+# the whole provider call, and the operator action must not queue behind them.
+# The sender reads the same flag with a plain SELECT before every SES call, so
+# a pause/stop takes effect within one in-flight call.
+
+HALTABLE_STATUSES = {CampaignStatus.QUEUED, CampaignStatus.SENDING}
+
+PAUSE_REASON = "paused"
+STOP_REASON = "stopped"
+
+
+def pause_campaign_for_client(external_key, data, authenticated_client):
+    campaign = campaign_for_client(external_key, data, authenticated_client)
+    return pause_campaign_instance(campaign)
+
+
+def pause_campaign_instance(campaign):
+    """Halt a queued/sending campaign, resumably. Plain UPDATE, no row lock."""
+    now = timezone.now()
+    updated = Campaign.objects.filter(
+        pk=campaign.pk,
+        status__in=HALTABLE_STATUSES,
+        send_halted_at__isnull=True,
+    ).update(send_halted_at=now, send_halt_reason=PAUSE_REASON, updated_at=now)
+    campaign.refresh_from_db()
+    return {"campaign": campaign_payload(campaign), "paused": bool(updated)}
+
+
+def resume_campaign_for_client(external_key, data, authenticated_client):
+    campaign = campaign_for_client(external_key, data, authenticated_client)
+    return resume_campaign_instance(campaign)
+
+
+def resume_campaign_instance(campaign):
+    """Clear a pause and re-enqueue batches for remaining PENDING recipients."""
+    from mailing.services.campaigns import resume_campaign_send  # noqa: PLC0415 - avoids service import cycle
+
+    campaign.refresh_from_db()
+    if campaign.send_halted_at is None or campaign.send_halt_reason != PAUSE_REASON:
+        raise ApiValidationError({"status": "not_paused"}, status_code=409)
+    if campaign.status == CampaignStatus.CANCELLED:
+        raise ApiValidationError({"status": "not_paused"}, status_code=409)
+    now = timezone.now()
+    Campaign.objects.filter(pk=campaign.pk).update(send_halted_at=None, send_halt_reason="", updated_at=now)
+    with transaction.atomic():
+        payloads, recipient_ids = resume_campaign_send(campaign.pk)
+    campaign.refresh_from_db()
+    return {
+        "campaign": campaign_payload(campaign),
+        "resumed": True,
+        "batch_count": len(payloads),
+        "recipient_count": len(recipient_ids),
+    }
+
+
+def stop_campaign_for_client(external_key, data, authenticated_client):
+    campaign = campaign_for_client(external_key, data, authenticated_client)
+    return stop_campaign_instance(campaign)
+
+
+def stop_campaign_instance(campaign):
+    """Halt a queued/sending campaign permanently. Sent rows are kept; the
+    remaining PENDING recipients are left untouched. Plain UPDATE, no row lock."""
+    campaign.refresh_from_db()
+    if campaign.status == CampaignStatus.CANCELLED:
+        return {"campaign": campaign_payload(campaign), "stopped": False}
+    if campaign.status not in HALTABLE_STATUSES:
+        raise ApiValidationError({"status": "not_stoppable"}, status_code=409)
+    now = timezone.now()
+    Campaign.objects.filter(pk=campaign.pk).update(
+        status=CampaignStatus.CANCELLED, send_halted_at=now, send_halt_reason=STOP_REASON, updated_at=now
+    )
+    campaign.refresh_from_db()
+    return {"campaign": campaign_payload(campaign), "stopped": True}
+
+
 def preview_campaign_for_client(external_key, data, authenticated_client):
     campaign = campaign_for_client(external_key, data, authenticated_client)
     return {
@@ -471,26 +661,34 @@ def validate_test_recipient_emails(value):
 
 
 def test_send_campaign_for_client(external_key, data, authenticated_client):
+    """Send only explicitly supplied test addresses and return final outcomes."""
     campaign = campaign_for_client(external_key, data, authenticated_client)
     emails = validate_test_recipient_emails(data.get("emails"))
-    sent = []
-    for email in emails:
-        sent.append(
-            {
-                "email": email,
-                "message_id": send_campaign_test_message(campaign, email),
-            }
-        )
-    return {
-        "campaign": campaign_payload(campaign),
-        "sent_count": len(sent),
-        "recipients": sent,
-    }
+    if len(emails) > 2:
+        raise ApiValidationError({"emails": "too_many", "max": 2})
+    accepted = []
+    for index, email in enumerate(emails):
+        try:
+            message_id = send_campaign_test_message(campaign, email)
+        except DryRunSuppressed:
+            return {"campaign": campaign_payload(campaign), "sent_count": len(accepted),
+                    "recipients": accepted, "status": "dry_run_suppressed", "not_attempted": emails[index:]}
+        except (BotoCoreError, ClientError):
+            # An uncertain provider outcome must never trigger an automatic
+            # replay of this address or hide earlier acceptances from callers.
+            return {"campaign": campaign_payload(campaign), "sent_count": len(accepted),
+                    "recipients": accepted, "status": "unconfirmed", "unconfirmed_email": email,
+                    "not_attempted": emails[index + 1:]}
+        accepted.append({"email": email, "message_id": message_id})
+    return {"campaign": campaign_payload(campaign), "sent_count": len(accepted),
+            "recipients": accepted, "status": "provider_accepted"}
 
 
 def campaign_recipient_payload(recipient):
+    context = recipient.context if isinstance(recipient.context, dict) else {}
     return {
         "id": recipient.id,
+        "client_recipient_key": str(context.get("client_recipient_key", "")),
         "email": recipient.email,
         "status": recipient.status,
         "skip_reason": recipient.skip_reason,
@@ -579,18 +777,24 @@ def retry_campaign_recipient_for_client(external_key, recipient_id, data, authen
 @transaction.atomic
 def update_client_sender_policy_for_client(data, authenticated_client):
     updates = validate_sender_policy_payload(data)
+    validate_sender_domains(authenticated_client, updates["sender_emails"], previous=authenticated_client.sender_emails)
     authenticated_client.default_sender_id = updates["default_sender_id"]
     authenticated_client.sender_emails = updates["sender_emails"]
     authenticated_client.save(update_fields=["default_sender_id", "sender_emails", "updated_at"])
     return sender_policy_payload(authenticated_client)
 
 
+TRANSACTIONAL_TEMPLATE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+
 def validate_transactional_template_payload(data, template_key):
     errors = {}
 
-    try:
-        validate_slug(template_key)
-    except ValidationError:
+    if (
+        not isinstance(template_key, str)
+        or len(template_key) > 120
+        or TRANSACTIONAL_TEMPLATE_KEY_RE.fullmatch(template_key) is None
+    ):
         errors["template_key"] = "invalid"
 
     name = data.get("name")
@@ -635,6 +839,15 @@ def validate_transactional_template_payload(data, template_key):
     if not isinstance(is_active, bool):
         errors["is_active"] = "must_be_boolean"
 
+    markdown_layout_context = data.get("markdown_layout_context", False)
+    if not isinstance(markdown_layout_context, bool):
+        errors["markdown_layout_context"] = "must_be_boolean"
+    elif markdown_layout_context and (
+        not isinstance(fields["markdown_body"], str)
+        or not fields["markdown_body"].strip()
+    ):
+        errors["markdown_layout_context"] = "requires_markdown_body"
+
     default_sender_id = data.get("default_sender_id", "")
     if default_sender_id in (None, ""):
         default_sender_id = ""
@@ -657,6 +870,7 @@ def validate_transactional_template_payload(data, template_key):
         "html_body": fields["html_body"],
         "text_body": fields["text_body"],
         "markdown_body": fields["markdown_body"],
+        "markdown_layout_context": markdown_layout_context,
         "category": category,
         "required_context": required_context,
         "example_context": example_context,
@@ -675,6 +889,14 @@ def get_transactional_template_for_client(template_key, authenticated_client):
     if template is None:
         raise ApiValidationError({"template_key": "not_found"}, status_code=404)
     return template_payload(template)
+
+
+def list_transactional_templates_for_client(authenticated_client):
+    templates = EmailTemplate.objects.filter(
+        client=authenticated_client,
+        is_transactional=True,
+    ).order_by("key")
+    return {"templates": [template_payload(template) for template in templates]}
 
 
 @transaction.atomic
@@ -1269,11 +1491,42 @@ def delete_count(result):
     return deleted_count
 
 
+def _lock_contact_children_for_erase(contact):
+    """Take the child row locks an erase will update, before the Contact lock.
+
+    Lock order contract for contact rows: child rows first, Contact last.
+    Every other writer already follows it -- SES webhook correlation locks
+    the ``TransactionalMessage``/``CampaignRecipient`` row and only later
+    updates the contact (hard bounce/complaint), the transactional sender
+    locks the message row and its committed ``EmailEvent`` insert takes
+    ``FOR KEY SHARE`` on the contact, tracking locks Campaign then recipient.
+    Erasing parent-first held ``FOR UPDATE`` on the contact and waited for a
+    child row while the provider-events worker held that child row and
+    waited on the contact -- the 2026-10-27 provider-events-worker deadlock.
+
+    Within each table the rows are locked in id order (matching the bulk
+    transactional retry), ``EmailEvent`` before the message tables so a
+    webhook redelivery holding the ``provider_event_id`` dedup lock cannot
+    close a cycle, and ``FOR NO KEY UPDATE`` because erasure only touches
+    non-key columns.
+    """
+    for model in (EmailEvent, TransactionalMessage, CampaignRecipient):
+        list(
+            model.objects.select_for_update(no_key=True, of=("self",))
+            .filter(contact=contact)
+            .order_by("id")
+            .values_list("pk", flat=True)
+        )
+
+
 @transaction.atomic
 def erase_contact_for_client(data, authenticated_client):
     scope = validate_contact_scope(data, authenticated_client)
     normalized_email = normalize_email(scope.email)
-    contact = Contact.objects.select_for_update().filter(normalized_email=normalized_email).first()
+    # Located without a lock: the row locks are taken child-first below, in
+    # the order every other contact writer uses (see
+    # _lock_contact_children_for_erase).
+    contact = Contact.objects.filter(normalized_email=normalized_email).first()
     if contact is None:
         return {
             "email": normalized_email,
@@ -1283,6 +1536,22 @@ def erase_contact_for_client(data, authenticated_client):
         }
 
     if not contact_has_scoped_relationship(contact, scope):
+        return {
+            "email": normalized_email,
+            "erased": False,
+            "contact_id": None,
+            "counts": empty_erasure_counts(),
+        }
+
+    _lock_contact_children_for_erase(contact)
+
+    # The parent lock comes last. normalized_email only changes when a
+    # concurrent erase wins the race, in which case the contact is already
+    # anonymous and there is nothing left to erase.
+    contact = Contact.objects.select_for_update().filter(
+        pk=contact.pk, normalized_email=normalized_email
+    ).first()
+    if contact is None:
         return {
             "email": normalized_email,
             "erased": False,

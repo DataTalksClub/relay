@@ -1,0 +1,7 @@
+<div class="compact-row">
+  <div class="compact-row-main">
+    <span class="badge {% if row.over_threshold %}danger{% else %}neutral{% endif %}">{{ row.rate_display }} complaint rate</span>
+    <a href="{% url 'mailing:campaign_detail' row.campaign_id %}"><strong>{{ row.campaign_name }}</strong></a>
+  </div>
+  <div class="compact-row-meta"><span class="muted">{{ row.complaints }} complaint{{ row.complaints|pluralize }} / {{ row.sent }} sent · campaign #{{ row.campaign_id }}</span></div>
+</div>

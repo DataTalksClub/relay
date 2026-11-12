@@ -10,6 +10,7 @@ from mailing.forms import CampaignForm
 from mailing.models import Audience, Campaign, Client, Organization
 from mailing.services.api import queue_campaign_for_client
 from mailing.services.campaigns import CampaignNotReady, campaign_send_issues, queue_campaign
+from mailing.tests.html_text import data_text
 
 pytestmark = pytest.mark.django_db
 
@@ -103,5 +104,5 @@ def test_review_contains_isolated_actual_rendered_email(scope, client):
     assert 'srcdoc="' in html
     assert '&lt;h1&gt;Hello&lt;/h1&gt;' in html
     assert '<script>alert(1)</script>' not in html
-    assert "Send to 0 recipients now" in html
+    assert "Send to 0 recipients now" in data_text(html)
     assert "Send now after confirmation" in html

@@ -10,16 +10,21 @@ settings.
 """
 
 import logging
+from datetime import timedelta
 
+from django.conf import settings
+from django.db import DatabaseError, InterfaceError
 from django.tasks import task
+from django.utils import timezone
 
 import taskdeck
+from mailing.db_retry import deadlock_diag_lines, is_transient_db_error, jittered_backoff_seconds, run_with_db_retry
 from mailing.queue_contracts import (
     validate_campaign_email_message,
     validate_email_event_message,
     validate_transactional_email_message,
 )
-from mailing.services.campaign_sender import send_campaign_batch
+from mailing.services.campaign_sender import CampaignSendInterrupted, RetryableCampaignSendError, send_campaign_batch
 from mailing.services.inbound_email import process_inbound_s3_notification
 from mailing.services.transactional_sender import send_transactional_email_from_queue
 
@@ -42,8 +47,8 @@ def _summarise(value, to_dict):
     return None if value is None else to_dict(value)
 
 
-@task()
-def send_transactional_email(payload):
+@task(queue_name="transactional", priority=50)
+def send_transactional_email(payload, *, attempt=1):
     """Render and send one transactional message."""
     validate_transactional_email_message(payload)
 
@@ -54,12 +59,34 @@ def send_transactional_email(payload):
     if message_id:
         taskdeck.set_entity("transactional_message", message_id)
 
-    message = send_transactional_email_from_queue(payload)
+    try:
+        message = send_transactional_email_from_queue(payload)
+    except Exception as exc:
+        # django-tasks-db records FAILED tasks but does not retry them. Queue
+        # a separate delayed attempt, retaining the original failure in the
+        # task history. The service's persisted claim/terminal checks remain
+        # the authority on whether SES may be called again.
+        if attempt < settings.RELAY_TRANSACTIONAL_MAX_ATTEMPTS:
+            delay = min(
+                settings.RELAY_TRANSACTIONAL_RETRY_BASE_SECONDS * 2 ** (attempt - 1),
+                settings.RELAY_TRANSACTIONAL_RETRY_MAX_SECONDS,
+            )
+            result = send_transactional_email.using(
+                run_after=timezone.now() + timedelta(seconds=delay),
+            ).enqueue(payload, attempt=attempt + 1)
+            taskdeck.stamp(result, entity=("transactional_message", message_id), owner_id=client_id)
+        else:
+            from mailing.services.transactional_reliability import (  # noqa: PLC0415 - avoids enqueue cycle
+                fail_exhausted_transactional_message,
+            )
+
+            fail_exhausted_transactional_message(payload, attempt, exc)
+        raise
     return _summarise(message, lambda m: {"transactional_message_id": m.pk, "status": m.status})
 
 
-@task()
-def send_campaign_email_batch(payload):
+@task(queue_name="campaign", priority=-50)
+def send_campaign_email_batch(payload, *, attempt=1):
     """Send one batch of a campaign's recipients.
 
     Progress for the campaign as a whole is not derived from these tasks. The
@@ -77,14 +104,97 @@ def send_campaign_email_batch(payload):
     if recipient_ids:
         taskdeck.set_total(len(recipient_ids), message=f"{len(recipient_ids)} recipients")
 
-    result = send_campaign_batch(payload)
+    try:
+        result = send_campaign_batch(payload)
+    except CampaignSendInterrupted as exc:
+        # SIGTERM drain: not throttling, so the attempt budget is not spent.
+        return _requeue_throttled_campaign_batch(payload, max(1, attempt - 1), exc, delay_override=5)
+    except RetryableCampaignSendError as exc:
+        return _requeue_throttled_campaign_batch(payload, attempt, exc)
     return _summarise(
         result,
-        lambda r: {"sent": r.sent_count, "skipped": r.skipped_count, "failed": r.failed_count},
+        lambda r: {"sent": r.sent_count, "skipped": r.skipped_count, "failed": r.failed_count}
+        | ({"unknown": r.unknown_count} if getattr(r, "unknown_count", 0) else {}),
     )
 
 
-@task()
+def _requeue_throttled_campaign_batch(payload, attempt, exc, *, delay_override=None):
+    """Requeue the remaining PENDING recipients instead of failing the batch.
+
+    SES throttling means the failed recipient (and everything after it) was
+    never attempted, so failing the batch would misreport unsent mail. The
+    remaining PENDING rows of this batch go out as one new task with run_after
+    backoff and bounded attempts; exhaustion re-raises so the batch is FAILED
+    loudly instead of retrying forever. A halted (paused/stopped) campaign is
+    never requeued: resume re-enqueues what is still pending.
+    """
+    from mailing.models import Campaign, CampaignRecipient, CampaignRecipientStatus  # noqa: PLC0415
+    from mailing.services.campaign_sender import _campaign_send_halted  # noqa: PLC0415
+
+    campaign_id = payload.get("campaign_id")
+    batch_recipient_ids = list(payload.get("campaign_recipient_ids") or [])
+    max_attempts = max(1, int(getattr(settings, "RELAY_CAMPAIGN_THROTTLE_MAX_ATTEMPTS", 8) or 8))
+    base_seconds = max(1, int(getattr(settings, "RELAY_CAMPAIGN_THROTTLE_BASE_SECONDS", 30) or 30))
+    max_seconds = max(1, int(getattr(settings, "RELAY_CAMPAIGN_THROTTLE_MAX_SECONDS", 900) or 900))
+
+    if campaign_id and _campaign_send_halted(campaign_id):
+        logger.error(
+            "campaign_send_throttled_but_halted campaign_id=%s batch_id=%s attempt=%d error=%s",
+            campaign_id, payload.get("batch_id"), attempt, str(exc)[:200],
+        )
+        return {"deferred": False, "halted": True, "attempt": attempt}
+
+    remaining_ids = []
+    if campaign_id and batch_recipient_ids:
+        remaining_ids = list(
+            CampaignRecipient.objects.filter(
+                campaign_id=campaign_id,
+                pk__in=batch_recipient_ids,
+                status=CampaignRecipientStatus.PENDING,
+            )
+            .order_by("id")
+            .values_list("id", flat=True)
+        )
+    if campaign_id and not Campaign.objects.filter(pk=campaign_id).exists():
+        logger.error(
+            "campaign_send_throttle_exhausted campaign_id=%s batch_id=%s attempt=%d remaining=%d error=%s",
+            campaign_id, payload.get("batch_id"), attempt, len(remaining_ids), str(exc)[:200],
+        )
+        raise exc
+    if not remaining_ids:
+        logger.error(
+            "campaign_send_throttled_no_pending campaign_id=%s batch_id=%s attempt=%d error=%s",
+            campaign_id, payload.get("batch_id"), attempt, str(exc)[:200],
+        )
+        return {"deferred": False, "remaining": 0, "attempt": attempt}
+    if attempt >= max_attempts:
+        logger.error(
+            "campaign_send_throttle_exhausted campaign_id=%s batch_id=%s attempt=%d/%d remaining=%d error=%s",
+            campaign_id, payload.get("batch_id"), attempt, max_attempts, len(remaining_ids), str(exc)[:200],
+        )
+        raise exc
+
+    delay = delay_override or min(base_seconds * 2 ** (attempt - 1), max_seconds)
+    next_attempt = attempt + 1
+    retry_payload = {
+        **payload,
+        "batch_id": f"{payload.get('batch_id')}-throttle-retry-{next_attempt}",
+        "campaign_recipient_ids": remaining_ids,
+        "idempotency_key": f"{payload.get('batch_id')}-throttle-retry-{next_attempt}",
+    }
+    validate_campaign_email_message(retry_payload)
+    result = send_campaign_email_batch.using(
+        run_after=timezone.now() + timedelta(seconds=delay),
+    ).enqueue(retry_payload, attempt=next_attempt)
+    taskdeck.stamp(result, entity=("campaign", campaign_id) if campaign_id else None)
+    logger.error(
+        "campaign_send_throttled_requeued campaign_id=%s batch_id=%s attempt=%d/%d remaining=%d retry_in_s=%d error=%s",
+        campaign_id, payload.get("batch_id"), next_attempt, max_attempts, len(remaining_ids), delay, str(exc)[:200],
+    )
+    return {"deferred": True, "next_attempt": next_attempt, "retry_in_seconds": delay, "remaining": len(remaining_ids)}
+
+
+@task(queue_name="transactional", priority=50)
 def send_transactional_email_batch(message_ids, list_key="", template_key="", client_id=None):
     """Fan out one bulk transactional send -- a scoring run, a reminder sweep.
 
@@ -138,8 +248,69 @@ def _batch_message(template_key, count):
     return f"{template_key}: {recipients}" if template_key else recipients
 
 
-@task()
-def process_ses_webhook_event(payload):
+def _run_provider_event(task_obj, work, payload, attempt):
+    """Run one provider-events task body, surviving transient DB errors.
+
+    A deadlock, serialization failure, refused/closed connection or DNS miss
+    aborts only the current transaction, and the provider-event services are
+    idempotent (SES events dedup on ``EmailEvent.provider_event_id``, inbound
+    mail on ``InboundMessage.message_id``) and transactional, so running them
+    again is safe. Immediate retries (``run_with_db_retry``) absorb a single
+    aborted transaction; if the error outlasts them, a delayed attempt is
+    enqueued with bounded exponential backoff instead of leaving the event
+    permanently FAILED -- django-tasks-db never retries a FAILED task. The
+    current task then returns a ``deferred`` summary rather than raising, so a
+    handled transient error does not log a traceback. After
+    ``RELAY_PROVIDER_EVENT_MAX_ATTEMPTS`` delayed attempts, or when the delayed
+    attempt cannot be enqueued, the error is raised and the task is FAILED.
+    """
+    action = task_obj.name
+    try:
+        return run_with_db_retry(
+            work,
+            action=action,
+            attempts=settings.RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS,
+            base_delay_seconds=0.5,
+            max_delay_seconds=4.0,
+        )
+    except (DatabaseError, InterfaceError) as exc:
+        if not is_transient_db_error(exc) or attempt >= settings.RELAY_PROVIDER_EVENT_MAX_ATTEMPTS:
+            raise
+        # Jittered so two provider-event tasks that deadlocked on the same
+        # rows do not wake up together and deadlock again.
+        delay = jittered_backoff_seconds(
+            settings.RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS,
+            attempt,
+            settings.RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS,
+        )
+        try:
+            run_with_db_retry(
+                lambda: task_obj.using(run_after=timezone.now() + timedelta(seconds=delay)).enqueue(
+                    payload, attempt=attempt + 1
+                ),
+                action=f"{action} delayed retry enqueue",
+                attempts=settings.RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS,
+                base_delay_seconds=0.5,
+                max_delay_seconds=4.0,
+            )
+        except (DatabaseError, InterfaceError):
+            raise exc from None
+        first_line = (str(exc).strip().splitlines() or [exc.__class__.__name__])[0]
+        detail = " | ".join(deadlock_diag_lines(exc))
+        logger.warning(
+            "%s: retrying transient DB error as a delayed task (next attempt %d/%d in %ds): %s%s",
+            action,
+            attempt + 1,
+            settings.RELAY_PROVIDER_EVENT_MAX_ATTEMPTS,
+            delay,
+            first_line,
+            f"; {detail}" if detail else "",
+        )
+        return {"deferred": True, "next_attempt": attempt + 1, "retry_in_seconds": delay}
+
+
+@task(queue_name="provider-events")
+def process_ses_webhook_event(payload, *, attempt=1):
     """Apply one SES delivery/bounce/complaint notification.
 
     Imported inside the body deliberately: ``services.ses_webhooks`` imports
@@ -152,14 +323,37 @@ def process_ses_webhook_event(payload):
         process_ses_webhook,
     )
 
-    event = process_ses_webhook(normalize_ses_webhook_worker_payload(payload))
-    return _summarise(event, lambda e: {"email_event_id": e.pk, "event_type": e.event_type})
+    return _run_provider_event(
+        process_ses_webhook_event,
+        lambda: _summarise_ses_result(process_ses_webhook(normalize_ses_webhook_worker_payload(payload))),
+        payload,
+        attempt,
+    )
 
 
-@task()
-def process_inbound_email(payload):
+def _summarise_ses_result(result):
+    if result is None:
+        return None
+    if hasattr(result, "action"):
+        return {
+            "operator_audit_id": getattr(result, "pk", getattr(result, "id", None)),
+            "action": result.action,
+        }
+    return {
+        "email_event_id": getattr(result, "pk", getattr(result, "id", None)),
+        "event_type": getattr(result, "event_type", None),
+    }
+
+
+@task(queue_name="provider-events")
+def process_inbound_email(payload, *, attempt=1):
     """Handle one inbound-mail object-storage notification."""
-    return process_inbound_s3_notification(payload)
+    return _run_provider_event(
+        process_inbound_email,
+        lambda: process_inbound_s3_notification(payload),
+        payload,
+        attempt,
+    )
 
 
 @task()
@@ -172,3 +366,46 @@ def process_email_event(payload):
     """
     validate_email_event_message(payload)
     return None
+
+
+@task(queue_name="tracking")
+def process_tracking_event(payload, *, attempt=1):
+    """Persist one recipient open/click accepted by the web (/t/o, /t/c)."""
+    from mailing.services.tracking import apply_tracking_event  # noqa: PLC0415 - tracking enqueues these tasks
+
+    return _run_provider_event(
+        process_tracking_event,
+        lambda: _summarise(apply_tracking_event(payload), lambda event: {"email_event_id": event.pk}),
+        payload,
+        attempt,
+    )
+
+
+@task(queue_name="tracking", priority=50)
+def apply_deferred_unsubscribe(payload, *, attempt=1):
+    """Apply an unsubscribe the web could not write within its lock timeout.
+
+    Waits for the recipient lock instead of timing out, and retries transient DB
+    errors, so the accepted unsubscribe is not lost; a final failure leaves a
+    FAILED row that the queue monitor reports.
+    """
+    from datetime import datetime  # noqa: PLC0415
+
+    from mailing.services.tracking import apply_unsubscribe_for_recipient  # noqa: PLC0415
+
+    return _run_provider_event(
+        apply_deferred_unsubscribe,
+        lambda: _summarise(
+            apply_unsubscribe_for_recipient(payload["recipient_id"], datetime.fromisoformat(payload["occurred_at"])),
+            lambda recipient: {"campaign_recipient_id": recipient.pk},
+        ),
+        payload,
+        attempt,
+    )
+
+
+@task(queue_name="tracking")
+def refresh_campaign_engagement(campaign_id):
+    from mailing.services.tracking import refresh_campaign_engagement_counts  # noqa: PLC0415
+
+    return refresh_campaign_engagement_counts(campaign_id)

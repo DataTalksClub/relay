@@ -5,15 +5,17 @@ is a client-scoped operator surface, and inbound is not client-scoped, so these
 have to be the part of the mailbox that does not care which tenant is selected.
 """
 
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, OuterRef, Q
 from django.utils import timezone
 
 from mailing.models import (
     BlockedSender,
+    DmarcReport,
     InboundAddress,
     InboundMessage,
     InboundMessageState,
 )
+from mailing.services.dmarc import DMARC_SENDERS
 
 # The default view is the unread mail, because that is what an operator opening
 # the mailbox is looking for. Read mail is still a click away and is not
@@ -32,7 +34,32 @@ def address_domain(value):
     return normalize_address(value).partition("@")[2]
 
 
-def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page=50):
+# RFC 7489 section 7.2.1.1 subject: "Report Domain: <d> Submitter: <s> Report-ID: <id>".
+# Anchored at the start (an optional "[Preview]"-style tag aside) so a person writing
+# "Report domain: ... is failing" is not matched; it also has to carry an attachment.
+DMARC_REPORT_SUBJECT_REGEX = r"^\s*(\[[^]]*\]\s*)?report domain:\s*\S+.*submitter:"
+
+
+def automated_dmarc_q():
+    """Messages that are automated DMARC aggregate reports (hidden from the default list, never deleted).
+
+    Deliberately much narrower than the ingest heuristic in `mailing.services.dmarc`,
+    because hiding a real message is worse than showing a report. Every clause needs
+    evidence of an actual report: a successfully parsed aggregate report, or an
+    attachment together with either an exact known report sender address or the
+    RFC 7489 report subject. Returns (filter, annotations) to apply to a queryset.
+    """
+    parsed = Exists(DmarcReport.objects.filter(attachment__archive__message=OuterRef("pk")))
+    return (
+        Q(parsed_dmarc_report=True)
+        | (
+            Q(attachment_count__gt=0)
+            & (Q(sender_address__in=sorted(DMARC_SENDERS)) | Q(subject__iregex=DMARC_REPORT_SUBJECT_REGEX))
+        )
+    ), {"parsed_dmarc_report": parsed}
+
+
+def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page=50, show_automated=False):
     """The mailbox list.
 
     `state=None` means every state, which is how the blocked and read mail stay
@@ -40,6 +67,8 @@ def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page
     """
     queryset = InboundMessage.objects.select_related("inbound_address", "blocked_rule")
 
+    automated_q, annotations = automated_dmarc_q()
+    queryset = queryset.annotate(**annotations)
     if state:
         queryset = queryset.filter(state=state)
 
@@ -55,6 +84,12 @@ def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page
     address = normalize_address(address)
     if address:
         queryset = queryset.filter(recipient_address__iexact=address)
+
+    # Counted after every other filter, so the note matches what Show would reveal.
+    hidden_count = 0
+    if not show_automated:
+        hidden_count = queryset.filter(automated_q).count()
+        queryset = queryset.exclude(automated_q)
 
     total = queryset.count()
     per_page = max(1, min(int(per_page or 50), 200))
@@ -76,17 +111,9 @@ def list_messages(*, state=DEFAULT_STATE, query="", address="", page=1, per_page
         "state": state or "",
         "query": query,
         "address": address,
-        "counts": message_counts(),
-        "sender_count": queryset.exclude(sender_address="").values("sender_address").distinct().count(),
+        "show_automated": show_automated,
+        "hidden_automated_count": hidden_count,
     }
-
-
-def message_counts():
-    counts = {InboundMessageState.RECEIVED: 0, InboundMessageState.READ: 0, InboundMessageState.BLOCKED: 0}
-    for state, total in InboundMessage.objects.values("state").annotate(total=Count("id")):
-        counts[state] = total
-    counts["all"] = sum(counts[key] for key in (InboundMessageState.RECEIVED, InboundMessageState.READ, InboundMessageState.BLOCKED))
-    return counts
 
 
 def unread_sender_count():
@@ -97,7 +124,9 @@ def unread_sender_count():
     is one sender.
     """
     return (
-        InboundMessage.objects.filter(state=InboundMessageState.RECEIVED)
+        InboundMessage.objects.annotate(**automated_dmarc_q()[1])
+        .filter(state=InboundMessageState.RECEIVED)
+        .exclude(automated_dmarc_q()[0])
         .exclude(sender_address="")
         .values("sender_address")
         .distinct()
@@ -122,15 +151,6 @@ def list_addresses(*, include_inactive=True):
     if not include_inactive:
         queryset = queryset.filter(is_active=True)
     return queryset.order_by("domain", "local_part")
-
-
-def address_summary():
-    return {
-        "addresses": list_addresses(),
-        "active_count": InboundAddress.objects.filter(is_active=True).count(),
-        "retired_count": InboundAddress.objects.filter(is_active=False).count(),
-        "total_count": InboundAddress.objects.count(),
-    }
 
 
 def list_blocked_senders():

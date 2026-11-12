@@ -1,3 +1,4 @@
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -49,6 +50,7 @@ from mailing.services.operator_ui import (
 )
 from mailing.services.transactional_catalog import transactional_queue_queryset
 from mailing.services.worker_status import _backlog_count
+from mailing.tests.html_text import data_text
 
 pytestmark = pytest.mark.django_db
 
@@ -139,32 +141,43 @@ def create_transactional_message(contact, client, *, status=TransactionalMessage
     )
 
 
-def test_base_template_loads_datamailer_static_css(client, operator):
+def test_base_template_loads_dakit_shell_assets(client, operator):
     client.force_login(operator)
 
     response = client.get(reverse("mailing:dashboard"))
 
     assert response.status_code == 200
-    assert b'href="/static/dakit/dist/dakit.css"' in response.content
-    assert b'src="/static/dakit/dist/dialogs.js"' in response.content
-    assert b'href="/static/mailing/css/app.css"' in response.content
-    assert b"<style>" not in response.content
-    assert b'class="brand-name">Relay</span>' in response.content
-    assert b'data-theme-toggle' in response.content
-    assert b'data-sidebar-toggle aria-expanded="true"' in response.content
-    assert b'data-sidebar-menu-toggle aria-expanded="false"' in response.content
-    assert b'matchMedia("(max-width: 860px)")' in response.content
-    assert b"dakit-theme" in response.content
-    assert finders.find("dakit/dist/dakit.css") is not None
-    assert finders.find("dakit/dist/dialogs.js") is not None
-    assert finders.find("mailing/css/app.css") is not None
-    dakit_css = Path(finders.find("dakit/dist/dakit.css")).read_text()
+    html = response.content.decode()
+    for asset in (
+        'href="/static/dakit/dakit.css"',
+        'src="/static/dakit/dialogs.js"',
+        'src="/static/dakit/shell.js"',
+        'src="/static/dakit/split.js"',
+        'href="/static/mailing/css/app.css"',
+        'src="/static/mailing/js/theme-boot.js"',
+        'src="/static/mailing/js/operator.js"',
+    ):
+        assert asset in html
+    assert "<style>" not in html
+    # dakit app shell (docs/shell.md), not the retired app-local sidebar.
+    assert 'class="dk-shell" data-app="relay"' in html
+    assert 'class="dk-brand__name">Relay</span>' in html
+    assert "data-dk-sidebar-toggle" in html
+    assert 'data-dk-drawer-toggle aria-controls="dk-sidebar"' in html
+    assert 'class="dk-skip-link" href="#main-content"' in html
+    for retired in ("app-sidebar", "app-toolbar", "account-panel", "sidebar-scrim", "datamailer.sidebar.collapsed"):
+        assert retired not in html
+    # Relay has no actionable notification feed, so the shell has no bell.
+    assert "dk-notif-trigger" not in html
+    assert finders.find("dakit/dakit.css") is not None
+    assert finders.find("dakit/shell.js") is not None
+    dakit_css = Path(finders.find("dakit/dakit.css")).read_text()
     assert "--dk-text-primary" in dakit_css
     css = Path(finders.find("mailing/css/app.css")).read_text()
     assert ".client-table,\n  .campaign-table,\n  .audience-table,\n  .audience-member-table" in css
     assert "scrollbar-width: thin" in css
-    assert ".app-shell.has-sidebar.sidebar-collapsed" in css
-    assert "html.js .has-sidebar.sidebar-open .app-sidebar" in css
+    for retired in (".app-shell", ".app-sidebar", ".sidebar-nav", ".account-panel", "max-width: 860px"):
+        assert retired not in css
 
 
 def test_chrome_icons_use_family_24grid_geometry(client, operator):
@@ -189,48 +202,61 @@ def test_chrome_icons_use_family_24grid_geometry(client, operator):
     assert b'stroke-width="1.5"' not in content
 
 
-def test_operator_account_chrome_owns_identity_appearance_and_sign_out(client, operator):
-    """Sidebar-footer Account popover is the only identity/theme/sign-out control.
+def test_operator_account_menu_owns_identity_theme_and_sign_out(client, operator):
+    """One account row at the sidebar foot opens the dakit account disclosure.
 
-    dakit family.md §Account chrome: avatar + name + chevron trigger in the
-    sidebar footer, popover titled Account with Identity, Appearance (labeled
-    track switch), Sign out. The operator shell has no desktop top bar.
+    dakit shell.md §5.4/§6: avatar + name + chevron trigger; the menu holds
+    identity, the only theme switch, the version meta and Sign out, with no
+    header or close button and no destinations.
     """
     client.force_login(operator)
 
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
-    css = Path(finders.find("mailing/css/app.css")).read_text()
 
     assert response.status_code == 200
-    assert 'aria-label="Account"' in html
-    assert 'class="account-button-name">operator</span>' in html
-    assert 'id="account-menu-title">Account</strong>' in html
-    assert "Signed in as" in html
-    assert "operator@example.com" in html
-    assert 'class="account-section-label">Appearance</p>' in html
-    assert 'data-theme-label>Dark mode</span>' in html
-    assert 'class="account-toggle-track"' in html
-    assert "<strong>Sign out</strong>" in html
-    assert 'href="/auth/logout"' in html
-    assert "Log out" not in html
-    assert 'class="icon-button theme-toggle"' not in html
-    assert html.index("account-panel") < html.index("data-theme-toggle")
-    assert html.index("data-theme-toggle") < html.index("account-sign-out")
-    foot_html = html[html.index("sidebar-foot") : html.index("app-column")]
-    assert 'class="account-button-name">operator</span>' in foot_html
-    assert "data-theme-toggle" in foot_html
-    assert "Sign out" in foot_html
-    assert html.index("app-sidebar") < html.index("sidebar-foot") < html.index("app-column")
-    toolbar_html = html[html.index("app-toolbar") : html.index("<main")]
-    assert "data-account-menu" not in toolbar_html
-    assert ".has-sidebar .app-toolbar" in css
-    assert "display: none" in css.split(".has-sidebar .app-toolbar {", 1)[1].split("}", 1)[0]
-    assert ".account-panel" in css
-    assert "var(--dk-radius-lg)" in css
-    assert "var(--dk-shadow-overlay)" in css
-    assert ".account-toggle-track" in css
-    assert ".account-theme-toggle[aria-pressed=" in css
+    foot = html[html.index('class="dk-sidebar__foot"') : html.index("</aside>")]
+    assert 'aria-label="Account, operator"' in foot
+    assert 'aria-controls="dk-account-menu"' in foot
+    assert 'class="dk-account-trigger__name">operator</span>' in foot
+    menu = html[html.index('id="dk-account-menu"') : html.index('id="dk-live"')]
+    # The popover is a sibling of the sidebar so nav overflow never clips it.
+    assert html.index("</aside>") < html.index('id="dk-account-menu"')
+    assert 'class="dk-menu__name">operator</span>' in menu
+    assert 'class="dk-menu__email">operator@example.com</span>' in menu
+    assert 'role="switch" aria-checked="false" data-dk-theme-toggle' in menu
+    assert html.count("data-dk-theme-toggle") == 1
+    assert 'class="dk-menu__meta"><span>v' in menu
+    assert '<form method="post" action="/auth/logout">' in menu
+    assert 'name="csrfmiddlewaretoken"' in menu[menu.index('action="/auth/logout"') :]
+    assert '<button class="dk-menu__item dk-menu__item--danger" type="submit">' in menu
+    assert 'href="/auth/logout"' not in html
+    assert menu.index("dk-menu__identity") < menu.index("data-dk-theme-toggle") < menu.index("dk-menu__meta") < menu.index("Sign out")
+    assert "Signed in as" not in html
+    assert "Close account menu" not in html
+    assert "<a class=\"dk-nav-item" not in menu
+
+
+def test_brand_row_switches_the_active_client(client, operator, client_record):
+    """The client context is the brand-row switcher (shell.md §5.1), a menu of
+    menuitemradio rows posting to client_select."""
+    other = Client.objects.create(organization=client_record.organization, name="Second Client", slug="second-client")
+    client.force_login(operator)
+    select_active_client(client, client_record)
+
+    html = client.get(reverse("mailing:dashboard")).content.decode()
+
+    head = html[html.index('class="dk-sidebar__head"') : html.index('class="dk-sidebar__nav"')]
+    assert 'class="dk-brand" type="button" data-dk-popover-trigger="dk-brand-menu" aria-haspopup="menu"' in head
+    assert f'class="dk-brand__scope">{client_record.name}</span>' in head
+    menu = html[html.index('id="dk-brand-menu"') : html.index("</form>", html.index('id="dk-brand-menu"'))]
+    assert 'role="menu"' in menu
+    assert f'action="{reverse("mailing:client_select")}"' in menu
+    assert f'value="{client_record.id}" role="menuitemradio" aria-checked="true"' in menu
+    assert f'value="{other.id}" role="menuitemradio" aria-checked="false"' in menu
+    assert "data-client-switcher" in menu
+    assert "<select" not in head
+    assert "Active client" not in html
 
 
 def test_sidebar_links_transactional_queue(client, operator, client_record):
@@ -284,8 +310,7 @@ def test_dashboard_renders_operational_summary_links_and_seeded_style_data(
     assert "Processing diagnostics" in html
     assert html.index("Processing diagnostics") < html.index("relay-db-worker.service")
     assert "Recent Campaign Activity" in html
-    assert "Deliverability attention" in html
-    assert "Client inventory" in html
+    assert "Client inventory" not in html
     assert "Weekly update" in html
     assert f'href="{reverse("mailing:campaign_detail", args=[campaign.id])}"' in html
     assert "Bounce" in html
@@ -787,7 +812,7 @@ def test_operator_contact_explorer_renders_filters_and_pagination_querystring(
     assert b"Contacts" in response.content
     assert b"person-00@example.com" in response.content
     assert b"person-29@example.com" not in response.content
-    assert b"Page 1 of 2" in response.content
+    assert b"Page 1 of 2" in data_text(response.content)
     assert f"audience={audience.id}&amp;subscription_status=subscribed&amp;page=2".encode() in response.content
 
 
@@ -894,8 +919,10 @@ def test_operator_contact_explorer_badges_suppressed_unverified_and_no_activity_
     assert "Marked invalid" in html
     assert "Unverified" in html
     assert "manual block" in html
-    assert "Sent never" in html
-    assert "Opened never / Clicked never" in html
+    # Dates sit in mono .data-time spans; compare the visible text.
+    text = re.sub(r"<[^>]+>", "", html)
+    assert "Sent never" in text
+    assert "Opened never / Clicked never" in text
     assert "datatalks-club/dtc-courses: unsubscribed" in html
 
 
@@ -1132,9 +1159,12 @@ def test_campaign_list_renders_recent_campaigns(client, operator, campaign):
     assert "1 queued / 2 processed" not in html
     assert "0.03/sec" not in html
     assert "2.0/min" not in html
-    assert "3 currently sent / 2 delivery confirmations" in html
+    assert "3 currently sent / 2 delivery confirmations" in data_text(html)
     assert "1 opens / 1 clicks" not in html
-    assert "1 bounces / 1 complaints" in html
+    assert "1 bounces / 1 complaints" in data_text(html)
+    # Quantities and times read as data: mono, tabular, dates unbroken.
+    assert '<span class="data-num">3</span> currently sent / <span class="data-num">2</span> delivery confirmations' in html
+    assert '<span class="data-num">1</span> bounces / <span class="data-num">1</span> complaints' in html
     assert '<span class="badge success">Sent</span>' in html
     assert "Locked" not in html
     assert "Create campaign" in html
@@ -1286,10 +1316,10 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert list_response.status_code == 200
     list_html = list_response.content.decode()
     assert "Audience Health" in list_html
-    assert "3 members" in list_html
-    assert "3 subscribed" in list_html
-    assert "1 inactive" in list_html
-    assert "1 suppressed" in list_html
+    assert "3 members" in data_text(list_html)
+    assert "3 subscribed" in data_text(list_html)
+    assert "1 inactive" in data_text(list_html)
+    assert "1 suppressed" in data_text(list_html)
     assert "Weekly update" in list_html
     assert f'href="{reverse("mailing:audience_detail", args=[audience.id])}"' in list_html
     assert detail_response.status_code == 200
@@ -1325,13 +1355,13 @@ def test_audience_list_and_detail_render_summaries_members_history_and_events(
     assert "Cannot send —" in detail_html
     assert "Missing email DNS" in detail_html
     assert "No MX 1" not in segment_html
-    assert "Valid email 1" in segment_html
-    assert "No validation data 1" in segment_html
+    assert "Valid email 1" in data_text(segment_html)
+    assert "No validation data 1" in data_text(segment_html)
     assert "Malformed email: 0" not in segment_html
-    assert "Sent 2" in segment_html
-    assert "Skipped 1" in segment_html
+    assert "Sent 2" in data_text(segment_html)
+    assert "Skipped 1" in data_text(segment_html)
     assert "Failed: 0" not in segment_html
-    assert "Invalid email 1" in segment_html
+    assert "Invalid email 1" in data_text(segment_html)
     assert "Client unsubscribe: 0" not in segment_html
     assert "Hard bounced" in health_html
     assert "invalid@example.com" in detail_html
@@ -1489,7 +1519,7 @@ def test_audience_detail_renders_clickable_and_deferred_summary_stats(client, op
         "?section=members&amp;suppression=hard_bounced",
         "?section=members&amp;suppression=complained",
     ):
-        assert f'class="stat-value stat-link" href="{href}"' in html
+        assert f'<a class="data-num" href="{href}">' in html
     # Deferred stats are present as labels but never rendered as links.
     assert "Inactive" in html
     assert "Opened" in html
@@ -1845,8 +1875,8 @@ def test_campaign_detail_shows_draft_estimate_and_state_dependent_controls(clien
     assert b"No campaign email events found yet" not in draft_response.content
     confirm_response = client.get(reverse("mailing:campaign_detail", args=[campaign.id]), {"confirm_send": "1"})
     assert b"Send this campaign now?" in confirm_response.content
-    assert b"1 recipient will be queued for sending" in confirm_response.content
-    assert b"Send to 1 recipient now" in confirm_response.content
+    assert b"1 recipient will be queued for sending" in data_text(confirm_response.content)
+    assert b"Send to 1 recipient now" in data_text(confirm_response.content)
 
     campaign.status = "queued"
     campaign.save()
@@ -1932,7 +1962,7 @@ def test_campaign_detail_paginates_recipients(client, operator, campaign):
     assert response.status_code == 200
     assert b"person-00@example.com" in response.content
     assert b"person-54@example.com" not in response.content
-    assert b"Page 1 of 2" in response.content
+    assert b"Page 1 of 2" in data_text(response.content)
 
 
 def test_contact_search_and_detail_render_product_context(client, operator, audience, client_record, campaign):
@@ -2106,7 +2136,7 @@ def test_transactional_template_catalog_filters_paginates_and_summarizes_context
     assert "other-template" not in html
     assert "first_name" in html
     assert "verification_url" in html
-    assert "+1" in html
+    assert "+1" in data_text(html)
     assert "{&#x27;name&#x27;" not in html
     assert "?page=2" in html
 
@@ -2276,8 +2306,8 @@ def test_transactional_queue_paginates_and_preserves_query_params(client, operat
     html = response.content.decode()
 
     assert response.status_code == 200
-    assert "Page 2 of 2" in html
-    assert "26 messages queued" in html
+    assert "Page 2 of 2" in data_text(html)
+    assert "26 messages queued" in data_text(html)
 
 
 def test_transactional_queue_empty_state(client, operator, client_record, other_client):
@@ -2289,7 +2319,7 @@ def test_transactional_queue_empty_state(client, operator, client_record, other_
 
     assert response.status_code == 200
     assert b"No queued transactional messages." in response.content
-    assert b"There is 1 queued message under other clients" in response.content
+    assert b"There is 1 queued message under other clients" in data_text(response.content)
 
 
 def test_transactional_queue_total_matches_scoped_count(client, operator, client_record, other_client):
@@ -2306,7 +2336,7 @@ def test_transactional_queue_total_matches_scoped_count(client, operator, client
         client=client_record, status=TransactionalMessageStatus.QUEUED
     ).count()
     assert scoped_count == 2
-    assert f"{scoped_count} message" in html
+    assert f"{scoped_count} message" in data_text(html)
 
 
 def test_transactional_queue_queryset_filters_and_orders(client_record, other_client):
@@ -2334,12 +2364,12 @@ def test_dashboard_transactional_backlog_links_and_is_client_scoped(client, oper
     select_active_client(client, client_record)
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
-    assert f'<a class="stat-value" href="{queue_url}">2</a>' in html
+    assert f'<a href="{queue_url}">Review this client\'s waiting emails (2)</a>' in data_text(html)
 
     select_active_client(client, other_client)
     response = client.get(reverse("mailing:dashboard"))
     html = response.content.decode()
-    assert f'<a class="stat-value" href="{queue_url}">3</a>' in html
+    assert f'<a href="{queue_url}">Review this client\'s waiting emails (3)</a>' in data_text(html)
 
 
 def test_dashboard_backlog_count_stays_global_in_worker_status(client_record, other_client):
@@ -2368,7 +2398,7 @@ def test_contact_detail_paginates_events(client, operator, campaign, client_reco
     response = client.get(reverse("mailing:contact_detail", args=[contact.normalized_email]))
 
     assert response.status_code == 200
-    assert b"Page 1 of 2" in response.content
+    assert b"Page 1 of 2" in data_text(response.content)
     assert response.content.count(b"<strong>Open</strong>") == 50
 
 
@@ -2400,3 +2430,114 @@ def test_campaign_detail_offers_assume_sent_only_for_failed_recipients(client, o
 
     assert f"/campaigns/{campaign.id}/recipients/{failed.id}/assume-sent/" in unfiltered_html
     assert f"/campaigns/{campaign.id}/recipients/{sent.id}/assume-sent/" not in unfiltered_html
+
+
+def test_a_bare_button_is_quiet_and_the_primary_is_opt_in():
+    """dakit hierarchy: an unmarked <button> is secondary; the filled accent
+    needs .primary (or a .button link). The comment matches the rules."""
+    import re as _re  # noqa: PLC0415
+
+    css = Path(finders.find("mailing/css/app.css")).read_text()
+    section = css.split("Buttons follow dakit's hierarchy", 1)[1]
+    base = section.split('button:where(:not([class*="dk-"])),\n.button {', 1)[1].split("}", 1)[0]
+    assert "background: var(--dk-bg-surface)" in base
+    assert "--dk-accent-default" not in base
+    primary = css.split("button.primary,\n.button {", 1)[1].split("}", 1)[0]
+    assert "background: var(--dk-accent-default)" in primary
+    assert "button.primary:hover" in css
+    templates = Path(__file__).resolve().parents[2] / "templates"
+    bare_submits = [
+        (path.name, match)
+        for path in templates.rglob("*.html")
+        for match in _re.findall(r"<button type=\"submit\">([^<{]+)", path.read_text())
+    ]
+    # Bare submits are filters and secondary actions only; each form's commit is explicit.
+    assert all(
+        label.split()[0] in {"Filter", "Apply", "Search", "Update", "Pause", "Use", "Review", "Send"}
+        for _, label in bare_submits
+    ), bare_submits
+
+
+@pytest.mark.parametrize("status", ["draft", "scheduled"])
+def test_recipient_review_has_one_count_and_no_stat_tiles(client, operator, audience, client_record, status):
+    """Draft and scheduled campaigns are working screens (dakit shell.md §2.9):
+    the recipient review states one eligible count and how the audience
+    narrows to it, with no KPI tiles or status dots."""
+    client.force_login(operator)
+    campaign = Campaign.objects.create(
+        audience=audience,
+        client=client_record,
+        subject="Review",
+        html_body="<p>Hello</p>",
+        text_body="Hello",
+        status=status,
+        scheduled_at=timezone.now() + timedelta(days=1) if status == "scheduled" else None,
+    )
+    create_subscribed_contact("person@example.com", audience, client_record)
+    create_subscribed_contact("second@example.com", audience, client_record)
+
+    html = client.get(reverse("mailing:campaign_detail", args=[campaign.id])).content.decode()
+    review = html[html.index('id="recipient-estimate"') :]
+    review = review[: review.index("</section>")]
+
+    assert "stats-grid" not in review
+    assert "stat-dot" not in review
+    assert "stat-value" not in review
+    assert '<span class="data-num">2</span> eligible recipients' in review
+    assert "tags exclude" in data_text(review) and "sending policy skips" in data_text(review)
+    # The eligible count is stated once outside the send confirmation.
+    assert data_text(html).count("2 eligible recipients") == 1
+
+
+def test_zero_and_range_quantities_read_as_data(client, operator, client_record):
+    """Quantities are mono in every branch: a contact page range and an
+    address with no messages yet (zero is still a count)."""
+    from mailing.models import InboundAddress  # noqa: PLC0415
+
+    client.force_login(operator)
+    select_active_client(client, client_record)
+    InboundAddress.objects.create(local_part="hello", domain="relay.example")
+
+    addresses = client.get(reverse("mailing:inbound_address_list")).content.decode()
+    assert '<span class="muted data-num">0</span>' in addresses
+
+    audience = Audience.objects.create(organization=client_record.organization, name="Range", slug="range")
+    create_subscribed_contact("range@example.com", audience, client_record)
+    contacts = client.get(reverse("mailing:contact_search")).content.decode()
+    assert 'Showing <span class="data-num">1–1</span> of <span class="data-num">1</span> contacts' in contacts
+
+
+def _nav(html):
+    start = html.index('aria-label="Primary"')
+    return html[start : html.index("</nav>", start)]
+
+
+@pytest.mark.parametrize(
+    ("path", "service"),
+    [
+        ("/", False),
+        ("/campaigns/", False),
+        ("/inbound/", True),
+        ("/ses-quota/", True),
+        ("/clients/", True),
+        ("/jobs/", True),
+        ("/jobs/dead-letters/", True),
+        ("/service/", True),
+    ],
+)
+def test_sidebar_shows_client_or_shared_service_never_both(client, path, service):
+    org = Organization.objects.create(name="Mode Org", slug="mode-org")
+    Client.objects.create(organization=org, name="Mode Client", slug="mode-client")
+    user = get_user_model().objects.create_user("modeop", "m@example.com", "pw", is_staff=True)
+    client.force_login(user)
+    response = client.get(path)
+    assert response.status_code == 200
+    nav = _nav(response.content.decode())
+    if service:
+        assert "Receiving addresses" in nav and "Admin API keys" in nav
+        assert "Campaigns" not in nav and "Contacts" not in nav and "Audiences" not in nav
+        assert "Shared service</span>" in response.content.decode().split("dk-brand__scope")[1][:60] + "</span>"
+    else:
+        assert "Campaigns" in nav and "Contacts" in nav
+        assert "Receiving addresses" not in nav and "Admin API keys" not in nav and "SES quota" not in nav
+        assert "/service/" in nav

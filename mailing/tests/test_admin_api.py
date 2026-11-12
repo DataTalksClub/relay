@@ -44,6 +44,9 @@ from mailing.urls import urlpatterns as client_patterns
 
 pytestmark = pytest.mark.django_db
 
+# service_home is a navigation landing page: it only summarises worker health, waiting jobs and unread inbound senders, each of which has its own API elsewhere.
+SESSION_SCOPED_UI_DATA_ROUTES = {"campaign_links_json", "service_home"}
+
 
 @pytest.fixture
 def setup():
@@ -264,7 +267,7 @@ def test_client_api_operations_have_admin_counterparts():
             assert reverse("admin_api:scoped_" + pattern.name, args=[1, *values]).startswith("/api/admin/clients/1/")
 
 
-def test_staff_ui_capabilities_have_admin_api_routes():
+def test_staff_ui_capabilities_have_admin_api_routes_or_session_scoped_data_routes():
     staff_views = set()
     modules = (views, admin_key_views, job_views, job_operator_views, activity_ui_views,
                campaign_ui_views, contact_ui_views, documentation_views, setup_views, template_ui_views)
@@ -278,7 +281,9 @@ def test_staff_ui_capabilities_have_admin_api_routes():
         for pattern in [*client_patterns, *job_patterns]:
             if pattern.callback.__module__ == module.__name__ and pattern.callback.__name__ in declared:
                 staff_views.add(pattern.name)
-    assert staff_views == set(OPERATOR_API_PARITY)
+    # The campaign detail page loads this data over its existing staff session;
+    # client integrations use the client-authenticated campaign links API.
+    assert staff_views == set(OPERATOR_API_PARITY) | SESSION_SCOPED_UI_DATA_ROUTES
     api_names = {p.name for p in admin_patterns}
     assert set(OPERATOR_API_PARITY.values()) <= api_names
 
@@ -313,7 +318,7 @@ def test_status_endpoints_use_operator_data(setup, monkeypatch):
     monkeypatch.setattr("mailing.services.worker_status.sandbox_worker_statuses", lambda: [])
     http = setup[0]
     response = http.get("/api/admin/dashboard")
-    assert response.status_code == 200 and "summary_stats" in response.json()
+    assert response.status_code == 200 and "attention_items" in response.json()
     assert http.get("/api/admin/workers").status_code == 200
 
 

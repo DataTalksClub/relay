@@ -9,8 +9,10 @@ render exactly like they did in the donor site:
 2. The substituted markdown converts to HTML with the same extension set
    AISL email uses: core extensions plus external-link rewriting, with
    mermaid and codehilite off (inboxes run no JS and ship no stylesheet).
-3. The HTML is wrapped in the shared email shell (``email_base.html``)
-   with a header and footer around the body.
+3. The HTML is wrapped in the CLIENT'S OWN email layout shell
+   (``EmailLayout.layout_html``) with that client's header and footer.
+   There is no shared Relay-branded shell: a client without a layout
+   renders a plain neutral shell with no brand text.
 """
 
 import re
@@ -18,7 +20,6 @@ from urllib.parse import urlparse
 
 import markdown as markdown_lib
 from django.conf import settings
-from django.template.loader import render_to_string
 from markdown.extensions import Extension
 from markdown.treeprocessors import Treeprocessor
 
@@ -118,14 +119,49 @@ def render_email_markdown(text):
     )
 
 
-def wrap_email_html(subject, body_html, *, footer_note=""):
-    """Wrap rendered body HTML in the shared email shell with header/footer."""
-    return render_to_string(
-        "mailing/email_base.html",
-        {
-            "subject": subject,
-            "body_html": body_html,
-            "brand_name": getattr(settings, "RELAY_EMAIL_BRAND_NAME", "Relay"),
-            "footer_note": footer_note,
-        },
+def wrap_email_html(
+    subject,
+    body_html,
+    *,
+    footer_note="",
+    client=None,
+    sender_id="",
+    markdown_layout_context=None,
+):
+    """Wrap rendered body HTML in the CLIENT'S OWN layout shell.
+
+    ``client`` selects the EmailLayout row (with optional per-sender
+    override). A missing layout renders a plain neutral shell with no
+    brand text -- never a "Relay"-branded shell.
+    """
+    if client is None:
+        from django.template import Context, Template  # noqa: PLC0415
+        from django.utils.safestring import mark_safe  # noqa: PLC0415
+
+        from mailing.services.email_layouts import MARKDOWN_LAYOUT_CONTEXT_KEYS, NEUTRAL_SHELL  # noqa: PLC0415
+
+        layout_context = {name: "" for name in MARKDOWN_LAYOUT_CONTEXT_KEYS}
+        layout_context["footer_note"] = footer_note or ""
+        if markdown_layout_context:
+            layout_context.update(markdown_layout_context)
+        return Template(NEUTRAL_SHELL).render(
+            Context(
+                {
+                    "subject": subject,
+                    "body_html": mark_safe(body_html),  # noqa: S308 -- rendered Markdown HTML
+                    **layout_context,
+                },
+                autoescape=True,
+            )
+        )
+    from mailing.services.email_layouts import render_with_layout  # noqa: PLC0415
+
+    html, _ = render_with_layout(
+        client=client,
+        subject=subject,
+        body_html=body_html,
+        sender_id=sender_id,
+        footer_note=footer_note,
+        markdown_layout_context=markdown_layout_context,
     )
+    return html

@@ -2,6 +2,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 
+from mailing.services.click_security import sign_click_redirect
 from mailing.services.tokens import ensure_campaign_recipient_tokens
 
 
@@ -14,10 +15,17 @@ def open_pixel_url(tracking_token):
 
 
 def click_redirect_url(tracking_token, destination_url):
-    return f"{_base_url()}/t/c/{tracking_token}?{urlencode({'u': destination_url})}"
+    signature = sign_click_redirect(tracking_token, destination_url)
+    return f"{_base_url()}/t/c/{tracking_token}?{urlencode({'u': destination_url, 's': signature})}"
 
 
-def unsubscribe_url(unsubscribe_token):
+UNSUBSCRIBE_TOKEN_PLACEHOLDER = "{token}"
+
+
+def unsubscribe_url(unsubscribe_token, url_template=""):
+    """Relay's own unsubscribe URL, or the sender's ``url_template`` when it supplied one."""
+    if url_template:
+        return url_template.replace(UNSUBSCRIBE_TOKEN_PLACEHOLDER, unsubscribe_token)
     return f"{_base_url()}/unsubscribe/{unsubscribe_token}"
 
 
@@ -27,7 +35,7 @@ def campaign_recipient_public_urls(recipient, destination_url=None):
         raise ValueError("Raw public tokens are unavailable for recipient with existing token hashes.")
     urls = {
         "open_pixel_url": open_pixel_url(tokens.tracking_token),
-        "unsubscribe_url": unsubscribe_url(tokens.unsubscribe_token),
+        "unsubscribe_url": unsubscribe_url(tokens.unsubscribe_token, recipient.campaign.unsubscribe_url_template),
     }
     if destination_url is not None:
         urls["click_redirect_url"] = click_redirect_url(tokens.tracking_token, destination_url)

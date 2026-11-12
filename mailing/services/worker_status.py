@@ -123,15 +123,34 @@ WORKER_DEFINITIONS = (
 
 
 def sandbox_worker_statuses() -> list[WorkerStatus]:
-    return [_worker_status(definition) for definition in WORKER_DEFINITIONS]
+    systemd_by_service: dict[str, dict[str, str]] = {}
+    statuses = []
+    for definition in WORKER_DEFINITIONS:
+        if definition.service_name not in systemd_by_service:
+            systemd_by_service[definition.service_name] = systemd_service_properties(definition.service_name)
+        statuses.append(_worker_status(definition, systemd=systemd_by_service[definition.service_name]))
+    return statuses
 
 
 def worker_status_payload() -> dict[str, object]:
+    """Serve the worker table with a short cache.
+
+    Previously every request ran 8 sequential `systemctl show` calls (up to
+    ~12 s worst case) on the request thread. Cache 30 s like the ops status
+    endpoint; backlog counts stay fresh enough for operators.
+    """
+    from django.core.cache import cache  # noqa: PLC0415 - avoid import cost at module load
+
+    cached = cache.get("worker_status_payload_v1")
+    if isinstance(cached, dict):
+        return cached
     workers = sandbox_worker_statuses()
-    return {
+    payload: dict[str, object] = {
         "status": _overall_status(workers),
         "workers": [_serialize_worker_status(worker) for worker in workers],
     }
+    cache.set("worker_status_payload_v1", payload, 30)
+    return payload
 
 
 def systemd_service_properties(service_name: str) -> dict[str, str]:
@@ -166,8 +185,8 @@ def systemd_service_properties(service_name: str) -> dict[str, str]:
     return properties
 
 
-def _worker_status(definition: WorkerDefinition) -> WorkerStatus:
-    systemd = systemd_service_properties(definition.service_name)
+def _worker_status(definition: WorkerDefinition, *, systemd: dict[str, str] | None = None) -> WorkerStatus:
+    systemd = systemd if systemd is not None else systemd_service_properties(definition.service_name)
     badge_label, badge_tone, detail = _badge_for_systemd(systemd)
     return WorkerStatus(
         key=definition.key,

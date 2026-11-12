@@ -2,6 +2,7 @@ from time import sleep
 
 from django.core.management.base import BaseCommand
 
+from mailing.db_retry import run_loop_iteration
 from mailing.services.recipient_lists import process_pending_recipient_list_import_jobs
 
 
@@ -35,7 +36,11 @@ class Command(BaseCommand):
 
         self.stdout.write("Starting recipient-list import worker")
         while True:
-            result = process_pending_recipient_list_import_jobs(limit=batch_size)
+            completed, result = run_loop_iteration(
+                lambda: process_pending_recipient_list_import_jobs(limit=batch_size), action="recipient-list import worker", once=options["once"]
+            )
+            if not completed:
+                continue
             self.stdout.write("processed={processed} succeeded={succeeded} failed={failed}".format(**result))
             if options["once"]:
                 return

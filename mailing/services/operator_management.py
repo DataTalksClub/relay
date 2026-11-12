@@ -335,7 +335,7 @@ def assume_recipient_sent(*, actor, campaign, recipient):
     # Every campaign writer locks the parent before its recipient.
     campaign = Campaign.objects.select_for_update().get(pk=campaign.pk)
     recipient = (
-        CampaignRecipient.objects.select_for_update()
+        CampaignRecipient.objects.select_for_update(of=("self",))
         .select_related("campaign", "campaign__client", "campaign__audience", "contact")
         .get(pk=recipient.pk, campaign=campaign)
     )

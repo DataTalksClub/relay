@@ -1,11 +1,13 @@
 import json
 import re
+from email.parser import BytesParser
+from email.policy import default
+from urllib.parse import unquote, unquote_plus
 
-import boto3
 import pytest
-from botocore.exceptions import ClientError
-from botocore.stub import Stubber
+from botocore.exceptions import ClientError, ConnectTimeoutError
 from django.test import override_settings
+from django.utils import timezone
 
 from mailing.models import (
     Audience,
@@ -16,9 +18,20 @@ from mailing.models import (
     Contact,
     EmailEvent,
     EmailEventType,
+    EmailTemplate,
+    EmailTemplateVersion,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
-from mailing.services.campaign_sender import build_campaign_html_body, send_campaign_batch
+from mailing.services.campaign_sender import (
+    build_campaign_html_body,
+    build_campaign_text_body,
+    send_campaign_batch,
+    send_campaign_test_message,
+)
+from mailing.services.campaigns import campaign_send_issues
+from mailing.services.click_security import sign_click_redirect, verify_click_redirect
 from mailing.services.tokens import token_hash
 from mailing.sqs import records_from_messages
 from mailing.workers import campaign_email_handler
@@ -39,9 +52,18 @@ def campaign_setup():
         html_body='<p>Hello <a href="https://example.com/post?a=1&b=2">read</a> <a href="mailto:a@example.com">mail</a></p>',
         text_body="Hello in text",
     )
-    contact = Contact.objects.create(email="person@example.com")
+    contact = make_sendable_contact("person@example.com", audience, client)
     recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)
     return campaign, recipient
+
+
+def make_sendable_contact(email, audience, client):
+    """A contact the pre-send suppression recheck lets through."""
+    contact = Contact.objects.create(email=email, verified_at=timezone.now())
+    Subscription.objects.create(
+        contact=contact, audience=audience, client=client, status=SubscriptionStatus.SUBSCRIBED,
+    )
+    return contact
 
 
 @override_settings(
@@ -52,46 +74,38 @@ def campaign_setup():
 )
 def test_campaign_sender_sends_pending_recipient_and_persists_audit_state(campaign_setup):
     campaign, recipient = campaign_setup
-    ses = _ses_client()
+    ses = _RawSesClient()
+    result = send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
 
-    with Stubber(ses) as stubber:
-        stubber.add_response(
-            "send_email",
-            {"MessageId": "ses-message-1"},
-            {
-                "Source": "newsletter@example.com",
-                "Destination": {"ToAddresses": ["person@example.com"]},
-                "Message": {
-                    "Subject": {"Charset": "UTF-8", "Data": "Weekly update"},
-                    "Body": {
-                        "Html": {
-                            "Charset": "UTF-8",
-                            "Data": _html_body_matcher(
-                                [
-                                    'https://mail.example.com/t/o/',
-                                    'https://mail.example.com/t/c/',
-                                    "u=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2",
-                                    'href="mailto:a@example.com"',
-                                    "Unsubscribe or manage preferences",
-                                ]
-                            ),
-                        },
-                        "Text": {
-                            "Charset": "UTF-8",
-                            "Data": _text_body_matcher(
-                                [
-                                    "Hello in text",
-                                    "Unsubscribe or manage preferences: https://mail.example.com/unsubscribe/",
-                                ]
-                            ),
-                        },
-                    },
-                },
-                "ConfigurationSetName": "campaign-events",
-            },
+    assert ses.params["Source"] == "newsletter@example.com"
+    assert ses.params["Destinations"] == ["person@example.com"]
+    assert ses.params["ConfigurationSetName"] == "campaign-events"
+    raw_message = BytesParser(policy=default).parsebytes(ses.params["RawMessage"]["Data"])
+    html_body = raw_message.get_body(preferencelist=("html",)).get_content()
+    text_body = raw_message.get_body(preferencelist=("plain",)).get_content()
+    assert (
+        _html_body_matcher(
+            [
+                "https://mail.example.com/t/o/",
+                "https://mail.example.com/t/c/",
+                "u=https%3A%2F%2Fexample.com%2Fpost%3Fa%3D1%26b%3D2",
+                'href="mailto:a@example.com"',
+                "Unsubscribe or manage preferences",
+            ]
         )
-
-        result = send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+        == html_body
+    )
+    assert (
+        _text_body_matcher(
+            [
+                "Hello in text",
+                "Unsubscribe or manage preferences: https://mail.example.com/unsubscribe/",
+            ]
+        )
+        == text_body
+    )
+    assert raw_message["List-Unsubscribe"].startswith("<https://mail.example.com/unsubscribe/")
+    assert raw_message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
     recipient.refresh_from_db()
     campaign.refresh_from_db()
@@ -106,6 +120,101 @@ def test_campaign_sender_sends_pending_recipient_and_persists_audit_state(campai
     assert event.metadata == {"ses_message_id": "ses-message-1"}
 
 
+@pytest.mark.parametrize("mime_template_enabled", [True, False])
+def test_campaign_with_sender_unsubscribe_template_uses_sender_url(campaign_setup, mime_template_enabled):
+    campaign, recipient = campaign_setup
+    campaign.unsubscribe_url_template = "https://courses.example.com/unsubscribe/{token}/"
+    campaign.save()
+    ses = _RawSesClient()
+    with override_settings(
+        AWS_REGION="us-east-1",
+        DEFAULT_FROM_EMAIL="newsletter@example.com",
+        PUBLIC_BASE_URL="https://mail.example.com",
+        RELAY_MIME_TEMPLATE_ENABLED=mime_template_enabled,
+    ):
+        send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+
+    raw_message = BytesParser(policy=default).parsebytes(ses.params["RawMessage"]["Data"])
+    html_body = raw_message.get_body(preferencelist=("html",)).get_content()
+    text_body = raw_message.get_body(preferencelist=("plain",)).get_content()
+    list_unsubscribe = raw_message["List-Unsubscribe"].strip()
+    assert list_unsubscribe.startswith("<https://courses.example.com/unsubscribe/")
+    assert list_unsubscribe.endswith("/>")
+    assert "{token}" not in list_unsubscribe and "RLYUNS0SENTINEL0TOKEN" not in list_unsubscribe
+    assert raw_message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+    assert "mail.example.com/unsubscribe" not in html_body + text_body
+    assert "https://courses.example.com/unsubscribe/" in html_body
+    assert "Unsubscribe or manage preferences: https://courses.example.com/unsubscribe/" in text_body
+    # List-Id still identifies the Relay audience.
+    assert ".list-id.mail.example.com" in raw_message["List-Id"]
+
+
+@override_settings(PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_without_unsubscribe_template_keeps_relay_unsubscribe(campaign_setup):
+    campaign, _recipient = campaign_setup
+    html_body = build_campaign_html_body(campaign.html_body, "track", "tok", campaign.unsubscribe_url_template)
+    text_body = build_campaign_text_body(campaign.text_body, "tok", campaign.unsubscribe_url_template)
+    assert 'href="https://mail.example.com/unsubscribe/tok"' in html_body
+    assert "https://mail.example.com/unsubscribe/tok" in text_body
+
+
+@override_settings(
+    AWS_REGION="us-east-1",
+    AWS_SES_CONFIGURATION_SET="campaign-events",
+    DEFAULT_FROM_EMAIL="newsletter@example.com",
+    PUBLIC_BASE_URL="https://mail.example.com",
+)
+def test_template_campaign_recipient_override_keeps_tracking_and_unsubscribe(campaign_setup):
+    campaign, recipient = campaign_setup
+    campaign.client.default_sender_id = "newsletter"
+    campaign.client.sender_emails = [{"id": "newsletter", "email": "newsletter@example.com"}]
+    campaign.client.save(update_fields=["default_sender_id", "sender_emails"])
+    template = EmailTemplate.objects.create(
+        client=campaign.client,
+        key="campaign-broadcast",
+        name="Campaign broadcast",
+        subject="{{ subject }}",
+        html_body='<p>{{ body_markdown }} <a href="{{ verify_email_url }}">Verify</a> '
+        '<a href="{{ unsubscribe_url }}">Unsubscribe</a></p>',
+        text_body="{{ body_markdown }} {{ verify_email_url }} {{ unsubscribe_url }}",
+        required_context=["subject", "body_markdown", "verify_email_url", "unsubscribe_url"],
+    )
+    EmailTemplateVersion.objects.create(
+        template=template,
+        version=1,
+        subject=template.subject,
+        html_body=template.html_body,
+        text_body=template.text_body,
+        required_context=template.required_context,
+    )
+    campaign.template_key = template.key
+    campaign.template_version = 1
+    campaign.sender_id = "newsletter"
+    campaign.context = {
+        "subject": campaign.subject,
+        "body_markdown": "Hello",
+        "verify_email_url": "https://example.test/old-verification",
+        "unsubscribe_url": "",
+    }
+    campaign.save(update_fields=["template_key", "template_version", "sender_id", "context"])
+    recipient.context = {"verify_email_url": "https://example.test/current-verification"}
+    recipient.save(update_fields=["context"])
+
+    ses = _RawSesClient()
+    send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+
+    raw_message = BytesParser(policy=default).parsebytes(ses.params["RawMessage"]["Data"])
+    html_body = raw_message.get_body(preferencelist=("html",)).get_content()
+    assert "https://example.test/current-verification" in unquote(html_body)
+    assert "https://example.test/old-verification" not in unquote(html_body)
+    assert html_body.count("/t/o/") == 1
+    assert "/t/c/" in html_body
+    assert "Unsubscribe or manage preferences" in html_body
+    assert "/unsubscribe/" in html_body
+    assert raw_message["List-Unsubscribe"].startswith("<https://mail.example.com/unsubscribe/")
+    assert raw_message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+
+
 @override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")
 def test_campaign_handler_is_idempotent_for_duplicate_sqs_delivery(campaign_setup, monkeypatch):
     campaign, recipient = campaign_setup
@@ -115,6 +224,9 @@ def test_campaign_handler_is_idempotent_for_duplicate_sqs_delivery(campaign_setu
         def send_email(self, **params):
             sends.append(params)
             return {"MessageId": "ses-message-1"}
+
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
 
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: FakeSes())
 
@@ -162,6 +274,9 @@ def test_campaign_sender_records_permanent_failure_and_acknowledges_record(campa
         def send_email(self, **params):
             raise ClientError({"Error": {"Code": "MessageRejected", "Message": "Address rejected"}}, "SendEmail")
 
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
+
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: RejectingSes())
     event = _event_from_payloads([("message-1", _payload(campaign, recipient))])
 
@@ -178,8 +293,10 @@ def test_campaign_sender_records_permanent_failure_and_acknowledges_record(campa
 @override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")
 def test_campaign_handler_returns_partial_batch_failure_for_retryable_send(campaign_setup, monkeypatch):
     campaign, recipient = campaign_setup
-    second_contact = Contact.objects.create(email="second@example.com")
-    second_recipient = CampaignRecipient.objects.create(campaign=campaign, contact=second_contact, email=second_contact.email)
+    second_contact = make_sendable_contact("second@example.com", campaign.audience, campaign.client)
+    second_recipient = CampaignRecipient.objects.create(
+        campaign=campaign, contact=second_contact, email=second_contact.email
+    )
 
     class MixedSes:
         def send_email(self, **params):
@@ -192,6 +309,9 @@ def test_campaign_handler_returns_partial_batch_failure_for_retryable_send(campa
                     "SendEmail",
                 )
             return {"MessageId": "ses-message-2"}
+
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
 
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: MixedSes())
     event = _event_from_payloads(
@@ -215,10 +335,14 @@ def test_campaign_handler_returns_partial_batch_failure_for_retryable_send(campa
 
 
 @override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")
-def test_campaign_handler_refreshes_sent_count_when_single_record_partially_sends_before_retry(campaign_setup, monkeypatch):
+def test_campaign_handler_refreshes_sent_count_when_single_record_partially_sends_before_retry(
+    campaign_setup, monkeypatch
+):
     campaign, recipient = campaign_setup
-    second_contact = Contact.objects.create(email="second@example.com")
-    second_recipient = CampaignRecipient.objects.create(campaign=campaign, contact=second_contact, email=second_contact.email)
+    second_contact = make_sendable_contact("second@example.com", campaign.audience, campaign.client)
+    second_recipient = CampaignRecipient.objects.create(
+        campaign=campaign, contact=second_contact, email=second_contact.email
+    )
 
     class MixedSes:
         def send_email(self, **params):
@@ -231,6 +355,9 @@ def test_campaign_handler_refreshes_sent_count_when_single_record_partially_send
                     "SendEmail",
                 )
             return {"MessageId": "ses-message-1"}
+
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
 
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: MixedSes())
     payload = _payload(campaign, recipient) | {"campaign_recipient_ids": [recipient.id, second_recipient.id]}
@@ -262,14 +389,15 @@ def test_campaign_handler_can_retry_pending_recipient_with_token_hashes_after_tr
         def send_email(self, **params):
             sends.append(params)
             if len(sends) == 1:
-                raise ClientError(
-                    {
-                        "Error": {"Code": "Throttling", "Message": "Rate exceeded"},
-                        "ResponseMetadata": {"HTTPStatusCode": 429},
-                    },
-                    "SendEmail",
-                )
+                # Definitely not sent, but not Throttling (which gets one internal
+                # re-permitted retry in mailing/ses.py): a connect failure returns
+                # the row to PENDING for a batch-level retry. A read timeout would
+                # be ambiguous and end UNKNOWN instead.
+                raise ConnectTimeoutError(endpoint_url="https://email.example.invalid")
             return {"MessageId": "ses-message-2"}
+
+        def send_raw_email(self, **params):
+            return self.send_email(**_raw_to_ses_params(params))
 
     monkeypatch.setattr("mailing.services.campaign_sender.default_ses_client", lambda: FlakySes())
     event = _event_from_payloads([("retry-message", _payload(campaign, recipient))])
@@ -300,6 +428,14 @@ def test_campaign_handler_can_retry_pending_recipient_with_token_hashes_after_tr
     assert token_hash(tracking_token) == recipient.tracking_token_hash
     assert token_hash(unsubscribe_token) == recipient.unsubscribe_token_hash
     assert f"https://mail.example.com/t/c/{tracking_token}?u=" in html_body
+    click_match = re.search(
+        r"/t/c/([A-Za-z0-9_-]+)\?u=([^\"&]+)&amp;s=([0-9a-f]{64})",
+        html_body,
+    )
+    assert click_match is not None
+    click_token, encoded_destination, click_signature = click_match.groups()
+    assert click_token == tracking_token
+    assert verify_click_redirect(click_token, unquote_plus(encoded_destination), click_signature)
     assert f"https://mail.example.com/unsubscribe/{unsubscribe_token}" in text_body
 
 
@@ -310,13 +446,29 @@ def test_campaign_sender_rejects_recipient_ids_from_another_campaign(campaign_se
         client=campaign.client,
         subject="Other",
     )
-    other_recipient = CampaignRecipient.objects.create(campaign=other_campaign, contact=recipient.contact, email=recipient.email)
+    other_recipient = CampaignRecipient.objects.create(
+        campaign=other_campaign, contact=recipient.contact, email=recipient.email
+    )
 
     event = _event_from_payloads([("bad-message", _payload(campaign, other_recipient))])
 
     assert campaign_email_handler(event, None) == {
         "batchItemFailures": [{"itemIdentifier": "bad-message"}],
     }
+
+
+@override_settings(DEBUG=False, TESTING=False, PUBLIC_BASE_URL="http://relay.example.com")
+def test_live_campaign_requires_https_public_base_url(campaign_setup):
+    campaign, _recipient = campaign_setup
+
+    assert "Set PUBLIC_BASE_URL to HTTPS before sending campaigns." in campaign_send_issues(campaign)
+
+
+def test_campaign_preflight_rejects_unresolved_mailchimp_merge_tags(campaign_setup):
+    campaign, _recipient = campaign_setup
+    campaign.html_body = "<html><body>*|HTML:LIST_ADDRESS|* *|UNSUB|*</body></html>"
+
+    assert "Resolve Mailchimp merge tags before sending through Relay." in campaign_send_issues(campaign)
 
 
 @override_settings(PUBLIC_BASE_URL="https://mail.example.com")
@@ -328,9 +480,30 @@ def test_build_campaign_html_body_adds_tracking_pixel_click_links_and_unsubscrib
     )
 
     assert 'src="https://mail.example.com/t/o/tracking-token.gif"' in html
-    assert 'href="https://mail.example.com/t/c/tracking-token?u=https%3A%2F%2Fexample.com%2Fpath"' in html
+    signature = sign_click_redirect("tracking-token", "https://example.com/path")
+    assert (
+        f'href="https://mail.example.com/t/c/tracking-token?u=https%3A%2F%2Fexample.com%2Fpath&amp;s={signature}"'
+        in html
+    )
     assert 'href="/relative"' in html
     assert 'href="https://mail.example.com/unsubscribe/unsubscribe-token"' in html
+
+
+@override_settings(PUBLIC_BASE_URL="https://mail.example.com")
+def test_build_campaign_html_body_rewrites_links_inside_outlook_conditional_comments():
+    html = build_campaign_html_body(
+        '<!--[if mso]><a href="https://example.com/mso">outlook</a><![endif]-->'
+        '<![if !mso]><a href="https://example.com/other">other</a><![endif]>',
+        "tracking-token",
+        "unsubscribe-token",
+    )
+
+    assert "https://example.com/mso" not in html.replace("%3A%2F%2Fexample.com%2Fmso", "")
+    assert '<!--[if mso]><a ses:no-track href="https://mail.example.com/t/c/tracking-token?u=' in html
+    assert "<![endif]-->" in html
+    assert "<![if !mso]>" in html and "<![endif]>" in html
+    assert html.count("ses:no-track") == 3  # mso link, downlevel link, unsubscribe footer
+    assert html.count("/t/o/tracking-token.gif") == 1
 
 
 def _payload(campaign, recipient):
@@ -356,13 +529,34 @@ def _event_from_payloads(message_payloads):
     )
 
 
-def _ses_client():
-    return boto3.client(
-        "ses",
-        region_name="us-east-1",
-        aws_access_key_id="test",
-        aws_secret_access_key="test",
-    )
+class _RawSesClient:
+    def __init__(self):
+        self.params = None
+
+    def send_raw_email(self, **params):
+        self.params = params
+        return {"MessageId": "ses-message-1"}
+
+
+def _raw_to_ses_params(params):
+    message = BytesParser(policy=default).parsebytes(params["RawMessage"]["Data"])
+    body = {}
+    for part in message.walk():
+        if part.get_content_type() == "text/plain":
+            body["Text"] = {"Charset": "UTF-8", "Data": part.get_content()}
+        elif part.get_content_type() == "text/html":
+            body["Html"] = {"Charset": "UTF-8", "Data": part.get_content()}
+    result = {
+        "Source": params["Source"],
+        "Destination": {"ToAddresses": [message["To"]]},
+        "Message": {
+            "Subject": {"Charset": "UTF-8", "Data": str(message["Subject"])},
+            "Body": body,
+        },
+    }
+    if "ConfigurationSetName" in params:
+        result["ConfigurationSetName"] = params["ConfigurationSetName"]
+    return result
 
 
 class _FailingIfCalledSes:
@@ -386,9 +580,8 @@ class _text_body_matcher:
         return all(part in other for part in self.expected_parts)
 
 
-
 def test_full_document_tracking_and_unsubscribe_stay_inside_body():
-    document = '<!doctype html><html><head><title>Email</title></head><BODY><p>Hello</p></BODY></html>'
+    document = "<!doctype html><html><head><title>Email</title></head><BODY><p>Hello</p></BODY></html>"
     rendered = build_campaign_html_body(document, "tracking", "unsubscribe")
     lowered = rendered.lower()
     body_end = lowered.rindex("</body>")
@@ -396,3 +589,101 @@ def test_full_document_tracking_and_unsubscribe_stay_inside_body():
     assert rendered.index('width="1" height="1"') < body_end
     assert lowered.endswith("</body></html>")
     assert lowered.count("</body>") == 1
+
+
+def test_campaign_bodies_replace_mailchimp_uniqid_footer_links():
+    html = (
+        '<html><body><a href="https://mailchi.mp/datatalks.club/weekly-301?e=[UNIQID]">View</a>'
+        '<a href="https://us19.forward-to-friend.com/forward?u=1&id=2&e=[UNIQID]">Forward to a friend</a> · '
+        '<a href="https://club.us19.list-manage.com/profile?u=1&id=2&e=[UNIQID]&c=3">update your preferences</a>'
+        '<a href="https://club.us19.list-manage.com/unsubscribe?u=1&id=2&t=b&e=[UNIQID]&c=3">unsubscribe</a>'
+        "</body></html>"
+    )
+    text = (
+        "View (https://mailchi.mp/datatalks.club/weekly-301?e=[UNIQID])\n"
+        "Forward to a friend (https://us19.forward-to-friend.com/forward?u=1&id=2&e=[UNIQID])\n"
+        "unsubscribe (https://club.us19.list-manage.com/unsubscribe?u=1&id=2&t=b&e=[UNIQID]&c=3)\n"
+    )
+    out_html = build_campaign_html_body(html, "track-tok", "unsub-tok")
+    out_text = build_campaign_text_body(text, "unsub-tok")
+
+    assert "UNIQID" not in out_html
+    assert "forward-to-friend" not in out_html
+    assert "list-manage" not in out_html
+    assert out_html.count("/unsubscribe/unsub-tok") == 3  # preferences, unsubscribe, appended footer
+    assert "UNIQID" not in out_text
+    assert "forward-to-friend" not in out_text
+    assert "list-manage" not in out_text
+    assert "/unsubscribe/unsub-tok" in out_text
+
+
+class _CapturingSes:
+    def __init__(self):
+        self.params = None
+
+    def send_email(self, **params):
+        self.params = params
+        return {"MessageId": "test-message-1"}
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_test_send_uses_client_default_sender(campaign_setup):
+    campaign, _recipient = campaign_setup
+    client = campaign.client
+    client.sender_emails = [{"id": "alexey", "email": "Alexey Grigorev <alexey@datatalks.club>"}]
+    client.default_sender_id = "alexey"
+    client.save(update_fields=["sender_emails", "default_sender_id", "updated_at"])
+    ses = _CapturingSes()
+
+    assert send_campaign_test_message(campaign, "test@example.com", ses_client=ses) == "test-message-1"
+    assert ses.params["Source"] == "Alexey Grigorev <alexey@datatalks.club>"
+    assert ses.params["Destination"] == {"ToAddresses": ["test@example.com"]}
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_test_send_falls_back_to_default_from_without_sender(campaign_setup):
+    campaign, _recipient = campaign_setup
+    ses = _CapturingSes()
+
+    send_campaign_test_message(campaign, "test@example.com", ses_client=ses)
+
+    assert ses.params["Source"] == "relay@example.com"
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_test_send_explicit_source_wins_over_client_sender(campaign_setup):
+    campaign, _recipient = campaign_setup
+    client = campaign.client
+    client.sender_emails = [{"id": "alexey", "email": "Alexey Grigorev <alexey@datatalks.club>"}]
+    client.default_sender_id = "alexey"
+    client.save(update_fields=["sender_emails", "default_sender_id", "updated_at"])
+    ses = _CapturingSes()
+
+    send_campaign_test_message(campaign, "test@example.com", ses_client=ses, source="explicit@example.com")
+
+    assert ses.params["Source"] == "explicit@example.com"
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_batch_send_uses_client_default_sender(campaign_setup):
+    campaign, recipient = campaign_setup
+    client = campaign.client
+    client.sender_emails = [{"id": "alexey", "email": "Alexey Grigorev <alexey@datatalks.club>"}]
+    client.default_sender_id = "alexey"
+    client.save(update_fields=["sender_emails", "default_sender_id", "updated_at"])
+    ses = _RawSesClient()
+
+    result = send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+
+    assert result.sent_count == 1
+    assert ses.params["Source"] == "Alexey Grigorev <alexey@datatalks.club>"
+
+
+@override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_campaign_batch_send_falls_back_to_default_from_without_sender(campaign_setup):
+    campaign, recipient = campaign_setup
+    ses = _RawSesClient()
+
+    send_campaign_batch(_payload(campaign, recipient), ses_client=ses)
+
+    assert ses.params["Source"] == "relay@example.com"

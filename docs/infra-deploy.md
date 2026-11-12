@@ -1,5 +1,11 @@
 # Infrastructure And Deploy
 
+> **Datamailer future-plan documentation:** Datamailer currently has a
+> sandbox deployment only; it has no production environment. Production
+> sections below describe planned AWS architecture and checks, not active
+> operations. These docs do not describe Relay's Contabo deployment; see
+> [Relay deployment](relay-deployment.md) for that system.
+
 This is the issue #13 MVP deployment path. It is intentionally practical without requiring AWS credentials in CI: generated definitions are validated locally, while account-specific IDs, DNS, SES production access, alarm subscribers, and restore drills remain HUMAN checks.
 
 ## Shape

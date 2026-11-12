@@ -1,11 +1,12 @@
 """Audience task screens with scope-preserving links and policy-based summaries."""
 
 from django.core.paginator import Paginator
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Count, Q
 from django.urls import reverse
 
 from mailing.filter_navigation import removable_contact_filters
 from mailing.models import (
+    Campaign,
     CampaignRecipient,
     CampaignRecipientSkipReason,
     CampaignRecipientStatus,
@@ -93,23 +94,25 @@ def eligibility_summary(audience, client):
     This is an unsegmented member count. Campaign category preferences and tag
     filters apply later; it is deliberately not presented as a campaign estimate.
     """
-    subscriptions = Subscription.objects.filter(contact_id=OuterRef("pk"), audience=audience)
+    subscriptions = Subscription.objects.filter(audience=audience).order_by()
     client_subscriptions = subscriptions.filter(client=client)
     audience_subscriptions = subscriptions.filter(client__isnull=True)
-    contacts = Contact.objects.filter(Exists(client_subscriptions))
-    eligible = (
-        contacts.filter(Exists(client_subscriptions.filter(status="subscribed")))
-        .filter(
+    contacts = Contact.objects.filter(id__in=client_subscriptions.values("contact_id"))
+    eligible_q = (
+        Q(id__in=client_subscriptions.filter(status="subscribed").values("contact_id"))
+        & (
             Q(verified_at__isnull=False)
-            | Q(Exists(client_subscriptions.filter(verified_at__isnull=False)))
-            | Q(Exists(audience_subscriptions.filter(verified_at__isnull=False)))
+            | Q(id__in=client_subscriptions.filter(verified_at__isnull=False).values("contact_id"))
+            | Q(id__in=audience_subscriptions.filter(verified_at__isnull=False).values("contact_id"))
         )
-        .filter(global_unsubscribed_at__isnull=True, hard_bounced_at__isnull=True, complained_at__isnull=True)
-        .exclude(email_validation_status__in=NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES)
-        .exclude(Exists(audience_subscriptions.filter(status="unsubscribed")))
+        & Q(global_unsubscribed_at__isnull=True, hard_bounced_at__isnull=True, complained_at__isnull=True)
+        & ~Q(email_validation_status__in=NON_DELIVERABLE_EMAIL_VALIDATION_STATUSES)
+        & ~Q(id__in=audience_subscriptions.filter(status="unsubscribed").values("contact_id"))
     )
-    total = contacts.count()
-    eligible_count = eligible.count()
+    eligible = contacts.filter(eligible_q)
+    counts = contacts.aggregate(total=Count("pk"), eligible=Count("pk", filter=eligible_q))
+    total = counts["total"]
+    eligible_count = counts["eligible"]
     excluded = contacts.exclude(pk__in=eligible.values("pk"))
     return (
         {"total": total, "eligible": eligible_count, "excluded": total - eligible_count},
@@ -119,37 +122,42 @@ def eligibility_summary(audience, client):
 
 
 def scoped_health_summary(audience, client):
-    subscriptions = Subscription.objects.filter(contact_id=OuterRef("pk"), audience=audience, client=client)
-    contacts = Contact.objects.filter(Exists(subscriptions))
-    recipients = CampaignRecipient.objects.filter(
-        contact_id=OuterRef("pk"), campaign__audience=audience, campaign__client=client
+    member_subs = Subscription.objects.filter(audience=audience, client=client).order_by()
+    contacts = Contact.objects.filter(id__in=member_subs.values("contact_id"))
+    rec_scope = CampaignRecipient.objects.filter(campaign__audience=audience, campaign__client=client).order_by()
+    evt_scope = EmailEvent.objects.filter(audience=audience, client=client).order_by()
+    sent = Q(id__in=rec_scope.filter(sent_at__isnull=False).values("contact_id")) | Q(
+        id__in=rec_scope.filter(status="sent").values("contact_id")
     )
-    events = EmailEvent.objects.filter(contact_id=OuterRef("pk"), audience=audience, client=client)
-    sent = recipients.filter(Q(sent_at__isnull=False) | Q(status="sent"))
-    opened = Q(Exists(recipients.filter(first_opened_at__isnull=False))) | Q(
-        Exists(events.filter(event_type=EmailEventType.OPEN))
+    opened = Q(id__in=rec_scope.filter(first_opened_at__isnull=False).values("contact_id")) | Q(
+        id__in=evt_scope.filter(event_type=EmailEventType.OPEN).values("contact_id")
     )
-    clicked = Q(Exists(recipients.filter(first_clicked_at__isnull=False))) | Q(
-        Exists(events.filter(event_type=EmailEventType.CLICK))
+    clicked = Q(id__in=rec_scope.filter(first_clicked_at__isnull=False).values("contact_id")) | Q(
+        id__in=evt_scope.filter(event_type=EmailEventType.CLICK).values("contact_id")
     )
     definitions = [
         ("members", "Members", Q(), ""),
         (
             "subscribed",
             "Subscribed",
-            Q(Exists(subscriptions.filter(status="subscribed"))),
+            Q(id__in=member_subs.filter(status="subscribed").values("contact_id")),
             "subscription_status=subscribed",
         ),
-        ("pending", "Pending", Q(Exists(subscriptions.filter(status="pending"))), "subscription_status=pending"),
+        (
+            "pending",
+            "Pending",
+            Q(id__in=member_subs.filter(status="pending").values("contact_id")),
+            "subscription_status=pending",
+        ),
         (
             "unsubscribed",
             "Unsubscribed",
-            Q(Exists(subscriptions.filter(status="unsubscribed"))),
+            Q(id__in=member_subs.filter(status="unsubscribed").values("contact_id")),
             "subscription_status=unsubscribed",
         ),
         ("verified", "Verified", Q(verified_at__isnull=False), "verified=verified"),
         ("unverified", "Unverified", Q(verified_at__isnull=True), "verified=unverified"),
-        ("inactive", "Inactive", Q(Exists(sent)) & ~opened & ~clicked, None),
+        ("inactive", "Inactive", sent & ~opened & ~clicked, None),
         (
             "global_unsubscribed",
             "Global unsubscribed",
@@ -176,8 +184,8 @@ def scoped_health_summary(audience, client):
 
 
 def scoped_member_contacts(audience, client):
-    membership = Subscription.objects.filter(contact_id=OuterRef("pk"), audience=audience, client=client)
-    return Contact.objects.filter(Exists(membership))
+    membership = Subscription.objects.filter(audience=audience, client=client).order_by().values("contact_id")
+    return Contact.objects.filter(id__in=membership)
 
 
 def scoped_tags(audience, client):
@@ -198,9 +206,11 @@ def scoped_breakdowns(audience, client):
         choices=[(value, email_validation_label(value)) for value, _label in EmailValidationStatus.choices],
     )
     result["tags"] = scoped_tags(audience, client)
+    member_ids = Subscription.objects.filter(audience=audience, client=client).order_by().values("contact_id")
+    campaign_ids = Campaign.objects.filter(audience=audience, client=client).order_by().values("id")
     recipients = CampaignRecipient.objects.filter(
-        campaign__audience=audience, campaign__client=client, contact__in=contacts
-    )
+        campaign_id__in=campaign_ids, contact_id__in=member_ids
+    ).order_by()
     for field, choices in [
         ("status", CampaignRecipientStatus.choices),
         ("skip_reason", CampaignRecipientSkipReason.choices),
@@ -249,10 +259,11 @@ def audience_page_context(request, audience, active_client):
     base = reverse("mailing:audience_detail", args=[audience.id])
     counts, eligible_ids, excluded_ids = eligibility_summary(audience, active_client)
     count_links = []
+    chosen = request.GET.get("eligibility")
     for key, title in [
-        ("total", "Total members"),
-        ("eligible", "Eligible for marketing"),
-        ("excluded", "Excluded from marketing"),
+        ("total", "All members"),
+        ("eligible", "Eligible"),
+        ("excluded", "Excluded"),
     ]:
         params = request.GET.copy()
         for field in [*FILTER_KEYS.values(), "page", "event_type", "eligibility", "inactive_since"]:
@@ -260,7 +271,10 @@ def audience_page_context(request, audience, active_client):
         params["section"] = "members"
         if key != "total":
             params["eligibility"] = key
-        count_links.append({"label": title, "value": counts[key], "url": base + "?" + params.urlencode()})
+        current = section == "members" and (chosen == key or (key == "total" and chosen not in {"eligible", "excluded"}))
+        count_links.append(
+            {"label": title, "value": counts[key], "url": base + "?" + params.urlencode(), "current": current}
+        )
     params = request.GET.copy()
     params.pop("page", None)
     params["section"] = section

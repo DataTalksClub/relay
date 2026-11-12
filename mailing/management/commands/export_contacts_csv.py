@@ -20,7 +20,7 @@ class Command(BaseCommand):
         parser.add_argument("--email-validation-status", default="", help="Optional email validation status filter.")
         parser.add_argument("--suppression", default="", help="none, any, global_unsubscribed, hard_bounced, or complained.")
         parser.add_argument("--updated-since", default="", help="Optional ISO datetime lower bound for contact updates.")
-        parser.add_argument("--limit", default="10000", help="Maximum rows to export, up to 10000.")
+        parser.add_argument("--limit", default="2000", help="Maximum rows to export, up to 2000 (sync cap; page for more).")
 
     def handle(self, *args, **options):
         client = Client.objects.filter(

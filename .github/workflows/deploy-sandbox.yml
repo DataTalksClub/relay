@@ -2,11 +2,12 @@ name: Deploy Relay Sandbox
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "*.md"
+  # The push trigger was retired on 2026-10-05 during the dtcdev->Relay
+  # transfer, and push-to-main deploys moved to deploy-dev.yml
+  # (dev.relay.datatalks.club). The host relay.dtcdev.click
+  # (i-03b7cd5de0a10a889) was not retired with the pipeline and was later
+  # observed serving again; the manual dispatch remains so touching the
+  # retired sandbox auto-deploy is always a conscious choice.
 
 concurrency:
   group: relay-sandbox
@@ -18,7 +19,11 @@ permissions:
 
 env:
   AWS_REGION: eu-west-1
-  SANDBOX_INSTANCE_ID: ${{ vars.RELAY_SANDBOX_INSTANCE_ID || 'i-03b7cd5de0a10a889' }}
+  # The host is found by its Terraform Name tag (aws-infra sandbox/relay), so a
+  # replaced instance needs no change here. RELAY_SANDBOX_INSTANCE_ID, when set,
+  # pins a specific instance instead.
+  SANDBOX_INSTANCE_ID: ${{ vars.RELAY_SANDBOX_INSTANCE_ID }}
+  SANDBOX_INSTANCE_NAME: relay-sandbox-web
   SANDBOX_HEALTH_URL: ${{ vars.RELAY_SANDBOX_HEALTH_URL || 'https://relay.dtcdev.click/health/ready' }}
   SANDBOX_DEPLOY_ROLE_ARN: ${{ vars.RELAY_SANDBOX_DEPLOY_ROLE_ARN || 'arn:aws:iam::817685572750:role/relay-sandbox-github-deploy' }}
 
@@ -41,8 +46,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: test
-    # Push to main deploys relay.dtcdev.click. A manual dispatch deploys the
-    # selected ref to that same sandbox host. Production is a separate workflow.
+    # A manual dispatch deploys the selected ref to the sandbox host.
+    # Push-to-main deployment moved to deploy-dev.yml. Production is a
+    # separate workflow (deploy-prod.yml, manual promote only).
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Configure AWS credentials
@@ -51,8 +57,46 @@ jobs:
           role-to-assume: ${{ env.SANDBOX_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Find the sandbox host
+        id: host
+        run: |
+          set -euo pipefail
+          instance_id="$SANDBOX_INSTANCE_ID"
+          if [[ -z "$instance_id" ]]; then
+            ids=$(aws ec2 describe-instances \
+              --region "$AWS_REGION" \
+              --filters "Name=tag:Name,Values=$SANDBOX_INSTANCE_NAME" \
+                        "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+              --query 'Reservations[].Instances[].InstanceId' \
+              --output text)
+            read -r -a found <<<"$ids"
+            if [[ ${#found[@]} -ne 1 ]]; then
+              echo "Expected exactly one instance tagged Name=$SANDBOX_INSTANCE_NAME, found ${#found[@]}: ${ids:-none}" >&2
+              exit 1
+            fi
+            instance_id="${found[0]}"
+          fi
+          state=$(aws ec2 describe-instances \
+            --region "$AWS_REGION" \
+            --instance-ids "$instance_id" \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
+          ping=$(aws ssm describe-instance-information \
+            --region "$AWS_REGION" \
+            --filters "Key=InstanceIds,Values=$instance_id" \
+            --query 'InstanceInformationList[0].PingStatus' \
+            --output text)
+          echo "Sandbox host $instance_id: EC2 state=$state, SSM ping=$ping"
+          if [[ "$state" != running || "$ping" != Online ]]; then
+            echo "::error::Relay sandbox host $instance_id is not reachable through SSM (EC2 state=$state, SSM ping=$ping). Start or recover the instance; the deploy cannot run until its SSM agent is Online." >&2
+            exit 1
+          fi
+          echo "instance_id=$instance_id" >>"$GITHUB_OUTPUT"
+
       - name: Deploy the complete Relay release
         id: deploy
+        env:
+          SANDBOX_INSTANCE_ID: ${{ steps.host.outputs.instance_id }}
         run: |
           set -euo pipefail
           command_id=$(
@@ -83,6 +127,8 @@ jobs:
 
       - name: Show deployment output
         if: always()
+        env:
+          SANDBOX_INSTANCE_ID: ${{ steps.host.outputs.instance_id }}
         run: |
           command_id="${{ steps.deploy.outputs.command_id }}"
           if [[ -z "$command_id" ]]; then

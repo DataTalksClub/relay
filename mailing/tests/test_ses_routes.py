@@ -8,6 +8,8 @@ from django.utils import timezone
 from mailing import aws
 from mailing.ses_routes import configuration_set_for_source, parse_ses_domain_routes
 
+pytestmark = pytest.mark.django_db
+
 SANDBOX_ROLE = "arn:aws:iam::817685572750:role/relay-sandbox-email-send"
 ROUTES = (
     "dtcdev.click role="
@@ -60,8 +62,13 @@ def test_sandbox_domain_assumes_the_sandbox_role(monkeypatch):
         calls.append((service_name, kwargs.get("region_name")))
         return Sts() if service_name == "sts" else object()
 
-    aws._credential_cache.clear()
+    def fake_role_client(service_name, role_arn, kwargs):
+        aws._refreshable_credentials(role_arn)
+        calls.append((service_name, kwargs["region_name"]))
+        return object()
+
     monkeypatch.setattr(aws.boto3, "client", fake_client)
+    monkeypatch.setattr(aws, "_role_client", fake_role_client)
 
     aws.ses_client_for_source("hello@pocketshell.io")
     aws.ses_client_for_source("relay@datatalks.club")

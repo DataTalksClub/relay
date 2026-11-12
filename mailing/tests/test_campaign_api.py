@@ -1,3 +1,4 @@
+
 import pytest
 from django.urls import reverse
 from django.utils import timezone
@@ -198,6 +199,43 @@ def test_campaign_api_upserts_and_gets_by_external_key(client, audience, api_cli
     assert Campaign.objects.count() == 1
 
 
+def test_campaign_api_roundtrips_template_context_and_unverified_list_scope(
+    client, audience, api_client_record,
+):
+    payload = campaign_payload(audience, api_client_record) | {
+        "recipient_list_key": "aishl-campaign-42",
+        "allow_unverified": True,
+        "context": {
+            "subject": "Please verify",
+            "body_markdown": "Hello",
+            "verify_email_url": "",
+        },
+    }
+
+    response = put_campaign(client, "aishl-campaign-42", payload)
+
+    assert response.status_code == 201
+    saved = response.json()["campaign"]
+    assert saved["allow_unverified"] is True
+    assert saved["recipient_list_key"] == "aishl-campaign-42"
+    assert saved["context"] == payload["context"]
+
+
+def test_campaign_api_requires_recipient_list_when_allowing_unverified(
+    client, audience, api_client_record,
+):
+    response = put_campaign(
+        client,
+        "unverified-without-list",
+        campaign_payload(audience, api_client_record) | {"allow_unverified": True},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {
+        "recipient_list_key": "required_when_allowing_unverified",
+    }
+
+
 def test_campaign_api_rejects_cross_audience_update(client, organization, audience, api_client_record):
     other_audience = Audience.objects.create(
         organization=organization,
@@ -284,7 +322,7 @@ def test_campaign_api_queue_snapshots_and_enqueues_pending_recipients(
         {"audience": audience.slug, "client": api_client_record.slug},
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 200
     body = response.json()
     assert body["queued"] is True
     assert body["batch_count"] == 1
@@ -301,7 +339,7 @@ def test_campaign_api_queue_snapshots_and_enqueues_pending_recipients(
         {"audience": audience.slug, "client": api_client_record.slug},
     )
 
-    assert replay.status_code == 202
+    assert replay.status_code == 200
     replay_body = replay.json()
     assert replay_body["queued"] is False
     assert replay_body["batch_count"] == 0
@@ -457,7 +495,7 @@ def test_campaign_api_test_send_sends_explicit_recipients_without_campaign_recip
         },
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 200
     body = response.json()
     assert body["sent_count"] == 2
     assert body["recipients"] == [
@@ -587,6 +625,7 @@ def test_campaign_api_recipients_list_dispositions_and_status_filter(
         status=CampaignRecipientStatus.SENT,
         ses_message_id="ses-1",
         sent_at=sent_at,
+        context={"client_recipient_key": "website-delivery-42"},
     )
     failed_recipient = campaign_recipient_row(
         campaign,
@@ -616,6 +655,7 @@ def test_campaign_api_recipients_list_dispositions_and_status_filter(
     sent_row = next(row for row in body["recipients"] if row["id"] == sent_recipient.id)
     assert sent_row["status"] == CampaignRecipientStatus.SENT
     assert sent_row["ses_message_id"] == "ses-1"
+    assert sent_row["client_recipient_key"] == "website-delivery-42"
     assert sent_row["sent_at"] == isoformat(sent_at)
     failed_row = next(row for row in body["recipients"] if row["id"] == failed_recipient.id)
     assert failed_row["status"] == CampaignRecipientStatus.FAILED
@@ -852,3 +892,75 @@ def test_campaign_api_retry_rejects_recipient_from_another_campaign(
 class _FailingIfCalledSes:
     def send_email(self, **params):
         raise AssertionError("SES should not be called")
+
+
+def test_client_test_send_fanout_cap_precedes_provider_calls(client, audience, api_client_record, monkeypatch):
+    calls = []
+    monkeypatch.setattr("mailing.services.api.send_campaign_test_message", lambda *args: calls.append(args))
+    put_campaign(client, "capped-test", campaign_payload(audience, api_client_record))
+    response = post_campaign_test_send(client, "capped-test", {
+        "audience": audience.slug, "client": api_client_record.slug,
+        "emails": ["a@example.com", "b@example.com", "c@example.com"],
+    })
+    assert response.status_code == 400
+    assert not calls
+
+
+def test_client_test_send_returns_partial_provider_outcome(client, audience, api_client_record, monkeypatch):
+    from botocore.exceptions import BotoCoreError  # noqa: PLC0415
+    from django.db import connection  # noqa: PLC0415
+    from django.test.utils import CaptureQueriesContext  # noqa: PLC0415
+
+    calls = []
+    def send(campaign, email):
+        calls.append(email)
+        if len(calls) == 2:
+            raise BotoCoreError()
+        return "accepted-id"
+    monkeypatch.setattr("mailing.services.api.send_campaign_test_message", send)
+    put_campaign(client, "partial-test", campaign_payload(audience, api_client_record))
+    with CaptureQueriesContext(connection) as queries:
+        response = post_campaign_test_send(client, "partial-test", {
+            "audience": audience.slug, "client": api_client_record.slug,
+            "emails": ["a@example.com", "b@example.com"],
+        })
+    assert response.status_code == 200
+    assert response.json()["sent_count"] == 1
+    assert response.json()["unconfirmed_email"] == "b@example.com"
+    assert len(queries) < 20
+    assert len(calls) == 2
+
+
+def test_campaign_api_stores_sender_unsubscribe_url_template(client, audience, api_client_record):
+    template = "https://courses.example.com/unsubscribe/{token}/"
+    response = put_campaign(
+        client,
+        "cmp-unsub-template",
+        campaign_payload(audience, api_client_record) | {"unsubscribe_url_template": template},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["campaign"]["unsubscribe_url_template"] == template
+    assert Campaign.objects.get().unsubscribe_url_template == template
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    [
+        ("http://courses.example.com/u/{token}/", "must_be_https_url"),
+        ("https://courses.example.com/u/", "must_contain_token_placeholder"),
+        ("https://courses.example.com/{token}/{token}", "must_contain_token_placeholder"),
+        ("https://user:pw@courses.example.com/{token}", "must_be_https_url"),
+        (123, "must_be_string"),
+    ],
+)
+def test_campaign_api_rejects_invalid_unsubscribe_url_template(client, audience, api_client_record, value, code):
+    response = put_campaign(
+        client,
+        "cmp-unsub-bad",
+        campaign_payload(audience, api_client_record) | {"unsubscribe_url_template": value},
+    )
+
+    assert response.status_code == 400
+    assert Campaign.objects.count() == 0
+    assert code in str(response.json())

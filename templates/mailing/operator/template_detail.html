@@ -106,7 +106,7 @@
         <p>No example context configured. Preview rendering uses an empty context.</p>
       {% endif %}
       {% if full_preview.html_body %}<h3>Rendered HTML source</h3><pre><code>{{ full_preview.html_body|force_escape }}</code></pre>{% endif %}
-      <p class="helptext">Updated {{ template.updated_at|date:"Y-m-d H:i" }} · Integration key: {{ template.key }}</p>
+      <p class="helptext">Updated <span class="data-time">{{ template.updated_at|date:"Y-m-d H:i" }}</span> · Integration key: {{ template.key }}</p>
       <a class="button secondary" href="{% url 'mailing:api_docs' %}">API reference</a>
       <a class="button secondary" href="/admin/mailing/emailtemplate/{{ template.id }}/change/">Edit template</a>
     </section>
@@ -137,7 +137,7 @@
                   {% endif %}
                 </td>
                 <td><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
-                <td class="nowrap">{{ row.message.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="nowrap"><span class="data-time">{{ row.message.created_at|date:"Y-m-d H:i" }}</span></td>
                 <td class="truncate">{{ row.message.last_error|default:"—" }}</td>
               </tr>
             {% endfor %}

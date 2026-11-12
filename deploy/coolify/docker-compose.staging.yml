@@ -1,0 +1,524 @@
+# Coolify service template for Relay staging (Contabo).
+# Secrets (DATABASE_URL, SECRET_KEY, API keys, etc.) live in Coolify UI / API
+# environment variables — never inline them here.
+# Image tag: __IMAGE_TAG__ is substituted by .github/workflows/deploy-prod.yml
+# (manual promote of a dev-proven release) with the exact format
+# YYYYMMDD-HHMMSS-<7> (never :latest, never sha-<…>).
+# CD path: GitHub Actions builds → GHCR → Coolify deploy API (no git clone on Contabo).
+#
+# Service set mirrors scripts/deploy_relay_sandbox.sh production list, minus
+# inbound is enabled by the per-domain receipt-rule migration:
+#   web                gunicorn (public; Traefik domains managed in Coolify UI)
+#   worker             django.tasks DB worker on queues "transactional,default"
+#                      (transactional sends + legacy default drain; never runs
+#                      campaign batches, so a blast cannot delay account mail)
+#   campaign-worker    django.tasks DB worker on queue "campaign" (exactly ONE
+#                      process: the SES rate limiter is per-process and a second
+#                      replica would multiply the send rate)
+#   provider-events-worker[-2..6]  django.tasks DB workers on queue "provider-events" (parallel consumers) (SES/inbound)
+#   tracking-worker    django.tasks DB worker on queue "tracking" (opens/clicks/deferred unsubscribes)
+#   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
+#   ses-ingress        drains SQS relay-production-ses-webhooks into django.tasks
+#   cmp-callbacks      CMP webhook outbox dispatcher
+#   aisl-ses-ingress   transports AISHL SES notifications to its webhook
+#   sandbox-ses-ingress drains SQS relay-sandbox-ses-webhooks into django.tasks
+#   client-callbacks   tenant client-callback outbox dispatcher
+#   recipient-imports  recipient-list import jobs
+# There is no prune container: finished django-tasks result rows are pruned by
+# the scheduler loop itself (jobs.services.prune_finished_task_results, daily,
+# 14-day retention, all queues). The retired AWS EventBridge
+# relay-production-prune-database rule referenced a host script that was never
+# implemented here and must stay retired: the scheduler is the single owner.
+# Inbound ingress consumes only SQS_INBOUND_EMAIL_QUEUE_URL, configured in Coolify.
+# DEV has no inbound ingress and cannot drain this production queue.
+services:
+  web:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      DEBUG: "0"
+      EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+      ALLOWED_HOSTS: relay.datatalks.club,origin.relay.datatalks.club,localhost,127.0.0.1,169.58.124.141
+    command:
+      - gunicorn
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "2"
+      - --access-logfile
+      - "-"
+      - relay.wsgi:application
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    expose:
+      - "8000"
+    # Preserve the existing production routing managed outside this compose.
+    labels:
+      traefik.enable: "false"
+
+  worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    # Transactional sends on their own lane plus the legacy default drain
+    # (jobs, campaign test sends, process_email_event, and any pre-split
+    # rows the 0049 migration did not move). Never consumes "campaign", so
+    # transactional mail never waits behind a campaign batch.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional,default", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-2:
+    # Transactional-lane consumer 2 of 11 (worker is 1). One process sends
+    # one message at a time (~4 msg/s measured on prod, one SES round
+    # trip each), so bulk transactional fan-out needs >=10 to reach 40/s.
+    # Replicas are safe: tasks are claimed with SKIP LOCKED, sends keep
+    # their persisted claim/terminal checks, and the SES limiter is the
+    # shared Postgres token bucket. Only "transactional": the legacy
+    # "default" drain stays on the single worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-3:
+    # Transactional-lane consumer 3 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-4:
+    # Transactional-lane consumer 4 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-5:
+    # Transactional-lane consumer 5 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-6:
+    # Transactional-lane consumer 6 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-7:
+    # Transactional-lane consumer 7 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-8:
+    # Transactional-lane consumer 8 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-9:
+    # Transactional-lane consumer 9 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-10:
+    # Transactional-lane consumer 10 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  transactional-worker-11:
+    # Transactional-lane consumer 11 of 11; see transactional-worker-2.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "transactional", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  campaign-worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.5"
+    mem_limit: 512m
+    # The ONLY consumer of the campaign lane. Exactly one process: the SES
+    # rate limiter is per-process (see docs/worker-contracts.md); a second
+    # replica is the later global-limiter work, not this deploy.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 40s
+
+  provider-events-worker:
+    # Consumer 1 of 6 on the provider-events lane. Replicas are safe: tasks are
+    # claimed with SELECT ... FOR UPDATE SKIP LOCKED, events lock only their
+    # recipient row and dedupe on the unique provider_event_id, so N processes
+    # never apply an event twice. One process drains ~30 ev/s (local benchmark,
+    # scripts/bench_provider_events.py); the send peak needs >= 2x ~45 msg/s.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  provider-events-worker-2:
+    # Consumer 2 of 6; see provider-events-worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  provider-events-worker-3:
+    # Consumer 3 of 6; see provider-events-worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  provider-events-worker-4:
+    # Consumer 4 of 6; see provider-events-worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  provider-events-worker-5:
+    # Consumer 5 of 6; see provider-events-worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  provider-events-worker-6:
+    # Consumer 6 of 6; see provider-events-worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "provider-events", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  tracking-worker:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    # Recipient opens/clicks and deferred unsubscribes accepted by the web
+    # (/t/o, /t/c, /unsubscribe). Own lane: never waits behind sends or an SES backlog.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "tracking", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 20s
+
+  scheduler:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    environment:
+      RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG: /run/relay-ops-msmtprc
+    volumes:
+      # Reuse the existing host ops transport; never copy SMTP secrets into git/env.
+      - /etc/msmtprc:/run/relay-ops-msmtprc:ro
+    command: ["python", "manage.py", "run_relay_scheduler", "--interval", "15"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  ses-ingress:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "drain_sqs_ingress", "ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  cmp-callbacks:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "process_cmp_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  aisl-ses-ingress:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    # AISHL is the sole mutation owner; acknowledge only after its HTTP 200.
+    command: ["python", "manage.py", "drain_sqs_ingress", "aisl-ses-webhooks", "--batch-size", "1", "--wait-time", "20"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  sandbox-ses-ingress:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    environment:
+      AWS_ACCESS_KEY_ID: ${SANDBOX_AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${SANDBOX_AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: eu-west-1
+      SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL: https://sqs.eu-west-1.amazonaws.com/817685572750/relay-sandbox-ses-webhooks
+    command: ["python", "manage.py", "drain_sqs_ingress", "sandbox-ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  client-callbacks:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "process_client_callbacks", "--batch-size", "25", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  recipient-imports:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "process_recipient_list_imports", "--batch-size", "10", "--idle-sleep", "5"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  inbound-deliveries:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    command: ["python", "manage.py", "process_inbound_deliveries"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+
+  inbound-ingress:
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.2"
+    mem_limit: 512m
+    # Stage code before receipt cutover; absence of queue is intentional standby.
+    command: ["sh", "-ec", 'if [ -n "$${SQS_INBOUND_EMAIL_QUEUE_URL:-}" ]; then exec python manage.py drain_sqs_ingress inbound-email --batch-size 10 --wait-time 20; else echo "inbound ingress standby: no queue configured"; exec sleep infinity; fi']
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -z \"$${SQS_INBOUND_EMAIL_QUEUE_URL:-}\" ]; then exit 0; fi; test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s

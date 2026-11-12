@@ -9,6 +9,9 @@ cannot be replaced by an in-application queue.
 Callers keep the same function names, so nothing downstream changes shape.
 """
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import taskdeck
 
 
@@ -28,7 +31,33 @@ def enqueue_transactional_email(payload):
     return result
 
 
+_campaign_buffer = ContextVar("campaign_enqueue_buffer", default=None)
+
+
+@contextmanager
+def batch_campaign_enqueues(correlation_id):
+    """Collect the existing send enqueues, then insert them as one batch."""
+    from mailing.services.bulk_enqueue import enqueue_send_tasks  # noqa: PLC0415
+    from mailing.tasks import send_campaign_email_batch  # noqa: PLC0415
+
+    payloads = []
+    token = _campaign_buffer.set(payloads)
+    try:
+        yield
+    finally:
+        _campaign_buffer.reset(token)
+    if payloads and not enqueue_send_tasks(
+        send_campaign_email_batch, payloads, entity_type="campaign", correlation_id=correlation_id,
+    ):
+        for payload in payloads:
+            enqueue_campaign_email(payload)
+
+
 def enqueue_campaign_email(payload):
+    buffer = _campaign_buffer.get()
+    if buffer is not None:
+        buffer.append(payload)
+        return None
     from mailing import tasks  # noqa: PLC0415 - avoids service/enqueue import cycles
 
     result = tasks.send_campaign_email_batch.enqueue(payload)

@@ -42,699 +42,34 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* --- shared shell pieces: icons, brand mark, canvas toolbar -------------- */
-
+/* Inline 24-grid icons in content (disclosure chevrons). The shell's icons
+   are dakit's (dk-nav-item__icon, dk-icon-button). */
 .icon {
   flex: none;
 }
 
-.icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  min-height: 0;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--dk-radius-md);
-  background: transparent;
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-md);
+select:where(:not([class*="dk-"]))[multiple] option {
+  padding: var(--dk-space-1);
 }
 
-.icon-button:hover {
-  color: var(--dk-text-primary);
-  border-color: transparent;
-  background: var(--dk-bg-hover);
-  text-decoration: none;
-}
-
-/* Canvas toolbar: the family shell has no top bar on desktop — the sidebar
-   footer carries the global controls. For operator shells the toolbar is the
-   mobile top bar only (menu + page title); standalone views keep it. */
-.has-sidebar .app-toolbar {
-  display: none;
-}
-
-.app-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: var(--dk-space-2);
-  min-height: 64px;
-  padding: 0 var(--dk-space-6);
-  border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-surface);
-}
-
-.topbar-title {
-  display: none;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dk-text-heading);
-  font-size: 17px;
-  font-weight: var(--dk-weight-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--dk-space-1);
-  margin-left: auto;
-}
-
-.toolbar-actions .icon-button .icon {
-  width: 18px;
-  height: 18px;
-}
-
-.toolbar-actions .icon-button {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  color: var(--dk-text-muted);
-}
-
-/* Theme toggle shows one glyph per theme; the boot script pins data-theme
-   before first paint, so the swap is pure CSS. */
-.theme-icon-sun {
-  display: none;
-}
-
-:root[data-theme="dark"] .theme-icon-moon {
-  display: none;
-}
-
-:root[data-theme="dark"] .theme-icon-sun {
-  display: block;
-}
-
-/* Account control: avatar chip + name + chevron opening the family
-   account popover (identity, appearance, sign-out). */
-.account-menu {
-  position: relative;
-}
-
-.account-menu summary {
-  list-style: none;
-}
-
-.account-menu summary::-webkit-details-marker {
-  display: none;
-}
-
-.account-menu[open] .account-button {
-  background: var(--dk-bg-hover);
-}
-
-.account-button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--dk-space-2);
-  min-height: var(--dk-size-control-md);
-  padding: 0 var(--dk-space-2) 0 var(--dk-space-1);
-  border: 0;
-  border-radius: var(--dk-radius-md);
-  background: transparent;
-  color: var(--dk-text-primary);
-  font-size: 13px;
-  font-weight: var(--dk-weight-semibold);
-  cursor: pointer;
-}
-
-.account-button .icon {
-  color: var(--dk-text-muted);
-}
-
-.account-button:hover {
-  background: var(--dk-bg-hover);
-}
-
-.account-avatar {
-  display: inline-grid;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: var(--dk-radius-full);
-  background: var(--dk-accent-default);
-  color: var(--dk-text-on-accent);
-  font-size: 11px;
-  font-weight: var(--dk-weight-bold);
-}
-
-.account-button-name {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
-  display: grid;
-  align-content: start;
-  width: min(380px, calc(100vw - var(--dk-space-7)));
-  overflow: auto;
-  max-height: calc(100vh - 80px);
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-lg);
-  background: var(--dk-bg-surface);
-  box-shadow: var(--dk-shadow-overlay);
-}
-
-.account-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--dk-space-3);
-  min-height: 54px;
-  padding: var(--dk-space-2) var(--dk-space-2) var(--dk-space-2) var(--dk-space-4);
-  border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-muted);
-}
-
-.account-panel-header strong {
-  color: var(--dk-text-heading);
-  font-size: var(--dk-text-lg);
-}
-
-.account-identity {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--dk-space-3);
-  padding: 14px var(--dk-space-4);
-  border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-surface);
-}
-
-.account-avatar-large {
-  width: 40px;
-  height: 40px;
-  font-size: 14px;
-}
-
-.account-identity-copy {
-  display: grid;
-  min-width: 0;
-}
-
-.account-identity-copy small,
-.account-identity-copy > span {
-  overflow: hidden;
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-identity-copy strong {
-  overflow: hidden;
-  color: var(--dk-text-heading);
-  font-size: var(--dk-text-body);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-section-label {
-  margin: 0;
-  padding: var(--dk-space-2) var(--dk-space-4);
-  border-bottom: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-muted);
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
-  font-weight: var(--dk-weight-semibold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.account-item {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
-  justify-content: stretch;
-  gap: 10px;
-  width: 100%;
-  min-height: 54px;
-  padding: 10px var(--dk-space-4);
-  border: 0;
-  border-bottom: 1px solid var(--dk-border-default);
-  border-radius: 0;
-  background: var(--dk-bg-surface);
-  color: var(--dk-text-primary);
-  font: inherit;
-  white-space: normal;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.account-item:hover {
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-hover);
-  color: var(--dk-text-primary);
-  text-decoration: none;
-}
-
-.account-item:last-child {
-  border-bottom: 0;
-}
-
-.account-item > span:nth-child(2) {
-  display: grid;
-  gap: 2px;
-}
-
-.account-item strong {
-  color: var(--dk-text-heading);
-  font-size: var(--dk-text-body);
-}
-
-.account-item small {
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-sm);
-  font-weight: var(--dk-weight-regular);
-}
-
-.account-item-icon {
-  display: grid;
-  place-items: center;
-  color: var(--dk-text-muted);
-}
-
-.account-theme-label {
-  color: var(--dk-text-heading);
-  font-weight: var(--dk-weight-semibold);
-}
-
-.account-toggle-track {
-  display: flex;
-  width: 36px;
-  height: 20px;
-  align-items: center;
-  border-radius: var(--dk-radius-full);
-  background: var(--dk-border-strong);
-  padding: 2px;
-  transition: background 140ms ease;
-}
-
-.account-toggle-track span {
-  width: 16px;
-  height: 16px;
-  border-radius: var(--dk-radius-full);
-  background: var(--dk-text-on-deep);
-  transition: transform 140ms ease;
-}
-
-.account-theme-toggle[aria-pressed="true"] .account-toggle-track {
-  background: var(--dk-accent-default);
-}
-
-.account-theme-toggle[aria-pressed="true"] .account-toggle-track span {
-  transform: translateX(16px);
-}
-
-.account-sign-out,
-.account-sign-out:hover,
-.account-sign-out strong,
-.account-sign-out:hover strong,
-.account-sign-out .account-item-icon,
-.account-sign-out:hover .account-item-icon {
-  color: var(--dk-danger-text);
-}
-
-.account-sign-out:hover {
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-hover);
-}
-
-.client-switcher {
-  display: grid;
-  gap: var(--dk-space-1);
-}
-
-.client-switcher label {
-  color: var(--dk-text-muted);
-  font-size: var(--dk-text-xs);
-  font-weight: var(--dk-weight-semibold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.client-switcher select[multiple] {
-  height: auto;
-  min-height: var(--dk-size-control-md);
-  /* Native multi-selects size to their options; the 34px control height
-     slices the second option in half. */
-  padding: 6px 10px;
-}
-
-select[multiple] option {
-  padding: 3px 4px;
-}
-
-select {
+select:where(:not([class*="dk-"])) {
   width: 100%;
   height: var(--dk-size-control-md);
   font-size: var(--dk-text-md);
-  /* Right padding keeps the label clear of dakit's chevron (base layer). */
-  padding: 0 calc(2 * var(--dk-space-3) + 10px) 0 var(--dk-space-2);
 }
 
-main,
-.app-main {
-  max-width: var(--dk-size-content-max);
-  padding: var(--dk-space-7) var(--dk-space-6) 64px;
-}
-
-/* --- the family shell: 268px sidebar + canvas ----------------------------
-   Same geometry as dataops: the sidebar sits on the page background, carries
-   the product mark and icon-plus-text rows; global actions live in a slim
-   toolbar above the canvas only. Selection signal is the filled row only. */
-
-.app-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 100vh;
-  background: var(--dk-bg-page);
-}
-
-.app-shell.has-sidebar {
-  grid-template-columns: var(--dk-size-sidebar) minmax(0, 1fr);
-}
-
-.app-shell.has-sidebar.sidebar-collapsed {
-  grid-template-columns: 56px minmax(0, 1fr);
-}
-
-.app-sidebar {
-  position: sticky;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--dk-space-4);
-  height: 100vh;
-  padding: var(--dk-space-4) var(--dk-space-3);
-  overflow-y: auto;
-  border-right: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-muted);
-}
-
-.sidebar-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--dk-space-1);
-  min-height: 40px;
-}
-
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--dk-space-2);
-  min-width: 0;
-  color: var(--dk-text-heading);
-  text-decoration: none;
-}
-
-.brand:hover {
-  text-decoration: none;
-}
-
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--dk-radius-md);
-  background: var(--dk-accent-default);
-  color: var(--dk-text-on-accent);
-  font-size: 16px;
-  font-weight: var(--dk-weight-bold);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.brand-name {
-  font-weight: var(--dk-weight-medium);
-  overflow: hidden;
-  color: var(--dk-text-heading);
-  font-size: 16px;
-  font-weight: var(--dk-weight-semibold);
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.brand-subtitle {
-  overflow: hidden;
-  margin-top: 2px;
-  color: var(--dk-text-muted);
-  font-size: 12px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The workspace collapse control is a 36px bordered square, the family's
-   sidebar-header button. */
-.sidebar-toggle {
-  border: 1px solid var(--dk-border-default);
-  background: var(--dk-bg-surface);
-  flex: none;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  color: var(--dk-text-muted);
-}
-
-/* The drawer close control shows only while the mobile drawer is open. */
-.sidebar-drawer-close {
-  display: none;
-}
-
-@media (max-width: 860px) {
-  html.js .has-sidebar.sidebar-open .sidebar-drawer-close {
-    display: inline-flex;
-  }
-
-  html.js .has-sidebar.sidebar-open .sidebar-toggle {
-    display: none;
-  }
-}
-
-/* The drawer open control lives in the toolbar on phones. */
-.sidebar-menu-toggle {
-  display: none;
-}
-
-.sidebar-context {
-  padding-top: var(--dk-space-2);
-}
-
-.sidebar-client-action {
-  width: 100%;
-}
-
-.sidebar-nav {
-  display: grid;
-  gap: var(--dk-space-5);
-  align-content: start;
-  flex: 1;
-}
-
-.sidebar-nav-group {
-  display: grid;
-  gap: 2px;
-}
-
-.sidebar-nav-label,
-.sidebar-context {
-  padding-left: var(--dk-space-3);
-  padding-right: var(--dk-space-3);
-}
-
-.sidebar-nav-label {
-  margin: 0 0 var(--dk-space-1);
-  padding-left: var(--dk-space-3);
-  color: var(--dk-text-muted);
-  font-size: 12px;
-  font-weight: var(--dk-weight-semibold);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-/* Family nav row: 36px icon+text row, radius-md, medium weight; the filled
-   row is the whole selection signal. */
-.sidebar-nav a {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 36px;
-  padding: 6px 10px;
-  border-radius: var(--dk-radius-md);
-  color: var(--dk-text-primary);
-  font-size: var(--dk-text-body);
-  font-weight: var(--dk-weight-medium);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.sidebar-nav a .icon {
-  color: var(--dk-text-primary);
-  color: var(--dk-text-muted);
-}
-
-.sidebar-nav a span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-nav a .icon {
-  flex: none;
-  color: var(--dk-text-muted);
-}
-
-.sidebar-nav a[aria-current="page"] .icon,
-.sidebar-nav a:hover .icon {
-  color: inherit;
-}
-
-.sidebar-nav a:hover {
-  background: var(--dk-bg-hover);
-  text-decoration: none;
-}
-
-.sidebar-nav a[aria-current="page"] {
-  background: var(--dk-accent-soft);
-  color: var(--dk-accent-default);
-  font-weight: var(--dk-weight-semibold);
-}
-
-.sidebar-nav a[aria-current="page"] .icon {
-  color: var(--dk-accent-default);
-}
-
-/* Collapsed rail: icon-only rows, restore control stays visible. */
-.sidebar-collapsed .app-sidebar {
-  padding: var(--dk-space-2);
-}
-
-.sidebar-collapsed .sidebar-head {
-  justify-content: center;
-}
-
-/* Sidebar footer: the shell's only global strip — account trigger on the
-   collapsed rail too (avatar only, panel anchored above it). */
-.sidebar-foot {
-  margin-top: auto;
-  border-top: 1px solid var(--dk-border-default);
-  padding-top: var(--dk-space-3);
-}
-
-.sidebar-collapsed .sidebar-foot {
-  padding-top: var(--dk-space-2);
-}
-
-.sidebar-foot .account-menu {
-  position: relative;
-  display: block;
-}
-
-.sidebar-foot .account-button {
-  width: 100%;
-  justify-content: flex-start;
-  padding: var(--dk-space-1) var(--dk-space-2);
-}
-
-.sidebar-foot .account-button-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-
-.sidebar-foot .account-panel {
-  top: auto;
-  bottom: calc(100% + 6px);
-  left: 0;
-  right: auto;
-}
-
-.sidebar-collapsed .account-button-name,
-.sidebar-collapsed .account-button > .icon {
-  display: none;
-}
-
-.sidebar-collapsed .account-button {
-  justify-content: center;
-  padding: 0;
-}
-
-.sidebar-collapsed .brand-text,
-.sidebar-collapsed .sidebar-context,
-.sidebar-collapsed .sidebar-nav-label,
-.sidebar-collapsed .sidebar-nav a span {
-  display: none;
-}
-
-.sidebar-collapsed .sidebar-nav a {
-  justify-content: center;
-  padding: 0;
-}
-
-.sidebar-toggle-closed {
-  display: none;
-}
-
-.sidebar-collapsed .sidebar-toggle-open {
-  display: none;
-}
-
-.sidebar-collapsed .sidebar-toggle-closed {
-  display: block;
-}
-
-.sidebar-scrim {
-  display: none;
-}
-
-.app-main {
-  width: 100%;
-  max-width: var(--dk-size-content-max);
-  margin: 0 auto;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-h1 {
+/* Operator page titles are dakit's page-header size (shell.md §8): 22px
+   at every width; --dk-text-page is for single-purpose views only. */
+h1:where(:not([class*="dk-"])) {
   margin: 0 0 var(--dk-space-2);
   color: var(--dk-text-heading);
-  font-size: var(--dk-text-page);
+  font-size: var(--dk-text-xl);
   font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
+  line-height: var(--dk-leading-tight);
+  letter-spacing: -0.01em;
 }
 
-h2 {
+h2:where(:not([class*="dk-"])) {
   margin: var(--dk-space-6) 0 var(--dk-space-2);
   color: var(--dk-text-heading);
   font-size: var(--dk-text-lg);
@@ -742,14 +77,14 @@ h2 {
   line-height: 1.25;
 }
 
-h3 {
+h3:where(:not([class*="dk-"])) {
   margin: var(--dk-space-4) 0 var(--dk-space-2);
   color: var(--dk-text-heading);
-  font-size: 14px;
+  font-size: var(--dk-text-body);
   font-weight: 600;
 }
 
-p {
+p:where(:not([class*="dk-"])) {
   color: var(--dk-text-muted);
 }
 
@@ -774,12 +109,16 @@ p {
   font-weight: var(--dk-weight-medium);
 }
 
-a {
+/* Element defaults skip every dakit-classed control: this CSS is unlayered,
+   so a bare `a` or `button` rule would beat .dk-tab, .dk-button and the
+   shell's nav items, menus and icon buttons in dakit's layers. :where()
+   keeps these at element specificity. */
+a:where(:not([class*="dk-"])) {
   color: var(--dk-text-link);
   text-decoration: none;
 }
 
-a:hover {
+a:where(:not([class*="dk-"])):hover {
   color: var(--dk-text-link-hover);
   text-decoration: underline;
 }
@@ -793,11 +132,11 @@ a:hover {
   text-decoration: underline;
 }
 
-a:focus-visible,
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
+a:where(:not([class*="dk-"])):focus-visible,
+button:where(:not([class*="dk-"])):focus-visible,
+input:where(:not([class*="dk-"])):focus-visible,
+select:where(:not([class*="dk-"])):focus-visible,
+textarea:where(:not([class*="dk-"])):focus-visible,
 summary:focus-visible,
 .button:focus-visible {
   outline: 2px solid var(--dk-focus-ring);
@@ -833,7 +172,7 @@ summary:focus-visible,
   gap: var(--dk-space-2);
   margin: 0 0 var(--dk-space-4);
   color: var(--dk-text-muted);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
 }
 
 .section,
@@ -848,13 +187,13 @@ summary:focus-visible,
 }
 
 .helptext {
-  margin-top: 2px;
+  margin-top: var(--dk-space-1);
   font-size: var(--dk-text-sm);
 }
 
 .readonly-field {
   min-height: var(--dk-size-control-md);
-  padding: 6px 10px;
+  padding: var(--dk-space-2) var(--dk-space-3);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-sm);
   background: var(--dk-bg-muted);
@@ -927,7 +266,7 @@ summary:focus-visible,
 .meta-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 1px;
+  gap: 0;
   margin: var(--dk-space-4) 0 var(--dk-space-6);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
@@ -955,7 +294,7 @@ summary:focus-visible,
 .stats-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 1px;
+  gap: 0;
   margin: var(--dk-space-4) 0 var(--dk-space-6);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
@@ -977,7 +316,7 @@ summary:focus-visible,
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: var(--dk-space-1);
   padding: var(--dk-space-3) var(--dk-space-4);
   background: var(--dk-bg-page);
 }
@@ -992,7 +331,7 @@ summary:focus-visible,
 .stat-value {
   display: block;
   font-family: var(--dk-font-mono);
-  font-size: 22px;
+  font-size: var(--dk-text-xl);
   font-weight: var(--dk-weight-medium);
   line-height: 1.2;
 }
@@ -1011,9 +350,9 @@ a.stat-link:focus {
   order: -1;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--dk-space-2);
   color: var(--dk-text-muted);
-  font-size: 12px;
+  font-size: var(--dk-text-sm);
   font-weight: var(--dk-weight-medium);
 }
 
@@ -1045,7 +384,7 @@ a.stat-link:focus {
 
 .meta-label {
   display: block;
-  margin-top: 2px;
+  margin-top: var(--dk-space-1);
   color: var(--dk-text-muted);
   font-size: var(--dk-text-sm);
 }
@@ -1066,8 +405,9 @@ a.stat-link:focus {
   display: inline-flex;
   align-items: center;
   gap: var(--dk-space-1);
-  padding: 1px var(--dk-space-2);
-  border: 1px solid var(--dk-border-default);
+  padding: 0 var(--dk-space-2);
+  /* Fill only, like .dk-badge: no perimeter in any tone. */
+  border: 1px solid transparent;
   border-radius: var(--dk-radius-sm);
   color: var(--dk-text-muted);
   background: var(--dk-bg-muted);
@@ -1089,25 +429,21 @@ a.stat-link:focus {
 
 .badge.success {
   color: var(--dk-success-text);
-  border-color: var(--dk-border-default);
   background: var(--dk-success-bg);
 }
 
 .badge.warning {
   color: var(--dk-warning-text);
-  border-color: var(--dk-border-default);
   background: var(--dk-warning-bg);
 }
 
 .badge.danger {
   color: var(--dk-danger-text);
-  border-color: var(--dk-border-default);
   background: var(--dk-danger-bg);
 }
 
 .badge.neutral {
   color: var(--dk-text-muted);
-  border-color: var(--dk-border-default);
   background: var(--dk-bg-muted);
 }
 
@@ -1253,12 +589,17 @@ a.stat-link:focus {
 .panel-header h2,
 .panel-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--dk-text-lg);
 }
 
 .panel-header p {
-  margin: 2px 0 0;
+  margin: var(--dk-space-1) 0 0;
   font-size: var(--dk-text-sm);
+}
+
+/* A collection header's description takes its own line under the title row. */
+.collection-header-note {
+  flex-basis: 100%;
 }
 
 /* Panel header actions are small quiet controls, the family's band buttons. */
@@ -1266,7 +607,7 @@ a.stat-link:focus {
 .panel-header button {
   min-height: 32px;
   padding: 4px 12px;
-  font-size: 13px;
+  font-size: var(--dk-text-md);
 }
 
 .panel-footer {
@@ -1389,7 +730,7 @@ a.stat-link:focus {
 .quick-links {
   margin: var(--dk-space-6) 0;
   color: var(--dk-text-muted);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
 }
 
 .quick-links a {
@@ -1410,7 +751,7 @@ a.stat-link:focus {
 .manage-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 1px;
+  gap: 0;
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
   background: var(--dk-border-default);
@@ -1464,7 +805,7 @@ a.compact-row:hover {
 
 .compact-row-meta {
   color: var(--dk-text-muted);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
 }
 
 .compact-row-main strong,
@@ -1493,7 +834,7 @@ a.compact-row:hover {
   gap: var(--dk-space-2);
   color: var(--dk-text-link);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--dk-text-md);
   font-weight: 600;
   list-style: none;
 }
@@ -1526,15 +867,15 @@ a.compact-row:hover {
 .checkbox-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 6px var(--dk-space-3);
+  gap: var(--dk-space-2) var(--dk-space-3);
 }
 
 .checkbox-list label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--dk-space-2);
   color: var(--dk-text-primary);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
   font-weight: 400;
 }
 
@@ -1707,7 +1048,7 @@ a.compact-row:hover {
   display: grid;
   gap: var(--dk-space-1);
   color: var(--dk-text-muted);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
 }
 
 .actions,
@@ -1816,7 +1157,7 @@ a.compact-row:hover {
 
 .form-panel > .form-panel-header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--dk-text-lg);
 }
 
 .form-panel .form-section,
@@ -1827,7 +1168,7 @@ a.compact-row:hover {
 .form-panel .form-section h2,
 .form-panel .section-header h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--dk-text-body);
 }
 
 .form-panel .section-header {
@@ -1882,27 +1223,27 @@ a.compact-row:hover {
 .field-errors,
 .form-errors,
 .errorlist {
-  margin: 6px 0 0;
+  margin: var(--dk-space-2) 0 0;
   color: var(--dk-danger-text);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
 }
 
 .errorlist {
   padding-left: var(--dk-space-5);
 }
 
-label {
+label:where(:not([class*="dk-"])) {
   display: block;
   margin-bottom: var(--dk-space-1);
   color: var(--dk-text-primary);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
   font-weight: 600;
 }
 
-input,
-select,
-textarea,
-button,
+input:where(:not([class*="dk-"])),
+select:where(:not([class*="dk-"])),
+textarea:where(:not([class*="dk-"])),
+button:where(:not([class*="dk-"])),
 .button {
   display: inline-flex;
   align-items: center;
@@ -1912,43 +1253,52 @@ button,
   white-space: nowrap;
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  padding: 5px 10px;
+  padding: var(--dk-space-1) var(--dk-space-3);
   font-family: var(--dk-font-sans);
   font-size: var(--dk-text-body);
-  background: var(--dk-bg-page);
+  /* background-color, not the shorthand: the kit's base layer draws the
+     select chevron as a background-image. */
+  background-color: var(--dk-bg-page);
   color: var(--dk-text-primary);
 }
 
-input::placeholder,
-textarea::placeholder {
+/* The kit's base layer gives selects room for that chevron; take it back
+   from the shared control padding above. */
+select:where(:not([class*="dk-"])) {
+  padding-right: revert-layer;
+}
+
+input:where(:not([class*="dk-"]))::placeholder,
+textarea:where(:not([class*="dk-"]))::placeholder {
   color: var(--dk-text-faint);
 }
 
-input[type="checkbox"],
-input[type="radio"] {
+input:where(:not([class*="dk-"]))[type="checkbox"],
+input:where(:not([class*="dk-"]))[type="radio"] {
   width: auto;
   min-height: 0;
 }
 
-input:focus,
-select:focus,
-textarea:focus {
+input:where(:not([class*="dk-"])):focus,
+select:where(:not([class*="dk-"])):focus,
+textarea:where(:not([class*="dk-"])):focus {
   border-color: var(--dk-border-strong);
 }
 
 /* Focus is the one colored edge dakit allows: an outline in the focus-ring
    role, and only on :focus-visible. */
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+input:where(:not([class*="dk-"])):focus-visible,
+select:where(:not([class*="dk-"])):focus-visible,
+textarea:where(:not([class*="dk-"])):focus-visible {
   outline: 2px solid var(--dk-focus-ring);
   outline-offset: 0;
 }
 
-/* Buttons follow dakit's hierarchy: a bare <button> is a quiet secondary
-   control; the filled primary is reserved for `.button` (one per view).
-   Danger is a quiet outline, never a filled red block. */
-button,
+/* Buttons follow dakit's hierarchy. A bare <button> is the quiet secondary
+   control, so an unmarked button never decides a view's emphasis. The
+   filled accent is opt-in: `.primary` on a button, or a `.button` link
+   (one per view). Danger is a quiet outline, never a filled red block. */
+button:where(:not([class*="dk-"])),
 .button {
   display: inline-flex;
   align-items: center;
@@ -1958,26 +1308,15 @@ button,
   padding: 0 var(--dk-space-4);
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
-  color: var(--dk-text-on-accent);
-  border-color: transparent;
-  background: var(--dk-accent-default);
+  color: var(--dk-text-primary);
+  background: var(--dk-bg-surface);
   font-size: var(--dk-text-body);
   font-weight: var(--dk-weight-medium);
   cursor: pointer;
   text-decoration: none;
 }
 
-/* Explicit aliases so templates can name the role instead of relying on
-   the bare-element default: .primary is the filled accent (one per view),
-   .secondary the quiet control, .danger the outlined destructive one. */
-button.primary,
-.button.primary {
-  color: var(--dk-text-on-accent);
-  border-color: transparent;
-  background: var(--dk-accent-default);
-}
-
-button:hover,
+button:where(:not([class*="dk-"])):hover,
 .button.secondary:hover,
 button.secondary:hover {
   color: var(--dk-text-primary);
@@ -1986,12 +1325,15 @@ button.secondary:hover {
   text-decoration: none;
 }
 
+/* The opt-in primary: a .primary button or a .button link. */
+button.primary,
 .button {
   color: var(--dk-text-on-accent);
   border-color: transparent;
   background: var(--dk-accent-default);
 }
 
+button.primary:hover,
 .button:hover {
   color: var(--dk-text-on-accent);
   border-color: transparent;
@@ -1999,7 +1341,7 @@ button.secondary:hover {
   text-decoration: none;
 }
 
-button:disabled,
+button:where(:not([class*="dk-"])):disabled,
 .button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
@@ -2052,7 +1394,7 @@ table {
 
 th,
 td {
-  padding: 10px var(--dk-space-3);
+  padding: var(--dk-space-3);
   border-bottom: 1px solid var(--dk-border-default);
   text-align: left;
   vertical-align: top;
@@ -2073,7 +1415,7 @@ th {
 }
 
 td {
-  font-size: 13px;
+  font-size: var(--dk-text-md);
 }
 
 td strong {
@@ -2094,7 +1436,7 @@ tr:last-child td {
 }
 
 .table-wrap td.nowrap {
-  font-size: 12.5px;
+  font-size: var(--dk-text-sm);
 }
 
 .table-wrap td.nowrap .helptext,
@@ -2274,14 +1616,14 @@ tr:last-child td {
   gap: var(--dk-space-2);
   margin: var(--dk-space-4) 0;
   color: var(--dk-text-muted);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
 }
 
 /* Activity renders as one bordered list with hairline-divided rows; the
    status is carried by the badge, not by a left rail. */
 .timeline {
   display: grid;
-  gap: 1px;
+  gap: 0;
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
   background: var(--dk-border-default);
@@ -2323,7 +1665,7 @@ pre {
   border-radius: var(--dk-radius-md);
   padding: var(--dk-space-3);
   color: var(--dk-text-primary);
-  font-size: 12.5px;
+  font-size: var(--dk-text-sm);
   line-height: 1.55;
   background: var(--dk-bg-muted);
 }
@@ -2364,7 +1706,7 @@ pre {
 
 .api-docs-nav a {
   color: var(--dk-text-muted);
-  font-size: 13px;
+  font-size: var(--dk-text-md);
   font-weight: 400;
   text-decoration: none;
 }
@@ -2471,7 +1813,7 @@ pre {
   border: 0;
   border-radius: 0;
   color: var(--dk-text-muted);
-  font-size: 11px;
+  font-size: var(--dk-text-xs);
   font-weight: var(--dk-weight-semibold);
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -2505,168 +1847,7 @@ pre {
   color: var(--dk-danger-text);
 }
 
-@media (max-width: 860px) {
-  .app-shell,
-  .app-shell.has-sidebar,
-  .app-shell.has-sidebar.sidebar-collapsed {
-    display: block;
-    min-height: 0;
-  }
-
-  /* The toolbar returns as the 64px top bar: menu control and page title —
-     the family's mobile top bar; account lives in the drawer footer. */
-  .has-sidebar .app-toolbar {
-    display: flex;
-  }
-
-  .app-toolbar {
-    min-height: 64px;
-    padding: 0 var(--dk-space-3);
-  }
-
-  .topbar-title {
-    display: block;
-    flex: 1;
-  }
-
-  .sidebar-menu-toggle {
-    display: inline-flex;
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    border: 1px solid var(--dk-border-default);
-    border-radius: var(--dk-radius-md);
-    background: var(--dk-bg-surface);
-  }
-
-  .toolbar-actions .icon-button .icon {
-  width: 18px;
-  height: 18px;
-}
-
-.toolbar-actions .icon-button {
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    border: 1px solid var(--dk-border-default);
-    border-radius: var(--dk-radius-md);
-    background: var(--dk-bg-surface);
-  }
-
-  .toolbar-actions {
-    flex: none;
-  }
-
-  /* Standalone toolbars collapse their account control to the bare avatar;
-     the operator drawer's footer row keeps its label at the touch scale. */
-  .toolbar-actions .account-button {
-    min-width: var(--dk-size-touch);
-    min-height: var(--dk-size-touch);
-    justify-content: center;
-    padding: 0;
-  }
-
-  .toolbar-actions .account-button-name,
-  .toolbar-actions .account-button > .icon {
-    display: none;
-  }
-
-  .sidebar-foot .account-button {
-    min-height: var(--dk-size-touch);
-  }
-
-  /* The drawer scrolls; pin the account row to its bottom edge so the
-     trigger never falls below the fold. */
-  .sidebar-foot {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    margin-top: auto;
-    padding: var(--dk-space-3) 0 0;
-    background: var(--dk-bg-muted);
-  }
-
-  .account-panel {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    width: 100%;
-    max-height: none;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .account-panel-header {
-    display: grid;
-    grid-template-columns: var(--dk-size-touch) minmax(0, 1fr) var(--dk-size-touch);
-    min-height: 64px;
-    padding: 0 var(--dk-space-2);
-  }
-
-  .account-panel-header strong {
-    grid-column: 2;
-    grid-row: 1;
-    text-align: center;
-  }
-
-  .account-panel-close {
-    grid-column: 1;
-    grid-row: 1;
-    width: var(--dk-size-touch);
-    min-width: var(--dk-size-touch);
-    height: var(--dk-size-touch);
-  }
-
-  .sidebar-toggle {
-    display: none;
-  }
-
-  .app-sidebar {
-    position: static;
-    height: auto;
-    max-height: none;
-    overflow: visible;
-    border-right: 0;
-    border-bottom: 1px solid var(--dk-border-default);
-  }
-
-  /* With JS the navigation opens as a modal drawer instead of stacking. */
-  html.js .has-sidebar .app-sidebar {
-    display: none;
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 40;
-    width: min(300px, 85vw);
-    height: 100vh;
-    border-right: 1px solid var(--dk-border-default);
-    box-shadow: var(--dk-shadow-overlay);
-  }
-
-  html.js .has-sidebar.sidebar-open .app-sidebar {
-    display: flex;
-  }
-
-  html.js .sidebar-scrim {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    border: 0;
-    padding: 0;
-    background: var(--dk-bg-backdrop);
-  }
-
-  html.js .app-shell.sidebar-open > .sidebar-scrim {
-    display: block;
-  }
-
-  .sidebar-nav a {
-    min-height: 40px;
-    height: auto;
-  }
-
+@media (max-width: 820px) {
   .table-wrap {
     scrollbar-width: thin;
     /* A right-edge fade hints that narrow viewports scroll sideways. */
@@ -2682,14 +1863,6 @@ pre {
     box-shadow: inset -14px 0 14px -16px var(--dk-border-strong);
   }
 
-  .app-main {
-    max-width: none;
-    margin: 0;
-    border: 0;
-    border-radius: 0;
-    padding: var(--dk-space-5) var(--dk-space-4) var(--dk-space-7);
-  }
-
   .api-docs-layout,
   .api-example {
     grid-template-columns: 1fr;
@@ -2701,20 +1874,6 @@ pre {
 }
 
 @media (max-width: 640px) {
-  main,
-  .app-main {
-    padding: var(--dk-space-5) 14px;
-  }
-
-  .app-toolbar {
-    padding-right: 14px;
-    padding-left: 14px;
-  }
-
-  h1 {
-    font-size: 22px;
-  }
-
   .page-header,
   .section-header {
     display: grid;
@@ -2846,6 +2005,19 @@ pre {
     font-family: var(--dk-font-sans);
   }
 
+  /* Desktop column widths (.client-table .integration-cell: 24%) must not
+     survive into the card: every line takes the card's full width. */
+  .table-wrap.stack-table td {
+    width: auto;
+    max-width: none;
+  }
+
+  /* Data cells stay mono inside the sans card. */
+  .stack-table td.data-num,
+  .stack-table td.data-time {
+    font-family: var(--dk-font-mono);
+  }
+
   /* The first column is the record title: ink, semibold, no label. */
   .stack-table td:first-child {
     font-weight: var(--dk-weight-semibold);
@@ -2857,7 +2029,7 @@ pre {
 
   .stack-table td[data-label]::before {
     display: block;
-    margin-bottom: 1px;
+    margin-bottom: 0;
     color: var(--dk-text-muted);
     font-size: var(--dk-text-xs);
     font-weight: var(--dk-weight-medium);
@@ -2976,69 +2148,34 @@ pre {
 .unsubscribe-form {
   display: grid;
   gap: var(--dk-space-4);
+  margin-top: var(--dk-space-6);
 }
 
-.unsubscribe-options {
-  display: grid;
-  gap: var(--dk-space-3);
-  margin: 0;
+.unsubscribe-email {
+  color: var(--dk-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.unsubscribe-resubscribe {
+  margin-top: var(--dk-space-4);
+  color: var(--dk-text-muted);
+}
+
+.link-button {
+  display: inline;
+  min-height: 0;
   padding: 0;
   border: 0;
-}
-
-.unsubscribe-options legend {
-  margin-bottom: var(--dk-space-3);
-  color: var(--dk-text-primary);
-  font-weight: 600;
-}
-
-.unsubscribe-option {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--dk-space-3);
-  align-items: start;
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-md);
-  padding: var(--dk-space-4);
-  color: var(--dk-text-primary);
-  background: var(--dk-bg-page);
+  background: none;
+  color: var(--dk-accent-default);
+  text-decoration: underline;
   cursor: pointer;
-}
-
-.unsubscribe-option:hover {
-  border-color: var(--dk-border-strong);
-}
-
-.unsubscribe-option:focus-within {
-  border-color: var(--dk-border-strong);
-}
-
-.unsubscribe-option:has(:focus-visible) {
-  outline: 2px solid var(--dk-focus-ring);
-  outline-offset: 0;
-}
-
-.unsubscribe-option input {
-  width: auto;
-  min-height: 0;
-  margin-top: 3px;
-}
-
-.unsubscribe-option strong,
-.unsubscribe-option span span {
-  display: block;
-}
-
-.unsubscribe-option span span {
-  margin-top: var(--dk-space-1);
-  color: var(--dk-text-muted);
-  font-weight: 400;
 }
 
 @media (max-width: 640px) {
   .unsubscribe-main {
     align-items: start;
-    padding: var(--dk-space-5) 14px;
+    padding: var(--dk-space-5) var(--dk-space-4);
   }
 
   .unsubscribe-panel {
@@ -3050,80 +2187,19 @@ pre {
   }
 }
 
-/* Task-focused navigation and responsive investigation rows. */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
+/* Placement only for dakit segmented controls (.dk-tabs): a page-level
+   track takes the page column's gap, and a track loose in a panel lines up
+   with panel prose. Their look is dakit's. */
+.panel > .dk-tabs,
+.panel > .section > .dk-tabs {
+  margin: var(--dk-space-4) var(--dk-space-4) 0;
 }
 
-.skip-link {
-  position: fixed;
-  top: 8px;
-  left: 8px;
-  z-index: 100;
-  transform: translateY(-160%);
-  padding: 10px 16px;
-  border: 1px solid var(--dk-border-strong);
-  border-radius: var(--dk-radius-sm);
-  background: var(--dk-bg-page);
-  color: var(--dk-text-primary);
-}
-
-.skip-link:focus {
-  transform: translateY(0);
-}
-
-.skip-link:focus-visible {
-  outline: 2px solid var(--dk-focus-ring);
-}
-
-.local-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  width: fit-content;
-  max-width: 100%;
-  padding: 2px;
-  margin: 0 0 var(--dk-space-4);
-  border: 1px solid var(--dk-border-default);
-  border-radius: var(--dk-radius-md);
-  background: var(--dk-bg-muted);
-}
-
-/* Quiet tab row: selection is accent text over an accent-soft underline band
-   aligned with the container hairline — no boxed chips. */
-.local-nav a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 0 var(--dk-space-3);
-  border: 1px solid transparent;
-  border-radius: var(--dk-radius-sm);
-  color: var(--dk-text-primary);
-  font-size: var(--dk-text-md);
-  font-weight: var(--dk-weight-medium);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.local-nav a:hover {
-  background: var(--dk-bg-hover);
-  text-decoration: none;
-}
-
-/* The active segment is the raised surface tab, never a filled pill — the
-   inbox reference's "Actionable | New | Blocked" treatment. */
-.local-nav a[aria-current] {
-  border-color: var(--dk-border-default);
-  background: var(--dk-bg-surface);
-  font-weight: var(--dk-weight-semibold);
+/* A filter bar that leads with a segmented control puts its field grid on
+   the next row, full width, instead of squeezing it beside the track. */
+.filter-bar > .filter-grid {
+  flex: 1 1 100%;
+  margin: 0;
 }
 
 [id] {
@@ -3146,7 +2222,7 @@ pre {
   white-space: normal;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 820px) {
   .triage-table {
     overflow: visible;
     box-shadow: none;
@@ -3226,30 +2302,23 @@ pre {
   border: 1px solid var(--dk-border-default);
   border-radius: var(--dk-radius-md);
   /* Emails render on paper in both themes; the preview frame is content,
-     not chrome, so it stays light when the app is dark. */
-  background: #fff;
+     not chrome, so it stays light when the app is dark: the light-scheme
+     system canvas, not a palette colour. */
+  color-scheme: light;
+  background: Canvas;
 }
 
-.inbox-counts {
-  margin-bottom: var(--dk-space-4);
-}
-
+/* Mail body: prose in the sans face, wrapped, on its own bordered sheet. */
 .inbound-body {
+  margin: 0;
+  padding: var(--dk-space-4);
+  border: 1px solid var(--dk-border-default);
+  border-radius: var(--dk-radius-md);
+  background: var(--dk-bg-surface);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--dk-font-sans);
   font-size: var(--dk-text-body);
-  background: var(--dk-bg-page);
-}
-
-.sender-domain-action {
-  width: 100%;
-  max-width: 640px;
-  text-align: left;
-}
-
-.sender-domain-action form {
-  margin-top: var(--dk-space-3);
 }
 
 .confirmation-choice {
@@ -3267,5 +2336,230 @@ pre {
 
 /* Scoped workflow controls integrated with the current shell. */
 .campaign-draft-summary { position: sticky; top: 0; z-index: 2; padding: 12px 16px; background: var(--dk-bg-page); border: 1px solid var(--dk-border-default); }
-.filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--dk-border-default); border-radius: var(--dk-radius-sm); }
+.filter-chip { display: inline-flex; align-items: center; gap: var(--dk-space-2); padding: 4px 8px; border: 1px solid var(--dk-border-default); border-radius: var(--dk-radius-sm); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Page blocks sit in dakit's .dk-main__inner flex column, whose gap is the
+   section rhythm; top-level blocks drop their page-flow margins so the two
+   don't add up. */
+.dk-main__inner > * {
+  margin-block: 0;
+}
+
+/* Client switcher in the brand row: the wordmark keeps its width and the
+   active client name takes the ellipsis. */
+.dk-brand__name {
+  flex: none;
+}
+
+/* Mailbox split (inbound_list.html): a wider list for subject + sender rows,
+   the pane's own filters in its tools band. */
+.inbox-split {
+  --dk-split-list: 400px;
+}
+
+.inbox-split .dk-split__tools > .dk-tabs {
+  flex: 1 1 100%;
+}
+
+.inbox-filter {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: var(--dk-space-2);
+  min-width: 0;
+}
+
+.inbox-filter .dk-input,
+.inbox-filter .dk-select {
+  flex: 1 1 140px;
+  width: auto;
+  min-width: 0;
+}
+
+/* Search takes the whole tools row, so its placeholder is never cut, from
+   the 240px resize minimum to a phone. */
+.inbox-filter .dk-input {
+  flex-basis: 100%;
+}
+
+.inbox-row__sender {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-row__time,
+.inbox-pages__label {
+  font-variant-numeric: tabular-nums;
+}
+
+.inbox-pages__label {
+  margin-inline: auto;
+}
+
+.inbox-message > :first-child {
+  margin-top: 0;
+}
+
+/* Pane titles are headings: relay's element margins must not reach them. */
+.dk-split__title {
+  margin: 0;
+}
+
+.inbox-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dk-gap-section);
+}
+
+.inbox-message__route {
+  margin: 0;
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-md);
+  overflow-wrap: anywhere;
+}
+
+.inbox-message__route strong {
+  color: var(--dk-text-primary);
+  font-weight: var(--dk-weight-semibold);
+}
+
+.inbox-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dk-space-3);
+}
+
+.inbox-section > .dk-callout {
+  align-self: stretch;
+}
+
+.inbox-section__title {
+  margin: 0;
+  font-size: var(--dk-text-lg);
+}
+
+.inbox-section__note {
+  margin: 0;
+  color: var(--dk-text-muted);
+  font-size: var(--dk-text-sm);
+}
+
+/* Secondary facts fold away behind one neutral hairline row each. */
+.inbox-disclosure {
+  align-self: stretch;
+  border-top: 1px solid var(--dk-border-default);
+}
+
+.inbox-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-2);
+  min-height: var(--dk-size-control-md);
+  padding-block: var(--dk-space-2);
+  color: var(--dk-text-heading);
+  font-size: var(--dk-text-md);
+  font-weight: var(--dk-weight-semibold);
+  list-style: none;
+  cursor: pointer;
+}
+
+.inbox-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.inbox-disclosure__chev {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--dk-text-muted);
+}
+
+.inbox-disclosure[open] .inbox-disclosure__chev {
+  transform: rotate(90deg);
+}
+
+.inbox-disclosure__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dk-space-3);
+  margin: 0;
+  padding: 0 0 var(--dk-space-4);
+}
+
+.inbox-disclosure__body p {
+  margin: 0;
+}
+
+/* Data reads as data (dakit principles): dates, times and quantities are
+   mono with tabular figures, and a date never breaks across lines. */
+.data-time,
+.data-num {
+  font-family: var(--dk-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-time {
+  white-space: nowrap;
+}
+
+.audience-health-counts {
+  max-width: var(--dk-size-measure);
+}
+
+/* Signed-in, non-staff bar: the identity line and its Sign out form. */
+.relay-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--dk-space-3);
+  min-width: 0;
+}
+
+.relay-identity .dk-auth-page__identity {
+  margin: 0;
+}
+
+/* Eligibility badges carry explanatory reasons ("Cannot send — invalid email
+   validation: missing email DNS"): they wrap inside their cell instead of
+   painting over the activity column. */
+.contact-explorer-table .badge-row {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.contact-explorer-table .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Campaign recipient review: the narrowing as one sentence, then the tag
+   policy, inside the panel band's inset. */
+.recipient-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dk-space-3);
+  padding: var(--dk-space-4);
+}
+
+.recipient-review__narrowing {
+  margin: 0;
+  color: var(--dk-text-primary);
+}
+
+/* Dashboard status strip: values are short phrases as often as numbers. */
+.dashboard-status .stat-value {
+  font-size: var(--dk-text-lg, 1.125rem);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .dashboard-status .stat {
+    flex-basis: 45%;
+  }
+}

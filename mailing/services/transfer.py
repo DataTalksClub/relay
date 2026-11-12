@@ -20,6 +20,7 @@ from mailing.models import (
     ContactSourceMetadata,
     ContactTag,
     EmailEvent,
+    EmailLayout,
     EmailTemplate,
     Organization,
     Subscription,
@@ -42,6 +43,7 @@ RESOURCE_ORDER = (
     "category_preferences",
     "contact_source_metadata",
     "email_templates",
+    "email_layouts",
     "transactional_messages",
     "email_events",
 )
@@ -538,6 +540,7 @@ _TEMPLATE_FIELDS = (
     "html_body",
     "text_body",
     "markdown_body",
+    "markdown_layout_context",
     "category",
     "required_context",
     "example_context",
@@ -580,6 +583,8 @@ class _Templates:
             defaults["required_context"] = []
         if defaults["example_context"] is None:
             defaults["example_context"] = {}
+        if defaults["markdown_layout_context"] is None:
+            defaults["markdown_layout_context"] = False
         if defaults["is_transactional"] is None:
             defaults["is_transactional"] = True
         if defaults["is_active"] is None:
@@ -594,6 +599,46 @@ class _Templates:
 
 def _transfer_key(source_id):
     return f"transfer:{source_id}"
+
+
+_LAYOUT_FIELDS = ("brand_name", "logo_url", "website_url", "layout_html", "sender_id")
+
+
+class _Layouts:
+    def count(self):
+        return EmailLayout.objects.count()
+
+    def page(self, offset, limit):
+        return EmailLayout.objects.select_related("client__organization").order_by("client__slug", "sender_id")[
+            offset : offset + limit
+        ]
+
+    def export(self, obj):
+        row = {
+            "organization": obj.client.organization.slug,
+            "client": obj.client.slug,
+            "created_at": _iso(obj.created_at),
+            "updated_at": _iso(obj.updated_at),
+        }
+        for field in _LAYOUT_FIELDS:
+            row[field] = getattr(obj, field)
+        return row
+
+    def load(self, row):
+        _require(row, "organization", "client", "brand_name", "layout_html")
+        if "Relay" in (row.get("brand_name") or "") or "Relay" in (row.get("layout_html") or ""):
+            raise TransferError("relay branding not allowed in client layout")
+        obj, _created = EmailLayout.objects.update_or_create(
+            client=_client(row["organization"], row["client"]),
+            sender_id=row.get("sender_id") or "",
+            defaults={
+                "brand_name": row["brand_name"],
+                "logo_url": row.get("logo_url") or "",
+                "website_url": row.get("website_url") or "",
+                "layout_html": row["layout_html"],
+            },
+        )
+        _stamp(EmailLayout, obj.pk, _dt(row.get("created_at")), _dt(row.get("updated_at")))
 
 
 def _message_load_key(event):
@@ -753,6 +798,7 @@ _handlers = {
     "category_preferences": _Preferences(),
     "contact_source_metadata": _Sources(),
     "email_templates": _Templates(),
+    "email_layouts": _Layouts(),
     "transactional_messages": _Messages(),
     "email_events": _Events(),
 }

@@ -1,7 +1,7 @@
 from django.urls import path
 from django.views.decorators.csrf import csrf_exempt
 
-from mailing import admin_api
+from mailing import admin_api, dmarc_api, inbound_routing_api, sending_domains_api, ses_quota_api
 from mailing import admin_operations as operations
 from mailing.urls import urlpatterns as client_patterns
 
@@ -19,6 +19,12 @@ def resource_dispatch(resource, write, id_arg):
 
 
 urlpatterns = [
+    path("inbound-dmarc", dmarc_api.archives, name="dmarc_archives"),
+    path("inbound-dmarc/<int:pk>", dmarc_api.archives, name="dmarc_archive"),
+    path("inbound-dmarc/<int:pk>/raw", dmarc_api.download, name="dmarc_raw"),
+    path("inbound-dmarc/<int:pk>/attachments/<int:attachment_id>", dmarc_api.download, name="dmarc_attachment"),
+    path("inbound-dmarc-summary", dmarc_api.summary, name="dmarc_summary"),
+    path("ses-quota", ses_quota_api.quota, name="ses_quota"),
     path("", admin_api.endpoint_index, name="index"),
     path("transfer/export", admin_api.data_transfer, {"action": "export"}, name="transfer_export"),
     path("transfer/load", admin_api.data_transfer, {"action": "load"}, name="transfer_load"),
@@ -41,6 +47,16 @@ urlpatterns = [
     path("workers", operations.status, {"kind": "workers"}, name="workers"),
     path("dashboard", operations.status, {"kind": "dashboard"}, name="dashboard"),
     path("dead-letters/<uuid:task_id>/retry", operations.dead_letter_retry, name="dead_letter_retry"),
+    path(
+        "transactional-messages/<int:message_id>/retry",
+        operations.transactional_retry,
+        name="transactional_retry",
+    ),
+    path(
+        "transactional-messages/retry",
+        operations.transactional_bulk_retry,
+        name="transactional_bulk_retry",
+    ),
 ]
 for resource in admin_api.RESOURCE_MODELS:
     urlpatterns += [
@@ -91,6 +107,7 @@ for action in ("mark-read", "block", "unblock"):
 
 WRITE_RESOURCES = {
     "tags": (operations.tag_write, "tag_id"),
+    "templates": (operations.template_write, "template_id"),
     "inbound-addresses": (operations.inbound_address_write, "address_id"),
     "blocked-senders": (operations.blocked_delete, "rule_id"),
 }
@@ -125,10 +142,21 @@ for resource in operations.READ_FIELDS:
 # Capability mapping, enforced by tests when staff UI endpoints are added.
 # Client selection is explicit in API paths instead of stored in a session.
 OPERATOR_API_PARITY = {
-    "api_docs_workflow": "index", "api_docs_reference": "index", "api_docs_legacy": "index",
-    "campaign_test_send": "scoped_api_campaign_test_send", "campaign_cancel": "scoped_api_campaign_cancel",
-    "job_list": "read_jobs", "job_detail": "read_jobs_detail", "job_retry": "job_retry",
-    "schedule_list": "read_schedules", "schedule_detail_ui": "read_schedules_detail", "schedule_action": "schedule_action",
+    "api_docs_workflow": "index",
+    "api_docs_reference": "index",
+    "api_docs_legacy": "index",
+    "campaign_test_send": "scoped_api_campaign_test_send",
+    "campaign_cancel": "scoped_api_campaign_cancel",
+    "campaign_pause": "scoped_api_campaign_cancel",
+    "campaign_resume": "scoped_api_campaign_cancel",
+    "campaign_stop": "scoped_api_campaign_cancel",
+    "campaign_unknown_resend": "scoped_api_campaign_unknown_resend",
+    "job_list": "read_jobs",
+    "job_detail": "read_jobs_detail",
+    "job_retry": "job_retry",
+    "schedule_list": "read_schedules",
+    "schedule_detail_ui": "read_schedules_detail",
+    "schedule_action": "schedule_action",
     "service_health": "workers",
     "dashboard": "dashboard",
     "api_docs": "index",
@@ -139,11 +167,19 @@ OPERATOR_API_PARITY = {
     "transactional_queue": "read_transactional-messages",
     "email_activity": "read_transactional-messages",
     "transactional_message_detail": "read_transactional-messages_detail",
+    "transactional_message_retry": "transactional_retry",
     "inbound_list": "read_inbound-messages",
+    "inbound_message_raw": "read_inbound-messages_detail",
     "inbound_message_detail": "read_inbound-messages_detail",
     "inbound_address_list": "read_inbound-addresses",
     "inbound_address_create": "read_inbound-addresses",
     "inbound_address_archive": "read_inbound-addresses_detail",
+    "dmarc_report_list": "dmarc_archives",
+    "dmarc_report_detail": "dmarc_archive",
+    "dmarc_report_xml": "dmarc_raw",
+    "dmarc_report_attachment": "dmarc_attachment",
+    "dmarc_summary": "dmarc_summary",
+    "ses_quota": "ses_quota",
     "blocked_sender_delete": "read_blocked-senders_detail",
     "campaign_list": "read_campaigns",
     "campaign_create": "campaign_create",
@@ -177,3 +213,17 @@ OPERATOR_API_PARITY = {
     "dead_letter_list": "read_dead-letters",
     "dead_letter_retry": "dead_letter_retry",
 }
+
+urlpatterns += [
+    path("inbound-domains", inbound_routing_api.domains, name="inbound_domains"),
+    path("inbound-domains/<int:pk>", inbound_routing_api.domains, name="inbound_domain_detail"),
+    path("inbound-mailboxes", inbound_routing_api.mailboxes, name="inbound_mailboxes"),
+    path("inbound-mailboxes/<int:pk>", inbound_routing_api.mailboxes, name="inbound_mailbox_detail"),
+    path("inbound-deliveries", inbound_routing_api.deliveries, name="inbound_deliveries"),
+]
+
+urlpatterns += [
+    path("sending-domains", sending_domains_api.domains, name="sending_domains"),
+    path("sending-domains/<int:pk>", sending_domains_api.domains, name="sending_domain_detail"),
+    path("sending-domains/<int:pk>/verify", sending_domains_api.verify, name="sending_domain_verify"),
+]

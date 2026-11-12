@@ -3,6 +3,7 @@ import os
 import sys
 import warnings
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
@@ -34,7 +35,14 @@ def float_env(name, *, default):
     return float(value)
 
 
-DEBUG = bool_env("DEBUG", default=True)
+def int_env(name, *, default):
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    return int(value)
+
+
+DEBUG = bool_env("DEBUG", default=False)
 TESTING = "test" in sys.argv or "pytest" in sys.argv[0]
 
 DEV_FALLBACK_SECRET_KEY = "django-insecure-dev-only-do-not-use-in-production"
@@ -74,6 +82,9 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django_tasks",
+    # Before django_tasks_db: relay's db_worker command overrides upstream's
+    # with database self-healing (relay/management/commands/db_worker.py).
+    "relay",
     "django_tasks_db",
     "taskdeck",
     "mailing",
@@ -87,8 +98,78 @@ TASKS = {
         "BACKEND": os.environ.get(
             "TASKS_BACKEND", "django_tasks_db.backend.DatabaseBackend"
         ),
+        # "transactional" = single sends + bulk-transactional fan-out, consumed
+        # by the `worker` service, which never runs campaign batches;
+        # "campaign" = campaign batches, consumed by exactly ONE
+        # `campaign-worker` process (the SES rate limiter is per-process, so
+        # replicas would multiply the send rate -- see worker-contracts.md).
+        # "default" stays registered and is drained by the `worker` service
+        # alongside "transactional": jobs.execute_job, campaign test sends
+        # and process_email_event still enqueue there, and pre-split READY
+        # rows are migrated off it by mailing 0049 (never deleted).
+        # "provider-events" = SES webhook + inbound mail so
+        # bounce/complaint never wait behind a send
+        # fan-out (F1 / t1126u); "tracking" = recipient opens/clicks and
+        # deferred unsubscribes, so the web never writes them inline and they
+        # never wait behind an SES backlog. db_worker --queue-name selects the lane.
+        "QUEUES": ["default", "transactional", "campaign", "provider-events", "tracking"],
     }
 }
+
+# Transactional retries include the initial attempt; delayed tasks do not
+# occupy a worker while waiting. Queue age uses created_at, never updated_at.
+RELAY_TRANSACTIONAL_MAX_ATTEMPTS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_MAX_ATTEMPTS", "5")))
+RELAY_TRANSACTIONAL_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_RETRY_BASE_SECONDS", "60")))
+RELAY_TRANSACTIONAL_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_RETRY_MAX_SECONDS", "900")))
+RELAY_TRANSACTIONAL_QUEUED_ALERT_MINUTES = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_QUEUED_ALERT_MINUTES", "15")))
+RELAY_TRANSACTIONAL_ALERT_REPEAT_SECONDS = max(1, int(os.environ.get("RELAY_TRANSACTIONAL_ALERT_REPEAT_SECONDS", "300")))
+# Provider-events tasks (SES webhook, inbound mail) retry transient DB errors
+# (deadlock, serialization failure, refused/closed connection, DNS miss):
+# first in-process, then as delayed tasks with bounded exponential backoff
+# (30s, 60s, ... capped at 15 min; ~30 min in total) so a transient error never
+# leaves an event permanently FAILED. Attempts include the first one.
+RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_DB_RETRY_ATTEMPTS", "4")))
+RELAY_PROVIDER_EVENT_MAX_ATTEMPTS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_MAX_ATTEMPTS", "7")))
+# Synchronous unsubscribe waits at most this long for the recipient row lock
+# before handing the (durable) write to the tracking worker.
+RELAY_UNSUBSCRIBE_LOCK_TIMEOUT_MS = max(100, int(os.environ.get("RELAY_UNSUBSCRIBE_LOCK_TIMEOUT_MS", "2000")))
+# Max concurrent /webhooks/ses requests per web process; the rest get an
+# immediate 503 + Retry-After (SNS redelivers) so webhooks can never take every
+# thread from /t/* and /unsubscribe. 0 disables the endpoint cap.
+RELAY_SES_WEBHOOK_MAX_CONCURRENCY = max(0, int(os.environ.get("RELAY_SES_WEBHOOK_MAX_CONCURRENCY", "2")))
+# Queue-age alerting (scheduler): oldest runnable READY task per queue.
+# Stuck-task detection (WP5). A campaign batch task RUNNING with no heartbeat
+# for the lease is failed loudly (FAILED, "stale task" error) and the campaign
+# gets an alert. The worker beats every HEARTBEAT seconds, so the lease must be
+# several beats long.
+RELAY_TASK_HEARTBEAT_SECONDS = max(1, int(os.environ.get("RELAY_TASK_HEARTBEAT_SECONDS", "30")))
+RELAY_TASK_LEASE_SECONDS = max(
+    RELAY_TASK_HEARTBEAT_SECONDS * 3, int(os.environ.get("RELAY_TASK_LEASE_SECONDS", "300"))
+)
+# Re-enqueue the still-PENDING recipients of a stale batch. OFF until WP1
+# (claim/send/finalize, SES call outside the transaction) is deployed: before
+# it, PENDING can mean "accepted by SES but rolled back", so a re-enqueue could
+# send a duplicate. Off = report only.
+RELAY_STALE_BATCH_AUTO_REENQUEUE = bool_env("RELAY_STALE_BATCH_AUTO_REENQUEUE", default=False)
+
+RELAY_QUEUE_AGE_ALERT_SECONDS = {
+    "provider-events": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_PROVIDER_EVENTS_SECONDS", "900")),
+    "tracking": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_TRACKING_SECONDS", "300")),
+    # Transactional mail must flow in seconds even mid-blast; the campaign
+    # lane intentionally has no age alert (a READY backlog is normal during
+    # a send -- progress is tracked per-recipient, not per-task).
+    "transactional": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_TRANSACTIONAL_SECONDS", "300")),
+}
+RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS", "30")))
+RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS", "900")))
+# Campaign SES-throttling retries include the first attempt. A batch that hits
+# retryable SES throttling does not fail: the remaining PENDING recipients of
+# that batch are requeued as a new task with run_after backoff (base, doubling,
+# capped), so a transient rate-limit never fails mail that was never attempted.
+RELAY_CAMPAIGN_THROTTLE_MAX_ATTEMPTS = max(1, int(os.environ.get("RELAY_CAMPAIGN_THROTTLE_MAX_ATTEMPTS", "8")))
+RELAY_CAMPAIGN_THROTTLE_BASE_SECONDS = max(1, int(os.environ.get("RELAY_CAMPAIGN_THROTTLE_BASE_SECONDS", "30")))
+RELAY_CAMPAIGN_THROTTLE_MAX_SECONDS = max(1, int(os.environ.get("RELAY_CAMPAIGN_THROTTLE_MAX_SECONDS", "900")))
+RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL = os.environ.get("RELAY_TRANSACTIONAL_ALERT_WEBHOOK_URL", "").strip()
 
 # Identifies this project in the taskdeck status contract and in TaskRun rows.
 TASKDECK_PROJECT = "relay"
@@ -148,6 +229,15 @@ if TESTING:
 
 ROOT_URLCONF = "relay.urls"
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "relay-default",
+        "TIMEOUT": 300,
+        "OPTIONS": {"MAX_ENTRIES": 2000},
+    }
+}
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -173,6 +263,40 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
+
+if DATABASES["default"]["ENGINE"].endswith("postgresql"):
+    # Fail fast and detect dead peers instead of hanging on a stale socket.
+    # On 2026-10-22/23 Coolify recreated Postgres with a new IP; long-lived
+    # workers kept sockets to the old one. connect_timeout bounds a connect to
+    # an address that no longer answers; TCP keepalives make the kernel notice
+    # an idle connection whose peer vanished (30s idle + 3 x 10s probes), so the
+    # next health check reconnects through fresh DNS. No IP is ever pinned.
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"] = {
+        "connect_timeout": int(os.environ.get("RELAY_DB_CONNECT_TIMEOUT_SECONDS", "5")),
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+    } | DATABASES["default"]["OPTIONS"]
+    # Web processes only (set by gunicorn.conf.py): a request never waits more
+    # than this on a row lock. It fails loudly instead of pinning a thread
+    # until every worker is busy and the proxy serves 503 (2026-11-09).
+    _web_lock_timeout_ms = int(os.environ.get("RELAY_WEB_DB_LOCK_TIMEOUT_MS", "0") or 0)
+    if _web_lock_timeout_ms > 0:
+        DATABASES["default"]["OPTIONS"]["options"] = (
+            DATABASES["default"]["OPTIONS"].get("options", "") + f" -c lock_timeout={_web_lock_timeout_ms}"
+        ).strip()
+    _web_statement_timeout_ms = int(os.environ.get("RELAY_WEB_DB_STATEMENT_TIMEOUT_MS", "0") or 0)
+    if _web_statement_timeout_ms > 0:
+        DATABASES["default"]["OPTIONS"]["options"] = (
+            DATABASES["default"]["OPTIONS"].get("options", "")
+            + f" -c statement_timeout={_web_statement_timeout_ms}"
+        ).strip()
+
+# Long-running loops touch this after every iteration that reached the
+# database; worker_healthcheck fails when it goes stale (see mailing/db_retry.py).
+RELAY_DB_HEARTBEAT_FILE = os.environ.get("RELAY_DB_HEARTBEAT_FILE", "/tmp/relay-db-heartbeat")
 
 if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
     # On a single host this database has many writers: two gunicorn workers,
@@ -229,33 +353,137 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "newsletter@example.co
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 AWS_SES_REGION = os.environ.get("AWS_SES_REGION", AWS_REGION)
+# boto3 client transport: seconds per attempt, total attempts incl. the first (standard retry mode).
+AWS_CONNECT_TIMEOUT = int_env("RELAY_AWS_CONNECT_TIMEOUT", default=5)
+AWS_READ_TIMEOUT = int_env("RELAY_AWS_READ_TIMEOUT", default=5)
+AWS_MAX_ATTEMPTS = int_env("RELAY_AWS_MAX_ATTEMPTS", default=3)
+# SES send calls are not idempotent: keep them at one attempt (see mailing.aws._ses_config).
+AWS_SES_SEND_MAX_ATTEMPTS = int_env("RELAY_AWS_SES_SEND_MAX_ATTEMPTS", default=1)
 AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "")
+DMARC_READER_ROLE_ARN = os.environ.get("DMARC_READER_ROLE_ARN", "")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+try:
+    _public_hostname = (urlsplit(PUBLIC_BASE_URL).hostname or "").lower().rstrip(".")
+except ValueError as exc:
+    raise ImproperlyConfigured("PUBLIC_BASE_URL must be a valid URL.") from exc
+if DEBUG and _public_hostname in {"relay.datatalks.club", "origin.relay.datatalks.club"}:
+    raise ImproperlyConfigured("DEBUG must be disabled when PUBLIC_BASE_URL targets Relay production.")
 API_DOCS_BASE_URL = os.environ.get("RELAY_API_DOCS_BASE_URL", PUBLIC_BASE_URL).rstrip("/")
 # Public base URL of the client site page that receives double opt-in confirm
 # links. Relay appends `?token=...`; the token never carries a raw email.
 SUBSCRIPTION_CONFIRM_BASE_URL = (
     os.environ.get("SUBSCRIPTION_CONFIRM_BASE_URL", "").strip().rstrip("/") or PUBLIC_BASE_URL
 )
+# Where "Block this sender" links in forwarded mail point. Empty means the
+# console host from AUTH_CALLBACK_URL, which serves every Relay path.
+INBOUND_BLOCK_LINK_BASE_URL = os.environ.get("INBOUND_BLOCK_LINK_BASE_URL", "").strip().rstrip("/")
 # Static sites call these lists without a client API key. The value is parsed
 # by mailing.services.public_lists. Empty disables the public routes' lists.
-RELAY_PUBLIC_LISTS = os.environ.get("RELAY_PUBLIC_LISTS", "")
-RELAY_PUBLIC_SUBSCRIBE_ORIGINS = frozenset(csv_env("RELAY_PUBLIC_SUBSCRIBE_ORIGINS", "", allow_empty=True))
+# Unset env falls back to the datatalks.club newsletter form (slugs only, no
+# secrets); setting the variable replaces the default.
+DEFAULT_PUBLIC_LISTS = (
+    "dtc-newsletter org=datatalksclub client=dtc-newsletter audience=dtc "
+    "category=newsletter template=newsletter-welcome optin=single"
+)
+RELAY_PUBLIC_LISTS = os.environ.get("RELAY_PUBLIC_LISTS", "").strip() or DEFAULT_PUBLIC_LISTS
+RELAY_PUBLIC_SUBSCRIBE_ORIGINS = frozenset(
+    csv_env("RELAY_PUBLIC_SUBSCRIBE_ORIGINS", "https://datatalks.club,https://www.datatalks.club", allow_empty=True)
+)
 RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_LIMIT", "3"))
 RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS = int(
     os.environ.get("RELAY_PUBLIC_SUBSCRIBE_EMAIL_WINDOW_SECONDS", "3600")
 )
+# Single-opt-in public lists also limit signups per client IP. The IP is the
+# Nth entry from the right of X-Forwarded-For (N = trusted proxy hops). Prod is
+# client -> CloudFront -> ALB -> app: the ALB appends the CloudFront edge, so
+# the client is 2nd from the right.
+RELAY_PUBLIC_SUBSCRIBE_IP_LIMIT = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_IP_LIMIT", "10"))
+RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS = int(
+    os.environ.get("RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS", "3600")
+)
+RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS", "2"))
 AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 # domain role=<arn> region=<region> configuration_set=<name>, separated by ';'
 # or newlines. Domains absent from this list use email.send and the values above.
 RELAY_SES_DOMAIN_ROUTES = os.environ.get("RELAY_SES_DOMAIN_ROUTES", "")
+RELAY_SES_QUOTA_REGIONS = csv_env("RELAY_SES_QUOTA_REGIONS", "eu-west-1,us-east-1", allow_empty=True)
+# Global account-wide SES token bucket (mailing/ses_rate_limiter.py): every SES
+# send path acquires a permit here, so K sender processes share one budget.
+# The account budget defaults to 45/s against an SES MaxSendRate of 50/s and is
+# clamped to the SES MaxSendRate discovered via GetAccount when reachable.
+SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_ACCOUNT_MAX_SEND_RATE", default=45.0)
+# Burst headroom in messages; 0 means rate/5 (never more than a second of sends).
+SES_LIMITER_BURST_MESSAGES = float_env("RELAY_SES_LIMITER_BURST_MESSAGES", default=0.0)
+# Sends of kind="transactional" may overdraw the bucket by this many messages,
+# so a saturating campaign cannot starve transactional mail for longer than ~1 s.
+SES_TRANSACTIONAL_RESERVE_PER_SECOND = float_env("RELAY_SES_TRANSACTIONAL_RESERVE_PER_SECOND", default=5.0)
+# Fail-closed: a permit wait longer than this raises instead of sending.
+SES_LIMITER_WAIT_TIMEOUT_SECONDS = float_env("RELAY_SES_LIMITER_WAIT_TIMEOUT_SECONDS", default=30.0)
+SES_LIMITER_POLL_INTERVAL_SECONDS = float_env("RELAY_SES_LIMITER_POLL_INTERVAL_SECONDS", default=0.05)
+# Throttling feedback (AIMD): on a Throttling response the shared rate is
+# multiplied by 0.8 for 60 s, then recovers linearly to the base rate over 60 s.
+SES_LIMITER_THROTTLE_FACTOR = float_env("RELAY_SES_LIMITER_THROTTLE_FACTOR", default=0.8)
+SES_LIMITER_THROTTLE_PENALTY_SECONDS = float_env("RELAY_SES_LIMITER_THROTTLE_PENALTY_SECONDS", default=60.0)
+SES_LIMITER_THROTTLE_RECOVERY_SECONDS = float_env("RELAY_SES_LIMITER_THROTTLE_RECOVERY_SECONDS", default=60.0)
+SES_LIMITER_MIN_RATE_PER_SECOND = float_env("RELAY_SES_LIMITER_MIN_RATE_PER_SECOND", default=1.0)
+# Best-effort clamp of the budget to the SES MaxSendRate (cached 5 min).
+# Disabled automatically under test runners (settings.TESTING).
+SES_LIMITER_DISCOVER_SES_QUOTA = bool_env("RELAY_SES_LIMITER_DISCOVER_SES_QUOTA", default=True)
+# Legacy per-process pacer name, kept for display/tests compat; the global
+# bucket above is the enforcing limiter. Prefer RELAY_SES_ACCOUNT_MAX_SEND_RATE.
 SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0)
+# 100-message batches spent ~15% of their time in fixed per-batch overhead (thread +
+# DB connection setup, last SES call tail); 500 reaches the limiter rate.
+CAMPAIGN_EMAIL_BATCH_SIZE = int_env("RELAY_CAMPAIGN_EMAIL_BATCH_SIZE", default=500)
+# SES calls in flight per batch. ~11 saturate 45/s at ~240 ms per call.
+CAMPAIGN_SEND_CONCURRENCY = int_env("RELAY_CAMPAIGN_SEND_CONCURRENCY", default=16)
+# Claim-send-finalize (mailing.services.campaign_sender): rows claimed per UPDATE, how long a
+# SENDING claim may live before it becomes UNKNOWN, and how long a SIGTERM drain waits for
+# in-flight SES calls (keep below the Docker stop timeout).
+CAMPAIGN_CLAIM_CHUNK = int_env("RELAY_CAMPAIGN_CLAIM_CHUNK", default=5)
+CAMPAIGN_SEND_LEASE_SECONDS = int_env("RELAY_CAMPAIGN_SEND_LEASE_SECONDS", default=600)
+CAMPAIGN_SEND_DRAIN_SECONDS = int_env("RELAY_CAMPAIGN_SEND_DRAIN_SECONDS", default=25)
+# MIME build once per batch (mailing.mime_template) with per-recipient byte
+# substitution. Set to 0 to use the per-message MIME builder instead.
+RELAY_MIME_TEMPLATE_ENABLED = bool_env("RELAY_MIME_TEMPLATE_ENABLED", default=True)
 SQS_TRANSACTIONAL_EMAIL_QUEUE_URL = os.environ.get("SQS_TRANSACTIONAL_EMAIL_QUEUE_URL", "")
 SQS_CAMPAIGN_EMAIL_QUEUE_URL = os.environ.get("SQS_CAMPAIGN_EMAIL_QUEUE_URL", "")
 SQS_EMAIL_EVENTS_QUEUE_URL = os.environ.get("SQS_EMAIL_EVENTS_QUEUE_URL", "")
 SQS_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SES_WEBHOOKS_QUEUE_URL", "")
+SQS_AISL_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_AISL_SES_WEBHOOKS_QUEUE_URL", "")
+AISL_SES_FORWARD_ENABLED = bool_env("AISL_SES_FORWARD_ENABLED", default=False)
+AISL_SES_WEBHOOK_URL = os.environ.get("AISL_SES_WEBHOOK_URL", "https://aishippinglabs.com/api/ses-events")
+AISL_SES_WEBHOOK_SECRET_ARN = os.environ.get("AISL_SES_WEBHOOK_SECRET_ARN", "")
+AISL_SES_TOPIC_ARNS = tuple(filter(None, (
+    value.strip() for value in os.environ.get("AISL_SES_TOPIC_ARNS", "").split(",")
+)))
+
+# Only transport IDs and acknowledgement status are logged by this adapter.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+        "aisl_ses_console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "mailing": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+        "mailing.services.aisl_ses_forwarder": {
+            "handlers": ["aisl_ses_console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
 SQS_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_INBOUND_EMAIL_QUEUE_URL", "")
-SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL = os.environ.get("SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL", "")
+SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL = os.environ.get(
+    "SQS_SANDBOX_SES_WEBHOOKS_QUEUE_URL",
+    "https://sqs.eu-west-1.amazonaws.com/817685572750/relay-sandbox-ses-webhooks",
+)
 SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL = os.environ.get("SQS_SANDBOX_INBOUND_EMAIL_QUEUE_URL", "")
 INBOUND_EMAIL_EVENTS_TOPIC_ARN = os.environ.get("INBOUND_EMAIL_EVENTS_TOPIC_ARN", "")
 # INBOUND_EMAIL_IDEMPOTENCY_TABLE is deliberately not read any more. Idempotency
@@ -303,12 +531,36 @@ SES_WEBHOOKS_SIGNATURE_MODE = os.environ.get(
     "mock" if DEBUG or TESTING else "strict",
 )
 SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION = bool_env("SES_WEBHOOKS_ALLOW_SUBSCRIPTION_CONFIRMATION", default=False)
+# F4: harden the public HTTP fallback. Bodies over this size are rejected
+# before Django buffers them or any SNS signature work (cert fetch + verify),
+# with HTTP 413. SNS always sends Content-Length; missing values are rejected.
+SES_WEBHOOKS_MAX_BODY_BYTES = int_env("SES_WEBHOOKS_MAX_BODY_BYTES", default=256 * 1024)
+# F4: optional TopicArn allowlist for the HTTP fallback. Empty allows any
+# topic once the SNS signature verifies (backwards compatible); set this in
+# production to the SES configuration-set topic ARN(s) so events from other
+# AWS accounts' topics are rejected with 403.
+SES_WEBHOOKS_ALLOWED_TOPIC_ARNS = csv_env("SES_WEBHOOKS_ALLOWED_TOPIC_ARNS", "", allow_empty=True)
+SES_WEBHOOKS_CERT_CACHE_TTL_SECONDS = float_env("SES_WEBHOOKS_CERT_CACHE_TTL_SECONDS", default=3600.0)
 
 # Transactional template test sends go only to these addresses (R1.3).
 # Empty disables test-send entirely.
 TRANSACTIONAL_TEST_SEND_ALLOWLIST = csv_env("TRANSACTIONAL_TEST_SEND_ALLOWLIST", "", allow_empty=True)
 
-# Shared email shell branding and the site host treated as internal by the
-# markdown external-link rewriter (ported from the AISL email pipeline).
-RELAY_EMAIL_BRAND_NAME = os.environ.get("RELAY_EMAIL_BRAND_NAME", "Relay")
+# Site host treated as internal by the markdown external-link rewriter
+# (ported from the AISL email pipeline). Branding lives in per-client
+# EmailLayout rows; there is no global brand name and no Relay fallback.
 RELAY_EMAIL_SITE_BASE_URL = os.environ.get("RELAY_EMAIL_SITE_BASE_URL", "")
+
+# No-history clients never page. Overrides keyed by client ID, without secrets.
+RELAY_TRANSACTIONAL_MONITOR_ENABLED = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_ENABLED", "1") == "1"
+RELAY_TRANSACTIONAL_MONITOR_CLIENTS = json.loads(os.environ.get("RELAY_TRANSACTIONAL_MONITOR_CLIENTS", "{}"))
+RELAY_TRANSACTIONAL_MONITOR_FROM = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_FROM", "noreply@datatalks.club")
+RELAY_TRANSACTIONAL_MONITOR_TO = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_TO", "dev@dtcdev.click")
+MIDDLEWARE.insert(0, "mailing.transactional_monitor_middleware.TransactionalMonitorMiddleware")
+
+RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG = os.environ.get("RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG", "")
+
+RELAY_SES_MONITOR_ENABLED = os.environ.get("RELAY_SES_MONITOR_ENABLED", "1") == "1"
+RELAY_SES_OUTCOME_GAP_THRESHOLD = int(os.environ.get("RELAY_SES_OUTCOME_GAP_THRESHOLD", "1"))
+RELAY_SES_OUTCOME_GAP_LOOKBACK_DAYS = int(os.environ.get("RELAY_SES_OUTCOME_GAP_LOOKBACK_DAYS", "7"))
+RELAY_SES_EVENTS_TOPIC_NAME = os.environ.get("RELAY_SES_EVENTS_TOPIC_NAME", "relay-production-ses-events")

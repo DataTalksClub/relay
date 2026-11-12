@@ -1,0 +1,193 @@
+"""Privacy-preserving acceptance and API failure monitoring; never resends mail."""
+import json
+import logging
+import math
+import subprocess
+from datetime import timedelta
+from email.message import EmailMessage
+from email.utils import make_msgid
+from zoneinfo import ZoneInfo
+
+from django.conf import settings
+from django.db.models import Max, Sum
+from django.utils import timezone
+
+from mailing.aws import ses_client_for_source
+from mailing.dry_run import ensure_transport_allowed
+from mailing.models import Client, TransactionalMessage, TransactionalMonitorState, TransactionalRequestMinute
+from mailing.ses import send_email
+from mailing.ses_rate_limiter import TRANSACTIONAL
+
+logger = logging.getLogger(__name__)
+_last_check = None
+
+
+def policy_for(client_id):
+    return {
+        "min_daily": 10, "timezone": "Europe/Berlin", "quiet_hours": [],
+        "error_percent": 20, "min_requests": 5, "min_requests_4xx": 20,
+        **settings.RELAY_TRANSACTIONAL_MONITOR_CLIENTS.get(str(client_id), {}),
+    }
+
+
+def acceptance_gap(client, now, policy):
+    """Return a gap payload when this local weekday/hour is overdue.
+
+    The matching hour in the previous weekly cycle estimates the client's
+    expected rate for this weekday and hour. An empty historical slot is
+    expected silence, so it cannot open an incident.
+    """
+    if policy.get("enabled", True) is False:
+        return None
+    zone = ZoneInfo(policy["timezone"])
+    local_now = now.astimezone(zone)
+    if local_now.hour in policy["quiet_hours"]:
+        return None
+
+    this_hour = local_now.replace(minute=0, second=0, microsecond=0)
+    reference_hour = this_hour - timedelta(days=7)
+    expected_count = TransactionalMessage.objects.filter(
+        client=client,
+        created_at__gte=reference_hour,
+        created_at__lt=reference_hour + timedelta(hours=1),
+    ).count()
+    if expected_count == 0:
+        return None
+
+    # Allow three expected inter-arrival periods, with a 15-minute floor.
+    # The threshold grows for sparse hours and shrinks as the expected rate rises.
+    threshold_minutes = max(15, math.ceil(180 / expected_count))
+    cutoff = now - timedelta(minutes=threshold_minutes)
+    messages = TransactionalMessage.objects.filter(client=client, created_at__lte=now)
+    latest = messages.aggregate(latest=Max("created_at"))["latest"]
+    if latest is None or latest > cutoff:
+        return None
+    baseline = messages.filter(created_at__gte=now - timedelta(days=7)).count()
+    if baseline < max(1, policy["min_daily"] * 7):
+        return None
+    return {
+        "kind": "acceptance_gap", "client_id": client.pk,
+        "baseline_count": baseline, "expected_hour_count": expected_count,
+        "threshold_minutes": threshold_minutes,
+        "gap_minutes": int((now - latest).total_seconds() / 60),
+    }
+
+
+def client_alerts(client, now):
+    policy = policy_for(client.pk)
+    if policy.get("enabled", True) is False:
+        return []
+    alerts = []
+    gap = acceptance_gap(client, now, policy)
+    if gap is not None:
+        alerts.append(gap)
+    counts = TransactionalRequestMinute.objects.filter(
+        client=client, minute__gt=now - timedelta(minutes=15), minute__lte=now,
+    ).aggregate(total=Sum("total"), errors=Sum("errors"), server_errors=Sum("server_errors"),
+                missing_template=Sum("missing_template"))
+    total, errors = counts["total"] or 0, counts["errors"] or 0
+    server_errors = counts["server_errors"] or 0
+    missing_template = counts["missing_template"] or 0
+    # Relay-side 5xx page at low volume: a real outage must never be muted.
+    server_alarm = (total >= max(1, policy["min_requests"])
+                    and server_errors * 100 >= total * policy["error_percent"])
+    # Include 4xx at meaningful volume, preserving isolated auth-probe silence.
+    # Combine both classes so a mixed failure cannot fall below each threshold.
+    combined_alarm = (total >= max(1, policy["min_requests_4xx"])
+                      and errors * 100 >= total * policy["error_percent"])
+    if server_alarm or combined_alarm:
+        alerts.append({"kind": "api_errors", "client_id": client.pk,
+                       "requests": total, "errors": errors, "server_errors": server_errors,
+                       "error_percent": round(errors * 100 / total, 1)})
+    # Every missing-template 404 is a client email that did not deliver, so it
+    # reports at any volume; the one-hour per-kind cooldown paces repeats.
+    if missing_template:
+        alerts.append({"kind": "missing_template", "client_id": client.pk,
+                       "requests": total, "errors": errors, "missing_template": missing_template})
+    return alerts
+
+
+def send_monitor_alert(payload, *, test=False):
+    # Test delivery is deliberately fixed to the operator mailbox.
+    destination = "dev@dtcdev.click" if test else settings.RELAY_TRANSACTIONAL_MONITOR_TO
+    source = settings.RELAY_TRANSACTIONAL_MONITOR_FROM
+    body = json.dumps(payload, sort_keys=True)
+    if settings.RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG:
+        return send_ops_smtp(source, destination, payload["kind"], body)
+    return send_email(ses_client=ses_client_for_source(source), source=source,
+                      to_email=destination, subject="[Relay transactional monitor] " + payload["kind"],
+                      text_body=body, html_body="", kind=TRANSACTIONAL)
+
+
+def send_ops_smtp(source, destination, kind, body):
+    ensure_transport_allowed("ops alert SMTP")
+    message = EmailMessage()
+    message["From"] = source
+    message["To"] = destination
+    message["Subject"] = "[Relay transactional monitor] " + kind
+    message["Message-ID"] = make_msgid(domain="relay.datatalks.club")
+    message.set_content(body)
+    try:
+        subprocess.run(
+            ["/usr/bin/msmtp", "--file=" + settings.RELAY_TRANSACTIONAL_MONITOR_MSMTP_CONFIG,
+             "--from=" + source, "--timeout=15", "--", destination],
+            input=message.as_bytes(), capture_output=True, check=True, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # SMTP diagnostics may include credentials or addresses; never propagate them.
+        raise RuntimeError("ops_alert_transport_failed") from None
+    return str(message["Message-ID"])
+
+
+def check_transactional_health(*, now=None, force=False):
+    global _last_check
+    now = now or timezone.now()
+    if not settings.RELAY_TRANSACTIONAL_MONITOR_ENABLED:
+        return []
+    if not force and _last_check and now - _last_check < timedelta(seconds=15):
+        return []
+    _last_check = now
+    found = []
+    try:
+        for client in Client.objects.filter(is_active=True).only("id"):
+            payloads = client_alerts(client, now)
+            for payload in payloads:
+                state, _ = TransactionalMonitorState.objects.get_or_create(client=client, kind=payload["kind"])
+                if payload["kind"] == "acceptance_gap" and state.last_alert_at:
+                    continue
+                if state.last_alert_at and now - state.last_alert_at < timedelta(hours=1):
+                    continue
+                logger.error("relay_transactional_alert %s", json.dumps(payload, sort_keys=True))
+                try:
+                    send_monitor_alert(payload)
+                except Exception as exc:
+                    logger.error("relay_transactional_alert_delivery_failed client_id=%s error_type=%s",
+                                 client.pk, type(exc).__name__)
+                else:
+                    state.last_alert_at = now
+                    state.save(update_fields=["last_alert_at"])
+                    found.append(payload)
+
+            gap_state = TransactionalMonitorState.objects.filter(client=client, kind="acceptance_gap").first()
+            latest_acceptance = TransactionalMessage.objects.filter(
+                client=client, created_at__lte=now,
+            ).aggregate(latest=Max("created_at"))["latest"]
+            if (gap_state and gap_state.last_alert_at and latest_acceptance
+                    and latest_acceptance > gap_state.last_alert_at):
+                resolved = {"kind": "acceptance_gap_resolved", "client_id": client.pk,
+                            "resolved_at": now.isoformat()}
+                try:
+                    send_monitor_alert(resolved)
+                except Exception as exc:
+                    logger.error("relay_transactional_alert_delivery_failed client_id=%s error_type=%s",
+                                 client.pk, type(exc).__name__)
+                else:
+                    gap_state.last_alert_at = None
+                    gap_state.save(update_fields=["last_alert_at"])
+                    found.append(resolved)
+        TransactionalRequestMinute.objects.filter(minute__lt=now - timedelta(days=1)).delete()
+        logger.info("relay_transactional_monitor_heartbeat checked_at=%s alerts=%s", now.isoformat(), len(found))
+    except Exception as exc:
+        # Monitoring must not stop the scheduler. Never log request bodies or exception text.
+        logger.error("relay_transactional_monitor_failed error_type=%s", type(exc).__name__)
+    return found

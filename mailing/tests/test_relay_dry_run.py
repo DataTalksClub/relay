@@ -155,8 +155,10 @@ class _RecordingSesClient:
         return {"MessageId": "direct-message-123"}
 
 
-def test_disabled_flag_keeps_direct_send_path(monkeypatch):
+def test_disabled_flag_keeps_direct_send_path(monkeypatch, settings):
     ses = _RecordingSesClient()
+
+    settings.SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = 0  # payload path only; the limiter has its own tests
 
     monkeypatch.delenv("RELAY_DRY_RUN", raising=False)
     assert send_email(

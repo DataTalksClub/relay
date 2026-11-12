@@ -1,16 +1,31 @@
+import binascii
+import logging
 import threading
 import time
 from dataclasses import dataclass
+from email import policy
 from email.message import EmailMessage, Message
+from email.parser import BytesParser
+from email.utils import formataddr, parseaddr
 
+from botocore.exceptions import ClientError
 from django.conf import settings
 
 from mailing.calendar_mime import add_calendar_alternative, validate_calendar_alternative
 from mailing.dry_run import ensure_transport_allowed
+from mailing.ses_rate_limiter import (
+    BULK,
+    THROTTLING_CODES,
+    acquire_ses_permit,
+    report_ses_throttling,
+)
 
-_rate_limit_lock = threading.Lock()
-_last_ses_send_monotonic = None
+logger = logging.getLogger(__name__)
 
+# Per-thread phase timings of the last send call, read by the campaign sender
+# for its batch log: seconds spent building the SES parameters (MIME) and
+# waiting on the global rate limiter.
+send_phase_timings = threading.local()
 
 @dataclass(frozen=True)
 class _Envelope:
@@ -47,17 +62,26 @@ def send_email(
     message_parts=None,
     configuration_set=None,
     calendar_alternative=None,
+    original_mime=None,
+    forward_footer=None,
+    kind=BULK,
 ):
     calendar = validate_calendar_alternative(calendar_alternative, text_body, html_body, message_parts, headers)
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
     content = _Content(subject, html_body, text_body, headers, message_parts, calendar)
     raw = bool(headers or message_parts or calendar is not None)
-    parameters = _raw_parameters(envelope, content) if raw else _simple_parameters(envelope, content)
-    ensure_transport_allowed("SES send_email")
-    throttle_ses_send()
-    if raw:
-        return ses_client.send_raw_email(**parameters)["MessageId"]
-    return ses_client.send_email(**parameters)["MessageId"]
+    build_started = time.perf_counter()
+    if original_mime is not None:
+        forwarded = _forward_message(envelope, original_mime, footer=forward_footer)
+        parameters = {"Source": source, "Destinations": [to_email], "RawMessage": {"Data": forwarded.as_bytes()}}
+        _configuration(parameters, configuration_set)
+        raw = True
+    else:
+        parameters = _raw_parameters(envelope, content) if raw else _simple_parameters(envelope, content)
+    send_phase_timings.build = time.perf_counter() - build_started
+    return _send_with_permit(
+        ses_client, parameters, raw=raw, kind=kind, operation="SES send_email",
+    )
 
 
 def send_raw_email(
@@ -75,13 +99,85 @@ def send_raw_email(
     message_parts=None,
     configuration_set=None,
     calendar_alternative=None,
+    kind=BULK,
 ):
     calendar = validate_calendar_alternative(calendar_alternative, text_body, html_body, message_parts, headers)
     envelope = _Envelope(source, to_email, reply_to, cc, bcc, configuration_set)
     content = _Content(subject, html_body, text_body, headers, message_parts, calendar)
+    build_started = time.perf_counter()
     parameters = _raw_parameters(envelope, content)
-    ensure_transport_allowed("SES send_raw_email")
-    return ses_client.send_raw_email(**parameters)["MessageId"]
+    send_phase_timings.build = time.perf_counter() - build_started
+    return _send_with_permit(
+        ses_client, parameters, raw=True, kind=kind, operation="SES send_raw_email",
+    )
+
+
+def _recipient_cost(parameters, raw):
+    if raw:
+        return max(1, len(parameters.get("Destinations") or []))
+    destination = parameters.get("Destination") or {}
+    return max(
+        1,
+        len(destination.get("ToAddresses") or [])
+        + len(destination.get("CcAddresses") or [])
+        + len(destination.get("BccAddresses") or []),
+    )
+
+
+def _send_with_permit(ses_client, parameters, *, raw, kind, operation):
+    cost = _recipient_cost(parameters, raw)
+    ensure_transport_allowed(operation)
+    # Every SES call acquires a global permit first, including raw sends; the
+    # SDK client is configured with standard retries (mailing/aws.py), and our
+    # layer re-acquires a permit before its single throttling retry, so retries
+    # never bypass the account budget.
+    waited = 0.0
+    started = time.perf_counter()
+    acquire_ses_permit(cost=cost, kind=kind)
+    waited += time.perf_counter() - started
+    send_phase_timings.limiter_wait = waited
+    call = ses_client.send_raw_email if raw else ses_client.send_email
+    try:
+        return call(**parameters)["MessageId"]
+    except ClientError as exc:
+        if not _is_throttling(exc):
+            raise
+        report_ses_throttling()
+        started = time.perf_counter()
+        acquire_ses_permit(cost=cost, kind=kind)
+        waited += time.perf_counter() - started
+        send_phase_timings.limiter_wait = waited
+        return call(**parameters)["MessageId"]
+
+
+def _is_throttling(exc):
+    code = exc.response.get("Error", {}).get("Code", "")
+    if code in THROTTLING_CODES:
+        return True
+    status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
+    return status == 429
+
+
+def send_raw_bytes(*, ses_client, source, to_email, raw_data, cc=None, bcc=None, configuration_set=None,
+                   kind=BULK):
+    """Send prebuilt MIME bytes (see mailing.mime_template.render_campaign_template).
+
+    This is the same wire call as the raw branch of send_email (guard, shared
+    SES throttle, configuration set), but the MIME was built once per batch and
+    only per-recipient bytes were substituted, so there is no per-message cost.
+    The byte substitution is timed by the caller in timing["render_mime"], so
+    build is reported as 0 here and the SES-call split stays exact.
+    """
+    parameters = {
+        "Source": source,
+        "Destinations": [to_email, *(cc or []), *(bcc or [])],
+        "RawMessage": {"Data": raw_data},
+    }
+    _configuration(parameters, configuration_set)
+    send_phase_timings.build = 0.0
+    return _send_with_permit(
+        ses_client, parameters, raw=True, kind=kind, operation="SES send_raw_email",
+    )
 
 
 def _simple_parameters(envelope, content):
@@ -122,7 +218,7 @@ def _configuration(params, configuration_set):
         params["ConfigurationSetName"] = configuration_set
 
 
-def _raw_message(envelope, content):
+def _raw_message(envelope, content, *, text_cte=None):
     message = EmailMessage()
     message["From"] = envelope.source
     message["To"] = envelope.to_email
@@ -136,17 +232,52 @@ def _raw_message(envelope, content):
     if content.calendar is not None:
         add_calendar_alternative(message, content.text, content.html, content.calendar)
     else:
-        _ordinary_body(message, content)
+        _ordinary_body(message, content, text_cte=text_cte)
     return message
 
 
-def _ordinary_body(message, content):
+# The stdlib quoted-printable encoder is pure Python (~10 ms for an 80 KB
+# newsletter, GIL-held, once per recipient). binascii does the same job in C.
+_FAST_QP_MIN_HTML = 8192
+
+
+def _add_html_alternative(message, html, *, text_cte=None):
+    if text_cte == "8bit":
+        # MIME templates (mailing.mime_template) substitute per-recipient bytes
+        # after serialization, so the payload must pass through untouched: raw
+        # UTF-8, never QP/base64-wrapped, never split mid-sentinel. The small
+        # branch goes through the content manager exactly like the per-message
+        # builder (same trailing newline); the big branch stores UTF-8 bytes
+        # directly, matching the binascii fast path's exact payload.
+        if len(html) < _FAST_QP_MIN_HTML:
+            message.add_alternative(html, subtype="html", cte="8bit")
+            return
+        message.make_alternative()
+        part = type(message)(policy=message.policy)
+        part["Content-Type"] = 'text/html; charset="utf-8"'
+        part["Content-Transfer-Encoding"] = "8bit"
+        part.set_payload(html.encode("utf-8"))
+        message.attach(part)
+        return
+    if len(html) < _FAST_QP_MIN_HTML:
+        message.add_alternative(html, subtype="html")
+        return
+    message.make_alternative()
+    part = type(message)(policy=message.policy)
+    part["Content-Type"] = 'text/html; charset="utf-8"'
+    part["Content-Transfer-Encoding"] = "quoted-printable"
+    part.set_payload(binascii.b2a_qp(html.encode("utf-8")).decode("ascii"))
+    message.attach(part)
+
+
+def _ordinary_body(message, content, *, text_cte=None):
+    cte_kw = {} if text_cte is None else {"cte": text_cte}
     if content.text:
-        message.set_content(content.text)
+        message.set_content(content.text, **cte_kw)
         if content.html:
-            message.add_alternative(content.html, subtype="html")
+            _add_html_alternative(message, content.html, text_cte=text_cte)
     else:
-        message.set_content(content.html, subtype="html")
+        message.set_content(content.html, subtype="html", **cte_kw)
     if content.parts:
         if message.get_content_maintype() != "multipart" or message.get_content_subtype() != "mixed":
             message.make_mixed()
@@ -173,19 +304,78 @@ def parse_content_type(value):
     return {"maintype": maintype, "subtype": subtype, "params": dict(message.get_params()[1:])}
 
 
-def throttle_ses_send():
-    max_rate = float(getattr(settings, "SES_MAX_SEND_RATE_PER_SECOND", 0) or 0)
-    if max_rate <= 0:
-        return
+def throttle_ses_send(*, cost=1, kind=BULK, timeout=None):
+    """Acquire a global SES permit. Kept as the named send gate (WP2 scope).
 
-    min_interval = 1.0 / max_rate
-    global _last_ses_send_monotonic
-    with _rate_limit_lock:
-        now = time.monotonic()
-        if _last_ses_send_monotonic is not None:
-            elapsed = now - _last_ses_send_monotonic
-            if elapsed < min_interval:
-                wait_seconds = min_interval - elapsed
-                time.sleep(wait_seconds)
-                now += wait_seconds
-        _last_ses_send_monotonic = now
+    The old process-local 1/rate pacer is gone: every send path funnels
+    through the Postgres token bucket, so K processes share one budget.
+    """
+    acquire_ses_permit(cost=cost, kind=kind, timeout=timeout)
+
+
+def _forward_message(envelope, raw, footer=None):
+    # Keep the original MIME tree intact, including inline parts, charsets,
+    # nested multipart, calendar data, and binary attachments.
+    message = BytesParser(policy=policy.SMTP).parsebytes(raw)
+    original_from = str(message.get("From", ""))
+    display, address = parseaddr(original_from)
+    originals = {name: str(message[name]) for name in ("Date", "Message-ID", "References", "In-Reply-To", "Subject") if message[name]}
+    for name in list(message.keys()):
+        lower = name.lower()
+        if lower in {"from", "to", "cc", "bcc", "reply-to", "sender", "return-path", "received", "authentication-results", "dkim-signature", "arc-seal", "arc-message-signature", "arc-authentication-results", "message-id", "date", "auto-submitted", "x-loop"} or lower.startswith("x-ses-"):
+            del message[name]
+    message["From"] = formataddr((f"{display or address} via {envelope.source.rpartition('@')[2]}", envelope.source))
+    message["To"] = envelope.to_email
+    message["Reply-To"] = original_from
+    message["Auto-Submitted"] = "auto-forwarded"
+    message["X-Loop"] = "relay-inbound"
+    message["X-Relay-Inbound"] = "forward"
+    for name, value in originals.items():
+        message["X-Original-" + name] = value
+    if footer:
+        # Edited on a copy: the footer is a convenience, and a body it cannot
+        # handle must still be forwarded unchanged rather than failed or retried.
+        candidate = BytesParser(policy=policy.SMTP).parsebytes(message.as_bytes())
+        try:
+            _append_footer(candidate, *footer)
+            message = candidate
+        except Exception as exc:
+            logger.warning("forward footer skipped error_type=%s", type(exc).__name__)
+    return message
+
+
+def _append_footer(message, text, markup):
+    """Add the block-link footer to the readable body without touching attachments.
+
+    Appends to the first inline text/plain and text/html parts. A signed or
+    encrypted body cannot be edited without breaking it, and a body with no
+    readable part has nothing to append to, so both get a separate inline part.
+    """
+    done = set()
+    if message.get_content_type() not in {"multipart/signed", "multipart/encrypted"}:
+        for part in message.walk():
+            subtype = part.get_content_subtype()
+            if (
+                part.get_content_maintype() != "text"
+                or subtype not in {"plain", "html"}
+                or subtype in done
+                or part.get_content_disposition() == "attachment"
+                or part.get_filename()
+            ):
+                continue
+            try:
+                body = part.get_content()
+            except (LookupError, ValueError):
+                continue
+            if subtype == "plain":
+                body = body.rstrip("\n") + text
+            else:
+                index = body.lower().rfind("</body>")
+                body = body[:index] + markup + body[index:] if index >= 0 else body + markup
+            part.set_content(body, subtype=subtype, charset="utf-8")
+            done.add(subtype)
+        if done:
+            return
+    if message.get_content_type() != "multipart/mixed":
+        message.make_mixed()
+    message.add_attachment(text.lstrip(), disposition="inline")

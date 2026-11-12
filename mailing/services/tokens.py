@@ -72,8 +72,15 @@ def generate_raw_token():
 
 
 @transaction.atomic
-def ensure_campaign_recipient_tokens(recipient):
-    recipient = CampaignRecipient.objects.select_for_update().get(pk=recipient.pk)
+def ensure_campaign_recipient_tokens(recipient, *, locked=False):
+    """Create missing token hashes; return the raw tokens that were minted.
+
+    ``locked=True`` means the caller already holds the row's FOR UPDATE lock in
+    this transaction and passes a freshly loaded instance, so the second
+    SELECT FOR UPDATE is skipped.
+    """
+    if not locked:
+        recipient = CampaignRecipient.objects.select_for_update().get(pk=recipient.pk)
     tracking_token = None
     unsubscribe_token = None
 
