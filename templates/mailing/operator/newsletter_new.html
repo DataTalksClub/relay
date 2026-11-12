@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}New newsletter | Relay{% endblock %}
+{% block topbar_title %}New newsletter{% endblock %}
+{% block content %}
+  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{% url 'mailing:newsletter_list' %}">Newsletters</a><span>/</span><span>New</span></nav>
+  <div class="page-header">
+    <div><h1>New newsletter</h1><p>For {{ active_client.name }}. You can change everything later in the editor.</p></div>
+  </div>
+
+  <form method="post" class="form-panel nl-new-form" data-nl-busy-form novalidate>
+    {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+    {% if errors %}
+      <div class="form-errors nl-form-errors" role="alert">
+        <strong>The newsletter was not created.</strong> Check the highlighted fields.
+        {% if existing %}<a href="{% url 'mailing:newsletter_detail' existing.id %}">Open the existing newsletter “{{ existing.subject }}”</a>{% endif %}
+      </div>
+    {% endif %}
+    <section class="form-section" aria-labelledby="nl-template-heading">
+      <div class="section-header"><h2 id="nl-template-heading">Start from</h2></div>
+      <div class="nl-template-choices" role="radiogroup" aria-labelledby="nl-template-heading">
+        {% for template in templates %}
+          <label class="nl-template-choice">
+            <input type="radio" name="template" value="{{ template.key }}"{% if template.key == template_key %} checked{% endif %} data-nl-template>
+            <span><strong>{{ template.label }}</strong><span class="helptext">{{ template.description }}</span></span>
+          </label>
+        {% endfor %}
+      </div>
+    </section>
+    <section class="form-section" aria-labelledby="nl-issue-heading">
+      <div class="section-header"><h2 id="nl-issue-heading">This issue</h2></div>
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="nl-number">Issue number</label>
+          <input id="nl-number" name="issue_number" value="{{ values.issue_number }}" inputmode="numeric"{% if errors.issue_number %} aria-invalid="true" aria-describedby="nl-number-error"{% endif %}>
+          {% if errors.issue_number %}<p class="field-errors" id="nl-number-error">{{ errors.issue_number }}</p>{% endif %}
+        </div>
+        <div class="form-field">
+          <label for="nl-date">Send date</label>
+          <input id="nl-date" name="publication_date" type="date" value="{{ values.publication_date }}" aria-describedby="nl-date-help{% if errors.publication_date %} nl-date-error{% endif %}"{% if errors.publication_date %} aria-invalid="true"{% endif %}>
+          <p class="helptext" id="nl-date-help">Events and recordings are looked up around this date.</p>
+          {% if errors.publication_date %}<p class="field-errors" id="nl-date-error">{{ errors.publication_date }}</p>{% endif %}
+        </div>
+        <div class="form-field full">
+          <label for="nl-subject">Subject <span class="nl-required" aria-hidden="true">*</span></label>
+          <input id="nl-subject" name="subject" value="{{ values.subject }}" maxlength="255" required{% if errors.subject %} aria-invalid="true" aria-describedby="nl-subject-error"{% endif %}>
+          {% if errors.subject %}<p class="field-errors" id="nl-subject-error">{{ errors.subject }}</p>{% endif %}
+        </div>
+        <div class="form-field full">
+          <label for="nl-preview">Preview text</label>
+          <input id="nl-preview" name="preview_text" value="{{ values.preview_text }}" maxlength="255" aria-describedby="nl-preview-help">
+          <p class="helptext" id="nl-preview-help">The grey line shown after the subject in the inbox. You can add it later.</p>
+          {% if errors.preview_text %}<p class="field-errors">{{ errors.preview_text }}</p>{% endif %}
+        </div>
+      </div>
+      <details class="inline-details nl-advanced"{% if advanced_open %} open{% endif %}>
+        <summary>Advanced</summary>
+        <div class="form-field">
+          <label for="nl-key">Key</label>
+          <input id="nl-key" name="key" value="{{ values.key }}" maxlength="120" aria-describedby="nl-key-help{% if errors.key %} nl-key-error{% endif %}"{% if errors.key %} aria-invalid="true"{% endif %}>
+          <p class="helptext" id="nl-key-help">A short id such as weekly-303. It is also used as the campaign key, so it must be unique.</p>
+          {% if errors.key %}<p class="field-errors" id="nl-key-error">{{ errors.key }}</p>{% endif %}
+        </div>
+      </details>
+    </section>
+    <div class="form-actions">
+      <button type="submit" class="primary" data-nl-busy-label="Creating… fetching events, recordings and the book of the week">Create newsletter</button>
+      <a class="button secondary" href="{% url 'mailing:newsletter_list' %}">Cancel</a>
+      <p class="helptext nl-busy-status" role="status" data-nl-busy-status></p>
+    </div>
+  </form>
+  <script src="{% static 'mailing/js/newsletter-editor.js' %}" defer></script>
+{% endblock %}

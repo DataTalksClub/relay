@@ -1,0 +1,14 @@
+<li class="nl-block is-new" id="new-block" data-nl-block="new">
+  <div class="nl-block__head">
+    <span class="nl-block__num" aria-hidden="true">+</span>
+    <div class="nl-block__title"><h3>New block: {{ new_block.label }}</h3><span class="dk-badge">Not saved yet</span></div>
+  </div>
+  <form method="post" action="{% url 'mailing:newsletter_block_new' issue.id %}" class="nl-block__form" data-nl-ajax data-nl-track>
+    {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="block_type" value="{{ new_block.type }}">{% if new_block.position is not None %}<input type="hidden" name="position" value="{{ new_block.position }}">{% endif %}
+    {% include "mailing/operator/_newsletter_block_fields.html" with fields=new_block.fields extra_fields=new_block.extra_fields prefix="new" %}
+    <div class="form-actions">
+      <button type="submit" class="primary">Add block</button>
+      <a class="button secondary" href="{% url 'mailing:newsletter_detail' issue.id %}#newsletter-blocks" data-nl-cancel>Cancel</a>
+    </div>
+  </form>
+</li>

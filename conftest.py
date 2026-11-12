@@ -106,3 +106,14 @@ def _close_campaign_send_pool(django_db_setup):
     from mailing.services.campaign_sender import shutdown_send_pool  # noqa: PLC0415
 
     shutdown_send_pool()
+
+
+@pytest.fixture(autouse=True)
+def _offline_newsletter_sources(monkeypatch):
+    """Newsletter autofill must never reach the network from tests.
+
+    Tests that need source data patch ``_http_get`` again with fixture payloads.
+    """
+    from mailing.services import newsletter_sources  # noqa: PLC0415 - imports require Django settings
+
+    monkeypatch.setattr(newsletter_sources, "_http_get", lambda url: None)

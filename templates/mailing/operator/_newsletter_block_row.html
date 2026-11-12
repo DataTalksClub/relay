@@ -1,0 +1,76 @@
+{% with block=row.block %}
+<li class="nl-block" id="block-{{ block.id }}" data-nl-block="{{ block.id }}">
+  <div class="nl-block__head">
+    <span class="nl-block__num data-num" aria-hidden="true">{{ row.number }}</span>
+    <div class="nl-block__title">
+      <h3><span class="dk-visually-hidden">Block {{ row.number }}: </span>{{ row.label }}</h3>
+      <span class="dk-badge dk-badge--{{ row.status.tone }}"><span class="dot" aria-hidden="true"></span>{{ row.status.label }}</span>
+    </div>
+    <form method="post" action="{% url 'mailing:newsletter_block_action' issue.id block.id %}" class="nl-block__tools" data-nl-ajax>
+      {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+      <button type="submit" name="action" value="up" class="nl-icon-button" aria-label="Move block {{ row.number }} up" title="Move up"{% if row.first %} disabled{% endif %}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg></button>
+      <button type="submit" name="action" value="down" class="nl-icon-button" aria-label="Move block {{ row.number }} down" title="Move down"{% if row.last %} disabled{% endif %}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      <button type="submit" name="action" value="duplicate" class="nl-small-button">Duplicate</button>
+      {% if row.refillable %}<button type="submit" name="action" value="refill" class="nl-small-button" title="Load the latest content from the website again">Refresh from source</button>{% endif %}
+      <a class="nl-small-button" href="{% url 'mailing:newsletter_detail' issue.id %}?test_block={{ block.id }}#newsletter-test-send" data-nl-test-block="{{ block.id }}">Test this block</a>
+    </form>
+  </div>
+  {% if block.source_note %}<p class="nl-block__note">{{ block.source_note }}</p>{% endif %}
+  {% if row.problems %}<ul class="nl-block__problems">{% for problem in row.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
+  {% if row.sponsor_switch %}
+    <form method="post" action="{% url 'mailing:newsletter_block_action' issue.id block.id %}" class="nl-sponsor-switch" data-nl-ajax data-nl-type-change>
+      {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="action" value="change_type">
+      <span>No sponsor this week? Turn this block into</span>
+      <button type="submit" name="new_type" value="course_promo" class="nl-small-button">Course promo</button>
+      <button type="submit" name="new_type" value="own_promo" class="nl-small-button">Own promo</button>
+    </form>
+  {% endif %}
+  {% if row.known %}
+  <details class="nl-block__edit" data-nl-edit{% if row.open %} open{% endif %}>
+    <summary><span class="nl-when-closed">Edit block</span><span class="nl-when-open">Close editor</span></summary>
+    <form method="post" action="{% url 'mailing:newsletter_block_edit' issue.id block.id %}" class="nl-block__form" data-nl-ajax data-nl-track>
+      {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+      {% with prefix=block.id|stringformat:"s" %}{% include "mailing/operator/_newsletter_block_fields.html" with fields=row.fields extra_fields=row.extra_fields prefix=prefix %}{% endwith %}
+      <div class="form-actions">
+        <button type="submit" class="primary">Save block</button>
+        <button type="submit" name="then" value="test" class="secondary" data-nl-native>Save and send test</button>
+        <a class="button secondary" href="{% url 'mailing:newsletter_detail' issue.id %}#block-{{ block.id }}" data-nl-cancel>Cancel</a>
+      </div>
+    </form>
+    <div class="nl-block__more">
+      <form method="post" action="{% url 'mailing:newsletter_block_action' issue.id block.id %}" class="nl-inline-form" data-nl-ajax data-nl-type-change>
+        {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="action" value="change_type">
+        <label for="type-{{ block.id }}">Block type</label>
+        <select id="type-{{ block.id }}" name="new_type">{% for key, label in block_types %}<option value="{{ key }}"{% if key == block.block_type %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+        <button type="submit" class="secondary">Change type</button>
+      </form>
+      <p class="helptext">Changing the type keeps the matching fields (title, text, image, button) and asks you to review the block.</p>
+      <details class="inline-details nl-delete">
+        <summary>Delete this block</summary>
+        <form method="post" action="{% url 'mailing:newsletter_block_action' issue.id block.id %}" class="nl-inline-form" data-nl-ajax>
+          {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="action" value="delete">
+          <label class="dk-check"><input type="checkbox" name="confirm_delete" value="1" required> Yes, delete block {{ row.number }} ({{ row.label }})</label>
+          <button type="submit" class="danger">Delete block</button>
+        </form>
+      </details>
+    </div>
+  </details>
+  {% if row.preview_doc %}<iframe class="email-preview-frame nl-block__preview" title="Preview of block {{ row.number }}" sandbox="" referrerpolicy="no-referrer" loading="lazy" srcdoc="{{ row.preview_doc|force_escape }}"></iframe>{% endif %}
+  {% else %}
+    <form method="post" action="{% url 'mailing:newsletter_block_action' issue.id block.id %}" class="nl-inline-form" data-nl-ajax>
+      {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="action" value="delete">
+      <label class="dk-check"><input type="checkbox" name="confirm_delete" value="1" required> Yes, delete this block</label>
+      <button type="submit" class="danger">Delete block</button>
+    </form>
+  {% endif %}
+  <details class="nl-add-below">
+    <summary>Add block below</summary>
+    <form method="get" action="{% url 'mailing:newsletter_detail' issue.id %}#new-block" class="nl-inline-form" data-nl-ajax>
+      <input type="hidden" name="at" value="{{ row.number }}">
+      <label class="dk-visually-hidden" for="add-below-{{ block.id }}">Block type</label>
+      <select id="add-below-{{ block.id }}" name="add">{% for key, label in block_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+      <button type="submit" class="secondary">Add here</button>
+    </form>
+  </details>
+</li>
+{% endwith %}

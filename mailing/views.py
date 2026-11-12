@@ -129,6 +129,7 @@ from mailing.services.mailchimp import (
     reconcile_tag_mappings_for_client,
     update_mailchimp_config_for_client,
 )
+from mailing.services.newsletters import NEWSLETTER_METADATA_KEY, campaign_newsletter_issue
 from mailing.services.operator_management import (
     add_contact_tag,
     assume_recipient_sent,
@@ -756,12 +757,20 @@ def campaign_list(request):
     )
 
 
+def newsletter_issue_for(campaign):
+    """The newsletter issue a campaign was assembled from; no query for ordinary campaigns."""
+    metadata = campaign.metadata if isinstance(campaign.metadata, dict) else {}
+    return campaign_newsletter_issue(campaign) if NEWSLETTER_METADATA_KEY in metadata else None
+
+
 @staff_member_required
 @require_http_methods(["GET", "POST"])
 def campaign_create(request):
     active_client = require_active_client(request)
     if active_client is None:
         return redirect("mailing:dashboard")
+    if request.method == "GET" and request.GET.get("type") != "regular":
+        return render(request, "mailing/operator/campaign_new_choice.html", {"active_client": active_client})
     form = CampaignForm(request.POST or None, active_client=active_client)
     if request.method == "POST" and form.is_valid():
         campaign = form.save()
@@ -793,7 +802,13 @@ def campaign_edit(request, campaign_id):
     return render(
         request,
         "mailing/operator/campaign_form.html",
-        {"form": form, "mode": "edit", "campaign": campaign, "active_client": active_client},
+        {
+            "form": form,
+            "mode": "edit",
+            "campaign": campaign,
+            "active_client": active_client,
+            "newsletter_issue": newsletter_issue_for(campaign),
+        },
     )
 
 
@@ -847,6 +862,7 @@ def campaign_detail(request, campaign_id):
         {
             **campaign_timing_context(campaign),
             "campaign": campaign,
+            "newsletter_issue": newsletter_issue_for(campaign),
             "recipient_query": recipient_query,
             "active_client": active_client,
             "campaign_badge": campaign_status_badge(campaign.status),
@@ -1348,6 +1364,9 @@ def client_select(request):
         "tag_detail": "audience_list",
         "tag_edit": "audience_list",
         "tag_create": "audience_list",
+        "newsletter_detail": "newsletter_list",
+        "newsletter_block_new": "newsletter_list",
+        "newsletter_block_edit": "newsletter_list",
     }
     if not client_id:
         return redirect("mailing:dashboard")

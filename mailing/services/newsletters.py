@@ -29,11 +29,19 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import Max
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 
 from mailing.dry_run import DryRunSuppressed
-from mailing.models import NewsletterBlock, NewsletterIssue, NewsletterTestSend
+from mailing.models import (
+    Audience,
+    Campaign,
+    CampaignStatus,
+    NewsletterBlock,
+    NewsletterIssue,
+    NewsletterTestSend,
+)
 from mailing.services.api_errors import ApiValidationError
 
 logger = logging.getLogger("mailing.newsletters")
@@ -138,8 +146,13 @@ def block_types_payload():
     return {"block_types": [block_type_payload(key) for key in BLOCK_TYPES]}
 
 
-def validate_block(block_type, data):
-    """Return cleaned ``data`` for ``block_type`` or raise ApiValidationError."""
+def validate_block(block_type, data, *, draft=False):
+    """Return cleaned ``data`` for ``block_type`` or raise ApiValidationError.
+
+    ``draft=True`` skips the required-field check (used for template
+    placeholders and blocks still flagged ``needs_review``); every other check
+    (types, lengths, URLs, unknown fields) still applies.
+    """
     if block_type not in BLOCK_TYPES:
         raise ApiValidationError({"type": "unknown_block_type"})
     if not isinstance(data, dict):
@@ -165,7 +178,7 @@ def validate_block(block_type, data):
         if kind == "url" and value and not _valid_url(value):
             errors[f"data.{name}"] = "invalid_url"
             continue
-        if name in spec["required"] and not value and not spec["defaults"].get(name):
+        if not draft and name in spec["required"] and not value and not spec["defaults"].get(name):
             errors[f"data.{name}"] = "required"
             continue
         if name == "events":
@@ -287,7 +300,8 @@ def update_issue(issue, data, *, actor=""):
     for name, value in fields.items():
         setattr(issue, name, value)
     issue.updated_by = actor
-    issue.save()
+    # Only the edited fields: a stale instance must not overwrite e.g. the campaign link.
+    issue.save(update_fields=[*fields, "updated_by", "updated_at"])
     return issue
 
 
@@ -300,10 +314,13 @@ def upsert_issue(client, key, data, *, actor=""):
 
 
 @transaction.atomic
-def add_block(issue, block_type, data, *, position=None, actor=""):
-    cleaned = validate_block(block_type, data)
+def add_block(issue, block_type, data, *, position=None, actor="", needs_review=False, source="", source_note=""):
+    """Insert a block. ``needs_review=True`` stores draft data (required fields may be empty)."""
+    cleaned = validate_block(block_type, data, draft=bool(needs_review))
     blocks = list(issue.blocks.select_for_update().order_by("position", "id"))
-    block = NewsletterBlock(issue=issue, block_type=block_type, data=cleaned, updated_by=actor)
+    block = NewsletterBlock(issue=issue, block_type=block_type, data=cleaned, updated_by=actor,
+                            needs_review=bool(needs_review), source=_clip(source, 60),
+                            source_note=_clip(source_note, 255))
     if position is None or not isinstance(position, int) or position < 0 or position >= len(blocks):
         blocks.append(block)
     else:
@@ -317,13 +334,55 @@ def add_block(issue, block_type, data, *, position=None, actor=""):
 
 @transaction.atomic
 def update_block(block, data, *, block_type=None, position=None, actor=""):
+    """Strictly validate and save; a successful save means the editor reviewed it."""
     block_type = block_type or block.block_type
     block.data = validate_block(block_type, data)
     block.block_type = block_type
+    block.needs_review = False
     block.updated_by = actor
     block.save()
     if isinstance(position, int):
         move_block_to(block, position)
+    _touch(block.issue, actor)
+    return block
+
+
+@transaction.atomic
+def duplicate_block(block, *, actor=""):
+    """Insert a copy of ``block`` right after it (same data and review flags); returns the copy."""
+    blocks = list(block.issue.blocks.select_for_update().order_by("position", "id"))
+    index = next((i for i, item in enumerate(blocks) if item.pk == block.pk), len(blocks) - 1)
+    copy = NewsletterBlock(issue=block.issue, block_type=block.block_type, data=dict(block.data or {}),
+                           updated_by=actor, needs_review=block.needs_review, source=block.source,
+                           source_note=block.source_note, position=index + 1)
+    copy.save()
+    blocks.insert(index + 1, copy)
+    _renumber(blocks)
+    _touch(block.issue, actor)
+    return copy
+
+
+@transaction.atomic
+def change_block_type(block, new_type, *, actor=""):
+    """Switch ``block`` to ``new_type`` keeping shared field values; flags it for review."""
+    if new_type not in BLOCK_TYPES:
+        raise ApiValidationError({"type": "unknown_block_type"})
+    old_spec = BLOCK_TYPES.get(block.block_type, {"defaults": {}})
+    new_spec = BLOCK_TYPES[new_type]
+    data = {}
+    for name in new_spec["fields"]:
+        value = (block.data or {}).get(name, "")
+        # A value that only repeats the old type's default (e.g. kicker "SPONSORED")
+        # is replaced by the new type's default.
+        if not value or value == old_spec["defaults"].get(name):
+            value = new_spec["defaults"].get(name, "")
+        if value:
+            data[name] = value
+    block.data = validate_block(new_type, data, draft=True)
+    block.block_type = new_type
+    block.needs_review = True
+    block.updated_by = actor
+    block.save()
     _touch(block.issue, actor)
     return block
 
@@ -362,6 +421,70 @@ def _touch(issue, actor):
 
 def next_position(issue):
     return (issue.blocks.aggregate(value=Max("position"))["value"] or -1) + 1
+
+
+def _clip(value, limit):
+    return str(value or "")[:limit]
+
+
+# --------------------------------------------------------------------------- problems
+
+_PROBLEM_TEXT = {
+    "required": "{label} is required",
+    "invalid_url": "{label} needs a full http(s):// link",
+    "too_long": "{label} is too long",
+    "unknown_field": "{label} is not a field of this block",
+    "must_be_string": "{label} must be text",
+}
+_MERGE_TAG_RE = re.compile(r"\{\{|\}\}|\*\|[^|]*\|\*")
+
+
+def _short_label(name):
+    return FIELD_LABELS.get(name, name).split(" (")[0]
+
+
+def _problem_text(field, code):
+    parts = field.removeprefix("data.").split(".")
+    label = _short_label(parts[0])
+    if len(parts) > 1 and parts[1].isdigit():
+        return f"{label}: line {int(parts[1]) + 1} needs a full http(s):// link"
+    template = _PROBLEM_TEXT.get(code if isinstance(code, str) else "", "{label} is not valid")
+    return template.format(label=label)
+
+
+def block_label(block_type):
+    return BLOCK_TYPES.get(block_type, {}).get("label", block_type)
+
+
+def block_problems(block):
+    """Short human-readable reasons why ``block`` is not ready to go out ([] when fine)."""
+    if block.block_type not in BLOCK_TYPES:
+        return [f"Unknown block type “{block.block_type}”"]
+    problems = []
+    if block.needs_review:
+        problems.append("Needs your review")
+    data = block.data if isinstance(block.data, dict) else {}
+    try:
+        validate_block(block.block_type, data)
+    except ApiValidationError as exc:
+        problems.extend(_problem_text(field, code) for field, code in exc.errors.items())
+    if any(isinstance(value, str) and _MERGE_TAG_RE.search(value) for value in data.values()):
+        problems.append("Remove {{ }} or *| |* — merge tags do not work in newsletters")
+    return problems
+
+
+def issue_problems(issue):
+    """Every block with problems, plus an issue-level entry when the issue has no blocks."""
+    blocks = list(issue.blocks.order_by("position", "id"))
+    if not blocks:
+        return [{"block_id": None, "position": None, "label": "Issue", "problems": ["The issue has no blocks yet"]}]
+    result = []
+    for block in blocks:
+        problems = block_problems(block)
+        if problems:
+            result.append({"block_id": block.pk, "position": block.position, "label": block_label(block.block_type),
+                           "problems": problems})
+    return result
 
 
 # --------------------------------------------------------------------------- rendering
@@ -426,7 +549,11 @@ def _value(spec, data, name):
 
 
 def render_block_html(block_type, data):
-    spec = BLOCK_TYPES[block_type]
+    """Inline-styled HTML for one block; tolerates partial (draft) data. Unknown types render ""."""
+    spec = BLOCK_TYPES.get(block_type)
+    if spec is None:
+        return ""
+    data = data if isinstance(data, dict) else {}
     get = lambda name: _value(spec, data, name)  # noqa: E731
     render = spec["render"]
     if render == "html":
@@ -442,6 +569,7 @@ def render_block_html(block_type, data):
             parts = [part.strip() for part in line.split("|")]
             when, title = parts[0], parts[1] if len(parts) > 1 else ""
             url, host = (parts[2] if len(parts) > 2 else ""), (parts[3] if len(parts) > 3 else "")
+            url = url if _valid_url(url) else ""
             title_html = f'<a href="{escape(url)}" style="color:#006ab1">{escape(title)}</a>' if url else escape(title)
             host_html = f" {escape(host)}" if host else ""
             items.append(f'<p style="margin:0 0 14px;font-size:16px;line-height:1.5"><strong>{escape(when)}</strong>'
@@ -451,11 +579,14 @@ def render_block_html(block_type, data):
         items = []
         for line in _lines(get("links")):
             parts = [part.strip() for part in line.split("|")]
+            url = parts[1] if len(parts) > 1 and _valid_url(parts[1]) else ""
             note = f' — {escape(parts[2])}' if len(parts) > 2 and parts[2] else ""
-            items.append(f'<li style="margin:0 0 8px"><a href="{escape(parts[1])}" style="color:#006ab1">'
-                         f'{escape(parts[0])}</a>{note}</li>')
-        return (_kicker(get("kicker")) + _title(get("title"))
-                + f'<ul style="margin:0 0 12px;padding-left:22px;font-size:16px;line-height:1.5">{"".join(items)}</ul>')
+            title = (f'<a href="{escape(url)}" style="color:#006ab1">{escape(parts[0])}</a>' if url
+                     else escape(parts[0]))
+            items.append(f'<li style="margin:0 0 8px">{title}{note}</li>')
+        items_html = (f'<ul style="margin:0 0 12px;padding-left:22px;font-size:16px;line-height:1.5">'
+                      f'{"".join(items)}</ul>' if items else "")
+        return _kicker(get("kicker")) + _title(get("title")) + items_html
     bullets = _lines(get("bullets"))
     bullets_html = ("<ul style=\"margin:0 0 12px;padding-left:22px;font-size:16px;line-height:1.5\">"
                     + "".join(f'<li style="margin:0 0 6px">{escape(item)}</li>' for item in bullets) + "</ul>"
@@ -470,7 +601,10 @@ def render_block_html(block_type, data):
 
 
 def render_block_text(block_type, data):
-    spec = BLOCK_TYPES[block_type]
+    spec = BLOCK_TYPES.get(block_type)
+    if spec is None:
+        return ""
+    data = data if isinstance(data, dict) else {}
     get = lambda name: _value(spec, data, name)  # noqa: E731
     if spec["render"] == "html":
         return re.sub(r"<[^>]+>", "", get("html")).strip()
@@ -491,15 +625,35 @@ def render_block_text(block_type, data):
 _DIVIDER = '<hr style="border:0;border-top:1px solid #e3e3e3;margin:28px 0">'
 
 
-def render_issue(issue, *, block=None, test=False):
-    """Render the whole issue (or one ``block``) into ``{subject, html_body, text_body}``."""
+def unfinished_note(block):
+    """Visible yellow box placed before a ``needs_review`` block in editor previews."""
+    note = f" — {block.source_note}" if block.source_note else ""
+    return ('<div style="background:#fff4ce;border:2px dashed #e0b400;border-radius:6px;padding:10px 14px;'
+            'margin:0 0 14px;font-size:14px;line-height:1.4;color:#5c4400;font-family:Arial,sans-serif">'
+            f'<strong>Needs content:</strong> {escape(block_label(block.block_type))}{escape(note)}</div>')
+
+
+def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
+    """Render the whole issue (or one ``block``) into ``{subject, html_body, text_body}``.
+
+    Blocks that render to nothing are skipped. ``mark_unfinished=True`` (editor
+    previews only) puts a visible "Needs content" note before every block that
+    still ``needs_review``.
+    """
     blocks = [block] if block is not None else list(issue.blocks.order_by("position", "id"))
     sections, texts = [], []
     for item in blocks:
         if item.block_type not in BLOCK_TYPES:
             continue
-        sections.append(render_block_html(item.block_type, item.data or {}))
-        texts.append(render_block_text(item.block_type, item.data or {}))
+        section = render_block_html(item.block_type, item.data or {})
+        if mark_unfinished and item.needs_review:
+            section = unfinished_note(item) + section
+        if not section.strip():
+            continue
+        sections.append(section)
+        text = render_block_text(item.block_type, item.data or {})
+        if text.strip():
+            texts.append(text)
     subject = issue.subject
     if block is not None:
         subject = f"{subject} — block: {BLOCK_TYPES.get(block.block_type, {}).get('label', block.block_type)}"
@@ -634,8 +788,16 @@ def send_test(issue, emails, *, block=None, actor=None, via="ui", deliver=None):
 
 def block_payload(block):
     return {"id": block.pk, "position": block.position, "type": block.block_type,
-            "label": BLOCK_TYPES.get(block.block_type, {}).get("label", block.block_type),
-            "data": block.data, "updated_by": block.updated_by, "updated_at": block.updated_at.isoformat()}
+            "label": block_label(block.block_type),
+            "data": block.data, "needs_review": block.needs_review, "source": block.source,
+            "source_note": block.source_note, "problems": block_problems(block),
+            "updated_by": block.updated_by, "updated_at": block.updated_at.isoformat()}
+
+
+def campaign_link_payload(campaign):
+    if campaign is None:
+        return None
+    return {"id": campaign.pk, "external_key": campaign.external_key, "status": campaign.status}
 
 
 def issue_payload(issue, *, with_blocks=True):
@@ -643,9 +805,102 @@ def issue_payload(issue, *, with_blocks=True):
         "key": issue.key, "subject": issue.subject, "preview_text": issue.preview_text,
         "issue_number": issue.issue_number,
         "publication_date": issue.publication_date.isoformat() if issue.publication_date else None,
+        "template": issue.template_key, "campaign": campaign_link_payload(issue.campaign),
+        "problems": len(issue_problems(issue)),
         "updated_by": issue.updated_by, "created_at": issue.created_at.isoformat(),
         "updated_at": issue.updated_at.isoformat(),
     }
     if with_blocks:
         payload["blocks"] = [block_payload(block) for block in issue.blocks.order_by("position", "id")]
     return payload
+
+
+# --------------------------------------------------------------------------- campaign assembly
+
+NEWSLETTER_METADATA_KEY = "newsletter"
+
+
+def _resolve_audience(client, audience):
+    if isinstance(audience, Audience):
+        return audience if audience.organization_id == client.organization_id else None
+    if isinstance(audience, str) and audience.strip():
+        return Audience.objects.filter(organization_id=client.organization_id, slug=audience.strip()).first()
+    if isinstance(audience, int) and not isinstance(audience, bool):
+        return Audience.objects.filter(organization_id=client.organization_id, pk=audience).first()
+    return None
+
+
+@transaction.atomic
+def assemble_campaign(issue, *, audience, actor=""):
+    """Turn a finished issue into a *draft* campaign; returns ``(campaign, created)``.
+
+    ``audience`` is an Audience, its slug or its id, and must belong to the
+    client's organization. Re-assembling updates the linked draft. This never
+    queues, schedules or sends anything: the campaign stays ``draft`` and goes
+    through the normal campaign review/queue flow.
+    """
+    from mailing.services.api import validate_campaign_external_key  # noqa: PLC0415 - avoid import cycle
+    from mailing.services.campaign_composer import EDITOR_METADATA_KEY  # noqa: PLC0415
+
+    original, issue = issue, NewsletterIssue.objects.select_for_update().get(pk=issue.pk)
+    client = issue.client
+    target = _resolve_audience(client, audience)
+    if target is None:
+        raise ApiValidationError({"audience": "invalid"})
+    if issue_problems(issue):
+        raise ApiValidationError({"issue": "has_problems"})
+    rendered = render_issue(issue)
+    stamp = {"issue_id": issue.pk, "issue_key": issue.key, "assembled_at": timezone.now().isoformat(),
+             "assembled_by": actor}
+    fields = {"subject": issue.subject, "preview_text": issue.preview_text,
+              "html_body": rendered["html_body"], "text_body": rendered["text_body"]}
+
+    campaign = Campaign.objects.select_for_update().filter(pk=issue.campaign_id).first() if issue.campaign_id else None
+    if campaign is not None:
+        if campaign.status != CampaignStatus.DRAFT:
+            raise ApiValidationError({"campaign": "not_draft"}, status_code=409)
+        if campaign.audience_id != target.pk:
+            # Tag filters are audience-scoped; they cannot carry over to another audience.
+            campaign.include_tags, campaign.exclude_tags = [], []
+        for name, value in fields.items():
+            setattr(campaign, name, value)
+        campaign.audience = target
+        metadata = dict(campaign.metadata) if isinstance(campaign.metadata, dict) else {}
+        metadata.pop(EDITOR_METADATA_KEY, None)
+        metadata[NEWSLETTER_METADATA_KEY] = stamp
+        campaign.metadata = metadata
+        campaign.save()
+        created = False
+    else:
+        external_key = validate_campaign_external_key(issue.key)
+        if Campaign.objects.filter(client=client, external_key=external_key).exists():
+            raise ApiValidationError({"campaign": "key_in_use"}, status_code=409)
+        campaign = Campaign.objects.create(client=client, audience=target, external_key=external_key,
+                                           status=CampaignStatus.DRAFT,
+                                           metadata={NEWSLETTER_METADATA_KEY: stamp}, **fields)
+        created = True
+    issue.campaign = campaign
+    issue.updated_by = actor
+    issue.save(update_fields=["campaign", "updated_by", "updated_at"])
+    original.campaign = campaign
+    logger.info("newsletter issue assembled client=%s issue=%s campaign=%s created=%s by=%s",
+                client.slug, issue.key, campaign.pk, created, actor)
+    return campaign, created
+
+
+def campaign_newsletter_issue(campaign):
+    """The newsletter issue a campaign was assembled from, or None."""
+    if campaign is None or not campaign.pk:
+        return None
+    return NewsletterIssue.objects.filter(campaign=campaign).order_by("-updated_at", "-id").first()
+
+
+# Templates and auto-fill live in their own module; re-exported so callers use ``svc.<name>``.
+from mailing.services.newsletter_templates import (  # noqa: E402,F401
+    NEWSLETTER_TEMPLATES,
+    create_issue_from_template,
+    issue_defaults,
+    newsletter_templates,
+    refill_block,
+)
+

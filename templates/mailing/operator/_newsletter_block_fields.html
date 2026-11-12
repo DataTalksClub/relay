@@ -1,0 +1,22 @@
+{% comment %}
+One input per field of a block type. Context: fields and extra_fields (from _field_groups),
+prefix (unique per form). Empty, rarely used card fields sit under "More fields".
+{% endcomment %}{% for field in fields %}
+  <div class="form-field nl-field">
+    <label for="f-{{ prefix }}-{{ field.name }}">{{ field.label }}{% if field.required %} <span class="nl-required" title="Required">*</span>{% endif %}</label>
+    {% if field.multiline %}
+      <textarea id="f-{{ prefix }}-{{ field.name }}" name="{{ field.name }}" rows="{{ field.rows }}"{% if field.kind == "html" or field.kind == "lines" %} class="nl-code" spellcheck="false"{% endif %}{% if field.required %} aria-required="true"{% endif %}{% if field.hint or field.error %} aria-describedby="{% if field.hint %}h-{{ prefix }}-{{ field.name }}{% endif %}{% if field.error %} e-{{ prefix }}-{{ field.name }}{% endif %}"{% endif %}{% if field.error %} aria-invalid="true"{% endif %}{% if field.default %} placeholder="{{ field.default }}"{% endif %}>{{ field.value }}</textarea>
+    {% else %}
+      <input id="f-{{ prefix }}-{{ field.name }}" name="{{ field.name }}" value="{{ field.value }}"{% if field.kind == "url" %} type="url" inputmode="url" placeholder="https://"{% elif field.default %} placeholder="{{ field.default }}"{% endif %}{% if field.required %} aria-required="true"{% endif %}{% if field.hint or field.error %} aria-describedby="{% if field.hint %}h-{{ prefix }}-{{ field.name }}{% endif %}{% if field.error %} e-{{ prefix }}-{{ field.name }}{% endif %}"{% endif %}{% if field.error %} aria-invalid="true"{% endif %}>
+    {% endif %}
+    {% if field.error %}<p class="field-errors" id="e-{{ prefix }}-{{ field.name }}">{{ field.error }}</p>{% endif %}
+    {% if field.thumbnail %}<img class="nl-thumb" src="{{ field.thumbnail }}" alt="Current image" loading="lazy" referrerpolicy="no-referrer">{% endif %}
+    {% if field.hint %}<p class="helptext" id="h-{{ prefix }}-{{ field.name }}">{{ field.hint }}</p>{% endif %}
+  </div>
+{% endfor %}
+{% if extra_fields %}
+  <details class="inline-details nl-more-fields">
+    <summary>More fields: {% for field in extra_fields %}{{ field.label|lower }}{% if not forloop.last %}, {% endif %}{% endfor %}</summary>
+    <div class="nl-more-fields__body">{% include "mailing/operator/_newsletter_block_fields.html" with fields=extra_fields extra_fields=None %}</div>
+  </details>
+{% endif %}

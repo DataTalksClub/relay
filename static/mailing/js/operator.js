@@ -4,8 +4,11 @@
 (function () {
   "use strict";
 
-  // Unsaved-changes guard for operator forms.
-  const forms = [...document.querySelectorAll('main form[method="post"]')];
+  // Unsaved-changes guard for operator forms. The newsletter editor
+  // (newsletter-editor.js) saves forms with fetch and runs its own guard.
+  const forms = [...document.querySelectorAll('main form[method="post"]')].filter(
+    (form) => !form.closest("[data-nl-editor]")
+  );
   const dirty = new Set();
   forms.forEach(function (form) {
     form.addEventListener("input", () => dirty.add(form));

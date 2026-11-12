@@ -1,92 +1,177 @@
 {% extends "base.html" %}
-{% block title %}{{ issue.subject }} | Newsletter | Relay{% endblock %}
+{% load static %}
+{% block title %}{{ issue.subject }} | Newsletters | Relay{% endblock %}
 {% block topbar_title %}{{ issue.subject }}{% endblock %}
 {% block content %}
-  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{% url 'mailing:newsletter_list' %}">Newsletter issues</a><span>/</span><span>{{ issue.key }}</span></nav>
-  <div class="page-header">
-    <div><h1>{% if issue.issue_number %}#{{ issue.issue_number }} · {% endif %}{{ issue.subject }}</h1><p><code>{{ issue.key }}</code>{% if issue.publication_date %} · {{ issue.publication_date|date:"Y-m-d" }}{% endif %} · last edit {{ issue.updated_at|date:"Y-m-d H:i" }} {{ issue.updated_by }}</p></div>
-    <div class="actions">{% if preview %}<a class="button secondary" href="{% url 'mailing:newsletter_preview' issue.id %}" target="_blank" rel="noopener">Open full preview</a>{% endif %}<a class="button" href="#newsletter-test-send">Send test</a></div>
+<div class="nl-editor" data-nl-editor="{{ issue.id }}">
+  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{% url 'mailing:newsletter_list' %}">Newsletters</a><span>/</span><span>{{ issue.key }}</span></nav>
+  <div class="page-header" data-nl-region="header">
+    <div>
+      <h1>{{ issue.subject }}</h1>
+      <p class="muted">{% if issue.publication_date %}Sends {{ issue.publication_date|date:"l, F j" }} · {% endif %}{{ rows|length }} block{{ rows|length|pluralize }} · {% if campaign %}Campaign: <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign_badge.label }}</a>{% else %}No campaign yet{% endif %} · Last edit {{ issue.updated_at|date:"M j, H:i" }}{% if issue.updated_by %} by {{ issue.updated_by }}{% endif %}</p>
+    </div>
+    <div class="actions">
+      {% if rows %}<a class="button secondary" href="{% url 'mailing:newsletter_preview' issue.id %}" target="_blank" rel="noopener">Preview in new tab</a>{% endif %}
+      <a class="button secondary" href="#newsletter-test-send">Send test</a>
+      {% if campaign %}<a class="button secondary" href="{% url 'mailing:campaign_detail' campaign.id %}">Open campaign</a>{% endif %}
+      {% if campaign_editable and rows %}<a class="button" href="#newsletter-campaign">{% if campaign %}Update campaign draft{% else %}Create campaign draft{% endif %}</a>{% endif %}
+    </div>
   </div>
 
-  <section class="section panel" aria-labelledby="newsletter-blocks-heading">
-    <div class="section-header"><div><h2 id="newsletter-blocks-heading">Blocks</h2><p>Blocks render top to bottom. The DataTalks.Club logo and the community footer are added automatically.</p></div></div>
-    {% for row in rows %}
-      <article class="panel" id="block-{{ row.block.id }}" style="margin-bottom:16px">
-        <div class="section-header"><div><h3>{{ forloop.counter }}. {{ row.label }}</h3><p class="helptext">Edited {{ row.block.updated_at|date:"Y-m-d H:i" }} {{ row.block.updated_by }}</p></div>
-          <div class="actions">
-            <a class="button secondary" href="{% url 'mailing:newsletter_block_edit' issue.id row.block.id %}">Edit</a>
-            <a class="button secondary" href="?test_block={{ row.block.id }}#newsletter-test-send">Test this block</a>
-            <form method="post" action="{% url 'mailing:newsletter_block_action' issue.id row.block.id %}" style="display:inline">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
-              {% if not forloop.first %}<button type="submit" name="action" value="up" class="secondary" aria-label="Move up">↑</button>{% endif %}
-              {% if not forloop.last %}<button type="submit" name="action" value="down" class="secondary" aria-label="Move down">↓</button>{% endif %}
-            </form>
-          </div></div>
-        {% if row.html %}<iframe class="email-preview-frame" title="Block preview" sandbox="" referrerpolicy="no-referrer" style="height:320px" srcdoc="&lt;div style=&quot;font-family:Helvetica,Arial,sans-serif;max-width:612px;padding:8px&quot;&gt;{{ row.html|force_escape }}&lt;/div&gt;"></iframe>{% endif %}
-        <details class="inline-details"><summary>Delete block</summary>
-          <form method="post" action="{% url 'mailing:newsletter_block_action' issue.id row.block.id %}">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}"><input type="hidden" name="action" value="delete">
-            <label><input type="checkbox" name="confirm_delete" value="1" required> Delete this block</label><button type="submit" class="danger">Delete</button></form>
-        </details>
-      </article>
-    {% empty %}<p class="empty-state">No blocks yet. Add the first block below.</p>{% endfor %}
-    <form method="get" action="{% url 'mailing:newsletter_block_new' issue.id %}" class="toolbar">
-      <label for="add-block-type">Add block</label>
-      <select id="add-block-type" name="type">{% for key, label in block_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
-      <button type="submit" class="primary">Add block</button>
-    </form>
-  </section>
-
-  <section class="section panel" aria-labelledby="newsletter-test-send" id="newsletter-test-send">
-    <div class="section-header"><div><h2 id="newsletter-test-send-h">Send test</h2><p>Sends a copy marked <strong>[TEST]</strong> only to the addresses below (max {{ max_test }}): Alexey, yourself, or a sponsor for approval. Links are not tracked and the unsubscribe link is disabled. Nothing goes to the audience.</p></div></div>
-    {% if last_test %}<div role="alert" class="{% if last_test.ok %}panel{% else %}form-errors{% endif %}"><strong>{% if last_test.ok %}Test sent{% else %}Test needs attention{% endif %}: {{ last_test.subject }}</strong><ul>{% for line in last_test.lines %}<li>{{ line }}</li>{% endfor %}</ul></div>{% endif %}
-    {% if rows %}
-    <form method="post" action="{% url 'mailing:newsletter_test_send' issue.id %}" id="newsletter-test-form">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
-      <label for="test-scope">What to send</label>
-      <select id="test-scope" name="block_id"><option value="">Whole issue</option>{% for row in rows %}<option value="{{ row.block.id }}"{% if request.GET.test_block == row.block.id|stringformat:"s" %} selected{% endif %}>Only block {{ forloop.counter }}: {{ row.label }}</option>{% endfor %}</select>
-      <fieldset><legend>Quick recipients</legend>{% for email in test_presets %}<label><input type="checkbox" name="preset" value="{{ email }}"> {{ email }}</label>{% endfor %}</fieldset>
-      <label for="test-emails">Other addresses (sponsor etc.)</label>
-      <textarea id="test-emails" name="emails" rows="2" placeholder="sponsor@example.com, colleague@datatalks.club"></textarea>
-      <p class="helptext">Separate several addresses with commas or new lines. The page waits up to about 45 seconds for the email provider and shows the result for each address.</p>
-      <button type="submit" class="primary" id="newsletter-test-button">Send [TEST] email</button>
-      <p role="status" id="newsletter-test-status" class="helptext"></p>
-    </form>
-    <script>
-      (() => {
-        const form = document.getElementById('newsletter-test-form');
-        form.addEventListener('submit', event => {
-          const anyPreset = form.querySelectorAll('input[name=preset]:checked').length > 0;
-          if (!anyPreset && !form.emails.value.trim()) { event.preventDefault(); document.getElementById('newsletter-test-status').textContent = 'Choose or enter at least one address.'; return; }
-          const button = document.getElementById('newsletter-test-button');
-          button.disabled = true; button.textContent = 'Sending…';
-          document.getElementById('newsletter-test-status').textContent = 'Sending the test email. This can take up to 45 seconds.';
-          setTimeout(() => { button.disabled = false; button.textContent = 'Send [TEST] email'; document.getElementById('newsletter-test-status').textContent = 'No answer from the server after 60 seconds. Check "Recent tests" below before sending again.'; }, 60000);
-        });
-      })();
-    </script>
-    {% else %}<p class="empty-state">Add at least one block before sending a test.</p>{% endif %}
-    {% if recent_tests %}
-      <details class="inline-details" open><summary>Recent tests</summary>
-        <div class="table-wrap"><table><thead><tr><th>When</th><th>To</th><th>Result</th><th>By</th><th>Error</th></tr></thead><tbody>
-        {% for test in recent_tests %}<tr><td class="data-time">{{ test.created_at|date:"Y-m-d H:i:s" }}</td><td>{{ test.email }}</td><td>{{ test.status }}{% if test.block_id %} (one block){% endif %}</td><td>{{ test.actor.email|default:test.via }}</td><td>{{ test.error }}</td></tr>{% endfor %}
-        </tbody></table></div>
-      </details>
+  <div data-nl-region="checklist" id="nl-checklist">
+    {% if checklist %}
+      <div class="dk-callout dk-callout--warning nl-checklist" role="status">
+        <div class="dk-callout__body">
+          <span class="dk-callout__title">{% if problem_blocks %}{{ problem_blocks }} block{{ problem_blocks|pluralize:" still needs,s still need" }} your attention{% else %}The newsletter has no blocks yet{% endif %}</span>
+          <ul>
+            {% for item in checklist %}
+              {% if item.block_id %}<li><a href="#block-{{ item.block_id }}" data-nl-open="{{ item.block_id }}">Block {{ item.number }}: {{ item.label }}</a> — {{ item.problems|join:"; " }}</li>
+              {% else %}<li><a href="#nl-add-block">Add the first block</a></li>{% endif %}
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    {% else %}
+      <div class="dk-callout dk-callout--success nl-checklist" role="status">
+        <div class="dk-callout__body">
+          <span class="dk-callout__title">All blocks are ready</span>
+          <span>Next: send yourself a test, then {% if campaign %}update{% else %}create{% endif %} the campaign draft.</span>
+        </div>
+      </div>
     {% endif %}
-  </section>
+  </div>
 
-  {% if preview %}
-  <section class="section panel" aria-labelledby="newsletter-preview-heading">
-    <div class="section-header"><div><h2 id="newsletter-preview-heading">Whole issue preview</h2>{% if issue.preview_text %}<p><strong>Inbox preview:</strong> {{ issue.preview_text }}</p>{% endif %}</div></div>
-    {% include "mailing/operator/_preview_sizes.html" %}
-    <iframe class="email-preview-frame" title="Newsletter preview" sandbox="" referrerpolicy="no-referrer" style="height:900px" srcdoc="{{ preview.html_body|force_escape }}"></iframe>
-  </section>
-  {% endif %}
-
-  <details class="secondary-section panel-diagnostics"><summary>Issue details (subject, preview text, number, date)</summary>
-    <form method="post">{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
-      <label for="nl-subject">Subject</label><input id="nl-subject" name="subject" value="{{ issue.subject }}" required maxlength="255">
-      <label for="nl-preview">Preview text</label><input id="nl-preview" name="preview_text" value="{{ issue.preview_text }}" maxlength="255">
-      <label for="nl-number">Issue number</label><input id="nl-number" name="issue_number" value="{{ issue.issue_number|default_if_none:'' }}" inputmode="numeric">
-      <label for="nl-date">Publication date</label><input id="nl-date" name="publication_date" type="date" value="{{ issue.publication_date|date:'Y-m-d' }}">
-      <button type="submit" class="primary">Save details</button>
+  <section class="panel nl-details" id="newsletter-details" aria-labelledby="nl-details-heading" data-nl-region="details">
+    <div class="panel-header"><h2 id="nl-details-heading">Subject and inbox preview</h2></div>
+    <form method="post" action="{% url 'mailing:newsletter_detail' issue.id %}" class="nl-details__form" data-nl-ajax data-nl-track>
+      {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+      <div class="nl-details__grid">
+        <div class="form-field nl-details__wide">
+          <label for="nl-subject">Subject <span class="nl-required" title="Required">*</span></label>
+          <input id="nl-subject" name="subject" value="{{ details.subject }}" required maxlength="255"{% if details.errors.subject %} aria-invalid="true" aria-describedby="nl-subject-error"{% endif %}>
+          {% if details.errors.subject %}<p class="field-errors" id="nl-subject-error">{{ details.errors.subject }}</p>{% endif %}
+        </div>
+        <div class="form-field nl-details__wide">
+          <label for="nl-preview">Preview text</label>
+          <input id="nl-preview" name="preview_text" value="{{ details.preview_text }}" maxlength="255" aria-describedby="nl-preview-help"{% if details.errors.preview_text %} aria-invalid="true"{% endif %}>
+          <p class="helptext" id="nl-preview-help">The grey line shown after the subject in the inbox.</p>
+          {% if details.errors.preview_text %}<p class="field-errors">{{ details.errors.preview_text }}</p>{% endif %}
+        </div>
+        <div class="form-field">
+          <label for="nl-number">Issue number</label>
+          <input id="nl-number" name="issue_number" value="{{ details.issue_number }}" inputmode="numeric"{% if details.errors.issue_number %} aria-invalid="true" aria-describedby="nl-number-error"{% endif %}>
+          {% if details.errors.issue_number %}<p class="field-errors" id="nl-number-error">{{ details.errors.issue_number }}</p>{% endif %}
+        </div>
+        <div class="form-field">
+          <label for="nl-date">Send date</label>
+          <input id="nl-date" name="publication_date" type="date" value="{{ details.publication_date }}"{% if details.errors.publication_date %} aria-invalid="true" aria-describedby="nl-date-error"{% endif %}>
+          {% if details.errors.publication_date %}<p class="field-errors" id="nl-date-error">{{ details.errors.publication_date }}</p>{% endif %}
+        </div>
+        <div class="nl-details__save"><button type="submit" class="secondary">Save details</button></div>
+      </div>
     </form>
-  </details>
+  </section>
+
+  <div class="nl-layout">
+    <div class="nl-main">
+      <section class="panel" id="newsletter-blocks" aria-labelledby="nl-blocks-heading">
+        <div class="panel-header"><h2 id="nl-blocks-heading">Blocks</h2><span class="muted">Top to bottom, as in the email. The logo and the community footer are added automatically.</span></div>
+        <ol class="nl-blocks" data-nl-region="blocks">
+          {% for row in rows %}
+            {% if new_block and new_block.index == forloop.counter0 %}{% include "mailing/operator/_newsletter_new_block.html" %}{% endif %}
+            {% include "mailing/operator/_newsletter_block_row.html" %}
+          {% endfor %}
+          {% if new_block and new_block.index is None %}{% include "mailing/operator/_newsletter_new_block.html" %}{% endif %}
+          {% if not rows and not new_block %}<li class="nl-blocks__empty">No blocks yet. Add the first one below.</li>{% endif %}
+        </ol>
+        <form method="get" action="{% url 'mailing:newsletter_detail' issue.id %}#new-block" class="nl-add" id="nl-add-block" data-nl-ajax>
+          <label for="add-block-type">Add a block at the end</label>
+          <div class="nl-add__row">
+            <select id="add-block-type" name="add">{% for key, label in block_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+            <button type="submit" class="secondary">Add block</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" id="newsletter-campaign" aria-labelledby="nl-campaign-heading" data-nl-region="campaign">
+        <div class="panel-header"><h2 id="nl-campaign-heading">{% if campaign %}Update the campaign draft{% else %}Create the campaign draft{% endif %}</h2>{% if campaign %}<span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>{% endif %}</div>
+        <div class="panel-body-pad nl-campaign">
+          {% if not campaign_editable %}
+            <div class="dk-callout dk-callout--warning" role="status"><div class="dk-callout__body"><span class="dk-callout__title">The campaign was already queued or sent.</span><span>Blocks can no longer change it. <a href="{% url 'mailing:campaign_detail' campaign.id %}">Open the campaign</a> to follow its delivery.</span></div></div>
+          {% else %}
+            <p>This creates a draft in Campaigns. Nothing is sent. You review, test and schedule it from the campaign page.{% if campaign %} Updating replaces the draft's subject, preview text and content with the blocks below.{% endif %}</p>
+            {% if checklist %}<p class="nl-campaign__blocked" role="status">Not available yet: {% if problem_blocks %}{{ problem_blocks }} block{{ problem_blocks|pluralize }} still need{{ problem_blocks|pluralize:"s," }} your attention (see the list at the top).{% else %}add some blocks first.{% endif %}</p>{% endif %}
+            {% if audiences %}
+              <form method="post" action="{% url 'mailing:newsletter_assemble' issue.id %}" class="nl-campaign__form">
+                {% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+                <div class="form-field">
+                  <label for="nl-audience">Send to (audience)</label>
+                  <select id="nl-audience" name="audience" required{% if checklist %} disabled{% endif %}>
+                    {% if not selected_audience %}<option value="">Choose an audience</option>{% endif %}
+                    {% for audience in audiences %}<option value="{{ audience.id }}"{% if audience.id == selected_audience %} selected{% endif %}>{{ audience.name }}</option>{% endfor %}
+                  </select>
+                </div>
+                <button type="submit" class="primary"{% if checklist %} disabled aria-disabled="true"{% endif %}>{% if campaign %}Update campaign draft{% else %}Create campaign draft{% endif %}</button>
+              </form>
+            {% else %}
+              <p class="form-errors">{{ active_client.name }} has no audience yet, so a campaign cannot be created. Ask an admin to add one.</p>
+            {% endif %}
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="panel" id="newsletter-test-send" aria-labelledby="newsletter-test-send-h" data-nl-region="test">
+        <div class="panel-header"><h2 id="newsletter-test-send-h">Send test</h2></div>
+        <div class="panel-body-pad">
+          <p>Sends a copy marked <strong>[TEST]</strong> only to the addresses below (max {{ max_test }}): Alexey, yourself, or a sponsor for approval. Links are not tracked and the unsubscribe link is disabled. Nothing goes to subscribers.</p>
+          {% if last_test %}<div role="alert" class="dk-callout {% if last_test.ok %}dk-callout--success{% else %}dk-callout--danger{% endif %}"><div class="dk-callout__body"><span class="dk-callout__title">{% if last_test.ok %}Test sent{% else %}Test needs attention{% endif %}: {{ last_test.subject }}</span><ul>{% for line in last_test.lines %}<li>{{ line }}</li>{% endfor %}</ul></div></div>{% endif %}
+          {% if rows %}
+          <form method="post" action="{% url 'mailing:newsletter_test_send' issue.id %}" id="newsletter-test-form" data-nl-track>{% csrf_token %}<input type="hidden" name="operator_client_id" value="{{ active_client.id }}">
+            <div class="form-field">
+              <label for="test-scope">What to send</label>
+              <select id="test-scope" name="block_id"><option value="">Whole newsletter</option>{% for row in rows %}<option value="{{ row.block.id }}"{% if test_block == row.block.id|stringformat:"s" %} selected{% endif %}>Only block {{ row.number }}: {{ row.label }}</option>{% endfor %}</select>
+            </div>
+            <fieldset class="nl-presets"><legend>Quick recipients</legend>{% for email in test_presets %}<label class="dk-check"><input type="checkbox" name="preset" value="{{ email }}"> {{ email }}</label>{% endfor %}</fieldset>
+            <div class="form-field">
+              <label for="test-emails">Other addresses (sponsor etc.)</label>
+              <textarea id="test-emails" name="emails" rows="2" placeholder="sponsor@example.com, colleague@datatalks.club" aria-describedby="test-emails-help"></textarea>
+              <p class="helptext" id="test-emails-help">Separate several addresses with commas or new lines. The page waits up to about 45 seconds for the email provider and shows the result for each address.</p>
+            </div>
+            <div class="nl-test-actions">
+              <button type="submit" class="secondary" id="newsletter-test-button">Send [TEST] email</button>
+              <p role="status" id="newsletter-test-status" class="helptext"></p>
+            </div>
+          </form>
+          {% else %}<p class="muted">Add at least one block before sending a test.</p>{% endif %}
+        </div>
+        {% if recent_tests %}
+          <details class="panel-diagnostics"><summary>Recent tests</summary>
+            <div class="table-wrap"><table><thead><tr><th>When</th><th>To</th><th>Result</th><th>By</th><th>Error</th></tr></thead><tbody>
+            {% for test in recent_tests %}<tr><td class="data-time">{{ test.created_at|date:"Y-m-d H:i:s" }}</td><td>{{ test.email }}</td><td>{{ test.status }}{% if test.block_id %} (one block){% endif %}</td><td>{{ test.actor.email|default:test.via }}</td><td>{{ test.error }}</td></tr>{% endfor %}
+            </tbody></table></div>
+          </details>
+        {% endif %}
+      </section>
+    </div>
+
+    <aside class="nl-preview" aria-labelledby="nl-preview-heading">
+      <div class="panel nl-preview__panel">
+        <div class="panel-header">
+          <h2 id="nl-preview-heading">Live preview</h2>
+          <div class="dk-tabs dk-tabs--sm" role="radiogroup" aria-label="Preview width">
+            <button type="button" class="dk-tab" role="radio" data-nl-width="100%" aria-checked="true" tabindex="0">Desktop</button>
+            <button type="button" class="dk-tab" role="radio" data-nl-width="375px" aria-checked="false" tabindex="-1">Mobile</button>
+          </div>
+        </div>
+        <div class="nl-preview__body">
+          <p class="nl-preview__inbox" data-nl-region="inbox"><strong>Inbox:</strong> {{ issue.subject }}{% if issue.preview_text %} — <span class="muted">{{ issue.preview_text }}</span>{% else %} — <span class="muted">no preview text yet</span>{% endif %}</p>
+          {% if preview_html %}<iframe class="email-preview-frame nl-preview__frame" id="nl-preview-frame" title="Newsletter preview" sandbox="" referrerpolicy="no-referrer" srcdoc="{{ preview_html|force_escape }}"></iframe>
+          <p class="helptext">Yellow boxes mark blocks that still need content; they are not in the real email. <a href="{% url 'mailing:newsletter_preview' issue.id %}" target="_blank" rel="noopener">Open the real email in a new tab</a>.</p>
+          {% else %}<p class="muted">The preview appears when the newsletter has blocks.</p>{% endif %}
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+<script src="{% static 'mailing/js/newsletter-editor.js' %}" defer></script>
 {% endblock %}
