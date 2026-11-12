@@ -637,3 +637,15 @@ def test_api_rejects_unknown_template_and_other_clients(api, client_record, read
                      content_type="application/json", **foreign).status_code == 404
     assert not Campaign.objects.exists()
     assert NewsletterBlock.objects.filter(issue=ready_issue).count() == 2
+
+
+def test_fetch_budget_stops_uncached_fetches_after_the_deadline(monkeypatch):
+    calls = []
+    monkeypatch.setenv("RELAY_NEWSLETTER_AUTOFILL", "1")
+    monkeypatch.setattr(sources, "_http_get", lambda url: calls.append(url) or b"ok")
+    with sources.fetch_budget(0):
+        assert sources._fetch("https://example.invalid/budget-a") is None
+    assert calls == []
+    with sources.fetch_budget(30):
+        assert sources._fetch("https://example.invalid/budget-b") == b"ok"
+    assert calls == ["https://example.invalid/budget-b"]

@@ -69,6 +69,10 @@ def _long_date(day):
     return f"{day:%B} {day.day}, {day.year}"
 
 
+# Total time all source fetches of one create request may take (gunicorn times out at 60 s).
+AUTOFILL_BUDGET_SECONDS = 25
+
+
 def newsletter_templates():
     return [{"key": key, "label": spec["label"], "description": spec["description"]}
             for key, spec in NEWSLETTER_TEMPLATES.items()]
@@ -222,7 +226,10 @@ def create_issue_from_template(client, template_key, data, *, actor="", autofill
     if client.newsletter_issues.filter(key=key).exists():
         raise ApiValidationError({"key": "already_exists"}, status_code=409)
 
-    plan = _plan_dtc_weekly(fields, autofill=autofill, today=today) if template_key == "dtc-weekly" else []
+    plan = []
+    if template_key == "dtc-weekly":
+        with sources.fetch_budget(AUTOFILL_BUDGET_SECONDS):
+            plan = _plan_dtc_weekly(fields, autofill=autofill, today=today)
 
     report = []
     with transaction.atomic():

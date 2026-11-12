@@ -9,6 +9,7 @@ Every HTTP request goes through ``_http_get`` so tests can patch one function.
 Responses are cached in Django's cache for ``CACHE_SECONDS``.
 """
 
+import contextlib
 import datetime as dt
 import functools
 import hashlib
@@ -17,6 +18,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
@@ -93,6 +96,25 @@ def _http_get(url):
     return body
 
 
+_budget = threading.local()
+
+
+@contextlib.contextmanager
+def fetch_budget(seconds):
+    """Cap the total time uncached fetches may take inside the block.
+
+    Sources are fetched one after another inside a web request; with every
+    host hanging, per-request timeouts alone would outlive the gunicorn
+    timeout. Past the deadline, uncached fetches return None immediately.
+    """
+    previous = getattr(_budget, "deadline", None)
+    _budget.deadline = time.monotonic() + seconds
+    try:
+        yield
+    finally:
+        _budget.deadline = previous
+
+
 def _fetch(url):
     """Cached ``_http_get``; only successful responses are cached."""
     if not autofill_enabled():
@@ -104,6 +126,10 @@ def _fetch(url):
         cached = None
     if cached is not None:
         return cached
+    deadline = getattr(_budget, "deadline", None)
+    if deadline is not None and time.monotonic() >= deadline:
+        logger.warning("newsletter source fetch skipped, time budget used up url=%s", url)
+        return None
     try:
         body = _http_get(url)
     except Exception as exc:  # noqa: BLE001 - defensive: patched/replaced fetchers may raise
