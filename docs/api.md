@@ -1294,10 +1294,13 @@ copy to explicit addresses.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/newsletter-block-types` | Block types, their fields (`text`, `url`, `markdown`, `lines`, `html`), required flags and defaults |
+| GET | `/api/newsletter-templates` | Starter structures for new issues: `{"templates": [{"key", "label", "description"}]}` (`dtc-weekly`, `blank`) |
 | GET | `/api/newsletter-issues` | Latest 100 issues of the key's client |
-| GET, PUT | `/api/newsletter-issues/<key>` | Read or create/update an issue: `subject` (required on create), `preview_text`, `issue_number`, `publication_date` (`YYYY-MM-DD`). PUT returns 201 on create |
-| POST | `/api/newsletter-issues/<key>/blocks` | Add a block: `{"type": "sponsor", "data": {...}, "position": 0}`; `position` is optional (default: append) |
-| GET, PUT, DELETE | `/api/newsletter-issues/<key>/blocks/<id>` | Read, replace `data` (and optionally `type`, `position`), or delete one block |
+| GET, PUT | `/api/newsletter-issues/<key>` | Read or create/update an issue: `subject` (required on create), `preview_text`, `issue_number`, `publication_date` (`YYYY-MM-DD`), and on create optionally `template`. PUT returns 201 on create |
+| POST | `/api/newsletter-issues/<key>/blocks` | Add a block: `{"type": "sponsor", "data": {...}, "position": 0, "needs_review": true}`; `position` is optional (default: append); `needs_review` (default `false`) stores an unfinished draft whose required fields may still be empty |
+| GET, PUT, DELETE | `/api/newsletter-issues/<key>/blocks/<id>` | Read, replace `data` (and optionally `type`, `position`), or delete one block. A successful PUT is fully validated and clears `needs_review` |
+| POST | `/api/newsletter-issues/<key>/blocks/<id>/refill` | Re-fetch an auto-filled block from its source (see below) and replace its data |
+| POST | `/api/newsletter-issues/<key>/assemble` | `{"audience": "<audience slug>"}`: create or update the issue's **draft** campaign; returns `{"campaign": {...}, "created": true}` (201 on create, 200 on update). Never queues or sends |
 | POST | `/api/newsletter-issues/<key>/preview` | Rendered `subject`, `html_body`, `text_body`; `{"block_id": 12}` previews one block |
 | POST | `/api/newsletter-issues/<key>/test-send` | `{"emails": ["alexey@datatalks.club", "sponsor@example.com"], "block_id": 12}` (block optional, max 10 addresses) |
 
@@ -1307,6 +1310,60 @@ lines are `title | https://link | note`. Markdown fields escape raw HTML and
 only keep `http(s)`/`mailto` links; the `html` block type inserts HTML as is.
 Validation errors return 400 with field codes such as
 `{"data.cta_url": "invalid_url"}`.
+
+Issue payloads include `template` (the template key or `""`), `campaign`
+(`{"id", "external_key", "status"}` of the assembled draft, or `null`) and
+`problems` (the number of blocks that are not ready, plus one when the issue
+has no blocks). Block payloads include `needs_review`, `source` (where the
+content came from: `website:events`, `website:recordings`, `website:podcast`,
+`website:books`, `substack:alexey`, `computed`, `placeholder`, or `""` for
+manual), `source_note` (one sentence for the editor) and `problems` (short
+human-readable reasons, e.g. `"Needs your review"`, `"Title is required"`).
+
+### Templates and auto-fill
+
+`PUT /api/newsletter-issues/weekly-303` with
+`{"template": "dtc-weekly", "subject": "DataTalks.Club Weekly #303", "issue_number": 303, "publication_date": "2026-11-16"}`
+creates the issue with the standard DataTalks.Club Weekly structure, in this
+order: intro (issue label computed, summary to write), sponsor, course update,
+upcoming events, one recording per workshop/webinar recorded in the 7 days
+before the publication date, one podcast episode per podcast recorded in that
+window, Alexey's latest Substack post (8 days), and the book of the week.
+Events, recordings, podcasts and the book come from the public
+DataTalks.Club website repository, the article from Alexey's Substack feed.
+Blocks that need writing are created with `needs_review: true`; optional
+blocks without data are not created. Without a `publication_date`, the next
+Monday is used. The response adds `autofill`, one entry per planned block:
+`{"block_id", "type", "label", "status", "note"}` where `status` is `auto`,
+`placeholder` or `skipped` (`block_id` is `null`). An unknown template returns
+400 `{"template": "unknown"}`. `template` is ignored when the issue exists.
+
+Sources are fetched with a 6 s timeout and cached for 10 minutes. A failed
+fetch never fails the request: the structure blocks are still created as
+placeholders and the report says so. Deployment settings:
+`RELAY_NEWSLETTER_AUTOFILL` (`0` turns all fetching off),
+`RELAY_NEWSLETTER_WEBSITE_RAW`, `RELAY_NEWSLETTER_WEBSITE_API` and
+`RELAY_NEWSLETTER_SUBSTACK_FEED`.
+
+`POST .../blocks/<id>/refill` works for blocks whose `source` starts with
+`website:` or `substack:`. It uses the issue's `publication_date` and keeps
+fields the source does not provide (such as a recording summary). Errors:
+`{"block": "no_source"}`, `{"block": "source_unavailable"}`,
+`{"publication_date": "required"}`.
+
+### Assembling the campaign
+
+`POST .../assemble` renders the issue (without test markings) into a normal
+draft campaign with `external_key` = the issue key, the issue's subject and
+preview text, and `metadata.newsletter` (`issue_id`, `issue_key`,
+`assembled_at`, `assembled_by`). Assembling again updates the same draft. The
+campaign is then reviewed, scheduled and queued through the regular campaign
+flow. Errors: 400 `{"issue": "has_problems"}` while any block needs review or
+fails validation (merge tags such as `{{ name }}` are not allowed in blocks),
+400 `{"audience": "invalid"}` for an audience outside the client's
+organization, 409 `{"campaign": "not_draft"}` once the linked campaign has left
+draft, and 409 `{"campaign": "key_in_use"}` when another campaign of the client
+already uses the issue key.
 
 Test sends are synchronous. The subject is prefixed with `[TEST]`, links are
 not click-tracked, no open pixel is added and no unsubscribe token is minted.

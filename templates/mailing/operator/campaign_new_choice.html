@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}New campaign | Relay{% endblock %}
+{% block topbar_title %}New campaign{% endblock %}
+
+{% block content %}
+  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{% url 'mailing:campaign_list' %}">Campaigns</a><span>/</span><span>New</span></nav>
+  <div class="page-header">
+    <div>
+      <h1>What do you want to create?</h1>
+      <p>For {{ active_client.name }}. Both start as a draft: nothing is sent until you review and confirm.</p>
+    </div>
+  </div>
+
+  <section class="panel choice-list" aria-label="Campaign kinds">
+    <div class="choice-row">
+      <div class="choice-row__main">
+        <h2><a href="{% url 'mailing:newsletter_new' %}">Newsletter from blocks</a></h2>
+        <p>Ready-made DataTalks.Club Weekly structure. Events, recordings, the podcast and the book of the week are filled in automatically; you edit the rest block by block.</p>
+      </div>
+      <a class="button" href="{% url 'mailing:newsletter_new' %}">Start a newsletter</a>
+    </div>
+    <div class="choice-row">
+      <div class="choice-row__main">
+        <h2><a href="{% url 'mailing:campaign_create' %}?type=regular">Regular campaign</a></h2>
+        <p>A one-off email: paste plain HTML or build it with the simple composer.</p>
+      </div>
+      <a class="button secondary" href="{% url 'mailing:campaign_create' %}?type=regular">Create regular campaign</a>
+    </div>
+  </section>
+{% endblock %}

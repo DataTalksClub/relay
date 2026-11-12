@@ -11,6 +11,15 @@
     </div>
   </div>
 
+  {% if newsletter_issue %}
+    <div class="dk-callout dk-callout--warning newsletter-notice" role="status">
+      <div class="dk-callout__body">
+        <span class="dk-callout__title">This campaign was built from newsletter blocks.</span>
+        <span>Edit the content in the block editor, then press Update campaign draft. Hand edits to the email HTML on this page are overwritten the next time the draft is updated from the blocks.</span>
+      </div>
+      <div class="dk-callout__actions"><a class="button secondary" href="{% url 'mailing:newsletter_detail' newsletter_issue.id %}">Open the block editor</a></div>
+    </div>
+  {% endif %}
   <nav class="actions campaign-draft-summary" aria-label="Draft preparation">
     <a class="button secondary" href="#campaign-audience-heading">1. Recipients</a>
     <a class="button secondary" href="#campaign-metadata-heading">2. Message</a>

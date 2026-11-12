@@ -1653,7 +1653,7 @@ def test_campaign_create_form_uses_sectioned_operational_layout(client, operator
     client.force_login(operator)
     Tag.objects.create(audience=audience, name="Newsletter", slug="newsletter")
 
-    response = client.get(reverse("mailing:campaign_create"))
+    response = client.get(reverse("mailing:campaign_create") + "?type=regular")
 
     assert response.status_code == 200
     html = response.content.decode()

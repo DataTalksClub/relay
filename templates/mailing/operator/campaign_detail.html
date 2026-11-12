@@ -9,6 +9,15 @@
     </div>
     <div class="actions"><a class="button secondary" href="{% url 'mailing:campaign_list' %}">All campaigns</a>{% if can_edit %}<a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>{% endif %}{% if can_queue and not confirm_queue and not send_issues %}<a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Review and send</a>{% endif %}</div>
   </div>
+  {% if newsletter_issue %}
+    <div class="dk-callout dk-callout--info newsletter-notice" role="status">
+      <div class="dk-callout__body">
+        <span class="dk-callout__title">This campaign was built from newsletter blocks.</span>
+        <span>{% if campaign.status == "draft" %}Edit the content in the block editor, then press Update campaign draft.{% else %}It is no longer a draft, so changes in the block editor do not change it.{% endif %}</span>
+      </div>
+      <div class="dk-callout__actions"><a class="button secondary" href="{% url 'mailing:newsletter_detail' newsletter_issue.id %}">Open the block editor</a></div>
+    </div>
+  {% endif %}
   {% if campaign.status == "queued" or campaign.status == "sending" or campaign.status == "snapshotting" %}<p role="status">Sending is in progress. Follow waiting recipients and results below; provider acceptance does not confirm delivery.</p>{% if campaign.send_halted_at %}<p role="alert">{% if campaign.send_halt_reason == "paused" %}Sending is paused. No further email is sent until resumed.{% elif campaign.send_halt_reason == "stopped" %}Sending is stopped. No further email will be sent.{% endif %}</p>{% endif %}{% elif campaign.status == "cancelled" %}<p>Campaign cancelled. It will not send further pending recipients.</p>{% elif campaign.status == "failed" %}<p class="form-errors">Sending needs attention. Inspect failed recipients below before taking any recovery action.</p>{% endif %}
   <nav class="dk-tabs" aria-label="Campaign stages">
     {% if can_edit %}<a class="dk-tab" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a class="dk-tab" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a><a class="dk-tab" href="#draft-readiness" aria-current="page">3. Review</a>{% elif campaign.status == "scheduled" %}<a class="dk-tab" href="#campaign-scheduled-heading">Schedule</a><a class="dk-tab" href="#recipient-estimate">Current audience estimate</a>{% else %}<a class="dk-tab" href="#campaign-stats">Results</a><a class="dk-tab" href="#campaign-recipients">Recipients</a>{% endif %}

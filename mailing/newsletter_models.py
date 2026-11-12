@@ -9,7 +9,7 @@ operator UI and the client API share one implementation.
 from django.conf import settings
 from django.db import models
 
-from mailing.models import Client, TimeStampedModel
+from mailing.models import Campaign, Client, TimeStampedModel
 
 
 class NewsletterIssue(TimeStampedModel):
@@ -20,6 +20,12 @@ class NewsletterIssue(TimeStampedModel):
     issue_number = models.PositiveIntegerField(null=True, blank=True)
     publication_date = models.DateField(null=True, blank=True)
     updated_by = models.CharField(max_length=320, blank=True)
+    # Which starter structure the issue was created from ("dtc-weekly", "blank"
+    # or "" for issues created before templates existed / via plain create).
+    template_key = models.CharField(max_length=60, blank=True, default="", db_default="")
+    # The draft campaign this issue was assembled into (see assemble_campaign).
+    campaign = models.ForeignKey(Campaign, on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="newsletter_issues")
 
     class Meta:
         db_table = "newsletter_issues"
@@ -38,6 +44,13 @@ class NewsletterBlock(TimeStampedModel):
     block_type = models.CharField(max_length=40)
     data = models.JSONField(default=dict, blank=True)
     updated_by = models.CharField(max_length=320, blank=True)
+    # True for template placeholders and auto-filled blocks the editor still has
+    # to look at; cleared by a successful (strict) update_block.
+    needs_review = models.BooleanField(default=False, db_default=False)
+    # Machine key of where the content came from ("website:events",
+    # "substack:alexey", "computed", "placeholder", "" for manual).
+    source = models.CharField(max_length=60, blank=True, default="", db_default="")
+    source_note = models.CharField(max_length=255, blank=True, default="", db_default="")
 
     class Meta:
         db_table = "newsletter_blocks"
