@@ -77,6 +77,7 @@ from mailing.services.api import (
     resume_campaign_for_client,
     retry_campaign_recipient_for_client,
     stop_campaign_for_client,
+    submit_campaign_for_client,
     subscribe_for_client,
     test_send_campaign_for_client,
     unsubscribe_for_client,
@@ -2506,6 +2507,28 @@ def api_campaign_queue(request, external_key):
         return validation_error_response(exc)
 
     return JsonResponse(payload, status=200)
+
+
+@csrf_exempt
+def api_campaign_submit(request, external_key):
+    if request.method != "POST":
+        return method_not_allowed_response(["POST"])
+
+    client, error_response = authenticate_api_request(request)
+    if error_response:
+        return error_response
+
+    try:
+        payload = submit_campaign_for_client(
+            external_key,
+            json_request_body(request),
+            client,
+        )
+    except ApiValidationError as exc:
+        return validation_error_response(exc)
+
+    status_code = 201 if payload.get("created") else 200
+    return JsonResponse(payload, status=status_code)
 
 
 @csrf_exempt

@@ -964,3 +964,55 @@ def test_campaign_api_rejects_invalid_unsubscribe_url_template(client, audience,
     assert response.status_code == 400
     assert Campaign.objects.count() == 0
     assert code in str(response.json())
+
+
+def test_campaign_submit_creates_reconciles_and_queues_in_one_request(
+    client,
+    audience,
+    api_client_record,
+    monkeypatch,
+):
+    enqueued = []
+    monkeypatch.setattr(
+        "mailing.services.campaigns.enqueue_campaign_email",
+        lambda payload: enqueued.append(payload) or type("TaskResult", (), {"id": "task-1"})(),
+    )
+
+    payload = campaign_payload(audience, api_client_record) | {
+        "allow_unverified": True,
+        "include_tags": [],
+        "exclude_tags": [],
+        "recipients": [
+            {"email": "alice@example.com", "source_object_key": "user-1", "metadata": {"name": "Alice"}},
+            {"email": "bob@example.com"},
+        ],
+    }
+    response = client.post(
+        "/api/campaigns/submit-one-shot/submit",
+        data=payload,
+        content_type="application/json",
+        **auth_headers(),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["created"] is True
+    assert body["queued"] is True
+    assert body["recipient_count"] == 2
+    assert body["campaign"]["recipient_count"] == 2
+    assert body["campaign"]["pending_count"] == 2
+    assert body["campaign"]["sent_count"] == 0
+    assert body["campaign"]["delivered_count"] == 0
+    assert len(enqueued) == 1
+    assert len(enqueued[0]["campaign_recipient_ids"]) == 2
+
+    # Idempotent replay returns 200 without re-queuing
+    replay = client.post(
+        "/api/campaigns/submit-one-shot/submit",
+        data=payload,
+        content_type="application/json",
+        **auth_headers(),
+    )
+    assert replay.status_code == 200
+    assert replay.json()["already_queued"] is True
+    assert len(enqueued) == 1
