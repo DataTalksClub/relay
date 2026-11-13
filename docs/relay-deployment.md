@@ -385,3 +385,24 @@ SES `DeliveryDelay` is evidence of an ongoing attempt. It is not a terminal
 bounce. A final transactional `Bounce`, including a transient bounce after
 retry expiration, ends the message in `bounced`; only a permanent bounce
 suppresses the contact. See [SES notification semantics](https://docs.aws.amazon.com/ses/latest/dg/notification-contents.html).
+
+
+## Emergency stop for a running campaign
+
+To halt a running or queued campaign immediately (all `campaign-worker` processes
+stop before their next SES call, within one in-flight call):
+
+1. **One-command server/container stop (fastest, no client scope required):**
+   ```bash
+   python manage.py emergency_stop --all
+   ```
+   Or target one campaign by numeric ID or `external_key`:
+   ```bash
+   python manage.py emergency_stop <campaign_id_or_external_key>
+   ```
+   Pass `--pause` to halt resumably without cancelling (`Campaign.status` stays
+   `sending`/`queued` and `send_halted_at` is set). The command runs a plain,
+   lock-free `UPDATE` on `Campaign`, so it never queues behind active sender
+   transactions.
+2. **CLI:** `datamailer operator campaigns stop <external_key> --confirm` (or `pause`).
+3. **Web UI:** Open the campaign detail page and click **Stop** (or **Pause**).

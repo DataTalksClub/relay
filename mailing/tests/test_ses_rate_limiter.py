@@ -263,3 +263,140 @@ def test_limiter_overhead_under_2ms_per_permit():
     mean_ms = (time.perf_counter() - started) / count * 1000
     print(f"\nlimiter overhead: {mean_ms:.3f} ms per permit (budget 2 ms)")
     assert mean_ms < 2.0, f"limiter overhead {mean_ms:.3f} ms per permit"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("target_rate", [40.0, 240.0])
+def test_single_config_scales_aggregate_rate_across_workers(target_rate, settings):
+    """Changing the ONE config number (SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND)
+    scales aggregate throughput across concurrent workers to ~target_rate
+    (e.g. 40/s -> 240/s) with mocked SES and zero real sends."""
+    settings.SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = target_rate
+    settings.SES_LIMITER_BURST_MESSAGES = 0.0  # default: rate / 5
+    settings.SES_TRANSACTIONAL_RESERVE_PER_SECOND = 10.0
+
+    class MockSes:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.timestamps = []
+
+        def send_email(self, **_kwargs):
+            with self.lock:
+                self.timestamps.append(time.monotonic())
+            return {"MessageId": f"mock-{len(self.timestamps)}"}
+
+    ses = MockSes()
+    # Pre-warm and drain the initial burst so steady-state rate is measured cleanly.
+    acquire_ses_permit(cost=1, kind="bulk")
+    SesRateLimitBucket.objects.filter(key=bucket_key()).update(tokens=0.0)
+
+    duration_s = 1.2
+    stop_at = time.monotonic() + duration_s
+    worker_count = 6
+
+    def worker(idx):
+        try:
+            n = 0
+            while time.monotonic() < stop_at:
+                send_email(
+                    ses_client=ses,
+                    source="sender@example.com",
+                    to_email=f"w{idx}-{n}@example.com",
+                    subject="Rate test",
+                    html_body="<p>hi</p>",
+                    text_body="hi",
+                    kind="bulk",
+                )
+                n += 1
+        finally:
+            _close_thread_connection()
+
+    started = time.monotonic()
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(worker_count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    elapsed = time.monotonic() - started
+    assert not any(t.is_alive() for t in threads)
+
+    ordered = sorted(ses.timestamps)
+    achieved_rate = len(ordered) / elapsed
+    burst = target_rate / 5.0
+    # Aggregate rate matches the single configured target_rate (neither under-fed nor uncapped).
+    assert target_rate * 0.75 <= achieved_rate <= target_rate * 1.25, (
+        f"target={target_rate}/s achieved={achieved_rate:.1f}/s ({len(ordered)} sends in {elapsed:.2f}s)"
+    )
+    for stamp in ordered:
+        in_window = sum(1 for other in ordered if stamp <= other < stamp + 1.0)
+        assert in_window <= target_rate + burst + 2, f"{in_window} sends in 1s window at target={target_rate}"
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=240.0,
+    SES_LIMITER_BURST_MESSAGES=0.0,
+    SES_TRANSACTIONAL_RESERVE_PER_SECOND=10.0,
+)
+def test_transactional_sends_promptly_while_campaign_runs_at_240():
+    """While bulk campaign workers saturate at 240/s, transactional mail still
+    sends promptly using the 10/s reserve and is not starved."""
+    class MockSes:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.bulk_count = 0
+            self.tx_count = 0
+
+        def send_email(self, **kwargs):
+            to_addr = kwargs["Destination"]["ToAddresses"][0]
+            with self.lock:
+                if to_addr.startswith("tx-"):
+                    self.tx_count += 1
+                else:
+                    self.bulk_count += 1
+            return {"MessageId": "mock-id"}
+
+    ses = MockSes()
+    stop = threading.Event()
+
+    def bulk_worker():
+        try:
+            while not stop.is_set():
+                send_email(
+                    ses_client=ses,
+                    source="sender@example.com",
+                    to_email="bulk@example.com",
+                    subject="Campaign",
+                    html_body="<p>bulk</p>",
+                    text_body="bulk",
+                    kind="bulk",
+                )
+        finally:
+            _close_thread_connection()
+
+    workers = [threading.Thread(target=bulk_worker) for _ in range(4)]
+    for w in workers:
+        w.start()
+    try:
+        time.sleep(0.4)
+        tx_latencies = []
+        for i in range(5):
+            t0 = time.monotonic()
+            send_email(
+                ses_client=ses,
+                source="sender@example.com",
+                to_email=f"tx-{i}@example.com",
+                subject="Reset password",
+                html_body="<p>tx</p>",
+                text_body="tx",
+                kind=TRANSACTIONAL,
+            )
+            tx_latencies.append(time.monotonic() - t0)
+    finally:
+        stop.set()
+        for w in workers:
+            w.join(timeout=30)
+    assert not any(w.is_alive() for w in workers)
+    assert ses.bulk_count > 20
+    assert ses.tx_count == 5
+    assert max(tx_latencies) < 0.5, f"transactional send delayed: max={max(tx_latencies):.3f}s"

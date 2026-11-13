@@ -213,7 +213,11 @@ def test_throughput_far_below_configured_rate_is_logged_as_error(caplog):
 
 
 @pytest.mark.django_db
-@override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=10.0, CAMPAIGN_SEND_CONCURRENCY=1)
+@override_settings(
+    SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=10.0,
+    SES_TRANSACTIONAL_RESERVE_PER_SECOND=2.0,
+    CAMPAIGN_SEND_CONCURRENCY=1,
+)
 def test_throughput_near_configured_rate_logs_info_only(caplog):
     campaign, payload = _campaign_with_recipients(20)
 

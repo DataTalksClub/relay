@@ -92,7 +92,7 @@ def test_dev_worker_healthchecks_are_shell_file_age_checks():
 def test_production_worker_heartbeats_and_resource_budget():
     services = yaml.safe_load((Path(__file__).parents[2] / "deploy/coolify/docker-compose.staging.yml").read_text())["services"]
     workers = {name: service for name, service in services.items() if name != "web"}
-    assert len(workers) == 28
+    assert len(workers) == 30
     dev_services = yaml.safe_load((Path(__file__).parents[2] / "deploy/coolify/docker-compose.dev.yml").read_text())["services"]
     dev_workers = [service for name, service in dev_services.items() if name != "web"]
     assert sum(float(service["cpus"]) for service in [*workers.values(), *dev_workers]) <= 8
