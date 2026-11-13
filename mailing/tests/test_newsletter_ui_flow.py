@@ -2,8 +2,11 @@
 editor (checklist, inline block forms, block actions), assembling the campaign draft and the
 notices on the campaign pages. Network sources are patched; nothing reaches the internet."""
 
+from pathlib import Path
+
 import pytest
 from django.contrib.auth import get_user_model
+from django.contrib.staticfiles import finders
 from django.test import Client as HttpClient
 from django.urls import reverse
 
@@ -400,3 +403,11 @@ def test_non_staff_is_blocked(client_record, issue):
         assert response.status_code == 302 and "/login/" in response["Location"]
     assert http.post(reverse("mailing:newsletter_assemble", args=[issue.pk])).status_code == 302
     assert not Campaign.objects.exists()
+
+
+def test_editor_text_areas_wrap_long_text():
+    # The shared control rule sets white-space: nowrap; paragraphs typed into a
+    # block must wrap instead of scrolling sideways on one line.
+    css = Path(finders.find("mailing/css/app.css")).read_text()
+    rule = css.split("[data-nl-editor] textarea {", 1)[1].split("}", 1)[0]
+    assert "white-space: pre-wrap" in rule

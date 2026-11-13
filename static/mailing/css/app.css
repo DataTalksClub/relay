@@ -2972,6 +2972,16 @@ button.nl-icon-button {
   margin-top: var(--dk-space-3);
 }
 
+/* The shared control rule keeps buttons and inputs on one line; text areas
+   in the editor hold paragraphs and must wrap like a normal text box. */
+[data-nl-editor] textarea {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  resize: vertical;
+}
+
 .nl-block__form .form-actions {
   margin-top: 0;
   padding-top: var(--dk-space-3);

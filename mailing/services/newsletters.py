@@ -49,6 +49,9 @@ logger = logging.getLogger("mailing.newsletters")
 MAX_TEST_RECIPIENTS = 10
 
 
+REFILLABLE_SOURCE_PREFIXES = ("website:", "substack:")
+
+
 def test_presets():
     """Addresses offered as one-click test recipients in the operator UI."""
     raw = os.environ.get("RELAY_NEWSLETTER_TEST_PRESETS", "alexey@datatalks.club")
@@ -339,6 +342,9 @@ def update_block(block, data, *, block_type=None, position=None, actor=""):
     block.data = validate_block(block_type, data)
     block.block_type = block_type
     block.needs_review = False
+    if not (block.source or "").startswith(REFILLABLE_SOURCE_PREFIXES):
+        # A placeholder's "what to write here" hint is done once the editor saved real content.
+        block.source_note = ""
     block.updated_by = actor
     block.save()
     if isinstance(position, int):
