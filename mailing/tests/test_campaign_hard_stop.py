@@ -10,10 +10,12 @@ Covers the acceptance criteria:
 """
 
 import inspect
+from io import StringIO
 
 import pytest
 from botocore.exceptions import ClientError
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -21,6 +23,7 @@ from django_tasks_db.models import DBTaskResult
 
 from mailing import tasks
 from mailing.context_processors import ACTIVE_CLIENT_SESSION_KEY
+from mailing.management.commands import emergency_stop
 from mailing.models import (
     Audience,
     Campaign,
@@ -417,3 +420,57 @@ def test_retryable_throttling_exhaustion_fails_loudly(campaign_setup, settings, 
     )
     with pytest.raises(sender.RetryableCampaignSendError):
         tasks.send_campaign_email_batch.call(_payload(campaign, recipients), attempt=1)
+
+
+@override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_emergency_stop_command_halts_running_campaign_mid_batch(campaign_setup):
+    """One-command `manage.py emergency_stop --all` halts a running campaign
+    mid-batch within 1 in-flight SES call, takes no row locks, and sends 0 real emails."""
+    campaign, recipients = campaign_setup
+    assert "select_for_update" not in inspect.getsource(emergency_stop)
+
+    class CommandHaltingSes:
+        def __init__(self):
+            self.calls = []
+
+        def send_raw_email(self, **params):
+            self.calls.append(params.get("Destinations", [None])[0])
+            if len(self.calls) == 1:
+                out = StringIO()
+                call_command("emergency_stop", "--all", stdout=out)
+                assert "Halted 1 campaign(s)" in out.getvalue()
+            return {"MessageId": f"mock-{len(self.calls)}"}
+
+        def send_email(self, **params):
+            to = params.get("Destination", {}).get("ToAddresses", [None])[0]
+            return self.send_raw_email(Destinations=[to])
+
+    ses = CommandHaltingSes()
+    result = sender.send_campaign_batch(_payload(campaign, recipients), ses_client=ses)
+    assert len(ses.calls) == 1
+    assert result.sent_count == 1
+    campaign.refresh_from_db()
+    assert campaign.status == CampaignStatus.CANCELLED
+    assert campaign.send_halted_at is not None
+    assert campaign.send_halt_reason == "stopped"
+    assert CampaignRecipient.objects.filter(campaign=campaign, status=CampaignRecipientStatus.PENDING).count() == 2
+
+
+@override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")
+def test_emergency_stop_command_by_key_and_pause(campaign_setup):
+    campaign, recipients = campaign_setup
+    out = StringIO()
+    call_command("emergency_stop", campaign.external_key, "--pause", stdout=out)
+    assert "paused" in out.getvalue()
+    campaign.refresh_from_db()
+    assert campaign.status == CampaignStatus.SENDING
+    assert campaign.send_halted_at is not None
+    assert campaign.send_halt_reason == "paused"
+
+    # Stopping an already-paused campaign permanently cancels it.
+    out2 = StringIO()
+    call_command("emergency_stop", str(campaign.pk), stdout=out2)
+    assert "stopped" in out2.getvalue()
+    campaign.refresh_from_db()
+    assert campaign.status == CampaignStatus.CANCELLED
+    assert campaign.send_halt_reason == "stopped"

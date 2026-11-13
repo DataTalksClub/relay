@@ -12,9 +12,9 @@
 #   worker             django.tasks DB worker on queues "transactional,default"
 #                      (transactional sends + legacy default drain; never runs
 #                      campaign batches, so a blast cannot delay account mail)
-#   campaign-worker    django.tasks DB worker on queue "campaign" (exactly ONE
-#                      process: the SES rate limiter is per-process and a second
-#                      replica would multiply the send rate)
+#   campaign-worker[-2..3]  django.tasks DB workers on queue "campaign" (3
+#                      replicas sharing the global Postgres SES token bucket at
+#                      RELAY_SES_ACCOUNT_MAX_SEND_RATE=240 aggregate)
 #   provider-events-worker[-2..6]  django.tasks DB workers on queue "provider-events" (parallel consumers) (SES/inbound)
 #   tracking-worker    django.tasks DB worker on queue "tracking" (opens/clicks/deferred unsubscribes)
 #   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
@@ -251,14 +251,47 @@ services:
     stop_grace_period: 20s
 
   campaign-worker:
+    # Consumer 1 of 3 on the campaign lane. Replicas are safe: tasks are
+    # claimed with SELECT ... FOR UPDATE SKIP LOCKED, recipient rows are
+    # claimed atomically, and the SES rate limiter is the shared Postgres
+    # token bucket (RELAY_SES_ACCOUNT_MAX_SEND_RATE=240 aggregate).
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.5"
+    cpus: "0.3"
     mem_limit: 512m
-    # The ONLY consumer of the campaign lane. Exactly one process: the SES
-    # rate limiter is per-process (see docs/worker-contracts.md); a second
-    # replica is the later global-limiter work, not this deploy.
+    command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 40s
+
+  campaign-worker-2:
+    # Consumer 2 of 3 on the campaign lane; see campaign-worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.3"
+    mem_limit: 512m
+    command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
+      interval: 15s
+      timeout: 5s
+      retries: 1
+      start_period: 120s
+    stop_grace_period: 40s
+
+  campaign-worker-3:
+    # Consumer 3 of 3 on the campaign lane; see campaign-worker.
+    image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
+    pull_policy: always
+    restart: unless-stopped
+    cpus: "0.3"
+    mem_limit: 512m
     command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
     healthcheck:
       test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]

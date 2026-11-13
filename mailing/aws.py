@@ -22,6 +22,7 @@ _client_cache_lock = threading.Lock()
 
 def _boto_config(*, max_attempts=None, read_timeout=None, **overrides):
     """Botocore Config shared by every client: standard retries, bounded timeouts, keepalive."""
+    overrides.setdefault("max_pool_connections", max(10, int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 10) or 10) + 4))
     return Config(
         retries={"mode": "standard", "total_max_attempts": max_attempts or settings.AWS_MAX_ATTEMPTS},
         connect_timeout=settings.AWS_CONNECT_TIMEOUT,

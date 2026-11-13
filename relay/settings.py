@@ -409,14 +409,15 @@ RELAY_SES_DOMAIN_ROUTES = os.environ.get("RELAY_SES_DOMAIN_ROUTES", "")
 RELAY_SES_QUOTA_REGIONS = csv_env("RELAY_SES_QUOTA_REGIONS", "eu-west-1,us-east-1", allow_empty=True)
 # Global account-wide SES token bucket (mailing/ses_rate_limiter.py): every SES
 # send path acquires a permit here, so K sender processes share one budget.
-# The account budget defaults to 45/s against an SES MaxSendRate of 50/s and is
-# clamped to the SES MaxSendRate discovered via GetAccount when reachable.
-SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_ACCOUNT_MAX_SEND_RATE", default=45.0)
+# The account budget defaults to 240/s against an SES MaxSendRate of 250/s
+# (leaving 10/s headroom for transactional mail) and is clamped to the SES
+# MaxSendRate discovered via GetAccount when reachable.
+SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_ACCOUNT_MAX_SEND_RATE", default=240.0)
 # Burst headroom in messages; 0 means rate/5 (never more than a second of sends).
 SES_LIMITER_BURST_MESSAGES = float_env("RELAY_SES_LIMITER_BURST_MESSAGES", default=0.0)
 # Sends of kind="transactional" may overdraw the bucket by this many messages,
 # so a saturating campaign cannot starve transactional mail for longer than ~1 s.
-SES_TRANSACTIONAL_RESERVE_PER_SECOND = float_env("RELAY_SES_TRANSACTIONAL_RESERVE_PER_SECOND", default=5.0)
+SES_TRANSACTIONAL_RESERVE_PER_SECOND = float_env("RELAY_SES_TRANSACTIONAL_RESERVE_PER_SECOND", default=10.0)
 # Fail-closed: a permit wait longer than this raises instead of sending.
 SES_LIMITER_WAIT_TIMEOUT_SECONDS = float_env("RELAY_SES_LIMITER_WAIT_TIMEOUT_SECONDS", default=30.0)
 SES_LIMITER_POLL_INTERVAL_SECONDS = float_env("RELAY_SES_LIMITER_POLL_INTERVAL_SECONDS", default=0.05)
@@ -435,8 +436,9 @@ SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0
 # 100-message batches spent ~15% of their time in fixed per-batch overhead (thread +
 # DB connection setup, last SES call tail); 500 reaches the limiter rate.
 CAMPAIGN_EMAIL_BATCH_SIZE = int_env("RELAY_CAMPAIGN_EMAIL_BATCH_SIZE", default=500)
-# SES calls in flight per batch. ~11 saturate 45/s at ~240 ms per call.
-CAMPAIGN_SEND_CONCURRENCY = int_env("RELAY_CAMPAIGN_SEND_CONCURRENCY", default=16)
+# SES calls in flight per batch worker. ~20-25 per worker across 3 campaign
+# workers (~60-72 in flight) saturate 240/s at ~240 ms per SES call.
+CAMPAIGN_SEND_CONCURRENCY = int_env("RELAY_CAMPAIGN_SEND_CONCURRENCY", default=32)
 # Claim-send-finalize (mailing.services.campaign_sender): rows claimed per UPDATE, how long a
 # SENDING claim may live before it becomes UNKNOWN, and how long a SIGTERM drain waits for
 # in-flight SES calls (keep below the Docker stop timeout).
