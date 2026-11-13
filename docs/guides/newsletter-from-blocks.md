@@ -64,6 +64,8 @@ What you see:
 
   You can leave the preview text empty. Then the inbox shows the text of the
   **Intro** block, the same as in previous issues.
+
+  ![Subject written like previous issues, empty preview text, and the inbox line taken from the intro](newsletter-from-blocks/05b-subject-and-preview.png)
 - **Blocks** on the left are the parts of the email, top to bottom.
 - **Live preview** on the right shows the email as it looks now. Yellow dashed
   boxes mark blocks that still need content. They do not appear in the real
@@ -198,7 +200,7 @@ preview to see both sizes.
 
 For a full-size view click **Preview in new tab** at the top of the page.
 
-![The full preview in its own tab](newsletter-from-blocks/12-full-preview.png)
+![The full preview in its own tab, in the same template as issue #302](newsletter-from-blocks/12-full-preview.png)
 
 The logo at the top and the community text at the bottom are added
 automatically. You do not need blocks for them.
