@@ -444,9 +444,10 @@ def test_mark_unfinished_flags_placeholders_only_in_editor_previews(ready_issue)
     marked = svc.render_issue(ready_issue, mark_unfinished=True)["html_body"]
     assert "Needs content" not in plain
     assert "Needs content:</strong> Course update / preparation card — Course news &lt;for&gt; this week" in marked
-    # An empty block adds no section, so no doubled divider.
-    assert plain.count(svc._DIVIDER) == 2
-    assert marked.count(svc._DIVIDER) == 3
+    # An empty block adds no section, so no doubled divider: only the one closing the
+    # lavender sponsor card (the intro's divider is part of the #302 skeleton).
+    assert plain.count(svc.layout.DIVIDER_ROW) == 1
+    assert marked.count(svc.layout.DIVIDER_ROW) == 2
 
 
 def test_partial_data_renders_without_crashing():
@@ -521,7 +522,7 @@ def test_assemble_creates_then_updates_one_draft_campaign(ready_issue, audience,
     assert (campaign.external_key, campaign.subject, campaign.preview_text) == (
         "weekly-303", "DataTalks.Club Weekly #303", "Course launch")
     assert campaign.audience == audience and campaign.client == ready_issue.client
-    assert "Try Acme" in campaign.html_body and "Try it: https://acme.dev/" in campaign.text_body
+    assert "Try Acme" in campaign.html_body and "Try it (https://acme.dev/)" in campaign.text_body
     assert "Needs content" not in campaign.html_body and "TEST EMAIL" not in campaign.html_body
     assert campaign.metadata["newsletter"]["issue_id"] == ready_issue.pk
     assert campaign.metadata["newsletter"]["assembled_by"] == "valeriia@datatalks.club"

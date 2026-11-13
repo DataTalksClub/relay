@@ -38,7 +38,8 @@ ANCHOR_DATE = dt.date(2026, 11, 9)
 SPONSOR_NOTE = ("Paste the sponsor's copy from the sponsor document (title, image, text, button). "
                 "No sponsor this week? Change the block type to “Course promo” or “Own promo”.")
 INTRO_NOTE = "Write 1–3 sentences about what is in this issue."
-COURSE_NOTE = "Course news for this week (deadlines, what to prepare). Duplicate the block for each course or delete it."
+COURSE_NOTE = ("Course news for this week (deadlines, what to prepare). Put the course banner in Image URL "
+               "(the guide lists them). Duplicate the block for each course or delete it.")
 EVENTS_EMPTY_NOTE = "No upcoming events were found on datatalks.club — add them manually or delete this block."
 RECORDING_NOTE = "Recording details were filled from datatalks.club events. Add a 2–3 sentence summary."
 

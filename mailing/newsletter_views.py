@@ -127,12 +127,7 @@ def _block_status(block, problems):
 
 
 def _block_preview_doc(block):
-    html = svc.render_block_html(block.block_type, block.data or {})
-    if not html.strip():
-        return ""
-    return ('<!doctype html><html><head><meta charset="utf-8"></head>'
-            '<body style="margin:0;padding:12px 16px;font-family:Helvetica,Arial,sans-serif;background:#ffffff">'
-            f'<div style="max-width:612px">{html}</div></body></html>')
+    return svc.render_block_preview(block.block_type, block.data or {})
 
 
 def _block_rows(issue, blocks, *, open_block_id=None, form_state=None):
@@ -192,6 +187,7 @@ def _editor_context(request, client, issue, *, open_block_id=None, form_state=No
     test_block = request.GET.get("test_block", "")
     return {
         "issue": issue, "rows": rows, "active_client": client, "checklist": checklist,
+        "inbox_preview": svc.effective_preview_text(issue),
         "problem_blocks": sum(1 for item in checklist if item["block_id"]),
         "preview_html": svc.render_issue(issue, mark_unfinished=True)["html_body"] if blocks else "",
         "block_types": [(key, spec["label"]) for key, spec in svc.BLOCK_TYPES.items()],

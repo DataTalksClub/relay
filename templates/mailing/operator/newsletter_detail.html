@@ -49,12 +49,13 @@
         <div class="form-field nl-details__wide">
           <label for="nl-subject">Subject <span class="nl-required" title="Required">*</span></label>
           <input id="nl-subject" name="subject" value="{{ details.subject }}" required maxlength="255"{% if details.errors.subject %} aria-invalid="true" aria-describedby="nl-subject-error"{% endif %}>
+          <p class="helptext" id="nl-subject-help">Write it like the previous issues: an emoji, the headline, then “ | DataTalks.Club Weekly”. Example: “🛠️ Our new free course starts next week | DataTalks.Club Weekly”.</p>
           {% if details.errors.subject %}<p class="field-errors" id="nl-subject-error">{{ details.errors.subject }}</p>{% endif %}
         </div>
         <div class="form-field nl-details__wide">
           <label for="nl-preview">Preview text</label>
           <input id="nl-preview" name="preview_text" value="{{ details.preview_text }}" maxlength="255" aria-describedby="nl-preview-help"{% if details.errors.preview_text %} aria-invalid="true"{% endif %}>
-          <p class="helptext" id="nl-preview-help">The grey line shown after the subject in the inbox.</p>
+          <p class="helptext" id="nl-preview-help">The grey line shown after the subject in the inbox. Leave it empty to use the intro text, as previous issues did.</p>
           {% if details.errors.preview_text %}<p class="field-errors">{{ details.errors.preview_text }}</p>{% endif %}
         </div>
         <div class="form-field">
@@ -164,7 +165,7 @@
           </div>
         </div>
         <div class="nl-preview__body">
-          <p class="nl-preview__inbox" data-nl-region="inbox"><strong>Inbox:</strong> {{ issue.subject }}{% if issue.preview_text %} — <span class="muted">{{ issue.preview_text }}</span>{% else %} — <span class="muted">no preview text yet</span>{% endif %}</p>
+          <p class="nl-preview__inbox" data-nl-region="inbox"><strong>Inbox:</strong> {{ issue.subject }}{% if inbox_preview %} — <span class="muted">{{ inbox_preview }}</span>{% else %} — <span class="muted">no preview text yet</span>{% endif %}</p>
           {% if preview_html %}<iframe class="email-preview-frame nl-preview__frame" id="nl-preview-frame" title="Newsletter preview" sandbox="" referrerpolicy="no-referrer" srcdoc="{{ preview_html|force_escape }}"></iframe>
           <p class="helptext">Yellow boxes mark blocks that still need content; they are not in the real email. <a href="{% url 'mailing:newsletter_preview' issue.id %}" target="_blank" rel="noopener">Open the real email in a new tab</a>.</p>
           {% else %}<p class="muted">The preview appears when the newsletter has blocks.</p>{% endif %}
