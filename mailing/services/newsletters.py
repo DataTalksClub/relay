@@ -20,14 +20,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from html import escape
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
+from django.core import signing
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import Max
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
@@ -581,23 +583,51 @@ TEST_BANNER = ('<div style="background:#fff4ce;border:1px solid #e0b400;border-r
                'are not tracked and the unsubscribe link is disabled.</div>')
 
 
-def _intro_summary(blocks):
-    for item in blocks:
-        if item.block_type == "intro":
-            return (item.data or {}).get("summary", "")
-    return ""
-
-
 def effective_preview_text(issue):
-    """The inbox preview: the issue's preview text, else the intro text (what #302 used)."""
-    if issue.preview_text:
-        return issue.preview_text
-    return _plain(_intro_summary(list(issue.blocks.order_by("position", "id"))))[:255]
+    """The inbox preview (preheader): the issue's own preview text, as on sent #302.
+
+    It is never filled from the visible intro: the inbox would then show the same
+    "This week: ..." line the reader sees first in the email.
+    """
+    return issue.preview_text or ""
 
 
-def _plain(markdown_text):
-    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", markdown_text or "")
-    return re.sub(r"\s+", " ", re.sub(r"[*_`#>]", "", text)).strip()
+WEB_VIEW_SALT = "mailing.newsletter.web_view"
+
+
+def web_view_token(issue):
+    return signing.Signer(salt=WEB_VIEW_SALT).sign(str(issue.pk))
+
+
+def issue_for_web_view_token(token):
+    """The issue a "View this email in your browser" token points at, or None."""
+    try:
+        pk = signing.Signer(salt=WEB_VIEW_SALT).unsign(token or "")
+    except signing.BadSignature:
+        return None
+    return NewsletterIssue.objects.filter(pk=pk).select_related("campaign").first() if pk.isdigit() else None
+
+
+def web_view_url(issue):
+    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}{reverse('mailing:newsletter_web_view', args=[web_view_token(issue)])}"
+
+
+def forward_url(issue, view_url):
+    """Relay's "Forward to a friend": a mailto draft with the issue's browser link (Mailchimp's
+    forward-to-friend.com page does not exist for Relay sends)."""
+    return "mailto:?" + urlencode({"subject": issue.subject, "body": f"{issue.subject}\n\n{view_url}"},
+                                  quote_via=quote)
+
+
+# Mailchimp's per-recipient preferences/unsubscribe links in the footer. A campaign send rewrites
+# them to the recipient's Relay unsubscribe page; a test send or the public web view has no
+# recipient, so they are disabled there (the sentence stays).
+_ACCOUNT_HREF_RE = re.compile(r'href="https://[^"]*list-manage\.com/(?:profile|unsubscribe)\?[^"]*\[UNIQID\][^"]*"')
+_ACCOUNT_TEXT_RE = re.compile(r"https://[^\s)]*list-manage\.com/(?:profile|unsubscribe)\?[^\s)]*\[UNIQID\][^\s)]*")
+
+
+def disable_account_links(html):
+    return _ACCOUNT_HREF_RE.sub('href="#"', html)
 
 
 def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
@@ -607,8 +637,10 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
     from the blocks: the intro goes under the logo, every other block becomes a
     section. Blocks that render to nothing are skipped. ``mark_unfinished=True``
     (editor previews only) puts a visible "Needs content" note before every
-    block that still ``needs_review``. The inbox preview falls back to the
-    intro text, as in #302, when the issue has no preview text.
+    block that still ``needs_review``. The inbox preview is the issue's preview
+    text only. ``test=True`` adds the yellow banner and ``[TEST]`` prefix and
+    disables the per-recipient preferences/unsubscribe links; a real render has
+    none of that.
     """
     all_blocks = list(issue.blocks.order_by("position", "id"))
     blocks = [block] if block is not None else all_blocks
@@ -633,11 +665,16 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
         subject = f"{subject} — block: {BLOCK_TYPES.get(block.block_type, {}).get('label', block.block_type)}"
     if test:
         subject = f"[TEST] {subject}"
-    preheader = issue.preview_text or _plain(_intro_summary(all_blocks))[:255]
-    html = layout.document(title=subject, preheader=preheader, banner_html=TEST_BANNER if test else "",
-                           intro_html="".join(intro_rows), sections=layout.sections_html(items))
-    text = "\n\n".join(["https://datatalks.club/", *texts, FOOTER_TEXT])
+    view_url = web_view_url(issue)
+    html = layout.document(title=subject, preheader=effective_preview_text(issue),
+                           banner_html=TEST_BANNER if test else "", intro_html="".join(intro_rows),
+                           sections=layout.sections_html(items), web_view_url=view_url,
+                           forward_url=forward_url(issue, view_url))
+    text = "\n\n".join([f"View this email in your browser ({view_url})", "https://datatalks.club/", *texts,
+                         FOOTER_TEXT.replace("{forward_url}", forward_url(issue, view_url))])
     if test:
+        html = disable_account_links(html)
+        text = _ACCOUNT_TEXT_RE.sub("disabled in test emails", text)
         # Belt and braces: SES leaves links marked ses:no-track alone even if a
         # default configuration set with click tracking applies.
         html = re.sub(r"<a(?=\s)", "<a ses:no-track", html)
@@ -645,18 +682,25 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
     return {"subject": subject, "html_body": html, "text_body": text}
 
 
-# The footer of #302's text part, unchanged.
+# The footer of #302's text part, with the #301 footer links.
 FOOTER_TEXT = (
     "DataTalks.Club is a global community of data enthusiasts. If you haven't had a chance to join our Slack yet, "
     "use this invite link (http://join.datatalks.club/) . If you have problems with the invite link, fill in this "
     "form (https://airtable.com/shrhUBN51Jy10fjJq) , and we'll add you to Slack manually.\n\n"
     "Do you have any questions? Hit reply, and we'll be glad to answer.\n\nSee you in Slack!\n\n"
-    "Subscribe (https://datatalks.club/) · Past issues (https://datatalks.club/blog/) · Sponsor this newsletter "
+    "Forward to a friend ({forward_url}) · "
+    "Subscribe (https://club.us19.list-manage.com/subscribe?u=0d7822ab98152f5afc118c176&id=97178021aa) · "
+    "Past issues (https://us19.campaign-archive.com/home/?u=0d7822ab98152f5afc118c176&id=97178021aa) · "
+    "Sponsor this newsletter "
     "(https://datatalks.club/blog/sponsor-datatalks-club.html)\n\n"
     "https://twitter.com/datatalksclub\nhttps://linkedin.com/company/datatalks-club\n"
     "https://www.youtube.com/c/DataTalksClub\nhttps://datatalks.club/\nmailto:alexey@datatalks.club\n\n"
     "Copyright (C) 2026 DataTalks. All rights reserved.\n\nOur mailing address is:\n"
     "DataTalks, Langhansstr. 70, Berlin, 13086, DE\n\nWant to change how you receive these emails?\n"
+    "You can update your preferences "
+    "(https://club.us19.list-manage.com/profile?u=0d7822ab98152f5afc118c176&id=97178021aa&e=[UNIQID]) or "
+    "unsubscribe (https://club.us19.list-manage.com/unsubscribe?u=0d7822ab98152f5afc118c176&id=97178021aa&t=b"
+    "&e=[UNIQID])\n"
 )
 
 

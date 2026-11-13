@@ -62,10 +62,14 @@ What you see:
   `🛠️ Our new free course starts next week | DataTalks.Club Weekly`.
   Relay suggests `DataTalks.Club Weekly #303`; replace it.
 
-  You can leave the preview text empty. Then the inbox shows the text of the
-  **Intro** block, the same as in previous issues.
+  Write the preview text yourself, one or two short sentences about the main
+  news, the way previous issues did. For #302 it was “Production AI Agents for
+  Generative Media starts November 16. Join the Q&A on November 10 and bring
+  your questions.” Relay does not copy the **Intro** text into it: the intro is
+  already the first thing people read in the email. If you leave it empty, the
+  inbox shows whatever the mail app picks from the top of the email.
 
-  ![Subject written like previous issues, empty preview text, and the inbox line taken from the intro](newsletter-from-blocks/05b-subject-and-preview.png)
+  ![Subject and preview text fields](newsletter-from-blocks/05b-subject-and-preview.png)
 - **Blocks** on the left are the parts of the email, top to bottom.
 - **Live preview** on the right shows the email as it looks now. Yellow dashed
   boxes mark blocks that still need content. They do not appear in the real
@@ -210,6 +214,15 @@ the same logo, fonts, colours, buttons and footer with the social icons and
 the mailing address. The sponsor, course promo and own promo blocks appear on
 a light purple background. Every other block is separated by a thin grey line.
 
+Like #301 and earlier issues, the top right has **View this email in your
+browser**. It opens the issue on a public Relay page (a signed link, so issues
+cannot be guessed). The footer line reads **Forward to a friend · Subscribe ·
+Past issues · Sponsor this newsletter**. Forward to a friend opens a new email
+with the browser link. Subscribe and Past issues go to the Mailchimp signup
+form and campaign archive, as before. The last line is **You can update your
+preferences or unsubscribe**. On a real send both links open the reader's own
+Relay unsubscribe page.
+
 ## Step 7. Send yourself a test
 
 1. Click **Send test** at the top of the page, or scroll to the **Send test**
@@ -226,7 +239,8 @@ A green box shows the result for each address.
 
 The test email has `[TEST]` at the start of the subject and a yellow banner at
 the top. It goes only to the addresses you entered, never to subscribers. Links
-in it are not tracked and its unsubscribe link does nothing.
+in it are not tracked, and the "update your preferences or unsubscribe" links
+do nothing. The real campaign has no banner and no `[TEST]`.
 
 To test a single block, choose it under **What to send**.
 

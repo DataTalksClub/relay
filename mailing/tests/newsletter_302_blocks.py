@@ -4,6 +4,9 @@ SUBJECT = "🛠️ Our new free course starts next week | DataTalks.Club Weekly"
 PREVIEW = ("This week: our free generative media course starting next week, Project 2 in AI Dev Tools Zoomcamp, "
            "the Machine Learning Zoomcamp midterm, a Q&A and launch stream, two recordings, and Alexey's post on "
            "dark software factories.")
+# The preheader (span.mcnPreviewText) of the #302 Mailchimp archive and of the 8 Nov copy.
+PREHEADER = ("Production AI Agents for Generative Media starts November 16. Join the Q&A on November 10 and bring "
+             "your questions.")
 BLOCKS = [
     ("intro", {"issue_label": "#302 · November 9, 2026", "summary": PREVIEW}),
     ("course_promo", {

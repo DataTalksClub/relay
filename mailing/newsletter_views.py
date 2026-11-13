@@ -527,6 +527,34 @@ def newsletter_preview(request, issue_id):
     return response
 
 
+_WEB_VIEW_CSP = "sandbox allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation; " \
+    "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'"
+
+
+@require_http_methods(["GET", "HEAD"])
+def newsletter_web_view(request, token):
+    """Public "View this email in your browser" page (the link at the top of every issue).
+
+    The token is signed, so issues cannot be enumerated. Once the issue's campaign
+    has left draft this shows the HTML that went out; before that, the issue as
+    it would be sent. Per-recipient preferences/unsubscribe links are disabled:
+    the page has no recipient. Sandboxed like the operator preview.
+    """
+    issue = svc.issue_for_web_view_token(token)
+    if issue is None:
+        return HttpResponse("Not found", status=404, content_type="text/plain; charset=utf-8")
+    campaign = issue.campaign
+    if campaign is not None and campaign.status != CampaignStatus.DRAFT and campaign.html_body:
+        html = campaign.html_body
+    else:
+        html = svc.render_issue(issue)["html_body"]
+    response = HttpResponse(svc.disable_account_links(html), content_type="text/html; charset=utf-8")
+    response["Content-Security-Policy"] = _WEB_VIEW_CSP
+    response["X-Robots-Tag"] = "noindex"
+    response["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 # --------------------------------------------------------------------------- client API
 
 def _api(request, allowed):
