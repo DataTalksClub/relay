@@ -182,7 +182,7 @@ def test_editor_shows_checklist_badges_and_live_preview(ui, issue):
     assert "Refresh from source" in html  # the book block came from the website
     # Needs-content blocks are open for editing; ready blocks show a rendered preview.
     assert html.count("data-nl-edit open") == 1
-    assert 'srcdoc="&lt;!doctype html&gt;' in html and 'sandbox=""' in html
+    assert 'srcdoc="&lt;!DOCTYPE html&gt;' in html and 'sandbox=""' in html
     assert "Needs content:</strong>" not in html  # email HTML is only inside escaped srcdoc
     assert "Needs content:&lt;/strong&gt;" in html  # the live preview marks unfinished blocks
     assert "Create campaign draft" in html and "disabled" in html

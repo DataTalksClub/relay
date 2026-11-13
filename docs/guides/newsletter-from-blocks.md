@@ -56,6 +56,14 @@ What you see:
 - **Subject and inbox preview** is where you change the subject line and the
   preview text (the grey line people see after the subject in their inbox).
   Click **Save details** after changing them.
+
+  Write the subject the way previous issues did: an emoji, the headline, then
+  ` | DataTalks.Club Weekly`. For example:
+  `🛠️ Our new free course starts next week | DataTalks.Club Weekly`.
+  Relay suggests `DataTalks.Club Weekly #303`; replace it.
+
+  You can leave the preview text empty. Then the inbox shows the text of the
+  **Intro** block, the same as in previous issues.
 - **Blocks** on the left are the parts of the email, top to bottom.
 - **Live preview** on the right shows the email as it looks now. Yellow dashed
   boxes mark blocks that still need content. They do not appear in the real
@@ -122,6 +130,23 @@ already typed.
 
 ![The block after switching to Course promo and filling it in](newsletter-from-blocks/09-course-promo-filled.png)
 
+### Course updates
+
+Each course update starts with the course banner, like in previous issues.
+Put the banner address in the **Image URL** field and the course page in
+**Image link**:
+
+| Course | Image URL |
+|---|---|
+| AI Dev Tools Zoomcamp | `https://mcusercontent.com/0d7822ab98152f5afc118c176/images/c39d593c-3435-b19e-3a98-d2d110924dc8.png` |
+| Machine Learning Zoomcamp | `https://mcusercontent.com/0d7822ab98152f5afc118c176/images/f6aee0bd-8307-6d8e-2e90-355ccb46929d.png` |
+| Production AI Agents for Generative Media | `https://mcusercontent.com/0d7822ab98152f5afc118c176/images/f10f4862-ad1e-cda0-050a-21a55b64c1cf.png` |
+
+For another course, take the banner from a previous issue or ask Alexey. The
+block title (for example "Project 2") appears under the banner. If two or more
+course updates follow each other, they appear one after another, without a
+line between them.
+
 ### Recordings
 
 Relay fills in the title, date, speakers, picture and link of each recording.
@@ -177,6 +202,11 @@ For a full-size view click **Preview in new tab** at the top of the page.
 
 The logo at the top and the community text at the bottom are added
 automatically. You do not need blocks for them.
+
+The email uses the same template as the issues we sent before (issue #302):
+the same logo, fonts, colours, buttons and footer with the social icons and
+the mailing address. The sponsor, course promo and own promo blocks appear on
+a light purple background. Every other block is separated by a thin grey line.
 
 ## Step 7. Send yourself a test
 

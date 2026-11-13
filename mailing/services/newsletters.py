@@ -22,7 +22,6 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from html import escape
 from urllib.parse import urlsplit
 
-import markdown as markdown_lib
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -42,6 +41,7 @@ from mailing.models import (
     NewsletterIssue,
     NewsletterTestSend,
 )
+from mailing.services import newsletter_layout as layout
 from mailing.services.api_errors import ApiValidationError
 
 logger = logging.getLogger("mailing.newsletters")
@@ -61,10 +61,6 @@ def test_presets():
 TEST_SEND_TIMEOUT_SECONDS = 15
 TEST_SEND_DEADLINE_SECONDS = 40
 
-BRAND_BLUE = "#2056A2"
-FONT = "'Helvetica Neue',Helvetica,Arial,Verdana,sans-serif"
-LOGO_URL = ("https://mcusercontent.com/0d7822ab98152f5afc118c176/images/"
-            "bf262d0f-68be-b981-422b-e8e5cfc8eeca.png")
 
 FIELD_LABELS = {
     "kicker": "Section label",
@@ -499,111 +495,33 @@ def _lines(value):
     return [line.strip() for line in (value or "").splitlines() if line.strip()]
 
 
-_SAFE_HREF = re.compile(r'href="(?!https?://|mailto:)[^"]*"')
-
-
-def render_markdown(text):
-    """Render operator Markdown to inline-styled email HTML. Raw HTML is escaped."""
-    html = markdown_lib.markdown(escape(text or "", quote=False), extensions=["sane_lists", "nl2br"])
-    html = _SAFE_HREF.sub('href="#"', html)
-    html = html.replace("<p>", '<p style="margin:0 0 12px;font-size:16px;line-height:1.5;color:#000000">')
-    html = html.replace("<ul>", '<ul style="margin:0 0 12px;padding-left:22px;font-size:16px;line-height:1.5">')
-    html = html.replace("<ol>", '<ol style="margin:0 0 12px;padding-left:22px;font-size:16px;line-height:1.5">')
-    html = html.replace("<li>", '<li style="margin:0 0 6px">')
-    html = html.replace("<a ", '<a style="color:#006ab1;text-decoration:underline" ')
-    return html
-
-
-def _kicker(text):
-    if not text:
-        return ""
-    return (f'<p style="margin:0 0 6px;font-size:13px;font-weight:bold;letter-spacing:1.5px;'
-            f'text-transform:uppercase;color:{BRAND_BLUE}">{escape(text)}</p>')
-
-
-def _title(text, url=""):
-    if not text:
-        return ""
-    inner = escape(text)
-    if url:
-        inner = f'<a href="{escape(url)}" style="color:#000000;text-decoration:none">{inner}</a>'
-    return f'<h2 style="margin:0 0 12px;font-size:22px;line-height:1.3;color:#000000">{inner}</h2>'
-
-
-def _button(text, url):
-    if not (text and url):
-        return ""
-    return (f'<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 4px"><tr>'
-            f'<td style="background:{BRAND_BLUE};border-radius:8px">'
-            f'<a href="{escape(url)}" style="display:inline-block;padding:14px 28px;font-size:16px;'
-            f'font-weight:bold;color:#ffffff;text-decoration:none;border-radius:8px">{escape(text)}</a>'
-            f'</td></tr></table>')
-
-
-def _image(url, link="", alt=""):
-    if not url:
-        return ""
-    img = (f'<img src="{escape(url)}" alt="{escape(alt)}" width="612" '
-           f'style="display:block;width:100%;max-width:612px;height:auto;border:0;border-radius:8px;margin:0 0 12px">')
-    if link:
-        return f'<a href="{escape(link)}">{img}</a>'
-    return img
-
-
 def _value(spec, data, name):
     return data.get(name) or spec["defaults"].get(name, "")
 
 
-def render_block_html(block_type, data):
-    """Inline-styled HTML for one block; tolerates partial (draft) data. Unknown types render ""."""
+def _block_rows(block_type, data):
     spec = BLOCK_TYPES.get(block_type)
     if spec is None:
         return ""
     data = data if isinstance(data, dict) else {}
-    get = lambda name: _value(spec, data, name)  # noqa: E731
-    render = spec["render"]
-    if render == "html":
-        return get("html")
-    if render == "intro":
-        label = get("issue_label")
-        head = (f'<p style="margin:0 0 8px;font-size:14px;font-weight:bold;color:{BRAND_BLUE}">{escape(label)}</p>'
-                if label else "")
-        return head + render_markdown(get("summary"))
-    if render == "events":
-        items = []
-        for line in _lines(get("events")):
-            parts = [part.strip() for part in line.split("|")]
-            when, title = parts[0], parts[1] if len(parts) > 1 else ""
-            url, host = (parts[2] if len(parts) > 2 else ""), (parts[3] if len(parts) > 3 else "")
-            url = url if _valid_url(url) else ""
-            title_html = f'<a href="{escape(url)}" style="color:#006ab1">{escape(title)}</a>' if url else escape(title)
-            host_html = f" {escape(host)}" if host else ""
-            items.append(f'<p style="margin:0 0 14px;font-size:16px;line-height:1.5"><strong>{escape(when)}</strong>'
-                         f'{"<br>" + title_html + host_html if title else ""}</p>')
-        return _kicker(get("kicker")) + _title(get("title")) + "".join(items) + render_markdown(get("footer"))
-    if render == "links":
-        items = []
-        for line in _lines(get("links")):
-            parts = [part.strip() for part in line.split("|")]
-            url = parts[1] if len(parts) > 1 and _valid_url(parts[1]) else ""
-            note = f' — {escape(parts[2])}' if len(parts) > 2 and parts[2] else ""
-            title = (f'<a href="{escape(url)}" style="color:#006ab1">{escape(parts[0])}</a>' if url
-                     else escape(parts[0]))
-            items.append(f'<li style="margin:0 0 8px">{title}{note}</li>')
-        items_html = (f'<ul style="margin:0 0 12px;padding-left:22px;font-size:16px;line-height:1.5">'
-                      f'{"".join(items)}</ul>' if items else "")
-        return _kicker(get("kicker")) + _title(get("title")) + items_html
-    bullets = _lines(get("bullets"))
-    bullets_html = ("<ul style=\"margin:0 0 12px;padding-left:22px;font-size:16px;line-height:1.5\">"
-                    + "".join(f'<li style="margin:0 0 6px">{escape(item)}</li>' for item in bullets) + "</ul>"
-                    if bullets else "")
-    meta = get("meta")
-    meta_html = (f'<p style="margin:0 0 10px;font-size:15px;font-weight:bold;color:#333333">{escape(meta)}</p>'
-                 if meta else "")
-    return (_kicker(get("kicker")) + _title(get("title"), get("image_link") if not get("image_url") else "")
-            + meta_html + _image(get("image_url"), get("image_link"), get("title"))
-            + render_markdown(get("body")) + bullets_html + render_markdown(get("closing"))
-            + _button(get("cta_text"), get("cta_url")))
+    return layout.block_rows(block_type, spec, lambda name: _value(spec, data, name), _valid_url)
+
+
+def render_block_html(block_type, data):
+    """Mailchimp rows (the #302 layout) for one block; tolerates partial (draft) data. Unknown types render ""."""
+    return _block_rows(block_type, data)
+
+
+def render_block_preview(block_type, data):
+    """One block as a standalone HTML document styled like the newsletter ("" when empty)."""
+    return layout.block_preview_document(block_type, _block_rows(block_type, data))
+
+
+def _text_markdown(value):
+    """Markdown -> the plain-text style of #302's text part: ``text (url)`` links, ``*`` bullets."""
+    text = re.sub(r"\[([^\]]*)\]\(([^)\s]*)\)", r"\1 (\2)", value or "")
+    text = re.sub(r"(?m)^\s*[-+]\s+", "* ", text)
+    return text.replace("**", "").strip()
 
 
 def render_block_text(block_type, data):
@@ -612,51 +530,101 @@ def render_block_text(block_type, data):
         return ""
     data = data if isinstance(data, dict) else {}
     get = lambda name: _value(spec, data, name)  # noqa: E731
-    if spec["render"] == "html":
+    render = spec["render"]
+    if render == "html":
         return re.sub(r"<[^>]+>", "", get("html")).strip()
+    if render == "intro":
+        return "\n\n".join(part for part in (get("issue_label"), _text_markdown(get("summary"))) if part)
     parts = []
-    for name in spec["fields"]:
-        value = get(name)
-        if not value or name in {"image_url", "image_link", "cta_url"}:
-            continue
-        if name == "cta_text" and get("cta_url"):
-            parts.append(f"{value}: {get('cta_url')}")
-        elif name in {"events", "links"}:
-            parts.extend(" ".join(part.strip() for part in line.split("|")) for line in _lines(value))
-        else:
-            parts.append(value)
-    return "\n".join(parts)
-
-
-_DIVIDER = '<hr style="border:0;border-top:1px solid #e3e3e3;margin:28px 0">'
+    if get("kicker"):
+        parts.append(get("kicker"))
+    if get("title"):
+        parts.append(f"\n** {get('title')}\n" + "-" * 60)
+    if render == "events":
+        for line in _lines(get("events")):
+            fields = [field.strip() for field in line.split("|")]
+            parts.append(fields[0])
+            if len(fields) > 1:
+                link = f" ({fields[2]})" if len(fields) > 2 and fields[2] else ""
+                host = f" {fields[3]}" if len(fields) > 3 and fields[3] else ""
+                parts.append(f"{fields[1]}{link}{host}")
+        parts.append(_text_markdown(get("footer")))
+    elif render == "links":
+        for line in _lines(get("links")):
+            fields = [field.strip() for field in line.split("|")]
+            link = f" ({fields[1]})" if len(fields) > 1 and fields[1] else ""
+            note = f" — {fields[2]}" if len(fields) > 2 and fields[2] else ""
+            parts.append(f"* {fields[0]}{link}{note}")
+    else:
+        if get("meta"):
+            parts.append(get("meta"))
+        if get("image_link"):
+            parts.append(get("image_link"))
+        parts.append(_text_markdown(get("body")))
+        parts.append("\n".join(f"* {item}" for item in _lines(get("bullets"))))
+        parts.append(_text_markdown(get("closing")))
+        if get("cta_text") and get("cta_url"):
+            parts.append(f"{get('cta_text')} ({get('cta_url')})")
+    return "\n\n".join(part for part in parts if part)
 
 
 def unfinished_note(block):
     """Visible yellow box placed before a ``needs_review`` block in editor previews."""
     note = f" — {block.source_note}" if block.source_note else ""
     return ('<div style="background:#fff4ce;border:2px dashed #e0b400;border-radius:6px;padding:10px 14px;'
-            'margin:0 0 14px;font-size:14px;line-height:1.4;color:#5c4400;font-family:Arial,sans-serif">'
+            'font-size:14px;line-height:1.4;color:#5c4400;font-family:Arial,sans-serif">'
             f'<strong>Needs content:</strong> {escape(block_label(block.block_type))}{escape(note)}</div>')
+
+
+TEST_BANNER = ('<div style="background:#fff4ce;border:1px solid #e0b400;border-radius:6px;padding:10px 14px;'
+               'margin:0 0 4px;font-size:14px;line-height:1.4;color:#5c4400;text-align:center">TEST EMAIL — links '
+               'are not tracked and the unsubscribe link is disabled.</div>')
+
+
+def _intro_summary(blocks):
+    for item in blocks:
+        if item.block_type == "intro":
+            return (item.data or {}).get("summary", "")
+    return ""
+
+
+def effective_preview_text(issue):
+    """The inbox preview: the issue's preview text, else the intro text (what #302 used)."""
+    if issue.preview_text:
+        return issue.preview_text
+    return _plain(_intro_summary(list(issue.blocks.order_by("position", "id"))))[:255]
+
+
+def _plain(markdown_text):
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", markdown_text or "")
+    return re.sub(r"\s+", " ", re.sub(r"[*_`#>]", "", text)).strip()
 
 
 def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
     """Render the whole issue (or one ``block``) into ``{subject, html_body, text_body}``.
 
-    Blocks that render to nothing are skipped. ``mark_unfinished=True`` (editor
-    previews only) puts a visible "Needs content" note before every block that
-    still ``needs_review``.
+    The HTML is the issue #302 Mailchimp layout (``newsletter_layout``) filled
+    from the blocks: the intro goes under the logo, every other block becomes a
+    section. Blocks that render to nothing are skipped. ``mark_unfinished=True``
+    (editor previews only) puts a visible "Needs content" note before every
+    block that still ``needs_review``. The inbox preview falls back to the
+    intro text, as in #302, when the issue has no preview text.
     """
-    blocks = [block] if block is not None else list(issue.blocks.order_by("position", "id"))
-    sections, texts = [], []
+    all_blocks = list(issue.blocks.order_by("position", "id"))
+    blocks = [block] if block is not None else all_blocks
+    intro_rows, items, texts = [], [], []
     for item in blocks:
         if item.block_type not in BLOCK_TYPES:
             continue
-        section = render_block_html(item.block_type, item.data or {})
+        rows = _block_rows(item.block_type, item.data or {})
         if mark_unfinished and item.needs_review:
-            section = unfinished_note(item) + section
-        if not section.strip():
+            rows = layout.note_row(unfinished_note(item)) + rows
+        if not rows.strip():
             continue
-        sections.append(section)
+        if item.block_type == "intro":
+            intro_rows.append(rows)
+        else:
+            items.append((item.block_type, rows))
         text = render_block_text(item.block_type, item.data or {})
         if text.strip():
             texts.append(text)
@@ -665,46 +633,31 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
         subject = f"{subject} — block: {BLOCK_TYPES.get(block.block_type, {}).get('label', block.block_type)}"
     if test:
         subject = f"[TEST] {subject}"
-    preheader = escape(issue.preview_text)
-    test_banner = ('<div style="background:#fff4ce;border:1px solid #e0b400;border-radius:6px;padding:10px 14px;'
-                   'margin:0 0 20px;font-size:14px;color:#5c4400">TEST EMAIL — links are not tracked and the '
-                   'unsubscribe link is disabled.</div>') if test else ""
-    footer = (
-        '<p style="margin:0 0 12px;font-size:15px;line-height:1.5;color:#333333">DataTalks.Club is a global community of '
-        'data enthusiasts. If you haven\'t had a chance to join our Slack yet, use '
-        '<a href="https://join.datatalks.club/" style="color:#006ab1">this invite link</a>. If you have problems with '
-        'the invite link, <a href="https://airtable.com/shrhUBN51Jy10fjJq" style="color:#006ab1">fill in this form</a>, '
-        'and we\'ll add you to Slack manually.</p>'
-        '<p style="margin:0 0 12px;font-size:15px;line-height:1.5;color:#333333">Do you have any questions? Hit reply, '
-        'and we\'ll be glad to answer. See you in Slack!</p>'
-        '<p style="margin:0;font-size:13px;color:#656565"><a href="https://datatalks.club/" style="color:#656565">'
-        'Subscribe</a> · <a href="https://datatalks.club/blog/sponsor-datatalks-club.html" style="color:#656565">'
-        'Sponsor this newsletter</a></p>'
-    )
-    html = (
-        '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,'
-        f'initial-scale=1"><title>{escape(subject)}</title></head>'
-        f'<body style="margin:0;padding:0;background:#ECECFB;font-family:{FONT}">'
-        f'<div style="display:none;max-height:0;overflow:hidden;opacity:0">{preheader}</div>'
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ECECFB">'
-        '<tr><td align="center" style="padding:24px 12px">'
-        '<table role="presentation" width="660" cellpadding="0" cellspacing="0" '
-        'style="width:100%;max-width:660px;background:#ffffff;border-radius:8px">'
-        '<tr><td style="padding:24px 24px 8px">'
-        f'<a href="https://datatalks.club/"><img src="{LOGO_URL}" alt="DataTalks.Club Weekly newsletter" width="612" '
-        'style="display:block;width:100%;max-width:612px;height:auto;border:0"></a></td></tr>'
-        f'<tr><td style="padding:12px 24px 24px;font-family:{FONT}">{test_banner}'
-        + _DIVIDER.join(sections)
-        + _DIVIDER + footer
-        + '</td></tr></table></td></tr></table></body></html>'
-    )
-    text = "\n\n----\n\n".join(texts)
+    preheader = issue.preview_text or _plain(_intro_summary(all_blocks))[:255]
+    html = layout.document(title=subject, preheader=preheader, banner_html=TEST_BANNER if test else "",
+                           intro_html="".join(intro_rows), sections=layout.sections_html(items))
+    text = "\n\n".join(["https://datatalks.club/", *texts, FOOTER_TEXT])
     if test:
         # Belt and braces: SES leaves links marked ses:no-track alone even if a
         # default configuration set with click tracking applies.
         html = re.sub(r"<a(?=\s)", "<a ses:no-track", html)
         text = "[TEST EMAIL - links are not tracked; unsubscribe is disabled]\n\n" + text
     return {"subject": subject, "html_body": html, "text_body": text}
+
+
+# The footer of #302's text part, unchanged.
+FOOTER_TEXT = (
+    "DataTalks.Club is a global community of data enthusiasts. If you haven't had a chance to join our Slack yet, "
+    "use this invite link (http://join.datatalks.club/) . If you have problems with the invite link, fill in this "
+    "form (https://airtable.com/shrhUBN51Jy10fjJq) , and we'll add you to Slack manually.\n\n"
+    "Do you have any questions? Hit reply, and we'll be glad to answer.\n\nSee you in Slack!\n\n"
+    "Subscribe (https://datatalks.club/) · Past issues (https://datatalks.club/blog/) · Sponsor this newsletter "
+    "(https://datatalks.club/blog/sponsor-datatalks-club.html)\n\n"
+    "https://twitter.com/datatalksclub\nhttps://linkedin.com/company/datatalks-club\n"
+    "https://www.youtube.com/c/DataTalksClub\nhttps://datatalks.club/\nmailto:alexey@datatalks.club\n\n"
+    "Copyright (C) 2026 DataTalks. All rights reserved.\n\nOur mailing address is:\n"
+    "DataTalks, Langhansstr. 70, Berlin, 13086, DE\n\nWant to change how you receive these emails?\n"
+)
 
 
 # --------------------------------------------------------------------------- test delivery
@@ -858,7 +811,7 @@ def assemble_campaign(issue, *, audience, actor=""):
     rendered = render_issue(issue)
     stamp = {"issue_id": issue.pk, "issue_key": issue.key, "assembled_at": timezone.now().isoformat(),
              "assembled_by": actor}
-    fields = {"subject": issue.subject, "preview_text": issue.preview_text,
+    fields = {"subject": issue.subject, "preview_text": effective_preview_text(issue),
               "html_body": rendered["html_body"], "text_body": rendered["text_body"]}
 
     campaign = Campaign.objects.select_for_update().filter(pk=issue.campaign_id).first() if issue.campaign_id else None
