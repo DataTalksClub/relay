@@ -215,6 +215,10 @@ def campaign_payload(campaign):
         "recipient_count": campaign.recipient_count,
         "sent_count": campaign.sent_count,
         "skipped_count": campaign.skipped_count,
+        "pending_count": max(
+            (campaign.recipient_count or 0) - (campaign.sent_count or 0) - (campaign.skipped_count or 0),
+            0,
+        ),
         "delivered_count": campaign.delivered_count,
         "unique_open_count": campaign.unique_open_count,
         "open_count": campaign.open_count,
@@ -509,6 +513,96 @@ def queue_campaign_for_client(external_key, data, authenticated_client):
         "recipient_count": campaign.recipient_count,
         "skipped_count": campaign.skipped_count,
     }
+
+
+def _normalize_submit_recipients(recipients):
+    if not isinstance(recipients, list) or not recipients:
+        raise ApiValidationError({"recipients": "required"})
+    normalized = []
+    for index, raw in enumerate(recipients):
+        if isinstance(raw, str):
+            email = raw.strip()
+            normalized.append({
+                "source_object_key": email.lower() or f"recipient-{index}",
+                "email": email,
+                "subscribe_if_missing": True,
+            })
+            continue
+        if not isinstance(raw, dict):
+            raise ApiValidationError({f"recipients.{index}": "must_be_object"})
+        member = dict(raw)
+        if not member.get("source_object_key"):
+            email = str(member.get("email") or "").strip().lower()
+            member["source_object_key"] = email or f"recipient-{index}"
+        member.setdefault("subscribe_if_missing", True)
+        normalized.append(member)
+    return normalized
+
+
+@transaction.atomic
+def submit_campaign_for_client(external_key, data, authenticated_client):
+    """Submit a campaign and its recipients in one idempotent request."""
+    from mailing.services.recipient_lists import reconcile_recipient_list_for_client  # noqa: PLC0415
+
+    external_key = validate_campaign_external_key(external_key)
+    scope = validate_contact_scope(data, authenticated_client, require_email=False)
+
+    existing = Campaign.objects.select_for_update().filter(
+        client=scope.client,
+        audience=scope.audience,
+        external_key=external_key,
+    ).first()
+    if existing is not None and existing.status != CampaignStatus.DRAFT:
+        if existing.status in {
+            CampaignStatus.SCHEDULED,
+            CampaignStatus.QUEUED,
+            CampaignStatus.SENDING,
+            CampaignStatus.SENT,
+        }:
+            return {
+                "campaign": campaign_payload(existing),
+                "created": False,
+                "queued": False,
+                "already_queued": True,
+                "snapshotting": False,
+                "scheduled": existing.status == CampaignStatus.SCHEDULED,
+                "batch_count": 0,
+                "recipient_count": existing.recipient_count,
+                "skipped_count": existing.skipped_count,
+            }
+        raise ApiValidationError({"status": "not_editable"}, status_code=409)
+
+    campaign_data = dict(data)
+    raw_recipients = campaign_data.pop("recipients", None)
+    if raw_recipients is None:
+        raw_recipients = campaign_data.pop("members", None)
+    should_queue = campaign_data.pop("queue", True)
+    if not isinstance(should_queue, bool):
+        raise ApiValidationError({"queue": "must_be_boolean"})
+
+    if raw_recipients is not None:
+        members = _normalize_submit_recipients(raw_recipients)
+        list_key = str(campaign_data.get("recipient_list_key") or f"campaign-{external_key}").strip()
+        reconcile_recipient_list_for_client(
+            list_key,
+            {
+                "audience": scope.audience.slug,
+                "client": scope.client.slug,
+                "name": str(campaign_data.get("subject") or list_key)[:255],
+                "members": members,
+                "remove_absent": True,
+            },
+            authenticated_client,
+        )
+        campaign_data["recipient_list_key"] = list_key
+
+    upsert_result = upsert_campaign_for_client(external_key, campaign_data, authenticated_client)
+    if not should_queue:
+        return upsert_result
+
+    queue_result = queue_campaign_for_client(external_key, campaign_data, authenticated_client)
+    queue_result["created"] = upsert_result["created"]
+    return queue_result
 
 
 @transaction.atomic

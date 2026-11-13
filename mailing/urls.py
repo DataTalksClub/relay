@@ -207,6 +207,7 @@ urlpatterns = [
     path("api/campaigns/<str:external_key>", views.api_campaign, name="api_campaign"),
     path("api/campaigns/<str:external_key>/links", views.api_campaign_links, name="api_campaign_links"),
     path("api/campaigns/<str:external_key>/queue", views.api_campaign_queue, name="api_campaign_queue"),
+    path("api/campaigns/<str:external_key>/submit", views.api_campaign_submit, name="api_campaign_submit"),
     path("api/campaigns/<str:external_key>/cancel", views.api_campaign_cancel, name="api_campaign_cancel"),
     path("api/campaigns/<str:external_key>/pause", views.api_campaign_pause, name="api_campaign_pause"),
     path("api/campaigns/<str:external_key>/resume", views.api_campaign_resume, name="api_campaign_resume"),
