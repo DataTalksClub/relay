@@ -224,7 +224,12 @@ def _youtube_thumbnail(url):
     video_id = _youtube_id(url)
     if not re.fullmatch(r"[A-Za-z0-9_-]{6,20}", video_id or ""):
         return ""
-    return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+    # Both are 16:9 (hqdefault is 4:3 with black bars). The large one only
+    # exists for HD uploads, so check it and fall back to the small one.
+    large = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+    if _fetch(large):
+        return large
+    return f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
 
 
 # --------------------------------------------------------------------------- people

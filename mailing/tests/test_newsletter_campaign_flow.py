@@ -246,7 +246,7 @@ def test_recordings_and_podcasts_only_take_recorded_events_from_the_past_week(we
     assert recordings[0] == {
         "title": "Webinar Recording: Production AI Agents for Generative Media: Pre-Course Live Q&A",
         "meta": "Webinar · Nov 10 · with Alexey Grigorev and Mikhail Rozhkov",
-        "image_url": "https://img.youtube.com/vi/iACtrkiXndw/hqdefault.jpg",
+        "image_url": "https://img.youtube.com/vi/iACtrkiXndw/mqdefault.jpg",
         "image_link": "https://www.youtube.com/watch?v=iACtrkiXndw",
         "cta_text": "Watch the recording",
         "cta_url": "https://www.youtube.com/watch?v=iACtrkiXndw",
@@ -254,7 +254,7 @@ def test_recordings_and_podcasts_only_take_recorded_events_from_the_past_week(we
     podcasts = sources.podcast_data(MONDAY)
     assert [(item["title"], item["image_url"], item["cta_text"]) for item in podcasts] == [
         ("Podcast Recording: Navigating the Maze of Production Machine Learning",
-         "https://img.youtube.com/vi/xC5lqvfSfLU/hqdefault.jpg", "Listen to the episode")]
+         "https://img.youtube.com/vi/xC5lqvfSfLU/mqdefault.jpg", "Listen to the episode")]
     # A week later the Nov 10 recording is out of the window and the Nov 3 one never was in.
     assert sources.recordings_data(MONDAY + dt.timedelta(days=7)) == []
     assert sources.recordings_data(MONDAY, days=14)[0]["title"].startswith("Workshop Recording: Build a Media Agent")
@@ -649,3 +649,25 @@ def test_fetch_budget_stops_uncached_fetches_after_the_deadline(monkeypatch):
     with sources.fetch_budget(30):
         assert sources._fetch("https://example.invalid/budget-b") == b"ok"
     assert calls == ["https://example.invalid/budget-b"]
+
+
+def test_recording_thumbnail_prefers_the_large_16_9_image_when_youtube_has_it(monkeypatch):
+    monkeypatch.setenv("RELAY_NEWSLETTER_AUTOFILL", "1")
+    monkeypatch.setattr(sources, "_http_get", lambda url: b"jpeg" if url.endswith("/vidWithHd01/maxresdefault.jpg") else None)
+    assert sources._youtube_thumbnail("https://www.youtube.com/watch?v=vidWithHd01").endswith("/vidWithHd01/maxresdefault.jpg")
+    assert sources._youtube_thumbnail("https://www.youtube.com/watch?v=vidNoHd0001").endswith("/vidNoHd0001/mqdefault.jpg")
+
+
+@pytest.mark.django_db
+def test_saving_a_placeholder_clears_its_hint_but_keeps_an_autofill_note():
+    organization = Organization.objects.create(name="Hint Org", slug="hint-org")
+    client = Client.objects.create(organization=organization, name="Hint", slug="hint-client")
+    issue = svc.create_issue(client, {"key": "hint-1", "subject": "Hint"})
+    placeholder = svc.add_block(issue, "course_update", {}, needs_review=True, source="placeholder", source_note="Write it")
+    auto = svc.add_block(issue, "recording", {"title": "T"}, needs_review=True, source="website:recordings", source_note="From events")
+    svc.update_block(placeholder, {"title": "Done"})
+    svc.update_block(auto, {"title": "T", "body": "Summary"})
+    placeholder.refresh_from_db()
+    auto.refresh_from_db()
+    assert (placeholder.source_note, placeholder.needs_review) == ("", False)
+    assert auto.source_note == "From events"
