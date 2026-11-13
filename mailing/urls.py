@@ -178,6 +178,7 @@ urlpatterns = [
     path("t/o/<str:tracking_token>.gif", views.tracking_open, name="tracking_open"),
     path("t/c/<str:tracking_token>", views.tracking_click, name="tracking_click"),
     path("unsubscribe/<str:unsubscribe_token>", views.public_unsubscribe, name="public_unsubscribe"),
+    path("newsletter/view/<str:token>", newsletter_views.newsletter_web_view, name="newsletter_web_view"),
     path("webhooks/ses", views.ses_webhook, name="ses_webhook"),
     path("api/contacts.csv", views.api_contacts_csv, name="api_contacts_csv"),
     path("api/contacts/imports", views.api_contact_imports, name="api_contact_imports"),

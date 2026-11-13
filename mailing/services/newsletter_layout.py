@@ -5,12 +5,19 @@ was sent on 2026-11-09 (Relay campaign 18, exported from Mailchimp), with the
 issue-specific parts cut out and replaced by markers:
 
 - ``<!--RELAY:TITLE-->`` and ``<!--RELAY:PREHEADER-->``: subject and inbox preview;
-- ``<!--RELAY:BANNER-->``: the empty text block above the logo (test banner);
+- ``<!--RELAY:BANNER-->``: the text block above the logo (test banner), before
+  "View this email in your browser" (``<!--RELAY:WEB_VIEW_URL-->``);
 - ``<!--RELAY:INTRO-->``: the issue label and "This week" text under the logo;
 - ``<!--RELAY:SECTIONS-->``: every block after the intro.
 
+- ``<!--RELAY:FORWARD_URL-->``: "Forward to a friend" in the footer.
+
 Head/CSS, logo, footer (community text, links, social icons, address) are kept
-byte-for-byte. Blocks are emitted with the same Mailchimp building pieces #302
+as #301/#302 had them. Subscribe and Past issues go to the Mailchimp signup form
+and campaign archive, like #301. "You can update your preferences or
+unsubscribe" keeps Mailchimp's ``list-manage.com/profile|unsubscribe ... e=[UNIQID]``
+links: a real campaign send rewrites them to the recipient's Relay unsubscribe
+page (``campaign_rendering``), the way the 8 November copy of #302 went out. Blocks are emitted with the same Mailchimp building pieces #302
 used (text, image, button and divider blocks inside ``mceWrapper`` sections),
 so a newsletter made from blocks looks like the ones we sent before.
 """
@@ -306,14 +313,16 @@ def sections_html(items):
     return "".join(out)
 
 
-def document(*, title, preheader, banner_html, intro_html, sections):
+def document(*, title, preheader, banner_html, intro_html, sections, web_view_url="#", forward_url="#"):
     html = skeleton()
     # The skeleton keeps #302's invisible filler after the preheader, so mail
     # clients do not pull body text into the inbox preview.
     for marker, value in (("<!--RELAY:TITLE-->", escape(title, quote=False)),
                           ("<!--RELAY:PREHEADER-->", escape(preheader or "", quote=False)),
-                          ("<!--RELAY:BANNER-->", banner_html), ("<!--RELAY:INTRO-->", intro_html),
-                          ("<!--RELAY:SECTIONS-->", sections)):
+                          ("<!--RELAY:BANNER-->", banner_html),
+                          ("<!--RELAY:WEB_VIEW_URL-->", escape(web_view_url or "#")),
+                          ("<!--RELAY:INTRO-->", intro_html), ("<!--RELAY:SECTIONS-->", sections),
+                          ("<!--RELAY:FORWARD_URL-->", escape(forward_url or "#"))):
         html = html.replace(marker, value, 1)
     return html
 

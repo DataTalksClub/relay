@@ -55,7 +55,7 @@
         <div class="form-field nl-details__wide">
           <label for="nl-preview">Preview text</label>
           <input id="nl-preview" name="preview_text" value="{{ details.preview_text }}" maxlength="255" aria-describedby="nl-preview-help"{% if details.errors.preview_text %} aria-invalid="true"{% endif %}>
-          <p class="helptext" id="nl-preview-help">The grey line shown after the subject in the inbox. Leave it empty to use the intro text, as previous issues did.</p>
+          <p class="helptext" id="nl-preview-help">The grey line shown after the subject in the inbox (the preheader). Write it like previous issues, for example “Production AI Agents for Generative Media starts November 16. Join the Q&amp;A on November 10 and bring your questions.” It is not taken from the intro.</p>
           {% if details.errors.preview_text %}<p class="field-errors">{{ details.errors.preview_text }}</p>{% endif %}
         </div>
         <div class="form-field">
