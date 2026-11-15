@@ -47,6 +47,8 @@ TRANSIENT_DB_ERROR_SNIPPETS = (
     "connection to server was lost",
     "ssl connection has been closed unexpectedly",
     "remaining connection slots are reserved",
+    "too many clients already",
+    "too many connections",
     # Concurrent writers; Postgres aborts exactly one of them.
     "deadlock detected",
     "could not serialize access",

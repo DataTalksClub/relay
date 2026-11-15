@@ -129,6 +129,10 @@ def fail_stale_campaign_tasks(*, now=None, lease_seconds=None, auto_reenqueue=No
             TaskHeartbeat.objects.filter(task_id=task.pk).delete()
         failed.append(task.pk)
         logger.error("STALE CAMPAIGN TASK campaign=%s %s", campaign_id, message)
+        if payload.get("db_recovery") == 1:
+            # Durable recovery owns opted-in batches, including the atomic
+            # enqueue receipt. Do not create a second successor here.
+            continue
         if campaign_id and auto_reenqueue:
             reenqueue_pending_recipients(payload, stale_task_id=task.pk)
         elif campaign_id:
