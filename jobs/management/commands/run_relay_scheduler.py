@@ -8,6 +8,7 @@ from jobs.services import (
     recover_unenqueued_jobs,
 )
 from mailing import db_retry
+from mailing.services.campaign_db_recovery import recover_campaign_db_batches
 from mailing.services.campaigns import dispatch_due_campaigns
 from mailing.services.complaints import check_complaint_rate
 from mailing.services.queue_monitor import check_queue_age
@@ -41,6 +42,7 @@ class Command(BaseCommand):
         fired = run_due_schedules()
         campaigns = dispatch_due_campaigns()
         fail_stale_campaign_tasks()
+        recover_campaign_db_batches()
         expire_stale_claims()
         reconcile_unknown_recipients()
         pruned = prune_finished_task_results()

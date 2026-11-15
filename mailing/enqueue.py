@@ -54,6 +54,9 @@ def batch_campaign_enqueues(correlation_id):
 
 
 def enqueue_campaign_email(payload):
+    # Persist opt-in with the task itself before it can execute. Recovery must
+    # never sweep historical failed/live campaigns when this fix is deployed.
+    payload = {**payload, "db_recovery": 1}
     buffer = _campaign_buffer.get()
     if buffer is not None:
         buffer.append(payload)

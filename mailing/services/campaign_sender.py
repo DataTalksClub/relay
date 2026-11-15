@@ -22,7 +22,7 @@ from botocore.exceptions import (
     ParamValidationError,
 )
 from django.conf import settings
-from django.db import close_old_connections, connection, transaction
+from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -584,7 +584,7 @@ class _BatchRun:
             self.stop.set()
         finally:
             if close_connections:
-                close_old_connections()
+                connection.close()
 
     def _halt(self):
         logger.error("Campaign batch halted campaign_id=%s", self.campaign_id)
@@ -690,7 +690,7 @@ class _BatchRun:
         else:
             # Sized by the configured maximum, not this batch's thread count, so a short
             # final batch does not resize (and reconnect) the pool.
-            pool = _send_pool(max(1, int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 1) or 1)))
+            pool = _send_pool(_configured_send_concurrency())
             futures = [pool.submit(self.drain, close_connections=True) for _ in range(concurrency)]
             self._wait(futures)
         self.finalizer.close()
@@ -795,8 +795,16 @@ def _send_concurrency(recipient_count):
         # SQLite serializes writers (and the send transaction holds the write
         # lock), so threads would only add "database is locked" failures.
         return 1
-    configured = int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 1) or 1)
+    configured = _configured_send_concurrency()
     return max(1, min(configured, recipient_count))
+
+
+def _configured_send_concurrency():
+    # pg-relay has 100 slots shared with every other lane. Three campaign
+    # replicas at the historical default of 32 consumed 96 sender slots alone.
+    # Bound each process to twelve sender + one main + one heartbeat connection,
+    # even when an old deployment still exports RELAY_CAMPAIGN_SEND_CONCURRENCY=32.
+    return max(1, min(12, int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 1) or 1)))
 
 
 _pool = None
