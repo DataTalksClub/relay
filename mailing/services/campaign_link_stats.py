@@ -20,6 +20,7 @@ def clicker_identity():
             then=Concat(
                 Value("mailchimp:"), KeyTextTransform("datacenter", source), Value(":"),
                 KeyTextTransform("list_id", source), Value(":"), KeyTextTransform("email_id", source),
+                output_field=CharField(),
             ),
         ),
         default=Value(None),
@@ -27,6 +28,7 @@ def clicker_identity():
     )
     return Coalesce(
         Cast("contact_id", CharField()), Cast("campaign_recipient__contact_id", CharField()), source_id,
+        output_field=CharField(),
     )
 
 
