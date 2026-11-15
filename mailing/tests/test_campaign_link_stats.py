@@ -1,5 +1,7 @@
 import pytest
 from django.contrib.auth import get_user_model
+from django.db.backends.postgresql.base import DatabaseWrapper
+from django.db.models import Count
 from django.urls import reverse
 
 from mailing.context_processors import ACTIVE_CLIENT_SESSION_KEY
@@ -15,6 +17,7 @@ from mailing.models import (
     Organization,
 )
 from mailing.services.auth import create_client_api_key
+from mailing.services.campaign_link_stats import clicker_identity
 
 pytestmark = pytest.mark.django_db
 
@@ -221,3 +224,39 @@ def test_dashboard_link_stats_json_is_client_scoped(client, campaign_scope):
     )
     hidden = client.get(reverse("mailing:campaign_links_json", args=[other_campaign.pk]))
     assert hidden.status_code == 404
+
+
+def test_link_stats_with_imported_historical_clicks_compile_without_mixed_field_error(client, campaign_scope):
+    url = "https://example.com/historical-mix"
+    record_click(campaign_scope, "linked@example.com", url)
+    EmailEvent.objects.create(
+        campaign=campaign_scope["campaign"],
+        client=campaign_scope["client"],
+        audience=campaign_scope["audience"],
+        event_type=EmailEventType.CLICK,
+        url=url,
+        metadata={
+            "provider": "mailchimp",
+            "historical_import": True,
+            "mailchimp": {"datacenter": "us19", "list_id": "list-one", "email_id": "member-one"},
+        },
+    )
+
+    pg_wrapper = DatabaseWrapper({"ENGINE": "django.db.backends.postgresql", "NAME": "test"})
+    qs = (
+        EmailEvent.objects.filter(campaign=campaign_scope["campaign"], event_type=EmailEventType.CLICK)
+        .exclude(url="")
+        .order_by()
+        .values("url")
+        .annotate(total_clicks=Count("id"), unique_clickers=Count(clicker_identity(), distinct=True))
+    )
+    sql, _ = qs.query.get_compiler(connection=pg_wrapper).as_sql()
+    assert "COALESCE(" in sql
+
+    response = client.get(
+        reverse("mailing:api_campaign_links", args=[CAMPAIGN_KEY]),
+        HTTP_AUTHORIZATION=f"Bearer {API_KEY}",
+    )
+    assert response.status_code == 200
+    assert response.json()["links"] == [{"url": url, "total_clicks": 2, "unique_clickers": 2}]
+
