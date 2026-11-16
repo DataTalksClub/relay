@@ -417,7 +417,9 @@ SES network calls and limiter sleeps. This caps all three workers at 18
 connections even while 96 SES requests are in flight; the previous cap used
 42 connections including main/heartbeat. The configured account budget is
 still 240/s, shared across the workers and transactional lane (SES limit 250/s).
-Idle pool sockets shrink after 30 seconds. Other roles retain their existing
+The combined DEV/live worker CPU ceilings are 14.75 on the 16-vCPU host
+(previous budget <8); non-campaign lanes still total <7. These are CPU limits,
+not reserved cores. Idle pool sockets shrink after 30 seconds. Other roles retain their existing
 connection configuration. Deployments without `RELAY_DB_POOL_MAX_SIZE` retain
 the twelve-thread safety cap. Never increase threads on an unpooled deployment.
 

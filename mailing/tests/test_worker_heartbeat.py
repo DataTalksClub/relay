@@ -95,9 +95,17 @@ def test_production_worker_heartbeats_and_resource_budget():
     assert len(workers) == 30
     dev_services = yaml.safe_load((Path(__file__).parents[2] / "deploy/coolify/docker-compose.dev.yml").read_text())["services"]
     dev_workers = [service for name, service in dev_services.items() if name != "web"]
-    assert sum(float(service["cpus"]) for service in [*workers.values(), *dev_workers]) <= 8
+    # Contabo has 16 vCPU: campaign ceilings now total 8 CPU (three live
+    # workers + one DEV), while all other lane ceilings stay below 7 CPU.
+    # These are limits rather than reservations; idle lanes use near zero.
+    assert sum(float(service["cpus"]) for service in [*workers.values(), *dev_workers]) <= 15
+    other_workers = [s for name, s in workers.items() if not name.startswith("campaign-worker")]
+    other_workers += [s for name, s in dev_services.items() if name != "web" and not name.startswith("campaign-worker")]
+    assert sum(float(service["cpus"]) for service in other_workers) <= 7
     for name, service in workers.items():
-        assert service["mem_limit"] == "512m"
+        assert service["mem_limit"] == ("1g" if name.startswith("campaign-worker") else "512m")
+        if name.startswith("campaign-worker"):
+            assert service["environment"]["RELAY_DB_POOL_MAX_SIZE"] == "6"
         probe = " ".join(service["healthcheck"]["test"])
         assert "stat -c %Y /tmp/relay-db-heartbeat" in probe
         assert "worker_healthcheck" not in probe
