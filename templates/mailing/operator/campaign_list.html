@@ -37,8 +37,12 @@
               {% with campaign=row.campaign %}
               <tr>
                 <td class="truncate" data-label="Campaign">
-                  <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject|default:"Untitled draft" }}</a>
-                  {% if row.mailchimp_history %}<div class="helptext">Mailchimp history</div>{% endif %}
+                  {% if row.meta.issue_number %}<span class="badge neutral">#{{ row.meta.issue_number }}</span> {% endif %}<a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject|default:"Untitled draft" }}</a>
+                  {% if row.mailchimp_history or row.meta.campaign_type or row.meta.source or campaign.external_key %}
+                    <div class="helptext">
+                      {% if row.mailchimp_history %}Mailchimp history{% endif %}{% if row.meta.campaign_type %}{% if row.mailchimp_history %} / {% endif %}{{ row.meta.campaign_type }}{% endif %}{% if row.meta.source %}{% if row.mailchimp_history or row.meta.campaign_type %} / {% endif %}{{ row.meta.source }}{% endif %}{% if campaign.external_key %}{% if row.mailchimp_history or row.meta.campaign_type or row.meta.source %} / {% endif %}<code>{{ campaign.external_key }}</code>{% endif %}
+                    </div>
+                  {% endif %}
                 </td>
                 <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
                 <td class="truncate" data-label="Audience">

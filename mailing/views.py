@@ -152,6 +152,7 @@ from mailing.services.operator_ui import (
     audience_list_rows,
     audience_queryset,
     campaign_list_rows,
+    campaign_metadata,
     campaign_queryset,
     campaign_recent_events,
     campaign_recipient_queryset,
@@ -856,6 +857,7 @@ def campaign_detail(request, campaign_id):
     events = campaign_recent_events(campaign)[:10]
     event_rows = [{"event": event, "metadata_summary": metadata_summary(event.metadata)} for event in events]
     from mailing.campaign_ui_views import campaign_timing_context  # noqa: PLC0415 - URL imports operator actions
+    newsletter_issue = newsletter_issue_for(campaign)
 
     return render(
         request,
@@ -863,7 +865,8 @@ def campaign_detail(request, campaign_id):
         {
             **campaign_timing_context(campaign),
             "campaign": campaign,
-            "newsletter_issue": newsletter_issue_for(campaign),
+            "newsletter_issue": newsletter_issue,
+            "campaign_meta": campaign_metadata(campaign, newsletter_issue=newsletter_issue),
             "recipient_query": recipient_query,
             "active_client": active_client,
             "campaign_badge": campaign_status_badge(campaign.status),
