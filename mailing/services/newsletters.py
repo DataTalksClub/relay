@@ -855,8 +855,16 @@ def assemble_campaign(issue, *, audience, actor=""):
     if issue_problems(issue):
         raise ApiValidationError({"issue": "has_problems"})
     rendered = render_issue(issue)
-    stamp = {"issue_id": issue.pk, "issue_key": issue.key, "assembled_at": timezone.now().isoformat(),
-             "assembled_by": actor}
+    stamp = {
+        "issue_id": issue.pk,
+        "issue_key": issue.key,
+        "issue_number": issue.issue_number,
+        "publication_date": issue.publication_date.isoformat() if issue.publication_date else None,
+        "template_key": issue.template_key or "",
+        "source_system": "newsletter-issues",
+        "assembled_at": timezone.now().isoformat(),
+        "assembled_by": actor,
+    }
     fields = {"subject": issue.subject, "preview_text": effective_preview_text(issue),
               "html_body": rendered["html_body"], "text_body": rendered["text_body"]}
 

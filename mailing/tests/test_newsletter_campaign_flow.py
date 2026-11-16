@@ -525,6 +525,10 @@ def test_assemble_creates_then_updates_one_draft_campaign(ready_issue, audience,
     assert "Try Acme" in campaign.html_body and "Try it (https://acme.dev/)" in campaign.text_body
     assert "Needs content" not in campaign.html_body and "TEST EMAIL" not in campaign.html_body
     assert campaign.metadata["newsletter"]["issue_id"] == ready_issue.pk
+    assert campaign.metadata["newsletter"]["issue_key"] == "weekly-303"
+    assert campaign.metadata["newsletter"]["issue_number"] == 303
+    assert campaign.metadata["newsletter"]["publication_date"] == "2026-11-16"
+    assert campaign.metadata["newsletter"]["source_system"] == "newsletter-issues"
     assert campaign.metadata["newsletter"]["assembled_by"] == "valeriia@datatalks.club"
     assert "operator_editor" not in campaign.metadata
     assert campaign_services.campaign_send_issues(campaign) == []

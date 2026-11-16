@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import datetime, time
 
 from django.db.models import (
@@ -217,6 +218,20 @@ class Badge:
 
 
 @dataclass(frozen=True)
+class CampaignMetadata:
+    issue_number: int | None = None
+    external_key: str = ""
+    campaign_type: str = ""
+    source: str = ""
+    publication_date: str = ""
+    mailchimp_campaign_id: str = ""
+    mailchimp_datacenter: str = ""
+    mailchimp_list_id: str = ""
+    mailchimp_campaign_title: str = ""
+    extra_items: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class CampaignListRow:
     campaign: Campaign
     badge: Badge
@@ -224,6 +239,7 @@ class CampaignListRow:
     timing_value: object | None
     progress: "CampaignSendProgress | None" = None
     mailchimp_history: bool = False
+    meta: CampaignMetadata = field(default_factory=CampaignMetadata)
 
 
 @dataclass(frozen=True)
@@ -455,6 +471,121 @@ def campaign_timing(campaign: Campaign) -> tuple[str, object | None]:
     return "Updated", campaign.updated_at
 
 
+_ISSUE_KEY_RE = re.compile(r"^(?:weekly|newsletter|issue)[-_](\d+)$", re.IGNORECASE)
+_KNOWN_CAMPAIGN_METADATA_KEYS = frozenset({
+    "newsletter",
+    "mailchimp",
+    "historical_import",
+    "provider",
+    "operator_editor",
+    "operator_schedule_timezone",
+    "scheduling_error",
+    "merge_vars",
+    "issue_number",
+    "type",
+    "campaign_type",
+    "source",
+    "source_system",
+})
+_NEWSLETTER_TYPE_LABELS = {
+    "dtc-weekly": "Weekly newsletter",
+    "blank": "Newsletter",
+}
+
+
+def _coerce_issue_number(value) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        parsed = int(value.strip())
+        return parsed if parsed > 0 else None
+    return None
+
+
+def _clean_str(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def campaign_metadata(campaign: Campaign, newsletter_issue=None) -> CampaignMetadata:
+    """Extract normalized display metadata from a Campaign without extra queries."""
+    metadata = campaign.metadata if isinstance(campaign.metadata, dict) else {}
+    newsletter = metadata.get("newsletter") if isinstance(metadata.get("newsletter"), dict) else {}
+    mailchimp = metadata.get("mailchimp") if isinstance(metadata.get("mailchimp"), dict) else {}
+    external_key = campaign.external_key or ""
+
+    issue_number = _coerce_issue_number(newsletter.get("issue_number"))
+    if issue_number is None and newsletter_issue is not None:
+        issue_number = _coerce_issue_number(getattr(newsletter_issue, "issue_number", None))
+    if issue_number is None:
+        issue_number = _coerce_issue_number(metadata.get("issue_number"))
+    if issue_number is None:
+        key_candidate = _clean_str(newsletter.get("issue_key")) or external_key
+        match = _ISSUE_KEY_RE.match(key_candidate)
+        if match:
+            issue_number = _coerce_issue_number(match.group(1))
+
+    is_mailchimp = (
+        metadata.get("provider") == "mailchimp"
+        or metadata.get("historical_import") is True
+        or bool(mailchimp)
+        or external_key.startswith("mailchimp-")
+    )
+
+    campaign_type = _clean_str(metadata.get("type")) or _clean_str(metadata.get("campaign_type"))
+    if not campaign_type and newsletter:
+        tpl = _clean_str(newsletter.get("template_key")) or (
+            _clean_str(getattr(newsletter_issue, "template_key", "")) if newsletter_issue is not None else ""
+        )
+        campaign_type = _NEWSLETTER_TYPE_LABELS.get(tpl, tpl or "Newsletter")
+    if not campaign_type and is_mailchimp:
+        campaign_type = "Historical import"
+    if not campaign_type and campaign.category_tag:
+        campaign_type = campaign.category_tag
+    if not campaign_type and campaign.template_key:
+        campaign_type = campaign.template_key
+    if not campaign_type and isinstance(metadata.get("operator_editor"), dict):
+        campaign_type = "Block composer"
+
+    source = _clean_str(metadata.get("source_system")) or _clean_str(metadata.get("source"))
+    if not source and is_mailchimp:
+        source = "Mailchimp"
+    if not source and newsletter:
+        nl_source = _clean_str(newsletter.get("source_system")) or "newsletter-issues"
+        assembled_by = _clean_str(newsletter.get("assembled_by"))
+        source = f"{nl_source} ({assembled_by})" if assembled_by.startswith("api:") else nl_source
+    if not source and isinstance(metadata.get("operator_editor"), dict):
+        source = "Relay composer"
+    if not source and external_key:
+        source = f"API ({campaign.client.slug})" if campaign.client_id else "API"
+
+    publication_date = _clean_str(newsletter.get("publication_date"))
+    if not publication_date and newsletter_issue is not None and getattr(newsletter_issue, "publication_date", None):
+        publication_date = newsletter_issue.publication_date.isoformat()
+
+    extra_items = []
+    for key in sorted(metadata):
+        if key in _KNOWN_CAMPAIGN_METADATA_KEYS:
+            continue
+        value = metadata[key]
+        if isinstance(value, (str, int, float, bool)) and str(value).strip():
+            extra_items.append((str(key), str(value).strip()))
+        if len(extra_items) >= 10:
+            break
+
+    return CampaignMetadata(
+        issue_number=issue_number,
+        external_key=external_key,
+        campaign_type=campaign_type,
+        source=source,
+        publication_date=publication_date,
+        mailchimp_campaign_id=_clean_str(mailchimp.get("campaign_id")),
+        mailchimp_datacenter=_clean_str(mailchimp.get("datacenter")),
+        mailchimp_list_id=_clean_str(mailchimp.get("list_id")),
+        mailchimp_campaign_title=_clean_str(mailchimp.get("campaign_title")),
+        extra_items=tuple(extra_items),
+    )
+
+
 def campaign_list_rows(campaigns, *, include_progress: bool = False) -> list[CampaignListRow]:
     campaigns = list(campaigns)
     progress_by_id = campaign_progress_map([campaign.pk for campaign in campaigns]) if include_progress else {}
@@ -471,6 +602,7 @@ def campaign_list_rows(campaigns, *, include_progress: bool = False) -> list[Cam
                 timing_value=timing_value,
                 progress=progress,
                 mailchimp_history=metadata.get("historical_import") is True and metadata.get("provider") == "mailchimp",
+                meta=campaign_metadata(campaign),
             )
         )
     return rows
