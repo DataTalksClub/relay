@@ -1,0 +1,11 @@
+{% extends "leads/base.html" %}
+{% block content %}
+  <h1>You're confirmed</h1>
+  {% if event.has_material %}
+    <p>Here are your materials{% if event.material %}: <strong>{{ event.material.title }}</strong>{% endif %}.</p>
+    <a class="button" href="{{ download_url }}">Download</a>
+    <p class="muted" style="margin-top:1rem">The link in your email keeps working, so you can come back to it later.</p>
+  {% else %}
+    <p>Thanks! I'll send you the materials by email.</p>
+  {% endif %}
+{% endblock %}

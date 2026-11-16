@@ -413,6 +413,26 @@ RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS = int(
     os.environ.get("RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS", "3600")
 )
 RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS", "2"))
+
+# Lead capture pages for talks/workshops (mailing.lead_capture_views). Events
+# are database rows (Django admin or `manage.py lead_event`); these settings
+# only say where signups land and which host the links in emails/QR codes use.
+# materials.dtcdev.click is a CloudFront distribution whose origin is
+# relay.datatalks.club with origin path /m (see docs/lead-capture.md).
+RELAY_LEADS_BASE_URL = os.environ.get("RELAY_LEADS_BASE_URL", "https://materials.dtcdev.click").strip().rstrip("/")
+RELAY_LEADS_ORG = os.environ.get("RELAY_LEADS_ORG", "datatalksclub").strip()
+RELAY_LEADS_CLIENT = os.environ.get("RELAY_LEADS_CLIENT", "talk-leads").strip()
+RELAY_LEADS_AUDIENCE = os.environ.get("RELAY_LEADS_AUDIENCE", "talk-leads").strip()
+RELAY_LEADS_CONFIRM_TEMPLATE = os.environ.get("RELAY_LEADS_CONFIRM_TEMPLATE", "lead-confirm").strip()
+# A second submit inside this window sends nothing new ("check your inbox").
+RELAY_LEADS_RESEND_SECONDS = int(os.environ.get("RELAY_LEADS_RESEND_SECONDS", "600"))
+RELAY_LEADS_EMAIL_LIMIT = int(os.environ.get("RELAY_LEADS_EMAIL_LIMIT", "3"))
+RELAY_LEADS_EMAIL_WINDOW_SECONDS = int(os.environ.get("RELAY_LEADS_EMAIL_WINDOW_SECONDS", "3600"))
+# A talk room shares one NAT address, so the per-IP limit is generous.
+RELAY_LEADS_IP_LIMIT = int(os.environ.get("RELAY_LEADS_IP_LIMIT", "120"))
+RELAY_LEADS_IP_WINDOW_SECONDS = int(os.environ.get("RELAY_LEADS_IP_WINDOW_SECONDS", "3600"))
+RELAY_LEADS_TOKEN_MAX_AGE_SECONDS = int(os.environ.get("RELAY_LEADS_TOKEN_MAX_AGE_SECONDS", str(365 * 24 * 3600)))
+RELAY_LEADS_MAX_MATERIAL_BYTES = int(os.environ.get("RELAY_LEADS_MAX_MATERIAL_BYTES", str(25 * 1024 * 1024)))
 AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 # domain role=<arn> region=<region> configuration_set=<name>, separated by ';'
 # or newlines. Domains absent from this list use email.send and the values above.

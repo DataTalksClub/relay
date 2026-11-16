@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <title>{% block title %}{% if event %}{{ event.title }}{% else %}Materials{% endif %}{% endblock %}</title>
+    <script>
+      try { document.documentElement.dataset.theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) {}
+    </script>
+    <style>{{ tokens_css|safe }}</style>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 17px/1.5 var(--dk-font-sans); color: var(--dk-text-primary); background: var(--dk-bg-muted); }
+      main { max-width: 32rem; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+      .card { background: var(--dk-bg-surface); border: 1px solid var(--dk-border-default); border-radius: var(--dk-radius-lg); padding: 1.5rem 1.25rem; }
+      h1 { font-size: 1.55rem; line-height: 1.25; margin: 0 0 .75rem; color: var(--dk-text-heading); }
+      p { margin: 0 0 1rem; }
+      a { color: var(--dk-text-link); }
+      .muted { color: var(--dk-text-muted); font-size: .92rem; }
+      .offer { font-weight: 600; }
+      label { display: block; font-weight: 600; margin: 1rem 0 .35rem; }
+      label .opt { font-weight: 400; color: var(--dk-text-muted); }
+      input[type=email], input[type=text] { width: 100%; font: inherit; padding: .8rem .9rem; border: 1px solid var(--dk-border-default); border-radius: var(--dk-radius-md); background: var(--dk-bg-page); color: var(--dk-text-primary); }
+      input:focus-visible { outline: 2px solid var(--dk-focus-ring); outline-offset: 1px; }
+      .consent { display: flex; gap: .7rem; align-items: flex-start; font-weight: 400; margin-top: 1.25rem; }
+      .consent input { width: 1.35rem; height: 1.35rem; margin: .15rem 0 0; flex: none; accent-color: var(--dk-accent-default); }
+      button.primary, .button { display: block; width: 100%; margin-top: 1.4rem; padding: .95rem 1rem; font: inherit; font-weight: 600; text-align: center; text-decoration: none; color: var(--dk-text-on-accent); background: var(--dk-accent-default); border: 0; border-radius: var(--dk-radius-md); cursor: pointer; }
+      button.primary:hover, .button:hover { background: var(--dk-accent-hover); }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+      .error { color: var(--dk-danger-text); font-weight: 600; }
+      .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+      footer { margin-top: 1.25rem; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="card">{% block content %}{% endblock %}</div>
+      <footer class="muted">{% block footer %}{% endblock %}</footer>
+    </main>
+  </body>
+</html>
