@@ -585,11 +585,6 @@ def unfinished_note(block):
             f'<strong>Needs content:</strong> {escape(block_label(block.block_type))}{escape(note)}</div>')
 
 
-TEST_BANNER = ('<div style="background:#fff4ce;border:1px solid #e0b400;border-radius:6px;padding:10px 14px;'
-               'margin:0 0 4px;font-size:14px;line-height:1.4;color:#5c4400;text-align:center">TEST EMAIL — links '
-               'are not tracked and the unsubscribe link is disabled.</div>')
-
-
 def effective_preview_text(issue):
     """The inbox preview (preheader): the issue's own preview text, as on sent #302.
 
@@ -645,9 +640,10 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
     section. Blocks that render to nothing are skipped. ``mark_unfinished=True``
     (editor previews only) puts a visible "Needs content" note before every
     block that still ``needs_review``. The inbox preview is the issue's preview
-    text only. ``test=True`` adds the yellow banner and ``[TEST]`` prefix and
-    disables the per-recipient preferences/unsubscribe links; a real render has
-    none of that.
+    text only. ``test=True`` adds the ``[TEST]`` subject prefix, marks links
+    ``ses:no-track`` and disables the per-recipient preferences/unsubscribe
+    links; a real render has none of that. Test sends carry no banner in the
+    body, so they look exactly like the real issue.
     """
     all_blocks = list(issue.blocks.order_by("position", "id"))
     blocks = [block] if block is not None else all_blocks
@@ -674,7 +670,7 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
         subject = f"[TEST] {subject}"
     view_url = web_view_url(issue)
     html = layout.document(title=subject, preheader=effective_preview_text(issue),
-                           banner_html=TEST_BANNER if test else "", intro_html="".join(intro_rows),
+                           banner_html="", intro_html="".join(intro_rows),
                            sections=layout.sections_html(items), web_view_url=view_url,
                            forward_url=forward_url(issue, view_url))
     text = "\n\n".join([f"View this email in your browser ({view_url})", "https://datatalks.club/", *texts,
@@ -685,7 +681,6 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
         # Belt and braces: SES leaves links marked ses:no-track alone even if a
         # default configuration set with click tracking applies.
         html = re.sub(r"<a(?=\s)", "<a ses:no-track", html)
-        text = "[TEST EMAIL - links are not tracked; unsubscribe is disabled]\n\n" + text
     return {"subject": subject, "html_body": html, "text_body": text}
 
 
