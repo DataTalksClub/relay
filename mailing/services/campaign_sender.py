@@ -288,7 +288,10 @@ _Gate = namedtuple("_Gate", "status halted scheduled_at")
 
 def _send_gate(campaign_id):
     """One lock-free read before every SES call: status, halt flag, schedule."""
-    row = Campaign.objects.filter(pk=campaign_id).values_list("status", "send_halted_at", "scheduled_at").first()
+    try:
+        row = Campaign.objects.filter(pk=campaign_id).values_list("status", "send_halted_at", "scheduled_at").first()
+    finally:
+        release_pooled_connection()
     if row is None:
         raise CampaignSenderError(f"campaign {campaign_id} does not exist")
     return _Gate(row[0], row[1] is not None, row[2])
@@ -380,6 +383,8 @@ class _Finalizer:
                         f"could not record {len(items)} send outcomes for campaign {self.campaign.pk}"
                     ) from None
                 return
+            finally:
+                release_pooled_connection()
             share = (time.perf_counter() - started) / len(items)
             for done in items:
                 if done.timing is not None:
