@@ -1985,7 +1985,7 @@ def test_transactional_campaign_details_counts_and_access(client, audience, api_
     user.save()
     response = client.get(url)
     assert response.status_code == 200
-    assert response.context["counts"]["total"] == 7
+    assert response.context["counts"]["total"] == len(TransactionalMessageStatus.values)
     assert response.context["counts"]["delivered"] == 1
     for status in TransactionalMessageStatus.values:
         assert response.context["counts"][status] == 1

@@ -1505,6 +1505,7 @@ def delivery_tone(status: str) -> str:
     if status in {
         CampaignRecipientStatus.SKIPPED,
         TransactionalMessageStatus.SKIPPED,
+        TransactionalMessageStatus.DUPLICATE_BLOCKED,
         CampaignRecipientStatus.PENDING,
         CampaignRecipientStatus.SENDING,
         CampaignRecipientStatus.UNKNOWN,

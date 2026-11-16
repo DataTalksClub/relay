@@ -418,6 +418,16 @@ AWS_SES_CONFIGURATION_SET = os.environ.get("AWS_SES_CONFIGURATION_SET", "")
 # or newlines. Domains absent from this list use email.send and the values above.
 RELAY_SES_DOMAIN_ROUTES = os.environ.get("RELAY_SES_DOMAIN_ROUTES", "")
 RELAY_SES_QUOTA_REGIONS = csv_env("RELAY_SES_QUOTA_REGIONS", "eu-west-1,us-east-1", allow_empty=True)
+# Duplicate-send guard (mailing/services/send_dedupe.py). Identical rendered content
+# (subject+bodies, per-recipient tokens removed) to the same client+address is blocked
+# inside the window. Campaign mail: 30 days. Transactional: 15 minutes by default, per
+# template override EmailTemplate.dedupe_window_seconds (0 = repeats always allowed).
+DEDUPE_ENABLED = bool_env("RELAY_DEDUPE_ENABLED", default=True)
+DEDUPE_CAMPAIGN_WINDOW_SECONDS = int_env("RELAY_DEDUPE_CAMPAIGN_WINDOW_SECONDS", default=30 * 86400)
+DEDUPE_TRANSACTIONAL_WINDOW_SECONDS = int_env("RELAY_DEDUPE_TRANSACTIONAL_WINDOW_SECONDS", default=900)
+# Fingerprint rows older than this are purged (purge_send_fingerprints); must exceed the windows.
+DEDUPE_RETENTION_DAYS = int_env("RELAY_DEDUPE_RETENTION_DAYS", default=90)
+
 # Global account-wide SES token bucket (mailing/ses_rate_limiter.py): every SES
 # send path acquires a permit here, so K sender processes share one budget.
 # The account budget defaults to 240/s against an SES MaxSendRate of 250/s
