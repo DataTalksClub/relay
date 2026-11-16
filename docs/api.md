@@ -1304,6 +1304,8 @@ copy to explicit addresses.
 | POST | `/api/newsletter-issues/<key>/preview` | Rendered `subject`, `html_body`, `text_body`; `{"block_id": 12}` previews one block |
 | POST | `/api/newsletter-issues/<key>/test-send` | `{"emails": ["alexey@datatalks.club", "sponsor@example.com"], "block_id": 12}` (block optional, max 10 addresses) |
 
+A card block's `kicker` is its section label (`SPONSORED`, `RECORDINGS`, ...). Set it to `-` for no label, so only the first block of a section shows it.
+
 Block field values are strings. `lines` fields also accept a list of strings.
 `events` lines are `when | title | https://link | with Speaker`; `links`
 lines are `title | https://link | note`. Markdown fields escape raw HTML and
