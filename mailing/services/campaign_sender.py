@@ -27,6 +27,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from mailing.aws import ses_client as default_ses_client
+from mailing.db_pool import release_pooled_connection
 from mailing.mime_template import (
     TRACKING_SENTINEL as _TRACKING_SENTINEL,
 )
@@ -688,6 +689,8 @@ class _BatchRun:
         if concurrency == 1:
             self.drain(close_connections=False)
         else:
+            # The coordinator does no SQL while sender threads drain the batch.
+            release_pooled_connection()
             # Sized by the configured maximum, not this batch's thread count, so a short
             # final batch does not resize (and reconnect) the pool.
             pool = _send_pool(_configured_send_concurrency())

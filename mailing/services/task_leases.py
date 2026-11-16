@@ -22,6 +22,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django_tasks_db.models import DBTaskResult
 
+from mailing.db_pool import release_pooled_connection
 from mailing.db_retry import record_db_heartbeat
 from mailing.enqueue import enqueue_campaign_email
 from mailing.models import CampaignRecipient, CampaignRecipientStatus, CampaignTaskAlert, TaskHeartbeat
@@ -57,6 +58,9 @@ class HeartbeatThread:
             # Not swallowed: a missed beat is logged at ERROR; enough of them
             # and the task is declared stale, which is also loud.
             logger.exception("task heartbeat failed task=%s worker=%s", self.task_id, self.worker_id)
+        finally:
+            # Do not reserve a sender pool socket between heartbeat ticks.
+            release_pooled_connection()
 
     def _run(self):
         try:

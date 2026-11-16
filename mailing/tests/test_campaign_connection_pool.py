@@ -33,7 +33,7 @@ def test_release_never_closes_an_atomic_transaction(monkeypatch):
 )
 @pytest.mark.django_db(transaction=True)
 @override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=240.0, CAMPAIGN_SEND_CONCURRENCY=32)
-def test_32_sends_share_six_pg_sockets_across_repeated_batches():
+def test_32_sends_share_six_pg_sockets_across_repeated_batches(monkeypatch):
     campaign, payload = _campaign_with_recipients(256)
     seen = set()
     lock = threading.Lock()
@@ -46,6 +46,13 @@ def test_32_sends_share_six_pg_sockets_across_repeated_batches():
                 seen.add(threading.get_ident())
             return super()._send()
 
+    original_wait = sender._BatchRun._wait
+
+    def checked_wait(self, futures):
+        assert connection.connection is None
+        return original_wait(self, futures)
+
+    monkeypatch.setattr(sender._BatchRun, "_wait", checked_wait)
     ses = CheckedSes(latency=0.1)
     ids = payload["campaign_recipient_ids"]
     try:

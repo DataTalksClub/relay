@@ -14,11 +14,14 @@ def test_campaign_task_heartbeat_refreshes_container_heartbeat(monkeypatch):
 
     task_beats = []
     file_beats = []
+    releases = []
+    monkeypatch.setattr(task_leases, "release_pooled_connection", lambda: releases.append(True))
     monkeypatch.setattr(task_leases, "record_task_heartbeat", lambda *args: task_beats.append(args))
     monkeypatch.setattr(task_leases, "record_db_heartbeat", lambda: file_beats.append(True))
 
     task_leases.HeartbeatThread("task-1", "worker-1")._beat()
 
+    assert releases == [True]
     assert task_beats == [("task-1", "worker-1")]
     assert file_beats == [True]
 
