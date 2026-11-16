@@ -223,6 +223,7 @@ class CampaignListRow:
     timing_label: str
     timing_value: object | None
     progress: "CampaignSendProgress | None" = None
+    mailchimp_history: bool = False
 
 
 @dataclass(frozen=True)
@@ -459,6 +460,7 @@ def campaign_list_rows(campaigns, *, include_progress: bool = False) -> list[Cam
     progress_by_id = campaign_progress_map([campaign.pk for campaign in campaigns]) if include_progress else {}
     rows = []
     for campaign in campaigns:
+        metadata = campaign.metadata if isinstance(campaign.metadata, dict) else {}
         timing_label, timing_value = campaign_timing(campaign)
         progress = (progress_by_id.get(campaign.pk) or campaign_send_progress(campaign)) if include_progress else None
         rows.append(
@@ -468,6 +470,7 @@ def campaign_list_rows(campaigns, *, include_progress: bool = False) -> list[Cam
                 timing_label=timing_label,
                 timing_value=timing_value,
                 progress=progress,
+                mailchimp_history=metadata.get("historical_import") is True and metadata.get("provider") == "mailchimp",
             )
         )
     return rows
@@ -596,7 +599,9 @@ def campaign_queryset(client: Client | None = None) -> QuerySet[Campaign]:
     )
     if client is not None:
         queryset = queryset.filter(client=client)
-    return queryset.order_by("-created_at", "-id")
+    # Import time is unrelated to the original send time. Sort before pagination
+    # and use the same fallback for drafts and campaigns with no send date.
+    return queryset.alias(list_date=Coalesce("sent_at", "scheduled_at", "created_at")).order_by("-list_date", "-id")
 
 
 def campaign_recent_events(campaign: Campaign) -> QuerySet[EmailEvent]:

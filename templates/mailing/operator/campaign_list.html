@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load tz %}
 
 {% block title %}Campaigns | Relay{% endblock %}
 {% block topbar_title %}Campaigns{% endblock %}
@@ -7,7 +8,7 @@
   <div class="page-header">
     <div>
       <h1>Campaigns</h1>
-      <p>Prepare drafts and follow delivery progress for {{ active_client.name }}.</p>
+      <p>Campaigns for {{ active_client.name }}, newest send or scheduled date first. Dates are UTC.</p>
     </div>
     <div class="actions">
       <a class="button secondary" href="{% url 'mailing:audience_list' %}">Audiences</a>
@@ -37,29 +38,20 @@
               <tr>
                 <td class="truncate" data-label="Campaign">
                   <a href="{% url 'mailing:campaign_detail' campaign.id %}">{{ campaign.subject|default:"Untitled draft" }}</a>
-                  <div class="helptext">
-                    {{ active_client.name }}
-                    {% if campaign.status == "draft" %}
-                      / <a href="{% url 'mailing:campaign_edit' campaign.id %}">Resume draft</a>
-                    {% elif campaign.status == "scheduled" %}
-                      / <a href="{% url 'mailing:campaign_detail' campaign.id %}">Review schedule</a>
-                    {% else %}
-                      / <a href="{% url 'mailing:campaign_detail' campaign.id %}#campaign-stats">View results</a>
-                    {% endif %}
-                  </div>
+                  {% if row.mailchimp_history %}<div class="helptext">Mailchimp history</div>{% endif %}
                 </td>
                 <td data-label="Status"><span class="badge {{ row.badge.tone }}">{{ row.badge.label }}</span></td>
                 <td class="truncate" data-label="Audience">
                   <a href="{% url 'mailing:audience_detail' campaign.audience_id %}">{{ campaign.audience.name }}</a>
                 </td>
                 <td class="nowrap" data-label="Send time">
-                  {% if campaign.sent_at %}<span class="data-time">{{ campaign.sent_at|date:"Y-m-d H:i" }}</span>{% elif campaign.status == "scheduled" %}<span class="data-time">{{ campaign.scheduled_at|date:"Y-m-d H:i" }}</span> UTC{% elif campaign.status == "draft" or campaign.status == "cancelled" %}Not sent{% else %}In progress{% endif %}
+                  {% timezone "UTC" %}{% if campaign.sent_at %}<span class="data-time">{{ campaign.sent_at|date:"Y-m-d H:i" }}</span>{% elif campaign.status == "scheduled" %}<span class="data-time">{{ campaign.scheduled_at|date:"Y-m-d H:i" }}</span>{% elif campaign.status == "draft" or campaign.status == "cancelled" %}Not sent{% else %}In progress{% endif %}{% endtimezone %}
                 </td>
-                <td class="data-num nowrap" data-label="Recipients">{{ campaign.recipient_count }}</td>
+                <td class="data-num nowrap" data-label="Recipients">{% if row.mailchimp_history %}<span class="muted">Not imported</span>{% else %}{{ campaign.recipient_count }}{% endif %}</td>
                 <td class="nowrap" data-label="Delivery">
-                  {% if campaign.status == "draft" %}<span class="muted">Review before sending</span>{% elif campaign.status == "scheduled" %}<span class="muted">Audience selected at send time</span>{% else %}
+                  {% if row.mailchimp_history %}<span class="muted">Send totals not imported</span>{% elif campaign.status == "draft" %}<span class="muted">Review before sending</span>{% elif campaign.status == "scheduled" %}<span class="muted">Audience selected at send time</span>{% else %}
                   <span class="data-num">{{ campaign.sent_count }}</span> currently sent / <span class="data-num">{{ campaign.delivered_count }}</span> delivery confirmations
-                  <div class="helptext"><span class="data-num">{{ campaign.bounce_count }}</span> bounces / <span class="data-num">{{ campaign.complaint_count }}</span> complaints</div>
+                  {% if campaign.bounce_count or campaign.complaint_count %}<div class="helptext"><span class="data-num">{{ campaign.bounce_count }}</span> bounces / <span class="data-num">{{ campaign.complaint_count }}</span> complaints</div>{% endif %}
                   {% endif %}
                 </td>
               </tr>
