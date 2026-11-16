@@ -604,7 +604,21 @@ def api_newsletter_block_types(request):
 
 @csrf_exempt
 def api_newsletter_templates(request):
-    return _api_call(request, {"GET"}, lambda client, data: ({"templates": svc.newsletter_templates()}, 200))
+    return _api_call(request, {"GET"}, lambda client, data: ({"templates": svc.newsletter_templates(client=client)}, 200))
+
+
+@csrf_exempt
+def api_newsletter_template(request, key):
+    def handler(client, data):
+        if request.method == "GET":
+            tpl = svc.get_newsletter_template(client, key)
+            if tpl is None:
+                return {"error": "not_found"}, 404
+            return {"template": svc.template_payload(tpl)}, 200
+        tpl, created = svc.upsert_newsletter_template(client, key, data, actor=_api_actor(client))
+        return {"template": svc.template_payload(tpl), "created": created}, 201 if created else 200
+
+    return _api_call(request, {"GET", "PUT", "PATCH"}, handler)
 
 
 @csrf_exempt
@@ -623,7 +637,7 @@ def api_newsletter_issue(request, key):
             return {"issue": svc.issue_payload(_issue_for(client, key))}, 200
         template = data.get("template")
         if template not in (None, ""):
-            if not isinstance(template, str) or template not in svc.NEWSLETTER_TEMPLATES:
+            if not isinstance(template, str) or not svc.template_exists(client, template):
                 raise ApiValidationError({"template": "unknown"})
             normalized = svc.normalize_issue_key(key)
             if not NewsletterIssue.objects.filter(client=client, key=normalized).exists():

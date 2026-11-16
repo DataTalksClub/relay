@@ -508,22 +508,25 @@ def _value(spec, data, name):
     return data.get(name) or spec["defaults"].get(name, "")
 
 
-def _block_rows(block_type, data):
+def _block_rows(block_type, data, *, rules=None):
     spec = BLOCK_TYPES.get(block_type)
     if spec is None:
         return ""
     data = data if isinstance(data, dict) else {}
-    return layout.block_rows(block_type, spec, lambda name: _value(spec, data, name), _valid_url)
+    return layout.block_rows(block_type, spec, lambda name: _value(spec, data, name), _valid_url, rules=rules)
 
 
-def render_block_html(block_type, data):
+def render_block_html(block_type, data, *, rules=None):
     """Mailchimp rows (the #302 layout) for one block; tolerates partial (draft) data. Unknown types render ""."""
-    return _block_rows(block_type, data)
+    return _block_rows(block_type, data, rules=rules)
 
 
-def render_block_preview(block_type, data):
+def render_block_preview(block_type, data, *, client=None, template_key=""):
     """One block as a standalone HTML document styled like the newsletter ("" when empty)."""
-    return layout.block_preview_document(block_type, _block_rows(block_type, data))
+    skeleton_html, _, rules = resolve_render_template(client, template_key)
+    return layout.block_preview_document(
+        block_type, _block_rows(block_type, data, rules=rules), rules=rules, skeleton_html=skeleton_html
+    )
 
 
 def _text_markdown(value):
@@ -645,13 +648,14 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
     links; a real render has none of that. Test sends carry no banner in the
     body, so they look exactly like the real issue.
     """
+    skeleton_html, footer_text, rules = resolve_render_template(issue.client, issue.template_key)
     all_blocks = list(issue.blocks.order_by("position", "id"))
     blocks = [block] if block is not None else all_blocks
     intro_rows, items, texts = [], [], []
     for item in blocks:
         if item.block_type not in BLOCK_TYPES:
             continue
-        rows = _block_rows(item.block_type, item.data or {})
+        rows = _block_rows(item.block_type, item.data or {}, rules=rules)
         if mark_unfinished and item.needs_review:
             rows = layout.note_row(unfinished_note(item)) + rows
         if not rows.strip():
@@ -671,10 +675,10 @@ def render_issue(issue, *, block=None, test=False, mark_unfinished=False):
     view_url = web_view_url(issue)
     html = layout.document(title=subject, preheader=effective_preview_text(issue),
                            banner_html="", intro_html="".join(intro_rows),
-                           sections=layout.sections_html(items), web_view_url=view_url,
-                           forward_url=forward_url(issue, view_url))
+                           sections=layout.sections_html(items, rules=rules), web_view_url=view_url,
+                           forward_url=forward_url(issue, view_url), skeleton_html=skeleton_html)
     text = "\n\n".join([f"View this email in your browser ({view_url})", "https://datatalks.club/", *texts,
-                         FOOTER_TEXT.replace("{forward_url}", forward_url(issue, view_url))])
+                         footer_text.replace("{forward_url}", forward_url(issue, view_url))])
     if test:
         html = disable_account_links(html)
         text = _ACCOUNT_TEXT_RE.sub("disabled in test emails", text)
@@ -904,8 +908,13 @@ def campaign_newsletter_issue(campaign):
 from mailing.services.newsletter_templates import (  # noqa: E402,F401
     NEWSLETTER_TEMPLATES,
     create_issue_from_template,
+    get_newsletter_template,
     issue_defaults,
     newsletter_templates,
     refill_block,
+    resolve_render_template,
+    template_exists,
+    template_payload,
+    upsert_newsletter_template,
 )
 

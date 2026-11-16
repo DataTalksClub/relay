@@ -227,6 +227,8 @@ urlpatterns = [
     path("api/campaigns/<str:external_key>/recount", views.api_campaign_recount, name="api_campaign_recount"),
     path("api/newsletter-block-types", newsletter_views.api_newsletter_block_types, name="api_newsletter_block_types"),
     path("api/newsletter-templates", newsletter_views.api_newsletter_templates, name="api_newsletter_templates"),
+    path("api/newsletter-templates/<str:key>", newsletter_views.api_newsletter_template,
+         name="api_newsletter_template"),
     path("api/newsletter-issues", newsletter_views.api_newsletter_issues, name="api_newsletter_issues"),
     path("api/newsletter-issues/<str:key>", newsletter_views.api_newsletter_issue, name="api_newsletter_issue"),
     path("api/newsletter-issues/<str:key>/blocks", newsletter_views.api_newsletter_blocks, name="api_newsletter_blocks"),
