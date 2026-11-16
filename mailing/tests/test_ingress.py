@@ -10,6 +10,8 @@ import pytest
 import yaml
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django_tasks_db.models import DBTaskResult
 
 import mailing.management.commands.drain_sqs_ingress as drain_module
@@ -69,6 +71,46 @@ def test_ses_ingress_enqueues_a_task_per_message(settings):
     queued = DBTaskResult.objects.filter(task_path__endswith="process_ses_webhook_event")
     assert queued.count() == 2
     assert set(queued.values_list("queue_name", flat=True)) == {"provider-events"}
+
+
+def test_ses_ingress_batches_task_and_status_inserts(settings):
+    settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
+    client = FakeSqsClient([_message(f"m{i}", _ses_payload(str(i))) for i in range(10)])
+    with CaptureQueriesContext(connection) as queries:
+        result = SqsWorker(get_ingress_config("ses-webhooks"), client=client).run_once()
+    assert (result.received, result.deleted, result.failed) == (10, 10, 0)
+    assert DBTaskResult.objects.count() == TaskRun.objects.count() == 10
+    inserts = [q["sql"] for q in queries if q["sql"].startswith("INSERT INTO")]
+    assert len(inserts) == 2, "one result insert and one visible-status insert per SQS batch"
+    assert all(run.result_id in {str(pk) for pk in DBTaskResult.objects.values_list("pk", flat=True)}
+               for run in TaskRun.objects.all())
+
+
+def test_ses_ingress_keeps_whole_batch_when_status_insert_fails(settings, monkeypatch):
+    settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
+    client = FakeSqsClient([_message("m1", _ses_payload("a")), _message("m2", _ses_payload("b"))])
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("status store unavailable")
+
+    monkeypatch.setattr(TaskRun.objects, "bulk_create", fail)
+    result = SqsWorker(get_ingress_config("ses-webhooks"), client=client).run_once()
+    assert (result.deleted, result.failed) == (0, 2)
+    assert client.deleted_receipts == []
+    assert not DBTaskResult.objects.exists()
+    assert not TaskRun.objects.exists()
+
+
+def test_ses_ingress_mixed_batch_only_acknowledges_persisted_records(settings):
+    settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
+    client = FakeSqsClient([
+        _message("good", _ses_payload("a")),
+        _message("bad", {"Type": "Notification", "Message": "bad-json"}),
+    ])
+    result = SqsWorker(get_ingress_config("ses-webhooks"), client=client).run_once()
+    assert (result.deleted, result.failed) == (1, 1)
+    assert client.deleted_receipts == ["receipt-good"]
+    assert DBTaskResult.objects.count() == TaskRun.objects.count() == 1
 
 
 def test_ses_ingress_does_not_process_inline(settings, monkeypatch):

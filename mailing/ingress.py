@@ -23,6 +23,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from mailing import tasks
 from mailing.services.aisl_ses_forwarder import aisl_ses_ingress_handler, validate_config
+from mailing.services.bulk_enqueue import enqueue_send_tasks
 from mailing.services.ses_webhooks import normalize_ses_webhook_worker_payload
 from mailing.sqs import process_sqs_event
 from mailing.sqs_worker import WorkerConfig
@@ -48,6 +49,26 @@ def _handle_inbound_email_record(payload, record):
 
 
 def ses_webhooks_ingress_handler(event, context=None):
+    # SQS supplies at most ten records. Persist their independent tasks and
+    # TaskRun rows together, rather than paying the enqueue signal/transaction
+    # overhead once per notification. Never acknowledge before both commit.
+    payloads = []
+
+    def collect(payload, record):
+        payloads.append(normalize_ses_webhook_worker_payload(payload, sqs_attributes=record.get("attributes")))
+
+    response = process_sqs_event(event, collect)
+    if not payloads:
+        return response
+    try:
+        if enqueue_send_tasks(tasks.process_ses_webhook_event, payloads, entity_type=""):
+            return response
+    except Exception:
+        # The bulk helper is atomic: a failure leaves every valid message on
+        # SQS for retry, including when creating its visible TaskRun failed.
+        logger.exception("SES ingress batch enqueue failed; retaining SQS messages")
+        raise
+    # Non-database task backends retain the ordinary per-record contract.
     return process_sqs_event(event, _handle_ses_webhook_record)
 
 
