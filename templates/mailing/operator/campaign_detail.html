@@ -2,14 +2,76 @@
 {% block title %}{{ campaign.subject|default:"Untitled draft" }} | Relay{% endblock %}
 {% block topbar_title %}{{ campaign.subject }}{% endblock %}
 {% block content %}
+  <style>
+    .campaign-page-header { margin-bottom: var(--dk-space-6); }
+    .campaign-overview { margin-bottom: var(--dk-space-6); padding: var(--dk-space-6); }
+    .campaign-overview .section-header { align-items: center; margin-bottom: var(--dk-space-4); gap: var(--dk-space-4); }
+    .campaign-overview h2 { margin: 0; }
+    .campaign-overview p { margin: var(--dk-space-2) 0 0; }
+    .campaign-delivery-counts { display: flex; flex-wrap: wrap; gap: var(--dk-space-6); margin: var(--dk-space-4) 0 var(--dk-space-3); }
+    .campaign-delivery-counts a, .campaign-delivery-counts > div { display: grid; gap: var(--dk-space-1); color: inherit; text-decoration: none; }
+    .campaign-delivery-counts strong { font-size: var(--dk-text-page); line-height: 1.2; font-variant-numeric: tabular-nums; }
+    .campaign-delivery-counts span { color: var(--dk-text-muted); font-size: var(--dk-text-md); }
+    .campaign-overview progress { display: block; width: 100%; height: 10px; border: 0; border-radius: 8px; overflow: hidden; background: var(--dk-border-default); accent-color: var(--dk-accent-default); }
+    .campaign-overview progress::-webkit-progress-bar { background: var(--dk-border-default); border-radius: 8px; }
+    .campaign-overview progress::-webkit-progress-value { background: var(--dk-accent-default); border-radius: 8px; }
+    .campaign-overview progress::-moz-progress-bar { background: var(--dk-accent-default); border-radius: 8px; }
+    .campaign-rate { text-align: right; }
+    .campaign-rate strong { font-size: var(--dk-text-xl); font-variant-numeric: tabular-nums; }
+    .campaign-rate small { display: block; color: var(--dk-text-muted); }
+    .campaign-engagement { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--dk-space-6); }
+    .campaign-metric { min-width: 0; }
+    .campaign-metric a { display: flex; justify-content: space-between; gap: var(--dk-space-2); margin-bottom: var(--dk-space-2); }
+    .campaign-metric p { color: var(--dk-text-muted); font-size: var(--dk-text-md); }
+    .campaign-overview-footer { display: flex; flex-wrap: wrap; gap: var(--dk-space-2) var(--dk-space-6); margin-top: var(--dk-space-4); color: var(--dk-text-muted); font-size: var(--dk-text-md); }
+    .campaign-secondary > summary { padding: var(--dk-space-4) 0; cursor: pointer; font-weight: 600; }
+    @media (max-width: 600px) {
+      .campaign-overview { padding: var(--dk-space-4); }
+      .campaign-rate strong { font-size: var(--dk-text-lg); }
+      .campaign-rate small { max-width: 140px; }
+      .campaign-delivery-counts { gap: var(--dk-space-6); }
+      .campaign-delivery-counts strong { font-size: var(--dk-text-xl); }
+      .campaign-engagement { grid-template-columns: 1fr; gap: var(--dk-space-5); }
+    }
+  </style>
   <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{% url 'mailing:campaign_list' %}">Campaigns</a><span>/</span><span>{{ campaign.subject|default:"Untitled draft" }}</span></nav>
-  <div class="page-header">
+  <div class="page-header campaign-page-header">
     <div><h1>{{ campaign.subject|default:"Untitled draft" }}</h1><p>{{ campaign.client.name }} / {{ campaign.audience.name }}</p>
       <div class="badge-row"><span class="badge {{ campaign_badge.tone }}">{{ campaign_badge.label }}</span>{% if campaign_meta.issue_number %}<span class="badge neutral">Issue #{{ campaign_meta.issue_number }}</span>{% endif %}{% if campaign_meta.campaign_type %}<span class="badge neutral">{{ campaign_meta.campaign_type }}</span>{% endif %}{% if campaign_meta.source %}<span class="badge neutral">{{ campaign_meta.source }}</span>{% endif %}{% if campaign.external_key %}<code>{{ campaign.external_key }}</code>{% endif %}{% if campaign.sent_at %}<span class="muted">Sent <span class="data-time">{{ campaign.sent_at|date:"Y-m-d H:i" }}</span></span>{% endif %}</div>
     </div>
     <div class="actions"><a class="button secondary" href="{% url 'mailing:campaign_list' %}">All campaigns</a>{% if can_edit %}<a class="button secondary" href="{% url 'mailing:campaign_edit' campaign.id %}">Edit draft</a>{% endif %}{% if can_queue and not confirm_queue and not send_issues %}<a class="button" href="{% url 'mailing:campaign_detail' campaign.id %}?confirm_send=1">Review and send</a>{% endif %}</div>
   </div>
+  {% if campaign.status != "draft" and campaign.status != "scheduled" %}
+  <div id="campaign-overview">
+    <section class="section panel campaign-overview" aria-labelledby="stats-delivery">
+      <div class="section-header">
+        <div><h2 id="stats-delivery">Delivery</h2><p class="muted">{{ campaign_badge.label }} · {{ delivery_overview.percent }}% sent</p></div>
+        <div class="campaign-rate"><span class="muted">Current send rate</span><br><strong>{{ delivery_overview.recent_per_second }}/sec</strong><small>{{ delivery_overview.recent_per_minute }}/min · last 60 seconds{% if not delivery_overview.active %} · inactive{% endif %}</small></div>
+      </div>
+      <div class="campaign-delivery-counts">
+        <a href="?filter=sent#campaign-recipients"><strong>{{ delivery_overview.sent }}</strong><span>Sent</span></a>
+        <a href="?filter=pending#campaign-recipients"><strong>{{ delivery_overview.pending }}</strong><span>Pending</span></a>
+        <div><strong>{{ delivery_overview.total }}</strong><span>Total recipients</span></div>
+      </div>
+      <progress value="{{ delivery_overview.finished }}" max="{{ delivery_overview.total|default:1 }}" aria-label="Recipients sent">{{ delivery_overview.percent }}%</progress>
+      <div class="campaign-overview-footer"><span>Sent means provider accepted. Delivery confirmations and unsuccessful recipients are in details.</span><a href="{% url 'mailing:campaign_detail' campaign.id %}">Refresh results</a><span>Updated {{ delivery_overview.sampled_at|date:"H:i:s T" }}</span></div>
+    </section>
+    <section class="section panel campaign-overview" aria-labelledby="stats-engagement">
+      <div class="section-header"><div><h2 id="stats-engagement">Engagement</h2><p class="muted">Share of selected recipients · tracking events may include automated activity.</p></div></div>
+      <div class="campaign-engagement">
+        {% for stat in stat_groups.engagement %}
+        <div class="campaign-metric">
+          <a href="?filter={% if stat.key == 'unique_opens' %}opened{% elif stat.key == 'unique_clicks' %}clicked{% else %}unsubscribed{% endif %}#campaign-recipients"><span>{{ stat.label }}</span><strong>{{ stat.rate|default:"0.0%" }}</strong></a>
+          <progress value="{{ stat.value }}" max="{{ campaign.recipient_count|default:1 }}" aria-label="{{ stat.label }}">{{ stat.rate }}</progress>
+          <p><span class="data-num">{{ stat.value }}</span> recipient{{ stat.value|pluralize }}</p>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+  {% endif %}
   {% if newsletter_issue %}
+    {% if campaign.status != "draft" %}<details class="secondary-section panel-diagnostics campaign-secondary"><summary>Newsletter block editor</summary>{% endif %}
     <div class="dk-callout dk-callout--info newsletter-notice" role="status">
       <div class="dk-callout__body">
         <span class="dk-callout__title">This campaign was built from newsletter blocks.</span>
@@ -17,10 +79,11 @@
       </div>
       <div class="dk-callout__actions"><a class="button secondary" href="{% url 'mailing:newsletter_detail' newsletter_issue.id %}">Open the block editor</a></div>
     </div>
+    {% if campaign.status != "draft" %}</details>{% endif %}
   {% endif %}
   {% if campaign.status == "queued" or campaign.status == "sending" or campaign.status == "snapshotting" %}<p role="status">Sending is in progress. Follow waiting recipients and results below; provider acceptance does not confirm delivery.</p>{% if campaign.send_halted_at %}<p role="alert">{% if campaign.send_halt_reason == "paused" %}Sending is paused. No further email is sent until resumed.{% elif campaign.send_halt_reason == "stopped" %}Sending is stopped. No further email will be sent.{% endif %}</p>{% endif %}{% elif campaign.status == "cancelled" %}<p>Campaign cancelled. It will not send further pending recipients.</p>{% elif campaign.status == "failed" %}<p class="form-errors">Sending needs attention. Inspect failed recipients below before taking any recovery action.</p>{% endif %}
   <nav class="dk-tabs" aria-label="Campaign stages">
-    {% if can_edit %}<a class="dk-tab" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a class="dk-tab" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a><a class="dk-tab" href="#draft-readiness" aria-current="page">3. Review</a>{% elif campaign.status == "scheduled" %}<a class="dk-tab" href="#campaign-scheduled-heading">Schedule</a><a class="dk-tab" href="#recipient-estimate">Current audience estimate</a>{% else %}<a class="dk-tab" href="#campaign-stats">Results</a><a class="dk-tab" href="#campaign-recipients">Recipients</a>{% endif %}
+    {% if can_edit %}<a class="dk-tab" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-audience-heading">1. Recipients</a><a class="dk-tab" href="{% url 'mailing:campaign_edit' campaign.id %}#campaign-metadata-heading">2. Message</a><a class="dk-tab" href="#draft-readiness" aria-current="page">3. Review</a>{% elif campaign.status == "scheduled" %}<a class="dk-tab" href="#campaign-scheduled-heading">Schedule</a><a class="dk-tab" href="#recipient-estimate">Current audience estimate</a>{% else %}<a class="dk-tab" href="#campaign-overview">Overview</a><a class="dk-tab" href="#campaign-recipients">Recipients</a>{% endif %}
   </nav>
   {% if campaign.status == "draft" %}
     <section class="section panel" aria-labelledby="draft-readiness">
@@ -69,7 +132,7 @@
     </section>
   {% endif %}
   {% if campaign.status == "queued" or campaign.status == "sending" %}
-    <details class="secondary-section panel-diagnostics" open><summary>Pause, resume, or stop sending</summary>
+    <details class="secondary-section panel-diagnostics"><summary>Pause, resume, or stop sending</summary>
       <p>{% if campaign.send_halted_at and campaign.send_halt_reason == "paused" %}Sending is paused: workers finish at most one in-flight email each and send nothing further. Resume re-queues the remaining recipients; sent email cannot be recalled.{% elif campaign.send_halted_at %}Sending is stopped: no further email will be sent. Sent email cannot be recalled.{% else %}Pausing halts sending within one in-flight email and keeps the remaining recipients for resume. Stopping ends the campaign permanently; sent email is kept and cannot be recalled.{% endif %}</p>
       <div class="toolbar">
         {% if not campaign.send_halted_at %}
@@ -88,7 +151,7 @@
     </details>
   {% endif %}
   {% if campaign.status != "draft" and campaign.status != "scheduled" %}
-  <section class="section panel" aria-labelledby="campaign-summary">
+  <details class="secondary-section panel-diagnostics campaign-secondary"><summary>Summary and campaign information</summary>
     <div class="section-header">
       <div>
         <h2 id="campaign-summary">Summary</h2>
@@ -112,10 +175,11 @@
       {% if campaign.template_key %}<div class="meta-item"><span class="meta-label">Template</span><code>{{ campaign.template_key }}</code>{% if campaign.template_version %} v{{ campaign.template_version }}{% endif %}</div>{% endif %}
       {% for key, value in campaign_meta.extra_items %}<div class="meta-item"><span class="meta-label">{{ key }}</span>{{ value }}</div>{% endfor %}
     </div>
-  </section>
+  </details>
 
   {% endif %}
   {% if campaign.status != "draft" and campaign.status != "scheduled" %}
+    <details class="secondary-section panel-diagnostics campaign-secondary"><summary>Detailed statistics, send timing, and link clicks</summary>
     <section class="section panel" aria-labelledby="campaign-stats">
       <div class="section-header">
         <div>
@@ -124,9 +188,9 @@
         </div>
       </div>
       <div class="detail-grid">
-        <section class="detail-section panel campaign-stat-group" aria-labelledby="stats-delivery">
+        <section class="detail-section panel campaign-stat-group" aria-labelledby="stats-delivery-details">
           <div class="panel-header">
-            <h3 id="stats-delivery">Delivery</h3>
+            <h3 id="stats-delivery-details">Delivery</h3>
           </div>
           <div class="stats-grid">
             {% for stat in stat_groups.delivery %}
@@ -138,9 +202,9 @@
             {% endfor %}
           </div>
         </section>
-        <section class="detail-section panel campaign-stat-group" aria-labelledby="stats-engagement">
+        <section class="detail-section panel campaign-stat-group" aria-labelledby="stats-engagement-details">
           <div class="panel-header">
-            <h3 id="stats-engagement">Engagement</h3>
+            <h3 id="stats-engagement-details">Engagement</h3>
           </div>
           <div class="stats-grid">
             {% for stat in stat_groups.engagement %}
@@ -253,7 +317,11 @@
           };
 
           retry.addEventListener("click", load);
-          load();
+          const disclosure = panel.closest("details");
+          if (!disclosure || disclosure.open) load();
+          else disclosure.addEventListener("toggle", () => {
+            if (disclosure.open) load();
+          }, {once: true});
         })();
       </script>
     </section>
@@ -279,7 +347,7 @@
           </div>
         {% endfor %}
         <div class="stat">
-          <span class="stat-label">Send speed</span>
+          <span class="stat-label">Send speed · lifetime average</span>
           <span class="stat-value">{{ send_progress.per_second|default:"—" }}</span>
           {% if send_progress.per_minute %}<span class="muted">{{ send_progress.per_minute }}</span>{% endif %}
         </div>
@@ -295,6 +363,7 @@
         </div>
       </div>
     </section>
+    </details>
   {% endif %}
 
   {% if estimate %}
@@ -372,10 +441,11 @@
   {% endif %}
 
   {% if campaign.status != "draft" and campaign.status != "scheduled" %}
-  <section class="section panel" aria-labelledby="campaign-recipients">
+  <details class="secondary-section panel-diagnostics campaign-secondary" id="campaign-recipients"{% if active_filter or recipient_query or request.GET.page %} open{% endif %}><summary>Recipients · search, filters, and delivery audit</summary>
+  <section class="section panel" aria-labelledby="campaign-recipients-heading">
     <div class="section-header">
       <div>
-        <h2 id="campaign-recipients">Recipients</h2>
+        <h2 id="campaign-recipients-heading">Recipients</h2>
         <p class="muted">Recipients, delivery state, engagement, provider diagnostics, and errors.</p>
       </div>
     </div>
@@ -477,6 +547,8 @@
     {% endif %}
   </section>
 
+  </details>
+  <details class="secondary-section panel-diagnostics campaign-secondary"><summary>Recent History</summary>
   <section class="section panel" aria-labelledby="campaign-history">
     <div class="panel-header">
       <div>
@@ -519,5 +591,6 @@
       <div class="empty-state">No campaign email events found yet.</div>
     {% endif %}
   </section>
+  </details>
   {% endif %}
 {% endblock %}

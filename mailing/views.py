@@ -856,6 +856,7 @@ def campaign_detail(request, campaign_id):
         preview_error = "The message could not be previewed. Review the content before sending."
     events = campaign_recent_events(campaign)[:10]
     event_rows = [{"event": event, "metadata_summary": metadata_summary(event.metadata)} for event in events]
+    from mailing.campaign_detail_metrics import campaign_delivery_context  # noqa: PLC0415
     from mailing.campaign_ui_views import campaign_timing_context  # noqa: PLC0415 - URL imports operator actions
     newsletter_issue = newsletter_issue_for(campaign)
 
@@ -864,6 +865,7 @@ def campaign_detail(request, campaign_id):
         "mailing/operator/campaign_detail.html",
         {
             **campaign_timing_context(campaign),
+            **campaign_delivery_context(campaign, send_progress),
             "campaign": campaign,
             "newsletter_issue": newsletter_issue,
             "campaign_meta": campaign_metadata(campaign, newsletter_issue=newsletter_issue),
