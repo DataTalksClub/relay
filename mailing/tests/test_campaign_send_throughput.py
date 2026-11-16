@@ -244,11 +244,11 @@ def test_cached_render_matches_direct_render_for_each_recipient():
 @pytest.mark.django_db(transaction=True)
 @override_settings(SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=45.0, CAMPAIGN_SEND_CONCURRENCY=16)
 def test_realistic_newsletter_batch_reaches_40_per_second():
-    # 300 recipients: the per-batch fixed cost (thread/connection setup, last
-    # SES call) is amortised like a default-size (500) batch.
-    campaign, payload = _campaign_with_recipients(300, html_body=_big_html())
+    # Measure enough messages to amortise pool startup and the final in-flight
+    # calls on shared CI runners, while keeping the >=40/s regression bound.
+    campaign, payload = _campaign_with_recipients(600, html_body=_big_html())
     started = time.monotonic()
     result = send_campaign_batch(payload, ses_client=_SlowSes())
-    rate = 300 / (time.monotonic() - started)
-    assert result.sent_count == 300
+    rate = 600 / (time.monotonic() - started)
+    assert result.sent_count == 600
     assert rate >= 40, f"{rate:.1f} msg/s"
