@@ -12,6 +12,7 @@ from botocore.exceptions import ClientError
 from django.conf import settings
 
 from mailing.calendar_mime import add_calendar_alternative, validate_calendar_alternative
+from mailing.db_pool import release_pooled_connection
 from mailing.dry_run import ensure_transport_allowed
 from mailing.ses_rate_limiter import (
     BULK,
@@ -136,6 +137,7 @@ def _send_with_permit(ses_client, parameters, *, raw, kind, operation):
     acquire_ses_permit(cost=cost, kind=kind)
     waited += time.perf_counter() - started
     send_phase_timings.limiter_wait = waited
+    release_pooled_connection()
     call = ses_client.send_raw_email if raw else ses_client.send_email
     try:
         return call(**parameters)["MessageId"]
@@ -147,6 +149,7 @@ def _send_with_permit(ses_client, parameters, *, raw, kind, operation):
         acquire_ses_permit(cost=cost, kind=kind)
         waited += time.perf_counter() - started
         send_phase_timings.limiter_wait = waited
+        release_pooled_connection()
         return call(**parameters)["MessageId"]
 
 

@@ -804,7 +804,11 @@ def _configured_send_concurrency():
     # replicas at the historical default of 32 consumed 96 sender slots alone.
     # Bound each process to twelve sender + one main + one heartbeat connection,
     # even when an old deployment still exports RELAY_CAMPAIGN_SEND_CONCURRENCY=32.
-    return max(1, min(12, int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 1) or 1)))
+    pool = connection.settings_dict.get("OPTIONS", {}).get("pool")
+    # More in-flight SES requests are safe only with a bounded DB pool; older
+    # deployments retain the twelve-connection guard until they opt in.
+    limit = 32 if isinstance(pool, dict) and 3 <= pool.get("max_size", 0) <= 6 else 12
+    return max(1, min(limit, int(getattr(settings, "CAMPAIGN_SEND_CONCURRENCY", 1) or 1)))
 
 
 _pool = None
