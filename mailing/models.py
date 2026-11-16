@@ -1497,5 +1497,10 @@ class SesRateLimitBucket(models.Model):
         return f"{self.key} ({self.tokens:.1f}/{self.capacity:.0f} tokens)"
 from mailing.device_login_models import DeviceLogin  # noqa: E402,F401
 from mailing.dmarc_models import DmarcArchive, DmarcAttachment, DmarcRecord, DmarcReport  # noqa: E402,F401
-from mailing.newsletter_models import NewsletterBlock, NewsletterIssue, NewsletterTestSend  # noqa: E402,F401
+from mailing.newsletter_models import (  # noqa: E402,F401
+    NewsletterBlock,
+    NewsletterIssue,
+    NewsletterTemplate,
+    NewsletterTestSend,
+)
 from mailing.sending_domain_models import SendingDomain  # noqa: E402,F401

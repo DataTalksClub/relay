@@ -21,6 +21,7 @@ from mailing.models import (
     InboundMessage,
     MailchimpSync,
     MailchimpTagMapping,
+    NewsletterTemplate,
     Organization,
     SendingDomain,
     Subscription,
@@ -246,6 +247,15 @@ class EmailTemplateAdmin(admin.ModelAdmin):
     )
     list_filter = ("client", "is_transactional", "is_active")
     search_fields = ("key", "name", "description", "subject", "client__name", "client__slug")
+    autocomplete_fields = ("client",)
+
+
+@admin.register(NewsletterTemplate)
+class NewsletterTemplateAdmin(admin.ModelAdmin):
+    readonly_fields = ("version", "created_at", "updated_at")
+    list_display = ("key", "label", "client", "version", "is_active", "updated_by", "updated_at")
+    list_filter = ("client", "is_active")
+    search_fields = ("key", "label", "description", "client__name", "client__slug")
     autocomplete_fields = ("client",)
 
 

@@ -8,8 +8,59 @@ operator UI and the client API share one implementation.
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 from mailing.models import Campaign, Client, TimeStampedModel
+
+
+class NewsletterTemplate(TimeStampedModel):
+    """Editable newsletter layout template and block-rendering rules stored as data.
+
+    ``client=None`` defines a shared/global template (such as ``dtc-weekly``);
+    a row with ``client`` set overrides the global template of the same ``key``
+    for that client. Changes take effect immediately on the next render without
+    a code deploy.
+    """
+
+    client = models.ForeignKey(Client, on_delete=models.PROTECT, null=True, blank=True,
+                               related_name="newsletter_templates")
+    key = models.SlugField(max_length=60)
+    label = models.CharField(max_length=120)
+    description = models.TextField(blank=True)
+    skeleton_html = models.TextField(blank=True)
+    footer_text = models.TextField(blank=True)
+    layout_rules = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=True)
+    version = models.PositiveIntegerField(default=1)
+    updated_by = models.CharField(max_length=320, blank=True)
+
+    class Meta:
+        db_table = "newsletter_templates"
+        ordering = ["key", "client_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["client", "key"],
+                condition=Q(client__isnull=False),
+                name="unique_newsletter_template_client_key",
+            ),
+            models.UniqueConstraint(
+                fields=["key"],
+                condition=Q(client__isnull=True),
+                name="unique_newsletter_template_global_key",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            self.version = (self.version or 1) + 1
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None and "version" not in update_fields:
+                kwargs["update_fields"] = [*update_fields, "version"]
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        scope = self.client.slug if self.client_id else "global"
+        return f"{self.key} ({scope}, v{self.version})"
 
 
 class NewsletterIssue(TimeStampedModel):

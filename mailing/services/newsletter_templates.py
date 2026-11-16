@@ -15,6 +15,8 @@ from collections import OrderedDict
 from django.db import transaction
 from django.db.models import Max
 
+from mailing.models import NewsletterTemplate
+from mailing.services import newsletter_layout as layout
 from mailing.services import newsletter_sources as sources
 from mailing.services.api_errors import ApiValidationError
 
@@ -74,13 +76,144 @@ def _long_date(day):
 AUTOFILL_BUDGET_SECONDS = 25
 
 
-def newsletter_templates():
-    return [{"key": key, "label": spec["label"], "description": spec["description"]}
-            for key, spec in NEWSLETTER_TEMPLATES.items()]
+def _merged_templates(client=None):
+    """Active templates visible to ``client`` (client overrides shadow global rows)."""
+    by_key = OrderedDict((k, {"key": k, "label": v["label"], "description": v["description"],
+                              "version": 1, "is_custom": False})
+                         for k, v in NEWSLETTER_TEMPLATES.items())
+    globals_qs = NewsletterTemplate.objects.filter(is_active=True, client__isnull=True).order_by("id")
+    for tpl in globals_qs:
+        by_key[tpl.key] = {
+            "key": tpl.key, "label": tpl.label, "description": tpl.description,
+            "version": tpl.version, "is_custom": False,
+        }
+    if client is not None:
+        for tpl in NewsletterTemplate.objects.filter(is_active=True, client=client).order_by("id"):
+            by_key[tpl.key] = {
+                "key": tpl.key, "label": tpl.label, "description": tpl.description,
+                "version": tpl.version, "is_custom": True,
+            }
+    return by_key
 
 
-def _check_template(template_key):
-    if template_key not in NEWSLETTER_TEMPLATES:
+def newsletter_templates(client=None):
+    return list(_merged_templates(client).values())
+
+
+def get_newsletter_template(client, key):
+    """Return the active ``NewsletterTemplate`` for ``(client, key)``, or global, or ``None``."""
+    if not key:
+        return None
+    if client is not None:
+        tpl = NewsletterTemplate.objects.filter(is_active=True, client=client, key=key).first()
+        if tpl is not None:
+            return tpl
+    return NewsletterTemplate.objects.filter(is_active=True, client__isnull=True, key=key).first()
+
+
+def template_exists(client, key):
+    return bool(key and (key in NEWSLETTER_TEMPLATES or get_newsletter_template(client, key) is not None))
+
+
+def resolve_render_template(client, template_key):
+    """Return ``(skeleton_html, footer_text, layout_rules)`` from DB, never cached."""
+    core = _core()
+    key = template_key or "dtc-weekly"
+    tpl = get_newsletter_template(client, key)
+    if tpl is None or not tpl.skeleton_html:
+        fallback = get_newsletter_template(client, "dtc-weekly") if key != "dtc-weekly" else None
+        if tpl is None:
+            tpl = fallback
+        elif fallback is not None:
+            return (
+                tpl.skeleton_html or fallback.skeleton_html,
+                tpl.footer_text or fallback.footer_text,
+                {**fallback.layout_rules, **(tpl.layout_rules or {})},
+            )
+    if tpl is None:
+        return layout.skeleton(), core.FOOTER_TEXT, dict(layout.DEFAULT_LAYOUT_RULES)
+    return (
+        tpl.skeleton_html or layout.skeleton(),
+        tpl.footer_text or core.FOOTER_TEXT,
+        tpl.layout_rules or dict(layout.DEFAULT_LAYOUT_RULES),
+    )
+
+
+def template_payload(tpl):
+    return {
+        "key": tpl.key,
+        "label": tpl.label,
+        "description": tpl.description,
+        "skeleton_html": tpl.skeleton_html,
+        "footer_text": tpl.footer_text,
+        "layout_rules": tpl.layout_rules or {},
+        "is_active": tpl.is_active,
+        "version": tpl.version,
+        "is_custom": tpl.client_id is not None,
+        "updated_by": tpl.updated_by,
+        "updated_at": tpl.updated_at.isoformat() if tpl.updated_at else None,
+    }
+
+
+def upsert_newsletter_template(client, key, data, *, actor=""):
+    """Create or update a client-scoped ``NewsletterTemplate`` without a deploy."""
+    core = _core()
+    normalized = core.normalize_issue_key(key)
+    if len(normalized) > 60:
+        raise ApiValidationError({"key": "too_long"})
+    data = data if isinstance(data, dict) else {}
+    existing = NewsletterTemplate.objects.filter(client=client, key=normalized).first()
+    created = existing is None
+    if created:
+        base = NewsletterTemplate.objects.filter(client__isnull=True, key=normalized).first()
+        if base is None:
+            base = NewsletterTemplate.objects.filter(client__isnull=True, key="dtc-weekly").first()
+        tpl = NewsletterTemplate(
+            client=client,
+            key=normalized,
+            label=(base.label if base else normalized),
+            description=(base.description if base else ""),
+            skeleton_html=(base.skeleton_html if base else layout.skeleton()),
+            footer_text=(base.footer_text if base else core.FOOTER_TEXT),
+            layout_rules=dict(base.layout_rules) if base and base.layout_rules else dict(layout.DEFAULT_LAYOUT_RULES),
+        )
+    else:
+        tpl = existing
+    if "label" in data:
+        label = (data.get("label") or "").strip() if isinstance(data.get("label"), str) else ""
+        if not label:
+            raise ApiValidationError({"label": "required"})
+        tpl.label = label[:120]
+    if "description" in data:
+        if not isinstance(data.get("description"), str):
+            raise ApiValidationError({"description": "invalid"})
+        tpl.description = data["description"]
+    if "skeleton_html" in data:
+        if not isinstance(data.get("skeleton_html"), str):
+            raise ApiValidationError({"skeleton_html": "invalid"})
+        tpl.skeleton_html = data["skeleton_html"]
+    if "footer_text" in data:
+        if not isinstance(data.get("footer_text"), str):
+            raise ApiValidationError({"footer_text": "invalid"})
+        tpl.footer_text = data["footer_text"]
+    if "layout_rules" in data:
+        rules = data.get("layout_rules")
+        if not isinstance(rules, dict):
+            raise ApiValidationError({"layout_rules": "invalid"})
+        merged = dict(tpl.layout_rules or {})
+        merged.update(rules)
+        tpl.layout_rules = merged
+    if "is_active" in data:
+        if not isinstance(data.get("is_active"), bool):
+            raise ApiValidationError({"is_active": "invalid"})
+        tpl.is_active = data["is_active"]
+    tpl.updated_by = actor
+    tpl.save()
+    return tpl, created
+
+
+def _check_template(template_key, *, client=None):
+    if not template_exists(client, template_key):
         raise ApiValidationError({"template": "unknown"})
 
 
@@ -91,7 +224,7 @@ def next_monday(today):
 def issue_defaults(client, template_key, *, today=None):
     """Suggested form values for a new issue: ``key``, ``subject``, ``preview_text``,
     ``issue_number`` (int or None) and ``publication_date`` (ISO string)."""
-    _check_template(template_key)
+    _check_template(template_key, client=client)
     publication_date = next_monday(today or _today())
     if template_key == "blank":
         return {"key": "", "subject": "", "preview_text": "", "issue_number": None,
@@ -216,7 +349,7 @@ def create_issue_from_template(client, template_key, data, *, actor="", autofill
     note}`` with status ``auto``, ``placeholder`` or ``skipped`` (not created).
     """
     core = _core()
-    _check_template(template_key)
+    _check_template(template_key, client=client)
     data = dict(data or {})
     today = _today()
     if template_key == "dtc-weekly" and not data.get("publication_date"):
