@@ -35,6 +35,7 @@ from mailing.models import (
     TransactionalMessageStatus,
 )
 from mailing.queue_contracts import CONTRACT_VERSION, SES_WEBHOOKS_CONTRACT, validate_ses_webhook_message
+from mailing.services import send_dedupe
 from mailing.services.client_callbacks import emit_client_callback, is_hard_bounce
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.services.operator_management import safe_metadata
@@ -686,6 +687,7 @@ def apply_campaign_recipient_update(recipient, notification_type, occurred_at, m
         recipient.delivered_at = occurred_at
         update_fields.append("delivered_at")
     elif notification_type == "bounce":
+        send_dedupe.release_sent("campaign", recipient.pk)  # never reached the mailbox: resend is legitimate
         if is_hard_bounce(metadata):
             recipient.status = CampaignRecipientStatus.BOUNCED
             update_fields.append("status")
@@ -727,6 +729,7 @@ def apply_transactional_message_update(message, notification_type, occurred_at, 
         # for a transient failure. Contact suppression still requires Permanent.
         message.status = TransactionalMessageStatus.BOUNCED
         update_fields.append("status")
+        send_dedupe.release_sent("transactional", message.pk)  # never reached the mailbox: resend is legitimate
         if is_hard_bounce(metadata):
             mark_hard_bounced(message.contact, occurred_at)
         else:

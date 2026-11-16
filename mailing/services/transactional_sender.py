@@ -9,6 +9,7 @@ from mailing.aws import ses_client_for_source
 from mailing.db_retry import run_with_db_retry
 from mailing.dry_run import DryRunSuppressed
 from mailing.models import EmailEvent, EmailEventType, TransactionalMessage, TransactionalMessageStatus
+from mailing.services import send_dedupe
 from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.ses import send_email
@@ -23,6 +24,7 @@ TERMINAL_ACK_STATUSES = {
     TransactionalMessageStatus.FAILED,
     TransactionalMessageStatus.BOUNCED,
     TransactionalMessageStatus.COMPLAINED,
+    TransactionalMessageStatus.DUPLICATE_BLOCKED,
 }
 
 PERMANENT_SES_ERROR_CODES = {
@@ -61,6 +63,9 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
         if client is None:
             client = ses_client_for_source(source)
             configuration_set = configuration_set_for_source(source)
+        blocked = _reserve_content(message)
+        if blocked is not None:
+            return _mark_duplicate_blocked(message.id, blocked)
         try:
             forward_options = {}
             if message.inbound_source_id:
@@ -96,6 +101,7 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
             raise TransientSendFailure(str(exc)) from exc
         except ClientError as exc:
             if _is_permanent_client_error(exc):
+                send_dedupe.release("transactional", [message.id])  # SES rejected it: a corrected resend is legitimate
                 return _mark_failed(
                     message.id,
                     _error_message(exc),
@@ -108,6 +114,7 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
             raise TransientSendFailure(_error_message(exc)) from exc
 
         sent_at = timezone.now()
+        send_dedupe.mark_sent("transactional", [message.id])
         return _mark_sent(
             message.id,
             ses_message_id,
@@ -122,7 +129,59 @@ def send_transactional_email_from_queue(payload, *, client=None, source=None):
         # Covers both the client factory and the send call: dry run suppresses
         # the transport, the record is acknowledged durably, and nothing
         # redrives.
+        send_dedupe.release("transactional", [message_id])
         return _mark_skipped_dry_run(message_id, str(exc))
+
+
+def _message_content_hash(message):
+    if message.inbound_source_id:
+        # A forward's body is the original MIME, not subject/html/text: key on the inbound message itself.
+        return send_dedupe.content_hash("forward", str(message.inbound_source_id), message.subject)
+    return send_dedupe.content_hash(message.subject, message.html_body, message.text_body)
+
+
+def _reserve_content(message):
+    """Atomic duplicate guard before the SES call; returns a Blocked record or None to proceed."""
+    if not send_dedupe.dedupe_enabled():
+        return None
+    window = send_dedupe.transactional_window_seconds(message.template)
+    if window == 0:
+        return None  # template opted out: identical repeats (OTP, password reset) are legitimate
+    chash = _message_content_hash(message)
+    reserved, blocked = send_dedupe.reserve(
+        message.client_id,
+        [send_dedupe.Candidate(key=message.id, email=message.email, content_hash=chash)],
+        kind="transactional", window_seconds=window,
+    )
+    return blocked.get(message.id)
+
+
+def _mark_duplicate_blocked(message_id, blocked):
+    logger.error(
+        "send_duplicate_blocked transactional_message_id=%s content_hash=%s first_state=%s",
+        message_id, blocked.content_hash, blocked.first_state,
+    )
+
+    def _attempt():
+        with transaction.atomic():
+            message = _locked_messages().get(id=message_id)
+            if message.status in TERMINAL_ACK_STATUSES:
+                return message
+            message.status = TransactionalMessageStatus.DUPLICATE_BLOCKED
+            message.last_error = "duplicate_blocked"
+            message.save(update_fields=["status", "last_error", "updated_at"])
+            _append_event(message, EmailEventType.DUPLICATE_BLOCKED, {
+                "reason": "duplicate_blocked", "content_hash": blocked.content_hash,
+                "first_state": blocked.first_state,
+                "first_at": blocked.first_at.isoformat() if blocked.first_at else None,
+                "first_transactional_message_id": blocked.first_transactional_message_id,
+            })
+            return message
+
+    return run_with_db_retry(
+        _attempt, action=f"mark transactional message {message_id} duplicate_blocked",
+        attempts=3, base_delay_seconds=0.2, max_delay_seconds=2.0,
+    )
 
 
 def _is_permanent_client_error(exc):

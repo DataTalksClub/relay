@@ -41,6 +41,7 @@ from mailing.mime_template import (
 from mailing.models import (
     Campaign,
     CampaignRecipient,
+    CampaignRecipientSkipReason,
     CampaignRecipientStatus,
     CampaignStatus,
     CategoryPreference,
@@ -49,6 +50,7 @@ from mailing.models import (
     RecipientListMember,
     Subscription,
 )
+from mailing.services import send_dedupe
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_merge import (
     MergeVarError,
@@ -459,6 +461,14 @@ def _write_outcomes(campaign, items):
                 )
         if events:
             EmailEvent.objects.bulk_create(events)
+        if send_dedupe.dedupe_enabled():
+            send_dedupe.mark_sent("campaign", [d.recipient.pk for d in by_outcome.get("sent", [])])
+            # SES definitely did not send these: free the slot. A duplicate_blocked skip never owned one;
+            # "unknown" stays reserved (ambiguous outcome is never auto-resent).
+            send_dedupe.release("campaign", [
+                d.recipient.pk for d in by_outcome.get("failed", []) + by_outcome.get("skipped", [])
+                if d.skip_reason != CampaignRecipientSkipReason.DUPLICATE_BLOCKED
+            ])
 
 
 def _event(campaign, recipient, event_type, metadata):
@@ -472,6 +482,7 @@ def _release_claims(recipient_ids, owner, *, error="", skipped_reason=""):
     """Return claimed-but-not-sent rows to PENDING (tokens dropped: nothing carrying them went out)."""
     if not recipient_ids:
         return 0
+    send_dedupe.release("campaign", recipient_ids)  # nothing went out: free the content slot too
     return CampaignRecipient.objects.filter(
         pk__in=list(recipient_ids), status=CampaignRecipientStatus.SENDING, claim_owner=owner,
     ).update(
@@ -592,6 +603,37 @@ class _BatchRun:
             if close_connections:
                 connection.close()
 
+    def _reserve_content(self, sendable, merge_values, campaign):
+        """Atomic duplicate guard: reserve (client, email, content hash) for the chunk before any SES call."""
+        if not sendable or not send_dedupe.dedupe_enabled():
+            return sendable
+        candidates = [
+            send_dedupe.Candidate(
+                key=row.pk, email=row.email,
+                content_hash=send_dedupe.campaign_content_hash(campaign, merge_values.get(row.pk), row.context),
+            )
+            for row in sendable
+        ]
+        reserved, blocked = send_dedupe.reserve(
+            campaign.client_id, candidates, kind="campaign",
+            window_seconds=send_dedupe.campaign_window_seconds(), campaign_id=campaign.pk,
+        )
+        if not blocked:
+            return sendable
+        reserved = set(reserved)
+        kept = []
+        for row in sendable:
+            if row.pk in reserved:
+                kept.append(row)
+                continue
+            info = blocked[row.pk]
+            self._finish(_Done(
+                row, "skipped", error=f"duplicate_blocked:first_{info.first_state}",
+                skip_reason=CampaignRecipientSkipReason.DUPLICATE_BLOCKED,
+            ))
+        send_dedupe.alert_campaign_blocked(self.campaign_id, len(blocked))
+        return kept
+
     def _halt(self):
         logger.error("Campaign batch halted campaign_id=%s", self.campaign_id)
         self.halted = True
@@ -628,6 +670,7 @@ class _BatchRun:
         index = 0
         delivered = False
         try:
+            sendable = self._reserve_content(sendable, merge_values, campaign)
             for index, row in enumerate(sendable):  # noqa: B007 - index is read by the handler below
                 delivered = False
                 started = time.perf_counter()

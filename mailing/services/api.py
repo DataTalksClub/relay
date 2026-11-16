@@ -2052,6 +2052,7 @@ RECONCILIATION_STATUS_BY_MESSAGE_STATUS = {
     TransactionalMessageStatus.SKIPPED: "suppressed",
     TransactionalMessageStatus.BOUNCED: "bounced",
     TransactionalMessageStatus.COMPLAINED: "complained",
+    TransactionalMessageStatus.DUPLICATE_BLOCKED: "suppressed",
 }
 
 
@@ -2072,6 +2073,8 @@ def reconciliation_reason_code(message):
     if message.status == TransactionalMessageStatus.SKIPPED:
         reason = str(metadata.get("reason", ""))
         return reason if reason in SUPPRESSION_REASON_CODES else "suppressed"
+    if message.status == TransactionalMessageStatus.DUPLICATE_BLOCKED:
+        return "duplicate_blocked"
     if message.status == TransactionalMessageStatus.BOUNCED:
         return "hard_bounce"
     if message.status == TransactionalMessageStatus.COMPLAINED:

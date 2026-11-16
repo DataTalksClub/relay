@@ -602,6 +602,66 @@ class CampaignTaskAlert(models.Model):
         ordering = ["-created_at"]
 
 
+class SendFingerprintState(models.TextChoices):
+    # A sender holds the right to send this content to this address; SES outcome not yet recorded.
+    RESERVED = "reserved", "Reserved"
+    SENT = "sent", "Sent"
+    # SES definitely did not send (throttled, rejected, cancelled, bounced): the slot is free again.
+    RELEASED = "released", "Released"
+
+
+class SendFingerprint(models.Model):
+    """One row per (client, address, rendered-content hash): the cross-sender duplicate guard.
+
+    Every campaign and transactional send reserves its row atomically (unique index +
+    ``INSERT .. ON CONFLICT DO NOTHING``) before the SES call; the loser is skipped as
+    ``duplicate_blocked``. No bodies, subjects or tokens are stored, only the hash.
+    """
+    client = models.ForeignKey("Client", on_delete=models.CASCADE, related_name="send_fingerprints")
+    email = models.CharField(max_length=320)
+    content_hash = models.CharField(max_length=64)
+    state = models.CharField(max_length=10, choices=SendFingerprintState.choices, default=SendFingerprintState.RESERVED)
+    # Who holds/held the slot: exactly one of these is set, so a redelivered retry of the
+    # same message is recognised as the owner rather than as a duplicate.
+    campaign_recipient_id = models.BigIntegerField(null=True, blank=True)
+    transactional_message_id = models.BigIntegerField(null=True, blank=True)
+    reserved_at = models.DateTimeField()
+    sent_at = models.DateTimeField(null=True, blank=True)
+    override_id = models.BigIntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = "send_fingerprints"
+        constraints = [
+            models.UniqueConstraint(fields=["client", "email", "content_hash"], name="unique_send_fingerprint"),
+        ]
+        indexes = [
+            models.Index(fields=["reserved_at"], name="send_fp_reserved_at_idx"),
+            models.Index(fields=["campaign_recipient_id"], name="send_fp_camp_recipient_idx"),
+            models.Index(fields=["transactional_message_id"], name="send_fp_tx_message_idx"),
+        ]
+
+
+class SendDedupeOverride(models.Model):
+    """Audited, narrow permission to re-send content the guard would block.
+
+    Scope is a campaign (every recipient of it) or one address + content hash. Rows are
+    never deleted; ``uses`` counts how many sends relied on it.
+    """
+    client = models.ForeignKey("Client", on_delete=models.CASCADE, related_name="send_dedupe_overrides")
+    campaign = models.ForeignKey("Campaign", null=True, blank=True, on_delete=models.CASCADE, related_name="+")
+    email = models.CharField(max_length=320, blank=True)
+    content_hash = models.CharField(max_length=64, blank=True)
+    reason = models.TextField()
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    uses = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "send_dedupe_overrides"
+        indexes = [models.Index(fields=["client", "expires_at"], name="send_override_client_exp_idx")]
+
+
 class CampaignRecipientStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     # Claimed by a sender; the SES call is in flight or its outcome is not yet recorded.
@@ -627,6 +687,8 @@ class CampaignRecipientSkipReason(models.TextChoices):
     COMPLAINT = "complaint", "Complaint"
     DUPLICATE = "duplicate", "Duplicate"
     SUPPRESSED = "suppressed", "Suppressed"
+    # Same rendered content already sent (or in flight) to this address for this client.
+    DUPLICATE_BLOCKED = "duplicate_blocked", "Duplicate blocked"
 
 
 class CampaignRecipient(TimeStampedModel):
@@ -700,6 +762,10 @@ class EmailTemplate(TimeStampedModel):
     default_sender_id = models.CharField(max_length=80, blank=True)
     is_transactional = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
+    # Duplicate-send guard: identical rendered content to one address inside this many seconds
+    # is blocked. NULL uses RELAY_DEDUPE_TRANSACTIONAL_WINDOW_SECONDS; 0 turns the guard off
+    # for this template (OTP / password-reset style mail that legitimately repeats).
+    dedupe_window_seconds = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "email_templates"
@@ -794,6 +860,8 @@ class TransactionalMessageStatus(models.TextChoices):
     SKIPPED = "skipped", "Skipped"
     BOUNCED = "bounced", "Bounced"
     COMPLAINED = "complained", "Complained"
+    # Identical rendered content was already sent to this address inside the dedupe window.
+    DUPLICATE_BLOCKED = "duplicate_blocked", "Duplicate blocked"
 
 
 class TransactionalCampaign(TimeStampedModel):
@@ -874,6 +942,7 @@ class EmailEventType(models.TextChoices):
     BOUNCE = "bounce", "Bounce"
     COMPLAINT = "complaint", "Complaint"
     FAILED = "failed", "Failed"
+    DUPLICATE_BLOCKED = "duplicate_blocked", "Duplicate blocked"
 
 
 class EmailEvent(models.Model):
