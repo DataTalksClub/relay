@@ -1,0 +1,9 @@
+{% extends "leads/base.html" %}
+{% block content %}
+  <h1>Confirm your email</h1>
+  <p>One click and you get the materials for <strong>{{ event.title }}</strong>.</p>
+  <form method="post" action="">
+    <input type="hidden" name="t" value="{{ token }}">
+    <button type="submit">Confirm and get the materials</button>
+  </form>
+{% endblock %}

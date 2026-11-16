@@ -1,7 +1,10 @@
 from django import forms
+from django.conf import settings
 from django.contrib import admin
 from django.db import models
+from django.utils.html import format_html
 
+from mailing.lead_capture_models import LeadEvent, LeadMaterial
 from mailing.models import (
     Audience,
     BlockedSender,
@@ -27,6 +30,7 @@ from mailing.models import (
     Tag,
     TransactionalMessage,
 )
+from mailing.services import lead_capture
 from mailing.services.api import validate_sender_policy_payload
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.sending_domains import refresh, validate_sender_domains
@@ -561,3 +565,77 @@ class DmarcRecordAdmin(DmarcReadOnlyAdmin):
     list_display = ('id', 'report', 'source_ip', 'count', 'disposition', 'dkim', 'spf')
     list_filter = ('disposition', 'dkim', 'spf')
     search_fields = ('source_ip', 'report__report_id')
+
+
+class LeadMaterialForm(forms.ModelForm):
+    upload = forms.FileField(required=False, help_text="PDF or other file delivered after confirmation.")
+
+    class Meta:
+        model = LeadMaterial
+        fields = ("slug", "title", "filename", "content_type")
+
+    def clean(self):
+        cleaned = super().clean()
+        upload = cleaned.get("upload")
+        if upload is None and not (self.instance.pk and self.instance.size):
+            raise forms.ValidationError("Upload a file.")
+        if upload is not None and upload.size > settings.RELAY_LEADS_MAX_MATERIAL_BYTES:
+            raise forms.ValidationError("The file is too large.")
+        return cleaned
+
+    def save(self, commit=True):
+        material = super().save(commit=False)
+        upload = self.cleaned_data.get("upload")
+        if upload is not None:
+            material.data = upload.read()
+            if not material.filename:
+                material.filename = upload.name
+            if upload.content_type:
+                material.content_type = upload.content_type
+        if commit:
+            material.save()
+        return material
+
+
+@admin.register(LeadMaterial)
+class LeadMaterialAdmin(admin.ModelAdmin):
+    form = LeadMaterialForm
+    list_display = ("slug", "title", "filename", "size", "updated_at")
+    readonly_fields = ("size", "sha256", "created_at", "updated_at")
+    fields = ("slug", "title", "filename", "content_type", "upload", "size", "sha256", "created_at", "updated_at")
+
+
+@admin.register(LeadEvent)
+class LeadEventAdmin(admin.ModelAdmin):
+    list_display = ("slug", "title", "is_active", "public_link", "signups", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("slug", "title")
+    readonly_fields = ("public_link", "qr_links", "signups", "created_at", "updated_at")
+    fields = (
+        "slug", "title", "intro", "offer", "material", "material_url", "consent_text", "is_active",
+        "public_link", "qr_links", "signups", "created_at", "updated_at",
+    )
+
+    @admin.display(description="Public page")
+    def public_link(self, obj):
+        if not obj.pk:
+            return "-"
+        url = lead_capture.event_url(obj)
+        return format_html('<a href="{}" target="_blank" rel="noopener">{}</a>', url, url)
+
+    @admin.display(description="QR code")
+    def qr_links(self, obj):
+        if not obj.pk:
+            return "-"
+        return format_html(
+            '<img src="/m/{0}/qr.svg" width="160" height="160" alt="QR code"><br>'
+            '<a href="/m/{0}/qr.svg?download=1">SVG</a> · <a href="/m/{0}/qr.png?download=1">PNG</a>',
+            obj.slug,
+        )
+
+    @admin.display(description="Signups (confirmed)")
+    def signups(self, obj):
+        if not obj.pk:
+            return "-"
+        stats = lead_capture.event_stats(obj)
+        return f"{stats['signups']} ({stats['confirmed']})"

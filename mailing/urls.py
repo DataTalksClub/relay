@@ -8,6 +8,7 @@ from mailing import (
     contact_ui_views,
     device_login_api,
     documentation_views,
+    lead_capture_views,
     mailchimp_history_views,
     newsletter_views,
     ops_views,
@@ -23,6 +24,13 @@ from mailing import (
 app_name = "mailing"
 
 urlpatterns = [
+    # Public lead capture pages (materials.dtcdev.click -> CloudFront origin path /m).
+    path("m/", lead_capture_views.index, name="lead_index"),
+    path("m/<slug:slug>", lead_capture_views.event_page, name="lead_page"),
+    path("m/<slug:slug>/", lead_capture_views.event_page),
+    path("m/<slug:slug>/confirm", lead_capture_views.confirm, name="lead_confirm"),
+    path("m/<slug:slug>/download", lead_capture_views.download, name="lead_download"),
+    path("m/<slug:slug>/qr.<str:kind>", lead_capture_views.qr, name="lead_qr"),
     path("device", device_login_api.device_approval, name="device_login_approval"),
     path("device/decide", device_login_api.device_approval_decide, name="device_login_decide"),
     path("api/agent/device/start", device_login_api.device_start, name="api_device_login_start"),

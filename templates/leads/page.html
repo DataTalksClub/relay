@@ -1,0 +1,34 @@
+{% extends "leads/base.html" %}
+{% block content %}
+  <h1>{{ event.title }}</h1>
+  {% if event.intro %}{{ event.intro|linebreaks }}{% endif %}
+  {% if event.offer %}<p class="offer">{{ event.offer }}</p>{% endif %}
+  {% if not event.is_active %}
+    <p class="error">Signups for this page are closed.</p>
+  {% else %}
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="" novalidate>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required value="{{ form.email }}">
+      <label for="name">Name <span class="opt">(optional)</span></label>
+      <input id="name" name="name" type="text" autocomplete="name" maxlength="120" value="{{ form.name }}">
+      <div class="hp" aria-hidden="true">
+        <label for="company">Company</label>
+        <input id="company" name="company" type="text" tabindex="-1" autocomplete="off">
+      </div>
+      <label class="consent" for="consent">
+        <input id="consent" name="consent" type="checkbox" value="yes" required{% if form.consent %} checked{% endif %}>
+        <span>{{ event.consent_text }}</span>
+      </label>
+      <button id="submit" type="submit">Send me the materials</button>
+    </form>
+    <p class="muted" style="margin-top:1rem">I'll email you a link to confirm your address. You can unsubscribe from any email.</p>
+    <script>
+      (function () {
+        var box = document.getElementById("consent"), btn = document.getElementById("submit");
+        function sync() { btn.disabled = !box.checked; }
+        box.addEventListener("change", sync); sync();
+      })();
+    </script>
+  {% endif %}
+{% endblock %}
