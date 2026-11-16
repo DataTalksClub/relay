@@ -17,6 +17,7 @@ clock; the DB layer converts datetimes to epoch seconds for them.
 """
 
 import logging
+import threading
 import time
 from datetime import timedelta
 
@@ -68,6 +69,21 @@ def _is_lock_contention(exc):
 # Cache for the best-effort SES MaxSendRate discovery (monotonic expiry, value).
 _account_quota_cache = {"expires": 0.0, "value": None}
 ACCOUNT_QUOTA_CACHE_SECONDS = 300.0
+
+# Short-lived in-process bulk token lease to avoid per-message Postgres row
+# contention across high-concurrency sender threads while preserving the global
+# Postgres budget, transactional reserve, and AIMD throttling feedback.
+_BULK_LEASE_TTL_SECONDS = 0.25
+_bulk_lease_lock = threading.Lock()
+_bulk_leases = {}
+
+
+def reset_bulk_leases():
+    """Clear in-process bulk token leases (e.g., on throttling feedback or in tests)."""
+    with _bulk_lease_lock:
+        for entry in _bulk_leases.values():
+            entry["tokens"] = 0
+            entry["expires_at"] = 0.0
 
 
 class SesRateLimiterError(RuntimeError):
@@ -172,6 +188,78 @@ def _to_ts(value):
     return value.timestamp() if value is not None else None
 
 
+def _lease_entry(bucket):
+    with _bulk_lease_lock:
+        entry = _bulk_leases.get(bucket)
+        if entry is None:
+            entry = {"tokens": 0, "expires_at": 0.0, "base_rate": 0.0, "refill_lock": threading.Lock()}
+            _bulk_leases[bucket] = entry
+        return entry
+
+
+def _take_leased_token(bucket, base_rate):
+    now = time.monotonic()
+    with _bulk_lease_lock:
+        entry = _bulk_leases.get(bucket)
+        if (
+            entry is not None
+            and entry["tokens"] >= 1
+            and now < entry["expires_at"]
+            and entry["base_rate"] == base_rate
+        ):
+            entry["tokens"] -= 1
+            return True
+    return False
+
+
+def _acquire_from_db(bucket, cost, max_lease, kind, config, deadline, timeout):
+    conflicts = 0
+    try:
+        while True:
+            try:
+                granted, sleep_hint = _try_acquire_once(bucket, cost, max_lease, kind, config)
+            except DatabaseError as exc:
+                remaining = deadline - time.monotonic()
+                if _is_lock_contention(exc) and remaining > 0:
+                    logger.debug(
+                        "ses_rate_limit_lock_contention bucket=%s kind=%s error_type=%s",
+                        bucket, kind, type(exc).__name__,
+                    )
+                    release_pooled_connection()
+                    time.sleep(min(config["poll_interval"], max(remaining, 0.001)))
+                    continue
+                logger.error(
+                    "ses_rate_limit_unavailable bucket=%s kind=%s cost=%s error_type=%s",
+                    bucket, kind, cost, type(exc).__name__,
+                )
+                raise SesRateLimiterUnavailable(
+                    f"SES rate limiter database unavailable; not sending (bucket={bucket})"
+                ) from exc
+            if granted > 0:
+                return granted
+            if sleep_hint < 0:
+                # Lost a race with another sender: re-read immediately (bounded).
+                conflicts += 1
+                if conflicts < 50:
+                    continue
+                sleep_hint = config["poll_interval"]
+                conflicts = 0
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                waited = config["timeout"] if timeout is None else timeout
+                logger.error(
+                    "ses_rate_limit_wait_timeout bucket=%s kind=%s cost=%s timeout_s=%.1f",
+                    bucket, kind, cost, waited,
+                )
+                raise SesRateLimiterTimeout(
+                    f"SES rate limiter permit wait timed out; not sending (bucket={bucket})"
+                )
+            release_pooled_connection()
+            time.sleep(min(max(sleep_hint, 0.001), config["poll_interval"], max(remaining, 0.001)))
+    finally:
+        release_pooled_connection()
+
+
 def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
     """Block until the bucket grants ``cost`` tokens; fail closed on timeout/DB error.
 
@@ -183,6 +271,9 @@ def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
     Hot path is two statements and no transaction: one SELECT plus one
     conditional UPDATE guarded by optimistic concurrency (the row must still
     hold the tokens we read). A lost race re-reads instead of over-issuing.
+    For high-rate bulk sends, each process leases a short-lived batch of
+    tokens under a local refill lock so sender threads do not contend on the
+    single bucket row for every message.
     """
     if kind not in KINDS:
         raise ValueError(f"unknown limiter kind: {kind!r}")
@@ -192,66 +283,40 @@ def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
         return
     bucket = key or bucket_key()
     deadline = time.monotonic() + (config["timeout"] if timeout is None else max(0.0, timeout))
-    conflicts = 0
-    while True:
-        try:
-            granted, sleep_hint = _try_acquire_once(bucket, cost, kind, config)
-        except DatabaseError as exc:
-            remaining = deadline - time.monotonic()
-            if _is_lock_contention(exc) and remaining > 0:
-                logger.debug(
-                    "ses_rate_limit_lock_contention bucket=%s kind=%s error_type=%s",
-                    bucket, kind, type(exc).__name__,
-                )
-                release_pooled_connection()
-                time.sleep(min(config["poll_interval"], max(remaining, 0.001)))
-                continue
-            logger.error(
-                "ses_rate_limit_unavailable bucket=%s kind=%s cost=%s error_type=%s",
-                bucket, kind, cost, type(exc).__name__,
-            )
-            raise SesRateLimiterUnavailable(
-                f"SES rate limiter database unavailable; not sending (bucket={bucket})"
-            ) from exc
-        if granted:
+    lease_max = min(12, int(config["base_rate"] // 20)) if (kind == BULK and cost == 1 and timeout is None) else 1
+    if lease_max > 1:
+        if _take_leased_token(bucket, config["base_rate"]):
             return
-        if sleep_hint < 0:
-            # Lost a race with another sender: re-read immediately (bounded).
-            conflicts += 1
-            if conflicts < 50:
-                continue
-            sleep_hint = config["poll_interval"]
-            conflicts = 0
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            waited = config["timeout"] if timeout is None else timeout
-            logger.error(
-                "ses_rate_limit_wait_timeout bucket=%s kind=%s cost=%s timeout_s=%.1f",
-                bucket, kind, cost, waited,
-            )
-            raise SesRateLimiterTimeout(
-                f"SES rate limiter permit wait timed out; not sending (bucket={bucket})"
-            )
-        release_pooled_connection()
-        time.sleep(min(max(sleep_hint, 0.001), config["poll_interval"], max(remaining, 0.001)))
+        entry = _lease_entry(bucket)
+        with entry["refill_lock"]:
+            if _take_leased_token(bucket, config["base_rate"]):
+                return
+            granted = _acquire_from_db(bucket, 1, lease_max, kind, config, deadline, timeout)
+            if granted > 1:
+                with _bulk_lease_lock:
+                    entry["tokens"] = granted - 1
+                    entry["expires_at"] = time.monotonic() + _BULK_LEASE_TTL_SECONDS
+                    entry["base_rate"] = config["base_rate"]
+            return
+    _acquire_from_db(bucket, cost, cost, kind, config, deadline, timeout)
 
 
-def _try_acquire_once(bucket, cost, kind, config):
+def _try_acquire_once(bucket, cost, max_cost, kind, config):
     """Single refill-and-consume attempt.
 
-    Returns (granted, sleep_hint); a negative sleep_hint means the row moved
-    under us (lost optimistic-concurrency race) and the caller should re-read.
-    No transaction is held: the SELECT runs in autocommit and the UPDATE only
-    applies when the row still holds exactly the tokens we read, so concurrent
-    senders can never over-issue. Shortage performs no write at all (the next
-    attempt recomputes the refill from the stored timestamp).
+    Returns (granted_count, sleep_hint); a negative sleep_hint means the row
+    moved under us (lost optimistic-concurrency race) and the caller should
+    re-read. No transaction is held: the SELECT runs in autocommit and the
+    UPDATE only applies when the row still holds exactly the tokens we read, so
+    concurrent senders can never over-issue. Shortage performs no write at all
+    (the next attempt recomputes the refill from the stored timestamp).
     """
     row = SesRateLimitBucket.objects.filter(key=bucket).values(
         "tokens", "last_refill", "penalty_factor", "penalty_expires_at",
     ).first()
     if row is None:
         _ensure_bucket(bucket, config)
-        return False, -1.0
+        return 0, -1.0
     now = timezone.now()
     base_rate = resolve_base_rate(config)
     now_ts = now.timestamp()
@@ -271,9 +336,10 @@ def _try_acquire_once(bucket, cost, kind, config):
     needed = cost - overdraft
     if tokens < needed:
         deficit = needed - tokens
-        return False, deficit / rate if rate > 0 else config["poll_interval"]
+        return 0, deficit / rate if rate > 0 else config["poll_interval"]
+    take = cost if max_cost <= cost else min(max_cost, max(cost, int(tokens)))
     update_fields = {
-        "tokens": tokens - cost,
+        "tokens": tokens - take,
         "last_refill": now,
         "base_rate": base_rate,
         "capacity": config["capacity"],
@@ -283,8 +349,8 @@ def _try_acquire_once(bucket, cost, kind, config):
         update_fields["penalty_expires_at"] = None
     updated = SesRateLimitBucket.objects.filter(key=bucket, tokens=row["tokens"]).update(**update_fields)
     if not updated:
-        return False, -1.0
-    return True, 0.0
+        return 0, -1.0
+    return take, 0.0
 
 
 def _ensure_bucket(bucket, config):
@@ -320,6 +386,7 @@ def report_ses_throttling(*, key=None):
         logger.debug("ses_rate_limit_feedback_ignored_limiter_disabled")
         return
     bucket = key or bucket_key()
+    reset_bulk_leases()
     try:
         base_rate = resolve_base_rate(config)
         floor = config["min_rate"] / base_rate if base_rate > 0 else 1.0

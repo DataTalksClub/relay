@@ -67,3 +67,21 @@ def test_32_sends_share_six_pg_sockets_across_repeated_batches(monkeypatch):
         assert campaign.sent_count == 256
     finally:
         sender.shutdown_send_pool()
+
+
+def test_send_gate_releases_pooled_connection(monkeypatch):
+    released = []
+    monkeypatch.setattr(sender, "release_pooled_connection", lambda: released.append(True))
+    campaign, _ = _campaign_with_recipients(1) if False else (None, None)
+    monkeypatch.setattr(
+        sender.Campaign.objects,
+        "filter",
+        lambda **_kwargs: type(
+            "_QS",
+            (),
+            {"values_list": lambda *_a: type("_V", (), {"first": lambda _s: ("sending", None, None)})()},
+        )(),
+    )
+    gate = sender._send_gate(1)
+    assert gate.status == "sending"
+    assert released == [True]

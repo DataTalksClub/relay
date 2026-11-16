@@ -21,6 +21,7 @@ from django.db import connection
 from django.db.utils import OperationalError
 from django.test import override_settings
 
+from mailing import ses_rate_limiter
 from mailing.models import SesRateLimitBucket
 from mailing.ses import send_email
 from mailing.ses_rate_limiter import (
@@ -400,3 +401,16 @@ def test_transactional_sends_promptly_while_campaign_runs_at_240():
     assert ses.bulk_count > 20
     assert ses.tx_count == 5
     assert max(tx_latencies) < 0.5, f"transactional send delayed: max={max(tx_latencies):.3f}s"
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    SES_ACCOUNT_MAX_SEND_RATE_PER_SECOND=240.0,
+    SES_LIMITER_BURST_MESSAGES=48.0,
+)
+def test_report_throttling_clears_in_process_bulk_lease():
+    acquire_ses_permit(cost=1, kind="bulk")
+    entry = ses_rate_limiter._bulk_leases.get(bucket_key())
+    assert entry is not None and entry["tokens"] > 0
+    report_ses_throttling()
+    assert entry["tokens"] == 0

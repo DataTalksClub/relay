@@ -24,9 +24,12 @@ def test_prod_compose_runs_at_least_ten_transactional_consumers():
     assert len(transactional) >= 10, transactional
     # The legacy "default" drain stays on exactly one consumer.
     assert [name for name, queues in lanes.items() if "default" in queues] == ["worker"]
-    # Campaign lane: 3 replicas share the global Postgres SES token bucket.
+    # Campaign lane: 6 replicas share the global Postgres SES token bucket.
     assert [name for name, queues in lanes.items() if "campaign" in queues] == [
         "campaign-worker",
         "campaign-worker-2",
         "campaign-worker-3",
+        "campaign-worker-4",
+        "campaign-worker-5",
+        "campaign-worker-6",
     ]
