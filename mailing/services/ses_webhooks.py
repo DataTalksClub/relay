@@ -760,7 +760,7 @@ RECONCILE_LOOKBACK_DAYS = 7
 RECONCILE_MAX_EVENTS = 5000
 
 
-def reconcile_uncorrelated_ses_events(campaign_id=None):
+def reconcile_uncorrelated_ses_events(campaign_id=None, recipient_ids=None):
     """Correlate stored-uncorrelated SES events whose message id is now committed.
 
     A webhook can reach us before the sender commits ses_message_id; it is
@@ -768,6 +768,10 @@ def reconcile_uncorrelated_ses_events(campaign_id=None):
     correlated under its own row lock and only if it is still uncorrelated, so
     its status/counter effects are applied exactly once even with concurrent
     reconcilers. Returns counts; everything is logged.
+
+    ``recipient_ids`` narrows a campaign reconcile to one batch's recipients: the
+    message-id list stays O(batch) instead of O(recipients sent so far), which
+    otherwise stalls every batch tail for seconds on a six-figure campaign.
     """
     events = EmailEvent.objects.filter(
         campaign_recipient__isnull=True,
@@ -775,10 +779,10 @@ def reconcile_uncorrelated_ses_events(campaign_id=None):
         created_at__gte=timezone.now() - timedelta(days=RECONCILE_LOOKBACK_DAYS),
     ).exclude(provider_event_id="").exclude(metadata__ses_message_id__isnull=True).exclude(metadata__ses_message_id="")
     if campaign_id is not None:
-        message_ids = list(
-            CampaignRecipient.objects.filter(campaign_id=campaign_id).exclude(ses_message_id="")
-            .values_list("ses_message_id", flat=True)
-        )
+        scoped = CampaignRecipient.objects.filter(campaign_id=campaign_id)
+        if recipient_ids is not None:
+            scoped = scoped.filter(pk__in=list(recipient_ids))
+        message_ids = list(scoped.exclude(ses_message_id="").values_list("ses_message_id", flat=True))
         events = events.filter(metadata__ses_message_id__in=message_ids)
     candidate_ids = list(events.order_by("id").values_list("pk", flat=True)[:RECONCILE_MAX_EVENTS])
     result = {"candidates": len(candidate_ids), "reconciled": 0, "still_uncorrelated": 0, "errors": 0}
