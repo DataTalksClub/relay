@@ -283,6 +283,26 @@ GET /api/contacts.csv
 
 JSON and CSV imports are idempotent by normalized email plus audience/client scope. Invalid items are returned in partial errors while valid items continue. CSV export returns safe recreatable contact, subscription, tag, verification, validation, suppression, unsubscribe, and update timestamp columns.
 
+### Finding contacts by email
+
+Both exports accept two email filters on top of `audience`/`client` scope,
+`tags`, `subscription_status`, `verified`, `email_validation_status`,
+`suppression`, `updated_since`, `limit` and `cursor`:
+
+| Parameter | Matches | Example |
+|---|---|---|
+| `domain` | The domain and any subdomain, case-insensitive; a leading `@` is ignored. Served by the `contacts_norm_email_rev_idx` index. | `domain=fsu.edu` matches `a@fsu.edu`, `b@cs.fsu.edu`, not `c@notfsu.edu` |
+| `email_contains` (alias `q`) | Case-insensitive substring of the email. | `email_contains=netcup` |
+
+```bash
+curl -H "Authorization: Bearer $RELAY_API_KEY" \
+  "https://relay.datatalks.club/api/contacts?audience=dtc&client=dtc-newsletter&domain=fsu.edu&limit=500"
+```
+
+An invalid `domain` (whitespace or an inner `@`) returns `400` with
+`{"domain": "invalid"}`. The operator Contacts page offers the same two
+filters as "Email contains" and "Email domain".
+
 ## Recipient List APIs
 
 Recipient lists are client-scoped audience nodes for later list sends. CMP writes path keys such as `ml-zoomcamp-2026`, `ml-zoomcamp-2026:@e`, and `ml-zoomcamp-2026:@e:@homework:homework-1`. Adding a member to a child path also adds cascade memberships to each parent path, including `<all>`. CMP writes the most specific node, and Datamailer keeps the ancestors current.

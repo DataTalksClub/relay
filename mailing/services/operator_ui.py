@@ -43,6 +43,12 @@ from mailing.models import (
     TransactionalMessageStatus,
 )
 from mailing.services.complaints import campaign_complaint_rates, recent_complaints
+from mailing.services.contact_email_search import (
+    EmailSearchError,
+    filter_email_contains,
+    filter_email_domain,
+    normalize_domain,
+)
 from mailing.services.contacts import has_invalid_email_validation, normalize_email
 from mailing.services.worker_status import WorkerStatus, sandbox_worker_statuses
 
@@ -131,6 +137,7 @@ class Choice:
 @dataclass(frozen=True)
 class ContactExplorerFilters:
     query: str = ""
+    domain: str = ""
     audience_id: int | None = None
     client_id: int | None = None
     include_tags: tuple[str, ...] = ()
@@ -149,6 +156,7 @@ class ContactExplorerFilters:
         return any(
             (
                 self.query,
+                self.domain,
                 self.audience_id,
                 self.client_id,
                 self.include_tags,
@@ -791,6 +799,8 @@ def active_contact_filters(filters: ContactExplorerFilters) -> list[ActiveFilter
     chips = []
     if filters.query:
         chips.append(ActiveFilter("Email", filters.query))
+    if filters.domain:
+        chips.append(ActiveFilter("Domain", filters.domain))
     if filters.audience_id:
         audience = Audience.objects.filter(pk=filters.audience_id).first()
         chips.append(ActiveFilter("Audience", audience.name if audience else str(filters.audience_id)))
@@ -827,6 +837,7 @@ def parse_contact_explorer_filters(params, *, forced_audience_id=None, forced_cl
 
     return ContactExplorerFilters(
         query=params.get("q", "").strip(),
+        domain=contact_domain_param(params.get("domain", "")),
         audience_id=forced_audience_id or positive_int(params.get("audience")),
         client_id=forced_client_id or positive_int(params.get("client")),
         include_tags=tuple(nonempty_values(params.getlist("include_tags"))),
@@ -842,6 +853,13 @@ def parse_contact_explorer_filters(params, *, forced_audience_id=None, forced_cl
         engagement=engagement if engagement in ENGAGEMENT_FILTER_LABELS else "",
         inactive_since=inactive_since,
     )
+
+
+def contact_domain_param(value) -> str:
+    try:
+        return normalize_domain(value)
+    except EmailSearchError:
+        return ""
 
 
 def positive_int(value):
@@ -864,9 +882,10 @@ def nonempty_values(values):
 def contact_explorer_queryset(filters: ContactExplorerFilters) -> QuerySet[Contact]:
     queryset = Contact.objects.all()
 
-    if filters.query:
-        normalized = normalize_email(filters.query)
-        queryset = queryset.filter(Q(normalized_email__icontains=normalized) | Q(email__icontains=filters.query))
+    # normalized_email is the casefolded email, so one LIKE on it covers any
+    # case the operator typed; domain uses the reverse(normalized_email) index.
+    queryset = filter_email_contains(queryset, normalize_email(filters.query))
+    queryset = filter_email_domain(queryset, filters.domain)
     subscription_scope = subscription_scope_queryset(filters)
     if filters.audience_id or filters.client_id or filters.subscription_status:
         queryset = queryset.filter(Exists(subscription_scope))
