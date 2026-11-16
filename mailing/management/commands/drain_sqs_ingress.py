@@ -27,6 +27,7 @@ class Command(BaseCommand):
         parser.add_argument("--batch-size", type=int, default=10)
         parser.add_argument("--wait-time", type=int, default=20)
         parser.add_argument("--idle-sleep", type=float, default=0)
+        parser.add_argument("--concurrency", type=int, default=1)
         parser.add_argument(
             "--heartbeat-every",
             type=int,
@@ -51,10 +52,14 @@ class Command(BaseCommand):
                 record_db_heartbeat()
                 time.sleep(1)
             return
+        concurrency = options.get("concurrency", 1)
+        if concurrency < 1:
+            raise CommandError("--concurrency must be >= 1")
         worker = SqsWorker(
             get_ingress_config(name),
             batch_size=options["batch_size"],
             wait_time=options["wait_time"],
+            concurrency=concurrency,
         )
 
         self.stdout.write(f"Starting {name} ingress drain")

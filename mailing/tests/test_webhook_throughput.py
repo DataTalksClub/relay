@@ -24,7 +24,11 @@ from mailing.models import (
     Organization,
 )
 from mailing.services import ses_webhooks
-from mailing.services.ses_webhooks import normalize_ses_webhook_worker_payload, process_ses_webhook
+from mailing.services.ses_webhooks import (
+    normalize_ses_webhook_worker_payload,
+    process_ses_webhook,
+    process_ses_webhook_batch,
+)
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -182,3 +186,65 @@ def test_concurrent_consumers_apply_every_event_exactly_once(campaign, settings)
         assert r.click_count == 1
     # One outbox row per applied event, never per delivery.
     assert CmpCallback.objects.count() == len(events)
+
+
+@override_settings(**CMP, PUBLIC_BASE_URL="https://relay.example.test")
+def test_process_ses_webhook_batch_bulk_inserts_dedupes_and_updates_counts(campaign):
+    r1 = _recipient(campaign, 1)
+    r2 = _recipient(campaign, 2)
+    payloads = [
+        normalize_ses_webhook_worker_payload(_sns("00000000-0000-0000-0000-000000000101", r1.ses_message_id, "Delivery")),
+        # In-batch duplicate of the same provider_event_id must be ignored
+        normalize_ses_webhook_worker_payload(_sns("00000000-0000-0000-0000-000000000101", r1.ses_message_id, "Delivery")),
+        normalize_ses_webhook_worker_payload(_sns("00000000-0000-0000-0000-000000000102", r2.ses_message_id, "Delivery")),
+        normalize_ses_webhook_worker_payload(_sns("00000000-0000-0000-0000-000000000103", r1.ses_message_id, "Open")),
+        normalize_ses_webhook_worker_payload(_sns("00000000-0000-0000-0000-000000000104", r1.ses_message_id, "Click")),
+    ]
+    res1 = process_ses_webhook_batch(payloads)
+    assert res1["processed"] == 4
+    assert res1["duplicates"] == 1
+
+    # Re-running the entire batch must be a complete no-op
+    res2 = process_ses_webhook_batch(payloads)
+    assert res2["processed"] == 0
+    assert res2["duplicates"] == 5
+
+    r1.refresh_from_db()
+    r2.refresh_from_db()
+    campaign.refresh_from_db()
+    assert r1.delivered_at is not None
+    assert r1.open_count == 1
+    assert r1.click_count == 1
+    assert r2.delivered_at is not None
+    assert campaign.delivered_count == 2
+    assert campaign.unique_open_count == 1
+    assert campaign.unique_click_count == 1
+    assert EmailEvent.objects.count() == 4
+    assert CmpCallback.objects.count() == 4
+
+
+@override_settings(**CMP)
+def test_process_ses_webhook_batch_falls_back_on_integrity_error_race(campaign, monkeypatch):
+    r1 = _recipient(campaign, 1)
+    r2 = _recipient(campaign, 2)
+    dup_payload = normalize_ses_webhook_worker_payload(
+        _sns("00000000-0000-0000-0000-000000000201", r1.ses_message_id, "Delivery")
+    )
+    new_payload = normalize_ses_webhook_worker_payload(
+        _sns("00000000-0000-0000-0000-000000000202", r2.ses_message_id, "Delivery")
+    )
+    # Pre-insert dup_payload, but make bulk_create hit IntegrityError as if it raced
+    _apply(dup_payload)
+    real_bulk_create = EmailEvent.objects.bulk_create
+
+    def racing_bulk_create(*args, **kwargs):
+        raise IntegrityError("duplicate key")
+
+    monkeypatch.setattr(EmailEvent.objects, "bulk_create", racing_bulk_create)
+    res = process_ses_webhook_batch([dup_payload, new_payload])
+    monkeypatch.setattr(EmailEvent.objects, "bulk_create", real_bulk_create)
+
+    assert res["fallback"] is True
+    assert res["processed"] == 1
+    assert res["duplicates"] == 1
+    assert EmailEvent.objects.count() == 2

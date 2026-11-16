@@ -89,7 +89,8 @@ def test_ses_event_not_blocked_by_default_queue_backlog(client, settings, transp
         result = SqsWorker(get_ingress_config("ses-webhooks"), client=sqs).run_once()
         assert (result.received, result.deleted, result.failed) == (1, 1, 0)
 
-    queued = DBTaskResult.objects.get(task_path__endswith="process_ses_webhook_event")
+    expected_task = "process_ses_webhook_event" if transport == "http" else "process_ses_webhook_batch"
+    queued = DBTaskResult.objects.get(task_path__endswith=expected_task)
     assert queued.queue_name == "provider-events"
     assert queued.status == TaskResultStatus.READY
     recipient.refresh_from_db()
@@ -97,7 +98,7 @@ def test_ses_event_not_blocked_by_default_queue_backlog(client, settings, transp
     assert not EmailEvent.objects.exists()
     client.force_login(admin_user)
     settings.WORKER_STATUS_SYSTEMD_ENABLED = False
-    _assert_ses_status(client, TaskRunStatus.QUEUED)
+    _assert_ses_status(client, TaskRunStatus.QUEUED, expected_task)
 
     call_command("db_worker", "--queue-name", "provider-events", "--batch", "--interval", "0")
 
@@ -110,10 +111,10 @@ def test_ses_event_not_blocked_by_default_queue_backlog(client, settings, transp
     assert DBTaskResult.objects.filter(queue_name="campaign", status=TaskResultStatus.READY).count() == 50
     assert not DBTaskResult.objects.filter(queue_name="campaign", started_at__isnull=False).exists()
     assert not DBTaskResult.objects.filter(queue_name="provider-events", status=TaskResultStatus.READY).exists()
-    _assert_ses_status(client, TaskRunStatus.SUCCESS)
+    _assert_ses_status(client, TaskRunStatus.SUCCESS, expected_task)
 
 
-def _assert_ses_status(client, expected_status):
+def _assert_ses_status(client, expected_status, task_name):
     cache.clear()
     workers_response = client.get("/api/workers/status")
     assert workers_response.status_code == 200
@@ -123,8 +124,8 @@ def _assert_ses_status(client, expected_status):
         headers={"authorization": "Bearer test-provider-lane-status"},
     )
     assert response.status_code == 200
-    runs = [run for run in response.json()["recent_runs"] if run["name"] == "process_ses_webhook_event"]
+    runs = [run for run in response.json()["recent_runs"] if run["name"] == task_name]
     assert len(runs) == 1
     assert runs[0]["status"] == expected_status
-    assert TaskRun.objects.get(name="process_ses_webhook_event").status == expected_status
+    assert TaskRun.objects.get(name=task_name).status == expected_status
     cache.clear()

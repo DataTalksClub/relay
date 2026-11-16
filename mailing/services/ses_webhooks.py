@@ -27,6 +27,7 @@ from mailing.models import (
     Campaign,
     CampaignRecipient,
     CampaignRecipientStatus,
+    CmpCallback,
     Contact,
     EmailEvent,
     EmailEventType,
@@ -36,7 +37,7 @@ from mailing.models import (
 )
 from mailing.queue_contracts import CONTRACT_VERSION, SES_WEBHOOKS_CONTRACT, validate_ses_webhook_message
 from mailing.services.client_callbacks import emit_client_callback, is_hard_bounce
-from mailing.services.cmp_callbacks import emit_cmp_contact_event
+from mailing.services.cmp_callbacks import callback_payload, cmp_callback_config, emit_cmp_contact_event
 from mailing.services.operator_management import safe_metadata
 from mailing.sqs import sanitize_for_logging
 
@@ -561,6 +562,267 @@ def process_ses_webhook(payload):
     return event
 
 
+def _process_ses_webhook_per_event(payloads):
+    processed = 0
+    duplicates = 0
+    for item in payloads:
+        result = process_ses_webhook(normalize_ses_webhook_worker_payload(item))
+        if result is None:
+            duplicates += 1
+        else:
+            processed += 1
+    return {"processed": processed, "duplicates": duplicates, "fallback": True}
+
+
+def _bulk_correlate_ses_messages(payloads):
+    """Map each payload index to ('cr', pk) or ('tm', pk) or None using two bulk queries."""
+    msg_ids = {p.get("ses_message_id", "") for p in payloads if p.get("ses_message_id")}
+    if not msg_ids:
+        return [None] * len(payloads)
+
+    cr_map: dict[str, list[int]] = {}
+    for pk, mid in CampaignRecipient.objects.filter(ses_message_id__in=msg_ids).values_list("pk", "ses_message_id"):
+        bucket = cr_map.setdefault(mid, [])
+        if len(bucket) < 2:
+            bucket.append(pk)
+
+    tm_map: dict[str, list[int]] = {}
+    for pk, mid in TransactionalMessage.objects.filter(ses_message_id__in=msg_ids).values_list("pk", "ses_message_id"):
+        bucket = tm_map.setdefault(mid, [])
+        if len(bucket) < 2:
+            bucket.append(pk)
+
+    targets = []
+    for p in payloads:
+        mid = p.get("ses_message_id", "")
+        if not mid:
+            targets.append(None)
+            continue
+        crs = cr_map.get(mid, ())
+        tms = tm_map.get(mid, ())
+        if len(crs) == 1 and not tms:
+            targets.append(("cr", crs[0]))
+        elif len(tms) == 1 and not crs:
+            targets.append(("tm", tms[0]))
+        else:
+            targets.append(None)
+    return targets
+
+
+def process_ses_webhook_batch(payloads):
+    """Apply a batch of SES webhook payloads with bulk reads, locks, and inserts.
+
+    Falls back to per-event ``process_ses_webhook`` on validation errors or
+    concurrent ``IntegrityError`` races so one duplicate or poison item never
+    loses or double-counts the rest of the batch.
+    """
+    if not payloads:
+        return {"processed": 0, "duplicates": 0}
+
+    normalized = []
+    try:
+        for raw in payloads:
+            item = normalize_ses_webhook_worker_payload(raw)
+            validate_ses_webhook_message(item)
+            normalized.append(item)
+    except Exception:  # noqa: BLE001 - isolate invalid payload via per-event path
+        return _process_ses_webhook_per_event(payloads)
+
+    seen_ids = set()
+    unsupported = []
+    candidates = []
+    duplicates = 0
+    for item in normalized:
+        if item["notification_type"] in {"delivery_delay", "unsupported"}:
+            unsupported.append(item)
+            continue
+        eid = item["provider_event_id"]
+        if eid in seen_ids:
+            duplicates += 1
+            continue
+        seen_ids.add(eid)
+        candidates.append(item)
+
+    for item in unsupported:
+        record_unsupported_ses_event(item)
+
+    if not candidates:
+        return {"processed": len(unsupported), "duplicates": duplicates}
+
+    existing_ids = set(
+        EmailEvent.objects.filter(provider_event_id__in=seen_ids).values_list("provider_event_id", flat=True)
+    )
+    pending = [item for item in candidates if item["provider_event_id"] not in existing_ids]
+    duplicates += len(candidates) - len(pending)
+    if not pending:
+        return {"processed": len(unsupported), "duplicates": duplicates}
+
+    targets = _bulk_correlate_ses_messages(pending)
+    cr_pks = sorted({pk for t in targets if t and t[0] == "cr" for pk in (t[1],)})
+    tm_pks = sorted({pk for t in targets if t and t[0] == "tm" for pk in (t[1],)})
+
+    try:
+        refresh_campaign_ids, processed_count = _apply_ses_webhook_batch_atomic(
+            pending, targets, cr_pks, tm_pks
+        )
+    except IntegrityError:
+        return _process_ses_webhook_per_event(payloads)
+
+    for cid in sorted(refresh_campaign_ids):
+        try:
+            refresh_campaign_provider_counts_if_due(cid)
+        except Exception:  # noqa: BLE001 - events are committed; next drain refreshes
+            logger.exception("Refreshing provider counts for campaign %s failed", cid)
+    return {"processed": processed_count + len(unsupported), "duplicates": duplicates}
+
+
+def _apply_ses_webhook_batch_atomic(pending, targets, cr_pks, tm_pks):
+    now = timezone.now()
+    with transaction.atomic():
+        recipients_by_pk = (
+            {
+                r.pk: r
+                for r in CampaignRecipient.objects.select_for_update(of=("self",))
+                .select_related("campaign", "campaign__client", "campaign__audience", "contact")
+                .filter(pk__in=cr_pks)
+                .order_by("pk")
+            }
+            if cr_pks
+            else {}
+        )
+        messages_by_pk = (
+            {
+                m.pk: m
+                for m in TransactionalMessage.objects.select_for_update(of=("self",))
+                .select_related("client", "contact")
+                .filter(pk__in=tm_pks)
+                .order_by("pk")
+            }
+            if tm_pks
+            else {}
+        )
+
+        to_insert = []
+        event_rows = []
+        for item, target in zip(pending, targets, strict=True):
+            source = None
+            if target is not None:
+                kind, pk = target
+                source = recipients_by_pk.get(pk) if kind == "cr" else messages_by_pk.get(pk)
+            if (
+                item["notification_type"] == "click"
+                and isinstance(source, CampaignRecipient)
+                and is_relay_tracker_url((item.get("metadata") or {}).get("url", ""))
+            ):
+                OperatorAudit.objects.get_or_create(
+                    action="ses.click.ignored_relay_tracker",
+                    metadata__provider_event_id=item["provider_event_id"],
+                    defaults={
+                        "target_type": "campaignrecipient",
+                        "target_id": source.pk,
+                        "metadata": {
+                            "provider_event_id": item["provider_event_id"],
+                            "sns_message_id": item["provider_event_id"],
+                            "sns_topic_arn": (item.get("metadata") or {}).get("sns_topic_arn"),
+                            "sns_timestamp": (item.get("metadata") or {}).get("sns_timestamp"),
+                            "reason": "relay_tracker_click_counted_by_tracking_path",
+                        },
+                    },
+                )
+                continue
+            event = _build_provider_event(item, source)
+            event_rows.append(event)
+            to_insert.append((item, source, event))
+
+        if not event_rows:
+            return set(), 0
+
+        EmailEvent.objects.bulk_create(event_rows)
+
+        updated_crs = {}
+        hard_bounced_contacts = {}
+        complained_contacts = {}
+        refresh_campaign_ids = set()
+        cmp_callbacks = []
+
+        for item, source, event in to_insert:
+            if source is None:
+                logger.warning(
+                    "ses_event_uncorrelated provider_event_id=%s type=%s ses_message_id=%s "
+                    "(stored; reconciled once the message id is committed)",
+                    item["provider_event_id"],
+                    item["notification_type"],
+                    item.get("ses_message_id", ""),
+                )
+                continue
+            ntype = item["notification_type"]
+            occurred_at = event_timestamp(item)
+            metadata = item.get("metadata") or {}
+            if isinstance(source, CampaignRecipient):
+                _, hb_at, comp_at = _mutate_campaign_recipient(source, ntype, occurred_at, metadata)
+                source.updated_at = now
+                updated_crs[source.pk] = source
+                refresh_campaign_ids.add(source.campaign_id)
+                if hb_at is not None and source.contact.hard_bounced_at is None:
+                    hard_bounced_contacts.setdefault(source.contact_id, hb_at)
+                if comp_at is not None and source.contact.complained_at is None:
+                    complained_contacts.setdefault(source.contact_id, comp_at)
+                if ntype in {"delivery", "open", "click", "complaint"} or (
+                    ntype == "bounce" and is_hard_bounce(metadata)
+                ):
+                    cb_payload = callback_payload(event)
+                    if cb_payload is not None:
+                        cb_config = cmp_callback_config(event.client)
+                        if cb_config is not None:
+                            cmp_callbacks.append(
+                                CmpCallback(
+                                    email_event=event,
+                                    contact=event.contact,
+                                    client=event.client,
+                                    audience=event.audience,
+                                    event_id=cb_payload["event_id"],
+                                    event_type=cb_payload["event_type"],
+                                    callback_url=cb_config["url"],
+                                    payload=cb_payload,
+                                    next_attempt_at=now,
+                                )
+                            )
+            elif isinstance(source, TransactionalMessage):
+                apply_transactional_message_update(source, ntype, occurred_at, metadata)
+                if ntype in {"delivery", "open", "click", "complaint"} or (
+                    ntype == "bounce" and is_hard_bounce(metadata)
+                ):
+                    emit_cmp_contact_event(event, in_transaction=True)
+                emit_client_callback(event)
+
+        if updated_crs:
+            CampaignRecipient.objects.bulk_update(
+                list(updated_crs.values()),
+                [
+                    "status",
+                    "delivered_at",
+                    "first_opened_at",
+                    "open_count",
+                    "first_clicked_at",
+                    "click_count",
+                    "last_error",
+                    "updated_at",
+                ],
+            )
+        for contact_id, hb_at in hard_bounced_contacts.items():
+            Contact.objects.filter(pk=contact_id, hard_bounced_at__isnull=True).update(
+                hard_bounced_at=hb_at, updated_at=now
+            )
+        for contact_id, comp_at in complained_contacts.items():
+            Contact.objects.filter(pk=contact_id, complained_at__isnull=True).update(
+                complained_at=comp_at, updated_at=now
+            )
+        if cmp_callbacks:
+            CmpCallback.objects.bulk_create(cmp_callbacks, ignore_conflicts=True)
+
+        return refresh_campaign_ids, len(event_rows)
+
+
 def _append_and_apply_ses_event(payload, provider_event_id, notification_type):
     """Body of the per-event transaction: returns ``(event, campaign_id_to_refresh)``."""
     source = correlate_ses_message(payload.get("ses_message_id", ""))
@@ -633,7 +895,7 @@ def correlate_ses_message(ses_message_id):
     return None
 
 
-def append_provider_event(payload, source):
+def _build_provider_event(payload, source):
     notification_type = payload["notification_type"]
     metadata = webhook_event_metadata(payload)
     url = metadata.get("url", "")
@@ -658,7 +920,13 @@ def append_provider_event(payload, source):
             "contact": source.contact,
             "client": source.client,
         }
-    return EmailEvent.objects.create(**kwargs)
+    return EmailEvent(**kwargs)
+
+
+def append_provider_event(payload, source):
+    event = _build_provider_event(payload, source)
+    event.save()
+    return event
 
 
 def apply_correlated_updates(payload, source, event):
@@ -680,8 +948,11 @@ def apply_correlated_updates(payload, source, event):
     emit_client_callback(event)
 
 
-def apply_campaign_recipient_update(recipient, notification_type, occurred_at, metadata):
+def _mutate_campaign_recipient(recipient, notification_type, occurred_at, metadata):
+    """Apply one SES event to an in-memory CampaignRecipient; return (fields, hard_bounce_at, complained_at)."""
     update_fields = ["updated_at"]
+    hard_bounced_at = None
+    complained_at = None
     if notification_type == "delivery" and recipient.delivered_at is None:
         recipient.delivered_at = occurred_at
         update_fields.append("delivered_at")
@@ -689,14 +960,14 @@ def apply_campaign_recipient_update(recipient, notification_type, occurred_at, m
         if is_hard_bounce(metadata):
             recipient.status = CampaignRecipientStatus.BOUNCED
             update_fields.append("status")
-            mark_hard_bounced(recipient.contact, occurred_at)
+            hard_bounced_at = occurred_at
         else:
             recipient.last_error = "soft_bounce"
             update_fields.append("last_error")
     elif notification_type == "complaint":
         recipient.status = CampaignRecipientStatus.COMPLAINED
         update_fields.append("status")
-        mark_complained(recipient.contact, occurred_at)
+        complained_at = occurred_at
     elif notification_type == "open":
         recipient.open_count += 1
         update_fields.append("open_count")
@@ -713,7 +984,17 @@ def apply_campaign_recipient_update(recipient, notification_type, occurred_at, m
         recipient.status = CampaignRecipientStatus.FAILED
         recipient.last_error = metadata.get("reason", "ses_reject")[:2000]
         update_fields += ["status", "last_error"]
+    return update_fields, hard_bounced_at, complained_at
 
+
+def apply_campaign_recipient_update(recipient, notification_type, occurred_at, metadata):
+    update_fields, hard_bounced_at, complained_at = _mutate_campaign_recipient(
+        recipient, notification_type, occurred_at, metadata
+    )
+    if hard_bounced_at is not None:
+        mark_hard_bounced(recipient.contact, hard_bounced_at)
+    if complained_at is not None:
+        mark_complained(recipient.contact, complained_at)
     recipient.save(update_fields=sorted(set(update_fields)))
 
 
@@ -845,7 +1126,11 @@ def refresh_campaign_provider_counts_if_due(campaign_id):
         f"campaign-provider-counts:{campaign_id}", 1, timeout=PROVIDER_COUNTS_REFRESH_INTERVAL_SECONDS
     )
     if not due and DBTaskResult.objects.filter(
-        task_path="mailing.tasks.process_ses_webhook_event", status="READY"
+        task_path__in=[
+            "mailing.tasks.process_ses_webhook_event",
+            "mailing.tasks.process_ses_webhook_batch",
+        ],
+        status="READY",
     ).exists():
         return False
     refresh_campaign_provider_counts(campaign_id)

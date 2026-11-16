@@ -514,13 +514,14 @@ services:
     # 0.4 keeps combined live + DEV worker ceilings below the 15 CPU budget.
     cpus: "0.4"
     mem_limit: 512m
-    command: ["python", "manage.py", "drain_sqs_ingress", "ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
+    command: ["python", "manage.py", "drain_sqs_ingress", "ses-webhooks", "--batch-size", "10", "--wait-time", "5", "--concurrency", "24"]
     healthcheck:
       test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
       interval: 15s
       timeout: 5s
       retries: 1
       start_period: 120s
+    stop_grace_period: 20s
 
   cmp-callbacks:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
