@@ -259,7 +259,8 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "1.0"
+    # 0.4 keeps combined live + DEV worker ceilings below the 15 CPU budget.
+    cpus: "0.4"
     mem_limit: 1g
     environment:
       RELAY_DB_POOL_MAX_SIZE: "3"
