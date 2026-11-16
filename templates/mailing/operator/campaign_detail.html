@@ -71,6 +71,7 @@
   </div>
   {% endif %}
   {% if newsletter_issue %}
+    {% if campaign.status != "draft" %}<details class="secondary-section panel-diagnostics campaign-secondary"><summary>Newsletter block editor</summary>{% endif %}
     <div class="dk-callout dk-callout--info newsletter-notice" role="status">
       <div class="dk-callout__body">
         <span class="dk-callout__title">This campaign was built from newsletter blocks.</span>
@@ -78,6 +79,7 @@
       </div>
       <div class="dk-callout__actions"><a class="button secondary" href="{% url 'mailing:newsletter_detail' newsletter_issue.id %}">Open the block editor</a></div>
     </div>
+    {% if campaign.status != "draft" %}</details>{% endif %}
   {% endif %}
   {% if campaign.status == "queued" or campaign.status == "sending" or campaign.status == "snapshotting" %}<p role="status">Sending is in progress. Follow waiting recipients and results below; provider acceptance does not confirm delivery.</p>{% if campaign.send_halted_at %}<p role="alert">{% if campaign.send_halt_reason == "paused" %}Sending is paused. No further email is sent until resumed.{% elif campaign.send_halt_reason == "stopped" %}Sending is stopped. No further email will be sent.{% endif %}</p>{% endif %}{% elif campaign.status == "cancelled" %}<p>Campaign cancelled. It will not send further pending recipients.</p>{% elif campaign.status == "failed" %}<p class="form-errors">Sending needs attention. Inspect failed recipients below before taking any recovery action.</p>{% endif %}
   <nav class="dk-tabs" aria-label="Campaign stages">
