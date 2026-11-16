@@ -5,26 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex">
     <title>{% block title %}{% if event %}{{ event.title }}{% else %}Materials{% endif %}{% endblock %}</title>
+    <script>
+      try { document.documentElement.dataset.theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) {}
+    </script>
+    <style>{{ tokens_css|safe }}</style>
     <style>
-      :root { color-scheme: light dark; --fg: #1d1d1f; --muted: #5f6368; --bg: #f6f6f4; --card: #fff; --line: #dadce0; --accent: #1f5fd1; --error: #b3261e; }
-      @media (prefers-color-scheme: dark) { :root { --fg: #ececec; --muted: #a8abb0; --bg: #161618; --card: #1f1f22; --line: #3a3a3f; --accent: #7aa7ff; --error: #f2b8b5; } }
       * { box-sizing: border-box; }
-      body { margin: 0; font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--fg); background: var(--bg); }
+      body { margin: 0; font: 17px/1.5 var(--dk-font-sans); color: var(--dk-text-primary); background: var(--dk-bg-muted); }
       main { max-width: 32rem; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
-      .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.5rem 1.25rem; }
-      h1 { font-size: 1.55rem; line-height: 1.25; margin: 0 0 .75rem; }
+      .card { background: var(--dk-bg-surface); border: 1px solid var(--dk-border-default); border-radius: var(--dk-radius-lg); padding: 1.5rem 1.25rem; }
+      h1 { font-size: 1.55rem; line-height: 1.25; margin: 0 0 .75rem; color: var(--dk-text-heading); }
       p { margin: 0 0 1rem; }
-      .muted { color: var(--muted); font-size: .92rem; }
+      a { color: var(--dk-text-link); }
+      .muted { color: var(--dk-text-muted); font-size: .92rem; }
       .offer { font-weight: 600; }
       label { display: block; font-weight: 600; margin: 1rem 0 .35rem; }
-      label .opt { font-weight: 400; color: var(--muted); }
-      input[type=email], input[type=text] { width: 100%; font: inherit; padding: .8rem .9rem; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); }
-      input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+      label .opt { font-weight: 400; color: var(--dk-text-muted); }
+      input[type=email], input[type=text] { width: 100%; font: inherit; padding: .8rem .9rem; border: 1px solid var(--dk-border-default); border-radius: var(--dk-radius-md); background: var(--dk-bg-page); color: var(--dk-text-primary); }
+      input:focus-visible { outline: 2px solid var(--dk-focus-ring); outline-offset: 1px; }
       .consent { display: flex; gap: .7rem; align-items: flex-start; font-weight: 400; margin-top: 1.25rem; }
-      .consent input { width: 1.35rem; height: 1.35rem; margin: .15rem 0 0; flex: none; accent-color: var(--accent); }
-      button, .button { display: block; width: 100%; margin-top: 1.4rem; padding: .95rem 1rem; font: inherit; font-weight: 600; text-align: center; text-decoration: none; color: #fff; background: var(--accent); border: 0; border-radius: 10px; cursor: pointer; }
+      .consent input { width: 1.35rem; height: 1.35rem; margin: .15rem 0 0; flex: none; accent-color: var(--dk-accent-default); }
+      button.primary, .button { display: block; width: 100%; margin-top: 1.4rem; padding: .95rem 1rem; font: inherit; font-weight: 600; text-align: center; text-decoration: none; color: var(--dk-text-on-accent); background: var(--dk-accent-default); border: 0; border-radius: var(--dk-radius-md); cursor: pointer; }
+      button.primary:hover, .button:hover { background: var(--dk-accent-hover); }
       button:disabled { opacity: .45; cursor: not-allowed; }
-      .error { color: var(--error); font-weight: 600; }
+      .error { color: var(--dk-danger-text); font-weight: 600; }
       .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
       footer { margin-top: 1.25rem; text-align: center; }
     </style>

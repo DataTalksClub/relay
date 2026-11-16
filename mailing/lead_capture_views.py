@@ -5,8 +5,11 @@ second CloudFront hostname and carry no session: the double opt-in email is the
 proof of address ownership, the honeypot and rate limits keep scripts out.
 """
 
+import functools
 import logging
+from pathlib import Path
 
+from django.conf import settings
 from django.http import Http404, HttpResponse, HttpResponseRedirect
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
@@ -41,8 +44,16 @@ def _client_ip(request):
     return (forwarded[0] if forwarded else request.META.get("REMOTE_ADDR", ""))[:64]
 
 
+@functools.cache
+def _tokens_css():
+    # The pages are served from materials.dtcdev.click, where /static/ is not
+    # routed, so dakit's colour/space roles are inlined (about 5 KB).
+    path = Path(settings.BASE_DIR) / "static" / "dakit" / "tokens.css"
+    return path.read_text() if path.is_file() else ""
+
+
 def _render(request, template, context, status=200):
-    response = render(request, f"leads/{template}", context, status=status)
+    response = render(request, f"leads/{template}", {"tokens_css": _tokens_css(), **context}, status=status)
     response["X-Robots-Tag"] = "noindex"
     response["Cache-Control"] = "no-store"
     response["Referrer-Policy"] = "no-referrer"
