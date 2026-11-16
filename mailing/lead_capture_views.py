@@ -37,9 +37,14 @@ MESSAGES = {
 
 
 def _client_ip(request):
-    # Leftmost X-Forwarded-For entry: the visitor as seen by the first
-    # CloudFront hop. Best effort (a client can prepend entries); it only feeds
-    # the per-IP rate limit and the consent evidence.
+    # materials.dtcdev.click runs a CloudFront Function that overwrites
+    # X-Materials-Client-Ip with the viewer address; behind two CloudFront hops
+    # X-Forwarded-For starts with an edge address instead. Both are best effort
+    # (a direct request to Relay can set either); they feed only the per-IP
+    # rate limit and the consent evidence.
+    viewer = request.headers.get("X-Materials-Client-Ip", "").strip()
+    if viewer:
+        return viewer[:64]
     forwarded = [part.strip() for part in request.META.get("HTTP_X_FORWARDED_FOR", "").split(",") if part.strip()]
     return (forwarded[0] if forwarded else request.META.get("REMOTE_ADDR", ""))[:64]
 

@@ -73,8 +73,10 @@ edited template unless you pass `--update-template`.
 Its origin is `relay.datatalks.club` with origin path `/m`, caching disabled,
 and the viewer Host header is not forwarded (`AllViewerExceptHostHeader`). So the
 production Relay edge, its WAF and its origin secret apply unchanged, and no
-Coolify routing or Terraform-managed edge was touched. Relay serves the pages
-at `/m/<slug>`; `RELAY_LEADS_BASE_URL` (default
+Coolify routing or Terraform-managed edge was touched. A viewer-request CloudFront
+Function (`relay-materials-client-ip`) overwrites `X-Materials-Client-Ip` with
+the visitor address, because behind two CloudFront hops `X-Forwarded-For` starts
+with an edge address. Relay serves the pages at `/m/<slug>`; `RELAY_LEADS_BASE_URL` (default
 `https://materials.dtcdev.click`) builds the links in emails and QR codes.
 
 Settings: `RELAY_LEADS_ORG`, `RELAY_LEADS_CLIENT`, `RELAY_LEADS_AUDIENCE`,
