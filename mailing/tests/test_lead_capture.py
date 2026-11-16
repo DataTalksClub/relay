@@ -133,6 +133,17 @@ def test_signup_sends_one_confirmation_and_stores_pending_lead_with_consent(clie
     assert not ContactTag.objects.exists()
 
 
+def test_viewer_ip_header_from_the_edge_wins(client, event, enqueued):
+    client.post(
+        "/m/test-talk",
+        data={"email": "dev+ip@dtcdev.click", "consent": "yes"},
+        HTTP_X_FORWARDED_FOR="3.172.103.105, 198.51.100.1",
+        HTTP_X_MATERIALS_CLIENT_IP="192.0.2.44",
+    )
+
+    assert ContactSourceMetadata.objects.get().metadata["last_submit_ip"] == "192.0.2.44"
+
+
 def test_double_submit_is_idempotent(client, event, enqueued):
     submit(client)
     again = submit(client, email="DEV+lead@dtcdev.click")

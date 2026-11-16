@@ -16,9 +16,9 @@ example_context:
 
 Hi{% if name %} {{ name }}{% endif %},
 
-thanks for coming to **{{ event_title }}**!
+thanks for signing up for the materials from **{{ event_title }}**.
 
-Please confirm your email address to get the materials{% if offer %}: {{ offer }}{% endif %}.
+Please confirm your email address to get them.{% if offer %} {{ offer }}{% endif %}
 
 [Confirm and get the materials]({{ confirm_url }})
 
