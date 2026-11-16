@@ -10,6 +10,41 @@ from mailing.management.commands import drain_sqs_ingress
 from mailing.services import task_leases
 
 
+def test_short_task_finishes_without_heartbeat_database_work(monkeypatch):
+    database_calls = []
+    monkeypatch.setattr(task_leases, "connection", SimpleNamespace(
+        vendor="postgresql", close=lambda: database_calls.append("close"),
+    ))
+    monkeypatch.setattr(task_leases, "record_task_heartbeat", lambda *_: database_calls.append("beat"))
+    monkeypatch.setattr(task_leases.TaskHeartbeat.objects, "filter", lambda **_: database_calls.append("delete"))
+    with task_leases.HeartbeatThread("short-task", "worker", interval=3600) as heartbeat:
+        assert heartbeat._thread.is_alive()
+    assert not heartbeat._thread.is_alive()
+    assert database_calls == []
+
+
+def test_long_task_waits_for_first_tick_and_keeps_beating(monkeypatch):
+    calls = []
+    heartbeat = task_leases.HeartbeatThread("long-task", "worker", interval=30)
+    waits = iter([False, False, True])
+    def wait(interval):
+        calls.append(("wait", interval))
+        return next(waits)
+    heartbeat._stop = SimpleNamespace(wait=wait, set=lambda: None)
+    monkeypatch.setattr(heartbeat, "_beat", lambda: calls.append("beat"))
+    monkeypatch.setattr(task_leases, "connection", SimpleNamespace(close=lambda: calls.append("close")))
+    heartbeat._run()
+    assert calls == [("wait", 30), "beat", ("wait", 30), "beat", ("wait", 30), "close"]
+    assert heartbeat._heartbeat_started
+    # Once a heartbeat was attempted, context cleanup still removes its row.
+    heartbeat._thread = SimpleNamespace(join=lambda **_: None, is_alive=lambda: False)
+    monkeypatch.setattr(task_leases.TaskHeartbeat.objects, "filter", lambda **kwargs: SimpleNamespace(
+        delete=lambda: calls.append(("delete", kwargs)),
+    ))
+    heartbeat.__exit__(None, None, None)
+    assert calls[-1] == ("delete", {"task_id": "long-task"})
+
+
 def test_campaign_task_heartbeat_refreshes_container_heartbeat(monkeypatch):
 
     task_beats = []

@@ -41,13 +41,14 @@ def record_task_heartbeat(task_id, worker_id=""):
 
 
 class HeartbeatThread:
-    """Beats for one running task from a background thread (own DB connection)."""
+    """Beats after the first interval, using a background DB connection if needed."""
 
     def __init__(self, task_id, worker_id, interval=None):
         self.task_id = task_id
         self.worker_id = worker_id
         self.interval = interval or settings.RELAY_TASK_HEARTBEAT_SECONDS
         self._stop = threading.Event()
+        self._heartbeat_started = False
         self._thread = threading.Thread(target=self._run, name=f"heartbeat-{task_id}", daemon=True)
 
     def _beat(self):
@@ -64,11 +65,15 @@ class HeartbeatThread:
 
     def _run(self):
         try:
-            self._beat()
+            # started_at protects the lease until the first interval elapses.
+            # Most provider events finish sooner: opening a heartbeat database
+            # connection and writing/deleting its row adds work per short task.
             while not self._stop.wait(self.interval):
+                self._heartbeat_started = True
                 self._beat()
         finally:
-            connection.close()
+            if self._heartbeat_started:
+                connection.close()
 
     def __enter__(self):
         if connection.vendor == "sqlite":
@@ -86,6 +91,8 @@ class HeartbeatThread:
         self._thread.join(timeout=10)
         if self._thread.is_alive():
             logger.error("task heartbeat thread did not stop within 10s task=%s", self.task_id)
+        if not self._heartbeat_started:
+            return False
         try:
             TaskHeartbeat.objects.filter(task_id=self.task_id).delete()
         except Exception:
