@@ -285,3 +285,13 @@ def test_api_is_scoped_to_key_client(other_client, issue):
     assert response.status_code == 404
     assert HttpClient().get("/api/newsletter-issues/weekly-303").status_code == 401
     assert NewsletterBlock.objects.filter(issue=issue).count() == 2
+
+
+def test_kicker_dash_switches_the_section_label_off():
+    with_label = svc.render_block_html("recording", {"title": "First recording"})
+    without_label = svc.render_block_html("recording", {"title": "Second recording", "kicker": "-"})
+    assert "RECORDINGS" in with_label
+    assert "RECORDINGS" not in without_label
+    assert ">-<" not in without_label
+    assert "RECORDINGS" not in svc.render_block_text("recording", {"title": "Second", "kicker": "-"})
+    assert svc.validate_block("recording", {"title": "Second", "kicker": "-"})["kicker"] == "-"

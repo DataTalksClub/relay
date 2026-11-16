@@ -65,7 +65,7 @@ TEST_SEND_DEADLINE_SECONDS = 40
 
 
 FIELD_LABELS = {
-    "kicker": "Section label",
+    "kicker": "Section label (\"-\" for none)",
     "title": "Title",
     "meta": "Date / details line",
     "image_url": "Image URL",
@@ -497,7 +497,14 @@ def _lines(value):
     return [line.strip() for line in (value or "").splitlines() if line.strip()]
 
 
+NO_LABEL = "-"
+
+
 def _value(spec, data, name):
+    # A kicker of "-" switches the section label off, so the second recording or
+    # podcast of a section does not repeat the label (and divider) of the first.
+    if name == "kicker" and data.get(name) == NO_LABEL:
+        return ""
     return data.get(name) or spec["defaults"].get(name, "")
 
 
