@@ -153,13 +153,14 @@ RELAY_TASK_LEASE_SECONDS = max(
 RELAY_STALE_BATCH_AUTO_REENQUEUE = bool_env("RELAY_STALE_BATCH_AUTO_REENQUEUE", default=False)
 
 RELAY_QUEUE_AGE_ALERT_SECONDS = {
-    "provider-events": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_PROVIDER_EVENTS_SECONDS", "900")),
+    "provider-events": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_PROVIDER_EVENTS_SECONDS", "120")),
     "tracking": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_TRACKING_SECONDS", "300")),
     # Transactional mail must flow in seconds even mid-blast; the campaign
     # lane intentionally has no age alert (a READY backlog is normal during
     # a send -- progress is tracked per-recipient, not per-task).
     "transactional": int(os.environ.get("RELAY_QUEUE_AGE_ALERT_TRANSACTIONAL_SECONDS", "300")),
 }
+RELAY_SES_SQS_LAG_DEPTH_THRESHOLD = max(1, int(os.environ.get("RELAY_SES_SQS_LAG_DEPTH_THRESHOLD", "5000")))
 RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_BASE_SECONDS", "30")))
 RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS = max(1, int(os.environ.get("RELAY_PROVIDER_EVENT_RETRY_MAX_SECONDS", "900")))
 # Campaign SES-throttling retries include the first attempt. A batch that hits

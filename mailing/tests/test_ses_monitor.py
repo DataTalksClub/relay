@@ -810,3 +810,57 @@ def test_metric_outage_cannot_discard_independently_proven_dlq_fault(monkeypatch
     alerts = check_ses_delivery_gap(now=timezone.now(), cw_client=cw)
     assert [a['kind'] for a in alerts] == ['ses_sqs_dlq_nonempty']
     assert len(sent) == 1
+
+
+@pytest.mark.parametrize('depth,threshold,expected', [
+    (4999, 5000, []),
+    (5000, 5000, ['ses_sqs_ingress_lag']),
+])
+def test_transport_pages_sqs_depth_lag_alert(settings, depth, threshold, expected):
+    settings.SQS_SES_WEBHOOKS_QUEUE_URL = 'https://sqs.eu-west-1.amazonaws.com/123/ses-source'
+    settings.RELAY_SES_SQS_LAG_DEPTH_THRESHOLD = threshold
+    alerts = check_ses_transport_health(
+        timezone.now(),
+        cw_client=_transport_cw(age=10),
+        sqs_client=_transport_sqs(source_depth=depth),
+    )
+    assert [a['kind'] for a in alerts] == expected
+
+
+@pytest.mark.django_db
+def test_received_sns_notification_ids_includes_batch_tasks():
+    now = timezone.now()
+    stamp = (now - timedelta(minutes=3)).isoformat()
+    DBTaskResult.objects.create(
+        task_path="mailing.tasks.process_ses_webhook_batch",
+        queue_name="provider-events",
+        backend_name="default",
+        args_kwargs={
+            "args": [[
+                {
+                    "provider_event_id": "batch-sns-1",
+                    "metadata": {
+                        "sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events",
+                        "sns_timestamp": stamp,
+                    },
+                },
+                {
+                    "provider_event_id": "batch-sns-2",
+                    "metadata": {
+                        "sns_topic_arn": "arn:aws:sns:eu-west-1:123:relay-production-ses-events",
+                        "sns_timestamp": stamp,
+                    },
+                },
+            ]],
+            "kwargs": {},
+        },
+        status="READY",
+        priority=0,
+        run_after=now,
+    )
+    ids = ses_monitor_module.received_sns_notification_ids(
+        "relay-production-ses-events",
+        now - timedelta(minutes=30),
+        now,
+    )
+    assert ids == {"batch-sns-1", "batch-sns-2"}

@@ -30,9 +30,18 @@ def enqueue_send_tasks(task, payloads, *, entity_type, owner_id="", correlation_
                 name=task.name, func=task.module_path,
                 correlation_id=correlation_id or context.current_correlation_id() or uuid.uuid4(),
                 parent_id=context.current_run_id(),
-                owner_id=str(owner_id or payload.get("client_id") or context.current_owner_id() or ""),
+                owner_id=str(
+                    owner_id
+                    or (payload.get("client_id") if isinstance(payload, dict) else "")
+                    or context.current_owner_id()
+                    or ""
+                ),
                 entity_type=entity_type,
-                entity_id=str(payload.get("campaign_id") or payload.get("transactional_message_id") or ""),
+                entity_id=str(
+                    (payload.get("campaign_id") or payload.get("transactional_message_id") or "")
+                    if isinstance(payload, dict)
+                    else ""
+                ),
             ) for row, payload in zip(rows, payloads, strict=True)
         ], batch_size=500)
     return True

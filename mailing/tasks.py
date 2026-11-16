@@ -331,6 +331,19 @@ def process_ses_webhook_event(payload, *, attempt=1):
     )
 
 
+@task(queue_name="provider-events")
+def process_ses_webhook_batch(payloads, *, attempt=1):
+    """Apply a batch of SES delivery/bounce/complaint notifications in bulk."""
+    from mailing.services.ses_webhooks import process_ses_webhook_batch as _process_batch  # noqa: PLC0415
+
+    return _run_provider_event(
+        process_ses_webhook_batch,
+        lambda: _process_batch(payloads),
+        payloads,
+        attempt,
+    )
+
+
 def _summarise_ses_result(result):
     if result is None:
         return None

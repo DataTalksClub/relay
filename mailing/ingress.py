@@ -49,9 +49,9 @@ def _handle_inbound_email_record(payload, record):
 
 
 def ses_webhooks_ingress_handler(event, context=None):
-    # SQS supplies at most ten records. Persist their independent tasks and
-    # TaskRun rows together, rather than paying the enqueue signal/transaction
-    # overhead once per notification. Never acknowledge before both commit.
+    # Persist all valid records in the ingress flush as one batch task (one
+    # DBTaskResult + one TaskRun), rather than one row per notification. Never
+    # acknowledge before both commit.
     payloads = []
 
     def collect(payload, record):
@@ -61,7 +61,7 @@ def ses_webhooks_ingress_handler(event, context=None):
     if not payloads:
         return response
     try:
-        if enqueue_send_tasks(tasks.process_ses_webhook_event, payloads, entity_type=""):
+        if enqueue_send_tasks(tasks.process_ses_webhook_batch, [payloads], entity_type=""):
             return response
     except Exception:
         # The bulk helper is atomic: a failure leaves every valid message on

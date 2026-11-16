@@ -4,6 +4,8 @@ work enqueued by Django.
 """
 
 import json
+import queue as py_queue
+import threading
 from pathlib import Path
 
 import pytest
@@ -18,7 +20,7 @@ import mailing.management.commands.drain_sqs_ingress as drain_module
 from mailing.ingress import INGRESS_WORKER_NAMES, get_ingress_config
 from mailing.models import EmailEvent
 from mailing.sqs_worker import SqsWorker, WorkerConfig, WorkerResult
-from mailing.tasks import process_ses_webhook_event
+from mailing.tasks import process_ses_webhook_batch
 from mailing.tests.test_ses_webhooks import ses_payload, sns_payload
 from taskdeck.models import TaskRun
 
@@ -57,7 +59,7 @@ def _ses_payload(mail_id="ses-1"):
     }
 
 
-def test_ses_ingress_enqueues_a_task_per_message(settings):
+def test_ses_ingress_enqueues_a_batch_task_for_messages(settings):
     settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
     client = FakeSqsClient([_message("m1", _ses_payload("a")), _message("m2", _ses_payload("b"))])
 
@@ -66,11 +68,12 @@ def test_ses_ingress_enqueues_a_task_per_message(settings):
 
     assert result.received == 2
     assert result.deleted == 2
-    runs = TaskRun.objects.filter(name="process_ses_webhook_event")
-    assert runs.count() == 2, "each notification becomes a visible task run"
-    queued = DBTaskResult.objects.filter(task_path__endswith="process_ses_webhook_event")
-    assert queued.count() == 2
+    runs = TaskRun.objects.filter(name="process_ses_webhook_batch")
+    assert runs.count() == 1, "the SQS batch becomes a single visible task run"
+    queued = DBTaskResult.objects.filter(task_path__endswith="process_ses_webhook_batch")
+    assert queued.count() == 1
     assert set(queued.values_list("queue_name", flat=True)) == {"provider-events"}
+    assert len(queued.get().args_kwargs["args"][0]) == 2
 
 
 def test_ses_ingress_batches_task_and_status_inserts(settings):
@@ -79,7 +82,8 @@ def test_ses_ingress_batches_task_and_status_inserts(settings):
     with CaptureQueriesContext(connection) as queries:
         result = SqsWorker(get_ingress_config("ses-webhooks"), client=client).run_once()
     assert (result.received, result.deleted, result.failed) == (10, 10, 0)
-    assert DBTaskResult.objects.count() == TaskRun.objects.count() == 10
+    assert DBTaskResult.objects.count() == TaskRun.objects.count() == 1
+    assert len(DBTaskResult.objects.get().args_kwargs["args"][0]) == 10
     inserts = [q["sql"] for q in queries if q["sql"].startswith("INSERT INTO")]
     assert len(inserts) == 2, "one result insert and one visible-status insert per SQS batch"
     assert all(run.result_id in {str(pk) for pk in DBTaskResult.objects.values_list("pk", flat=True)}
@@ -162,11 +166,12 @@ def test_ses_ingress_preserves_transport_timestamps_through_task_processing(sett
     result = SqsWorker(get_ingress_config("ses-webhooks"), client=FakeSqsClient([message])).run_once()
 
     assert result.deleted == 1
-    queued = DBTaskResult.objects.get(task_path__endswith="process_ses_webhook_event")
-    queued_payload = queued.args_kwargs["args"][0]
+    queued = DBTaskResult.objects.get(task_path__endswith="process_ses_webhook_batch")
+    queued_payloads = queued.args_kwargs["args"][0]
+    assert len(queued_payloads) == 1
     # Processing later must retain the receipt time captured by ingress.
-    received_at = queued_payload["received_at"]
-    process_ses_webhook_event.func(queued_payload)
+    received_at = queued_payloads[0]["received_at"]
+    process_ses_webhook_batch.func(queued_payloads)
     metadata = EmailEvent.objects.get().metadata
     assert metadata["received_at"] == received_at
     assert metadata["sqs_sent_timestamp"] == "1792756799000"
@@ -231,7 +236,7 @@ def test_ses_ingress_processes_and_deletes_delivery_delay_notification(settings)
     assert result.failed == 0
     assert result.deleted == 1
     assert client.deleted_receipts == ["receipt-m-delay"]
-    queued = DBTaskResult.objects.filter(task_path__endswith="process_ses_webhook_event")
+    queued = DBTaskResult.objects.filter(task_path__endswith="process_ses_webhook_batch")
     assert queued.count() == 1
 
 
@@ -337,3 +342,53 @@ def test_drain_once_reports_batch_result(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "received=2 deleted=2 failed=0" in out
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_sqs_worker_batches_across_pollers_and_isolates_failures(settings):
+    settings.SQS_SES_WEBHOOKS_QUEUE_URL = "https://sqs.example/ses"
+    q = py_queue.Queue()
+    for i in range(6):
+        q.put(_message(f"good-{i}", _ses_payload(f"mail-{i}")))
+    q.put(_message("bad-1", {"Type": "Notification", "Message": "bad-json"}))
+
+    deleted_lock = threading.Lock()
+    deleted_receipts = []
+
+    class ThreadSafeFakeSqsClient:
+        def receive_message(self, **kwargs):
+            batch = []
+            max_n = kwargs.get("MaxNumberOfMessages", 10)
+            while len(batch) < max_n:
+                try:
+                    batch.append(q.get_nowait())
+                except py_queue.Empty:
+                    break
+            return {"Messages": batch}
+
+        def delete_message_batch(self, QueueUrl, Entries):
+            with deleted_lock:
+                deleted_receipts.extend(entry["ReceiptHandle"] for entry in Entries)
+            return {"Successful": [{"Id": entry["Id"]} for entry in Entries], "Failed": []}
+
+    worker = SqsWorker(
+        get_ingress_config("ses-webhooks"),
+        client=ThreadSafeFakeSqsClient(),
+        concurrency=3,
+        writer_batch_max_records=10,
+    )
+    results = []
+    for res in worker.run_forever(should_stop=lambda: q.empty() and sum(r.received for r in results) >= 7):
+        results.append(res)
+
+    assert sum(r.received for r in results) == 7
+    assert sum(r.deleted for r in results) == 6
+    assert sum(r.failed for r in results) == 1
+    assert len(deleted_receipts) == 6
+    assert "receipt-bad-1" not in deleted_receipts
+    enqueued_payloads = [
+        p
+        for row in DBTaskResult.objects.filter(task_path__endswith="process_ses_webhook_batch")
+        for p in row.args_kwargs["args"][0]
+    ]
+    assert len(enqueued_payloads) == 6

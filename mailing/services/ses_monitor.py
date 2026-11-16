@@ -245,7 +245,26 @@ def received_sns_notification_ids(topic_name, window_start, window_end):
         KT("args_kwargs__args__0__provider_event_id"),
         KT("args_kwargs__args__0__metadata__sns_timestamp"),
     )
-    return _notification_ids(receipts.iterator(), window_start, window_end)
+    ids = _notification_ids(receipts.iterator(), window_start, window_end)
+
+    topic_suffix = ":" + topic_name
+    batches = DBTaskResult.objects.filter(
+        task_path="mailing.tasks.process_ses_webhook_batch",
+        enqueued_at__gte=window_start - timedelta(minutes=2),
+    ).order_by().values_list("args_kwargs", flat=True)
+    batch_rows = []
+    for args_kwargs in batches.iterator(chunk_size=500):
+        args = (args_kwargs or {}).get("args") or []
+        payloads = args[0] if args and isinstance(args[0], list) else []
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            meta = payload.get("metadata") or {}
+            if (meta.get("sns_topic_arn") or "").endswith(topic_suffix):
+                batch_rows.append((payload.get("provider_event_id"), meta.get("sns_timestamp")))
+    if batch_rows:
+        ids |= _notification_ids(batch_rows, window_start, window_end)
+    return ids
 
 
 def check_ses_transport_health(now, *, cw_client=None, sqs_client=None):
@@ -269,6 +288,10 @@ def check_ses_transport_health(now, *, cw_client=None, sqs_client=None):
         depth = int(attrs.get("ApproximateNumberOfMessages", 0)) + int(
             attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
         queue_name = urlsplit(queue_url).path.rsplit("/", 1)[-1]
+        lag_depth_threshold = getattr(settings, "RELAY_SES_SQS_LAG_DEPTH_THRESHOLD", 5000)
+        if lag_depth_threshold > 0 and depth >= lag_depth_threshold:
+            alerts.append({"kind": "ses_sqs_ingress_lag", "queue": queue_name,
+                           "depth": depth, "threshold": lag_depth_threshold})
         if depth:
             cw = cw_client or aws_client("cloudwatch")
             age = cw.get_metric_statistics(
