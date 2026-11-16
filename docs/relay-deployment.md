@@ -406,3 +406,31 @@ stop before their next SES call, within one in-flight call):
    transactions.
 2. **CLI:** `datamailer operator campaigns stop <external_key> --confirm` (or `pause`).
 3. **Web UI:** Open the campaign detail page and click **Stop** (or **Pause**).
+
+
+## Campaign capacity and PostgreSQL headroom
+
+The three campaign workers each have 2 CPU / 1 GiB, 32 sender threads and a
+process-wide psycopg pool capped at **six PostgreSQL sockets**, including the
+main worker and task heartbeat. Sender threads return their checkout before
+SES network calls and limiter sleeps. This caps all three workers at 18
+connections even while 96 SES requests are in flight; the previous cap used
+42 connections including main/heartbeat. The configured account budget is
+still 240/s, shared across the workers and transactional lane (SES limit 250/s).
+Idle pool sockets shrink after 30 seconds. Other roles retain their existing
+connection configuration. Deployments without `RELAY_DB_POOL_MAX_SIZE` retain
+the twelve-thread safety cap. Never increase threads on an unpooled deployment.
+
+`RELAY_DB_POOL_MAX_SIZE` is validated between 3 and 6; pooling sets
+`CONN_MAX_AGE=0` as required by Django. Never return a checkout inside an atomic
+transaction. The campaign send gate, recipient claims, suppression checks,
+unknown-outcome handling and fail-closed shared SES limiter remain in force.
+
+For a live capacity proof, run `scripts/campaign_dev_load.py` through Django's
+shell with a fresh `RELAY_LOAD_RUN` label and `RELAY_LOAD_COUNT` (100–20000).
+This creates a separate client/audience/campaign and only queues generated
+`dev+relay131k-…@dtcdev.click` destinations, rechecked from persisted recipients.
+It refuses a busy campaign queue and never accepts existing campaign/list IDs.
+It reports wall and steady-state rates plus 100 ms sampled PostgreSQL connection
+peaks. It sends real SES messages: run only under explicit dev-load authorization.
+Do not use any real list or change AISHL campaigns 253/254 for this proof.

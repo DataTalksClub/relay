@@ -279,6 +279,16 @@ if DATABASES["default"]["ENGINE"].endswith("postgresql"):
         "keepalives_interval": 10,
         "keepalives_count": 3,
     } | DATABASES["default"]["OPTIONS"]
+    # Opt in only on campaign workers. All sender threads in one process share
+    # this bound (including the main worker and task heartbeat connections).
+    _pool_max = int(os.environ.get("RELAY_DB_POOL_MAX_SIZE", "0"))
+    if _pool_max:
+        if not 3 <= _pool_max <= 6:
+            raise ValueError("RELAY_DB_POOL_MAX_SIZE must be between 3 and 6")
+        DATABASES["default"]["CONN_MAX_AGE"] = 0
+        DATABASES["default"]["OPTIONS"]["pool"] = {
+            "min_size": 0, "max_size": _pool_max, "max_idle": 30, "timeout": 10,
+        }
     # Web processes only (set by gunicorn.conf.py): a request never waits more
     # than this on a row lock. It fails loudly instead of pinning a thread
     # until every worker is busy and the proxy serves 503 (2026-11-09).

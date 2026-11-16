@@ -26,6 +26,7 @@ from django.db.models.functions import Greatest
 from django.db.utils import DatabaseError, IntegrityError
 from django.utils import timezone
 
+from mailing.db_pool import release_pooled_connection
 from mailing.models import SesRateLimitBucket
 
 logger = logging.getLogger(__name__)
@@ -202,6 +203,7 @@ def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
                     "ses_rate_limit_lock_contention bucket=%s kind=%s error_type=%s",
                     bucket, kind, type(exc).__name__,
                 )
+                release_pooled_connection()
                 time.sleep(min(config["poll_interval"], max(remaining, 0.001)))
                 continue
             logger.error(
@@ -230,6 +232,7 @@ def acquire_ses_permit(*, cost=1, kind=BULK, timeout=None, key=None):
             raise SesRateLimiterTimeout(
                 f"SES rate limiter permit wait timed out; not sending (bucket={bucket})"
             )
+        release_pooled_connection()
         time.sleep(min(max(sleep_hint, 0.001), config["poll_interval"], max(remaining, 0.001)))
 
 

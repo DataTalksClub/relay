@@ -258,8 +258,11 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.3"
-    mem_limit: 512m
+    cpus: "2.0"
+    mem_limit: 1g
+    environment:
+      RELAY_DB_POOL_MAX_SIZE: "6"
+      RELAY_CAMPAIGN_SEND_CONCURRENCY: "32"
     command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
     healthcheck:
       test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
@@ -274,8 +277,11 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.3"
-    mem_limit: 512m
+    cpus: "2.0"
+    mem_limit: 1g
+    environment:
+      RELAY_DB_POOL_MAX_SIZE: "6"
+      RELAY_CAMPAIGN_SEND_CONCURRENCY: "32"
     command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
     healthcheck:
       test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
@@ -290,8 +296,11 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.3"
-    mem_limit: 512m
+    cpus: "2.0"
+    mem_limit: 1g
+    environment:
+      RELAY_DB_POOL_MAX_SIZE: "6"
+      RELAY_CAMPAIGN_SEND_CONCURRENCY: "32"
     command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
     healthcheck:
       test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]

@@ -46,3 +46,16 @@ def test_web_database_timeouts_are_applied_to_postgres_options():
     assert result.returncode == 0, result.stderr
     assert "lock_timeout=2000" in result.stdout
     assert "statement_timeout=15000" in result.stdout
+
+
+def test_campaign_pool_has_a_hard_bound_and_disables_persistent_checkouts():
+    result = _run_settings(
+        {"RELAY_DB_POOL_MAX_SIZE": "6"},
+        "from relay.settings import DATABASES; db = DATABASES['default']; "
+        "assert db['CONN_MAX_AGE'] == 0; assert db['OPTIONS']['pool']['max_size'] == 6; "
+        "assert db['OPTIONS']['pool']['min_size'] == 0",
+    )
+    assert result.returncode == 0, result.stderr
+    invalid = _run_settings({"RELAY_DB_POOL_MAX_SIZE": "32"}, "import relay.settings")
+    assert invalid.returncode != 0
+    assert "must be between 3 and 6" in invalid.stderr

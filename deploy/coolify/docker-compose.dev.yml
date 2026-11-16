@@ -12,7 +12,7 @@
 #                      (transactional sends + legacy default drain; never runs
 #                      campaign batches)
 #   campaign-worker    django.tasks DB worker on queue "campaign" (exactly ONE
-#                      process: the SES rate limiter is per-process)
+#                      process on DEV; all replicas share the Postgres SES limiter)
 #   provider-events-worker[-2..2]  django.tasks DB workers on queue "provider-events" (parallel consumers)
 #   tracking-worker    django.tasks DB worker on queue "tracking" (opens/clicks/deferred unsubscribes)
 #   scheduler          due campaigns/schedules, lease expiry, recovery, heartbeat
@@ -77,10 +77,13 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    cpus: "0.25"
-    mem_limit: 512m
-    # The ONLY consumer of the campaign lane (exactly one process: the SES
-    # rate limiter is per-process).
+    cpus: "2.0"
+    mem_limit: 1g
+    environment:
+      RELAY_DB_POOL_MAX_SIZE: "6"
+      RELAY_CAMPAIGN_SEND_CONCURRENCY: "32"
+    # One DEV consumer; use three for the deployment-scale load proof.
+    # The SES limiter is shared across all processes.
     command: ["python", "manage.py", "db_worker", "--queue-name", "campaign", "--interval", "1"]
     healthcheck:
       test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/relay-db-heartbeat))) -lt 105"]
