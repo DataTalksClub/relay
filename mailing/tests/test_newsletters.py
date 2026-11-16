@@ -93,7 +93,8 @@ def test_render_escapes_html_and_neutralises_script_links(issue):
 def test_test_render_is_marked_and_untracked(issue):
     rendered = svc.render_issue(issue, test=True)
     assert rendered["subject"] == "[TEST] DataTalks.Club Weekly #303"
-    assert "TEST EMAIL" in rendered["html_body"] and rendered["text_body"].startswith("[TEST EMAIL")
+    # No "TEST EMAIL" banner: a test looks exactly like the real issue (only the subject says [TEST]).
+    assert "TEST EMAIL" not in rendered["html_body"] and "TEST EMAIL" not in rendered["text_body"]
     assert "/t/c/" not in rendered["html_body"] and "/t/o/" not in rendered["html_body"]
     assert "/unsubscribe/" not in rendered["html_body"]
     assert rendered["html_body"].count("<a ses:no-track ") == rendered["html_body"].count("<a ")

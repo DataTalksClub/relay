@@ -285,10 +285,15 @@ def note_row(html):
 def sections_html(items):
     """``items``: ``[(block_type, rows_html)]`` in order -> the content sections.
 
-    Like #302: promo blocks are lavender sections; every other block is a white
-    section that starts with a divider (except right after the intro, whose
+    Like #301/#302: promo blocks are lavender sections; every other block is a
+    white section that starts with a divider (except right after the intro, whose
     divider is in the skeleton); consecutive course cards share one section with
     no divider between them. A closing divider precedes the footer.
+
+    Only the first of two adjacent promo blocks is lavender: #301 put the course
+    promo that followed the sponsored card in a white section with a divider, so
+    the sponsored card ends visibly. Two lavender sections back to back read as
+    one card (the #303 test send).
     """
     out, current, previous = [], [], "intro"
 
@@ -298,7 +303,7 @@ def sections_html(items):
             current.clear()
 
     for block_type, rows in items:
-        if block_type in PROMO_TYPES:
+        if block_type in PROMO_TYPES and previous not in PROMO_TYPES:
             flush()
             out.append(section(rows, background=PROMO_BACKGROUND, css_class="mceSection46"))
         elif block_type in COURSE_TYPES and previous in COURSE_TYPES and current:

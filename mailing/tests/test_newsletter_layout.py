@@ -125,7 +125,8 @@ def test_real_send_points_preferences_and_unsubscribe_at_relay(issue_302):
 def test_test_send_keeps_the_sentence_but_disables_recipient_links(issue_302):
     rendered = svc.render_issue(issue_302, test=True)
     assert rendered["subject"].startswith("[TEST] ")
-    assert "TEST EMAIL" in rendered["html_body"]
+    assert "TEST EMAIL" not in rendered["html_body"] and "fff4ce" not in rendered["html_body"]
+    assert "TEST EMAIL" not in rendered["text_body"]
     assert UNSUB_LINE in _visible_text(rendered["html_body"])
     assert "[UNIQID]" not in rendered["html_body"] and "[UNIQID]" not in rendered["text_body"]
     real = svc.render_issue(issue_302)
@@ -179,6 +180,18 @@ def test_layout_sections_follow_302_rules():
     assert html.count(layout.DIVIDER_ROW) == 3
     assert layout.COURSE_GAP_ROW + "<tr>c</tr>" in html
     assert layout.sections_html([]) == ""
+
+
+def test_promo_after_sponsor_closes_the_sponsored_card():
+    # #303 test send: sponsor then course promo rendered as two touching lavender
+    # sections, so the course looked like part of the sponsored card. #301 drew the
+    # course promo after the sponsor as a white section that starts with a divider.
+    sponsor, promo, course = ("sponsor", "<tr>s</tr>"), ("course_promo", "<tr>p</tr>"), ("course_update", "<tr>c</tr>")
+    html = layout.sections_html([sponsor, promo, course])
+    assert html.count(f"background-color:{layout.PROMO_BACKGROUND}") == 1
+    assert html.index("<tr>s</tr>") < html.index(f"{layout.DIVIDER_ROW}<tr>p</tr>")
+    # promo divider, course divider, closing divider
+    assert html.count(layout.DIVIDER_ROW) == 3
 
 
 def test_markdown_uses_the_302_text_conventions():
