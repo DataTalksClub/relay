@@ -259,8 +259,7 @@ services:
     image: ghcr.io/datatalksclub/relay:__IMAGE_TAG__
     pull_policy: always
     restart: unless-stopped
-    # 0.4 keeps combined live + DEV worker ceilings below the 15 CPU budget.
-    cpus: "0.4"
+    cpus: "1.0"
     mem_limit: 1g
     environment:
       RELAY_DB_POOL_MAX_SIZE: "3"
@@ -512,7 +511,8 @@ services:
     # A newsletter produces Send + Delivery notifications per recipient.
     # The former 0.2 CPU ingress capped the entire lane at ~30 events/s,
     # leaving 270k events in SQS while six provider workers waited for work.
-    cpus: "1.0"
+    # 0.4 keeps combined live + DEV worker ceilings below the 15 CPU budget.
+    cpus: "0.4"
     mem_limit: 512m
     command: ["python", "manage.py", "drain_sqs_ingress", "ses-webhooks", "--batch-size", "10", "--wait-time", "20"]
     healthcheck:
