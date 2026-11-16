@@ -48,3 +48,4 @@ jobs:
           mailing/tests/test_campaign_send_throughput.py
           mailing/tests/test_campaign_hard_stop.py
           mailing/tests/test_campaign_suppression_recheck.py
+          mailing/tests/test_contact_search_domain.py

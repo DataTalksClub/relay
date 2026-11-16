@@ -2,7 +2,7 @@
 from mailing.services.operator_ui import active_contact_filters
 
 FILTER_PARAMETERS = {
-    "Email": "q", "Audience": "audience", "Subscription": "subscription_status",
+    "Email": "q", "Domain": "domain", "Audience": "audience", "Subscription": "subscription_status",
     "Verification": "verified", "Validation": "email_validation_status", "Suppression": "suppression",
     "Campaign": "campaign_status", "Skip reason": "skip_reason", "Engagement": "engagement",
     "Includes tag": "include_tags", "Excludes tag": "exclude_tags",

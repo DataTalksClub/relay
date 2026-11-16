@@ -25,9 +25,14 @@
 
     <div class="filter-panel">
       <div class="filter-grid promoted-filter-grid">
-        <div class="form-field full">
-          <label for="q">Email search</label>
-          <input id="q" name="q" type="search" value="{{ filters.query }}" autocomplete="email" placeholder="person@example.com">
+        <div class="form-field">
+          <label for="q">Email contains</label>
+          <input id="q" name="q" type="search" value="{{ filters.query }}" autocomplete="email" placeholder="person@example.com or netcup">
+        </div>
+        <div class="form-field">
+          <label for="domain">Email domain</label>
+          <input id="domain" name="domain" type="search" value="{{ filters.domain }}" autocomplete="off" placeholder="fsu.edu" aria-describedby="domain-help">
+          <small id="domain-help" class="muted">Matches the domain and its subdomains.</small>
         </div>
         <div class="form-field">
           <label for="audience">Audience</label>

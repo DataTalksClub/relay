@@ -16,6 +16,13 @@ from mailing.services.api import (
     validate_bool,
     validate_contact_scope,
 )
+from mailing.services.contact_email_search import (
+    EmailSearchError,
+    filter_email_contains,
+    filter_email_domain,
+    normalize_contains,
+    normalize_domain,
+)
 from mailing.services.contacts import normalize_email, normalize_tag_slug
 
 CSV_COLUMNS = [
@@ -312,6 +319,14 @@ def filtered_contact_queryset(data, authenticated_client):
 
 
 def apply_export_filters(queryset, data, scope):
+    try:
+        email_contains = normalize_contains(data.get("email_contains") or data.get("q"))
+        domain = normalize_domain(data.get("domain"))
+    except EmailSearchError as exc:
+        raise ApiValidationError({exc.field: exc.code}) from exc
+    queryset = filter_email_domain(queryset, domain)
+    queryset = filter_email_contains(queryset, email_contains)
+
     tags = parse_filter_list(data.get("tags"))
     for tag in tags:
         queryset = queryset.filter(contact_tags__tag__audience=scope.audience, contact_tags__tag__slug=normalize_tag_slug(tag))
