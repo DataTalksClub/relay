@@ -16,6 +16,7 @@ cross-sender duplicate guard never has to block one.
 """
 
 import io
+import logging
 import secrets
 import unicodedata
 from dataclasses import dataclass
@@ -44,6 +45,8 @@ from mailing.models import (
 from mailing.services.categories import TRANSACTIONAL_CATEGORY
 from mailing.services.contacts import upsert_contact
 from mailing.services.transactional import TransactionalSendRejected, send_transactional_email_for_client
+
+logger = logging.getLogger(__name__)
 
 TOKEN_SALT = "relay.lead-capture.v1"
 SOURCE_PREFIX = "lead:"
@@ -151,11 +154,21 @@ def _parse_time(value):
         return None
 
 
+class SignupResult(str):
+    """Signup outcome string; ``token`` is set only for ``"confirmed"`` (verified contacts skip the email)."""
+
+    def __new__(cls, status, token=""):
+        obj = super().__new__(cls, status)
+        obj.token = token
+        return obj
+
+
 def request_lead(event, *, email, name="", consent=False, evidence=None):
     """Record a signup and send the confirmation email (at most once per window).
 
-    Returns ``"sent"``, ``"already_sent"`` or ``"suppressed"``; the page shows
-    the same "check your inbox" text for all three, so the form never reveals
+    Returns ``"sent"``, ``"already_sent"``, ``"suppressed"`` or ``"confirmed"``
+    (an already verified contact skips the email and gets the materials at
+    once). The page shows the same "check your inbox" text for the first three, so the form never reveals
     whether an address is known, bounced or unsubscribed.
     """
     if not event.is_active:
@@ -184,9 +197,42 @@ def request_lead(event, *, email, name="", consent=False, evidence=None):
         record = ContactSourceMetadata.objects.select_for_update().get(pk=record.pk)
         metadata = dict(record.metadata or {})
 
+        subscription = Subscription.objects.filter(
+            contact=contact, audience=scope.audience, client=scope.client
+        ).first()
+        if (
+            contact.verified_at is not None
+            and subscription is not None
+            and subscription.status == SubscriptionStatus.SUBSCRIBED
+            and subscription.verified_at is not None
+        ):
+            # Already confirmed earlier (another event): no second opt-in. The
+            # fresh consent for this event is recorded and the materials unlock
+            # at once.
+            metadata.update(
+                {
+                    "event": event.slug,
+                    "event_title": event.title,
+                    "consent_text": event.consent_text,
+                    "last_consent_at": now.isoformat(),
+                    "last_submit_ip": ip,
+                    "user_agent": str(evidence.get("user_agent", ""))[:300],
+                    "referer": str(evidence.get("referer", ""))[:300],
+                }
+            )
+            metadata.setdefault("consent_at", now.isoformat())
+            metadata["skipped_confirmation"] = True
+            if name:
+                metadata["name"] = name
+            record.metadata = metadata
+            record.save(update_fields=["metadata", "updated_at"])
+            token = issue_token(contact.id, event.id)
+            _apply_confirmation(contact, record, scope, event, token, ip=ip, now=now)
+            return SignupResult("confirmed", token)
+
         last_sent = _parse_time(metadata.get("confirmation_sent_at"))
         if last_sent and now - last_sent < timedelta(seconds=settings.RELAY_LEADS_RESEND_SECONDS):
-            return "already_sent"
+            return SignupResult("already_sent")
         if _recent_confirmations(scope, contact.normalized_email) >= settings.RELAY_LEADS_EMAIL_LIMIT:
             raise LeadError("rate_limited", status=429)
 
@@ -230,15 +276,67 @@ def request_lead(event, *, email, name="", consent=False, evidence=None):
                 },
                 scope.client,
             )
-            status = "sent"
+            status = SignupResult("sent")
             metadata["confirmation_sent_at"] = now.isoformat()
             metadata["confirmation_count"] = int(metadata.get("confirmation_count", 0)) + 1
         except TransactionalSendRejected:
-            status = "suppressed"
+            status = SignupResult("suppressed")
             metadata["suppressed_at"] = now.isoformat()
         record.metadata = metadata
         record.save(update_fields=["metadata", "updated_at"])
     return status
+
+
+def _apply_confirmation(contact, record, scope, event, token, *, ip, now):
+    """Subscribe, tag with the event and queue the thank-you email once.
+
+    Runs inside the caller's transaction with ``record`` row-locked, so
+    concurrent confirms serialize and the message and receipt commit together:
+    retries never enqueue a second thank-you.
+    """
+    subscription, _ = Subscription.objects.get_or_create(
+        contact=contact, audience=scope.audience, client=scope.client
+    )
+    if subscription.status != SubscriptionStatus.SUBSCRIBED or subscription.verified_at is None:
+        subscription.status = SubscriptionStatus.SUBSCRIBED
+        subscription.verified_at = subscription.verified_at or now
+        subscription.unsubscribed_at = None
+        subscription.unsubscribe_reason = ""
+        subscription.save()
+    if contact.verified_at is None:
+        contact.verified_at = now
+        contact.save(update_fields=["verified_at", "updated_at"])
+    tag, _ = Tag.objects.get_or_create(audience=scope.audience, slug=event.slug, defaults={"name": event.title})
+    ContactTag.objects.get_or_create(contact=contact, tag=tag)
+    metadata = dict(record.metadata or {})
+    metadata.setdefault("confirmed_at", now.isoformat())
+    metadata["last_confirm_ip"] = ip
+    if event.thank_you_template_key and not metadata.get("thank_you_message_id"):
+        try:
+            result = send_transactional_email_for_client(
+                {
+                    "email": contact.normalized_email,
+                    "template_key": event.thank_you_template_key,
+                    "context": {
+                        "event_title": event.title,
+                        "download_url": f"{event_url(event, '/download')}?t={token}",
+                        "name": metadata.get("name", ""),
+                    },
+                    "audience": scope.audience.slug,
+                    "client": scope.client.slug,
+                    "category_tag": TRANSACTIONAL_CATEGORY,
+                    "metadata": {"lead_event": event.slug, "lead_thank_you": True},
+                },
+                scope.client,
+            )
+            metadata["thank_you_message_id"] = result["message"]["id"]
+            metadata["thank_you_queued_at"] = now.isoformat()
+        except TransactionalSendRejected:
+            # Suppression must not prevent access to the promised download.
+            logger.info("relay_lead_thank_you_suppressed event=%s contact=%s", event.slug, contact.id)
+    record.metadata = metadata
+    record.save(update_fields=["metadata", "updated_at"])
+    return metadata
 
 
 def confirm_lead(event, token, *, ip=""):
@@ -255,25 +353,7 @@ def confirm_lead(event, token, *, ip=""):
         )
         if contact is None or record is None:
             raise LeadError("invalid_token")
-        subscription, _ = Subscription.objects.get_or_create(
-            contact=contact, audience=scope.audience, client=scope.client
-        )
-        if subscription.status != SubscriptionStatus.SUBSCRIBED or subscription.verified_at is None:
-            subscription.status = SubscriptionStatus.SUBSCRIBED
-            subscription.verified_at = subscription.verified_at or now
-            subscription.unsubscribed_at = None
-            subscription.unsubscribe_reason = ""
-            subscription.save()
-        if contact.verified_at is None:
-            contact.verified_at = now
-            contact.save(update_fields=["verified_at", "updated_at"])
-        tag, _ = Tag.objects.get_or_create(audience=scope.audience, slug=event.slug, defaults={"name": event.title})
-        ContactTag.objects.get_or_create(contact=contact, tag=tag)
-        metadata = dict(record.metadata or {})
-        metadata.setdefault("confirmed_at", now.isoformat())
-        metadata["last_confirm_ip"] = ip
-        record.metadata = metadata
-        record.save(update_fields=["metadata", "updated_at"])
+        metadata = _apply_confirmation(contact, record, scope, event, token, ip=ip, now=now)
     return contact, metadata
 
 

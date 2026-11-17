@@ -51,39 +51,39 @@ class Command(BaseCommand):
             client.sender_emails = [{"id": SENDER_ID, "email": sender_email}]
             client.save(update_fields=["default_sender_id", "sender_emails", "updated_at"])
 
-        key = settings.RELAY_LEADS_CONFIRM_TEMPLATE
-        path = Path(settings.BASE_DIR) / "templates" / TEMPLATE_DIR / f"{key}.md"
-        if not path.is_file():
-            raise CommandError(f"Missing template file {path}.")
-        post = frontmatter.load(str(path))
-        fields = {
-            "name": str(post.metadata.get("name") or key),
-            "subject": str(post.metadata["subject"]).strip(),
-            "markdown_body": post.content,
-            "category": str(post.metadata.get("category") or ""),
-            "required_context": [
-                {"name": item.name, "description": item.description}
-                for item in normalize_required_context(post.metadata.get("required_context") or [])
-            ],
-            "example_context": post.metadata.get("example_context") or {},
-            "default_sender_id": client.default_sender_id or SENDER_ID,
-            "is_transactional": True,
-            "is_active": True,
-        }
-        template = EmailTemplate.objects.filter(client=client, key=key).first()
-        if template is None:
-            EmailTemplate.objects.create(client=client, key=key, **fields)
-            template_state = "created"
-        elif options["update_template"]:
-            for name, value in fields.items():
-                setattr(template, name, value)
-            template.save()
-            template_state = "updated"
-        else:
-            template_state = "kept"
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Lead capture ready: organization={organization.slug} audience={audience.slug} "
-                f"client={client.slug} sender={client.sender_emails} template={key} ({template_state})"
+        for key in (settings.RELAY_LEADS_CONFIRM_TEMPLATE, "lead-thank-you"):
+            path = Path(settings.BASE_DIR) / "templates" / TEMPLATE_DIR / f"{key}.md"
+            if not path.is_file():
+                raise CommandError(f"Missing template file {path}.")
+            post = frontmatter.load(str(path))
+            fields = {
+                "name": str(post.metadata.get("name") or key),
+                "subject": str(post.metadata["subject"]).strip(),
+                "markdown_body": post.content,
+                "category": str(post.metadata.get("category") or ""),
+                "required_context": [
+                    {"name": item.name, "description": item.description}
+                    for item in normalize_required_context(post.metadata.get("required_context") or [])
+                ],
+                "example_context": post.metadata.get("example_context") or {},
+                "default_sender_id": client.default_sender_id or SENDER_ID,
+                "is_transactional": True,
+                "is_active": True,
+            }
+            template = EmailTemplate.objects.filter(client=client, key=key).first()
+            if template is None:
+                EmailTemplate.objects.create(client=client, key=key, **fields)
+                template_state = "created"
+            elif options["update_template"]:
+                for name, value in fields.items():
+                    setattr(template, name, value)
+                template.save()
+                template_state = "updated"
+            else:
+                template_state = "kept"
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Lead capture ready: organization={organization.slug} audience={audience.slug} "
+                    f"client={client.slug} sender={client.sender_emails} template={key} ({template_state})"
+                )
             )
-        )

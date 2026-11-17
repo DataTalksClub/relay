@@ -22,8 +22,6 @@ Please confirm your email address to get them.{% if offer %} {{ offer }}{% endif
 
 [Confirm and get the materials]({{ confirm_url }})
 
-The link stays valid, so you can use it again later to download the materials.
-
 If you didn't sign up, ignore this email and you won't hear from me.
 
 Alexey Grigorev

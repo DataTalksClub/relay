@@ -7,7 +7,7 @@ slide and say "scan this and I'll send you the slides".
 ## What happens
 
 1. The visitor enters their email, optionally a name, and ticks the required box
-   "I agree that Alexey Grigorev may contact me and send me materials". The
+   "I agree to be contacted by Alexey Grigorev". The
    button stays disabled until the box is ticked, and the server rejects a
    submit without it.
 2. Relay stores the contact in the `talk-leads` audience (client `talk-leads`,
@@ -18,8 +18,12 @@ slide and say "scan this and I'll send you the slides".
 3. The link in the email opens a page with a "Confirm and get the materials"
    button. Confirmation is a POST, so link scanners can't confirm on someone's
    behalf. On confirm the contact becomes **subscribed** and verified and gets
-   the tag `<event-slug>`, and the page shows the download. The same link keeps
-   working (365 days), so the email is also how they get back to the file.
+   the tag `<event-slug>`, and the page shows the download. For events with a thank-you template, a
+   second email contains the signed PDF link and follow-up message. Repeat
+   confirmation sends no duplicate. Already verified subscribers to talk-leads
+   skip confirmation when signing up for another event: the new consent and
+   event tag are recorded, the materials open immediately, and the event
+   thank-you email is sent once. Signed links work for 365 days.
 4. Later, send the slides as a normal Relay campaign: client `talk-leads`,
    audience `talk-leads`, **include tag** `<event-slug>`. Only confirmed signups
    carry the tag.
@@ -84,3 +88,29 @@ Settings: `RELAY_LEADS_ORG`, `RELAY_LEADS_CLIENT`, `RELAY_LEADS_AUDIENCE`,
 `RELAY_LEADS_EMAIL_LIMIT`/`_WINDOW_SECONDS`, `RELAY_LEADS_IP_LIMIT`/`_WINDOW_SECONDS`,
 `RELAY_LEADS_TOKEN_MAX_AGE_SECONDS`, `RELAY_LEADS_MAX_MATERIAL_BYTES`
 (see `relay/settings.py`).
+
+## Optional email after confirmation
+
+Set an event's **thank_you_template_key** in Lead events admin, or use
+`uv run python manage.py lead_event set <slug> --thank-you-template-key lead-thank-you`.
+Blank leaves the event's existing download-only behavior unchanged.
+`uv run python manage.py provision_lead_capture` creates `lead-thank-you` in the
+`talk-leads` client and preserves any edits to existing templates.
+
+Edit that transactional template in Relay, or create a different template per
+event and select its key. Context: `event_title`, `download_url` (the signed PDF
+link), and `name`. Wording and template selection take effect without a deploy.
+The default thanks the attendee, links the guide, promises materials within a
+few days, and links Alexey's LinkedIn and Substack. It uses the client sender
+Alexey Grigorev <alexey@datatalks.club>.
+
+The email is queued on confirmation POST or an already verified subscriber's
+signup, in the same transaction as the confirmation receipt. The per-signup row lock and stored message ID prevent
+repeat confirms (including different confirmation tokens) from sending again.
+Events with no selected template do not send this email. Hard suppression still
+applies; a suppressed email does not block the promised download.
+
+Confirmation requests time out visibly in the browser after 12 seconds and
+restore the button for a safe retry. Server failures are logged and return a
+503 page with a retry button. Campaign sends append Relay's unsubscribe link
+to both HTML and text and include one-click unsubscribe headers.

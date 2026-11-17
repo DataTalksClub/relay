@@ -1,11 +1,22 @@
 {% extends "leads/base.html" %}
 {% block content %}
   <h1>You're confirmed</h1>
+  {% if event.thank_you_template_key %}
+    <p>Thank you for attending {{ event.title }}!</p>
+  {% endif %}
   {% if event.has_material %}
-    <p>Here are your materials{% if event.material %}: <strong>{{ event.material.title }}</strong>{% endif %}.</p>
+    <p>Here's the guide{% if event.material %}: <strong>{{ event.material.title }}</strong>{% endif %}.</p>
     <a class="button" href="{{ download_url }}">Download</a>
-    <p class="muted" style="margin-top:1rem">The link in your email keeps working, so you can come back to it later.</p>
+    {% if event.thank_you_template_key %}
+      <p class="muted" style="margin-top:1rem">I also sent the download link to your email, so you can come back to it later.</p>
+    {% endif %}
   {% else %}
     <p>Thanks! I'll send you the materials by email.</p>
+  {% endif %}
+  {% if event.thank_you_template_key %}
+    <p>Within a few days I'll send you all the materials I used today.</p>
+    <p>Let's stay in touch: <a href="https://www.linkedin.com/in/agrigorev/">send me a LinkedIn connection request</a> and add a note saying where we met.</p>
+    <p>And <a href="https://aishippingblog.com/">subscribe to my Substack</a>, where I regularly write about agentic engineering.</p>
+    <p>Alexey Grigorev</p>
   {% endif %}
 {% endblock %}

@@ -73,6 +73,10 @@ class LeadEvent(models.Model):
         help_text="Alternative to a stored file: link delivered after confirmation.",
     )
     consent_text = models.CharField(max_length=300, default=DEFAULT_CONSENT_TEXT)
+    thank_you_template_key = models.CharField(
+        max_length=120, blank=True, default="",
+        help_text="Optional talk-leads transactional template sent once after confirmation (blank = none). Context: event_title, download_url, name.",
+    )
     is_active = models.BooleanField(default=True, help_text="Inactive pages show 'closed' and accept no signups.")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
