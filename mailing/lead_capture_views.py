@@ -126,7 +126,19 @@ def event_page(request, slug):
             {"event": event, "form": form, "error": MESSAGES.get(exc.code, "Something went wrong.")},
             status=exc.status,
         )
+    except Exception:
+        logger.exception("relay_lead_signup_failed event=%s", event.slug)
+        return _render(request, "page.html", {
+            "event": event, "form": form,
+            "error": "Something went wrong saving your signup. Please try again.",
+        }, status=503)
     logger.info("relay_lead_signup event=%s status=%s", event.slug, status)
+    if status == "confirmed":
+        return _render(
+            request,
+            "confirmed.html",
+            {"event": event, "download_url": f"{lead_capture.event_url(event, '/download')}?t={status.token}"},
+        )
     return _render(request, "sent.html", {"event": event, "page_url": _page_url(event)})
 
 
@@ -146,6 +158,12 @@ def confirm(request, slug):
         lead_capture.confirm_lead(event, token, ip=_client_ip(request))
     except LeadError as exc:
         return _message(request, event, exc.code, exc.status)
+    except Exception:
+        logger.exception("relay_lead_confirmation_failed event=%s", event.slug)
+        return _render(request, "confirm.html", {
+            "event": event, "token": token,
+            "error": "Something went wrong. Please try confirming again. It's safe to retry.",
+        }, status=503)
     logger.info("relay_lead_confirmed event=%s", event.slug)
     return _render(
         request,

@@ -1,4 +1,5 @@
 import io
+import re
 
 import pytest
 from django.core.management import call_command
@@ -39,7 +40,8 @@ def event():
     call_command("provision_lead_capture", stdout=io.StringIO())
     material = LeadMaterial.objects.create(slug="kit", title="The 28 prompts kit", filename="kit.pdf", data=PDF)
     return LeadEvent.objects.create(
-        slug="test-talk", title="Test talk", offer="Slides and the kit", material=material
+        slug="test-talk", title="Test talk", offer="Slides and the kit", material=material,
+        thank_you_template_key="lead-thank-you",
     )
 
 
@@ -289,3 +291,130 @@ def test_lead_event_command_creates_material_event_and_qr(tmp_path, event):
     assert created.material.filename == "kit2.pdf"
     assert (tmp_path / "talk-two-qr.svg").exists() and (tmp_path / "talk-two-qr.png").exists()
     assert "https://materials.dtcdev.click/talk-two" in out.getvalue()
+
+
+def test_thank_you_after_confirm_once_with_pdf_and_event_copy(client, event, enqueued):
+    event.thank_you_template_key = "lead-thank-you"
+    event.consent_text = "I agree to be contacted by Alexey Grigorev"
+    event.save()
+    submit(client)
+    token = confirm_url(TransactionalMessage.objects.get())
+    assert client.get("/m/test-talk/confirm", {"t": token}).status_code == 200
+    assert TransactionalMessage.objects.count() == 1
+
+    assert client.post("/m/test-talk/confirm", {"t": token}).status_code == 200
+    message = TransactionalMessage.objects.get(template_key="lead-thank-you")
+    assert message.from_email == "Alexey Grigorev <alexey@datatalks.club>"
+    assert "Thank you for attending Test talk" in message.text_body
+    assert "Within a few days I'll send you all the materials I used today." in message.text_body
+    assert "https://www.linkedin.com/in/agrigorev/" in message.text_body
+    assert "https://aishippingblog.com/" in message.text_body
+    assert "where we met" in message.text_body
+    assert "agentic engineering" in message.text_body
+    assert message.context["download_url"].endswith("/test-talk/download?t=" + token)
+    assert client.get("/m/test-talk/download", {"t": token}).content == PDF
+    assert ContactSourceMetadata.objects.get().metadata["consent_text"] == event.consent_text
+    assert ContactSourceMetadata.objects.get().metadata["thank_you_message_id"] == message.id
+
+    # Both the original token and a freshly issued one share the durable receipt.
+    assert client.post("/m/test-talk/confirm", {"t": token}).status_code == 200
+    another_token = lead_capture.issue_token(Contact.objects.get().id, event.id)
+    assert client.post("/m/test-talk/confirm", {"t": another_token}).status_code == 200
+    assert TransactionalMessage.objects.filter(template_key="lead-thank-you").count() == 1
+
+
+def test_event_uses_editable_thank_you_template(client, event, enqueued):
+    template = EmailTemplate.objects.get(key="lead-thank-you")
+    template.subject = "Workshop follow-up: {{ event_title }}"
+    template.markdown_body = "Custom event materials: {{ download_url }}"
+    template.save()
+    event.thank_you_template_key = template.key
+    event.save()
+    submit(client)
+    token = confirm_url(TransactionalMessage.objects.get())
+
+    assert client.post("/m/test-talk/confirm", {"t": token}).status_code == 200
+    message = TransactionalMessage.objects.get(template_key=template.key)
+    assert message.subject == "Workshop follow-up: Test talk"
+    assert "Custom event materials:" in message.text_body
+
+
+def test_confirmation_email_only_asks_to_confirm(client, event, enqueued):
+    submit(client)
+    body = TransactionalMessage.objects.get().text_body
+    assert "Confirm and get the materials" in body
+    assert "stays valid" not in body
+
+
+def test_confirmed_page_says_the_guide_was_emailed(client, event, enqueued):
+    submit(client)
+    token = confirm_url(TransactionalMessage.objects.get())
+    page = client.post("/m/test-talk/confirm", {"t": token}).content.decode()
+    assert "I also sent the download link to your email" in page
+    assert "keeps working" not in page
+
+
+def test_verified_contact_skips_confirmation_for_another_event(client, event, enqueued):
+    submit(client)
+    token = confirm_url(TransactionalMessage.objects.get())
+    client.post("/m/test-talk/confirm", {"t": token})
+    second = LeadEvent.objects.create(
+        slug="second-talk", title="Second talk", material=event.material, thank_you_template_key="lead-thank-you",
+        consent_text="I agree to be contacted by Alexey Grigorev",
+    )
+
+    response = submit(client, slug="second-talk", name="")
+    assert response.status_code == 200
+    page = response.content.decode()
+    assert "You're confirmed" in page
+    assert "/second-talk/download?t=" in page
+    assert "Check your inbox" not in page
+    # No confirmation email for the second event; one thank-you for it.
+    assert not TransactionalMessage.objects.filter(
+        template_key="lead-confirm", context__event_title="Second talk"
+    ).exists()
+    thank_you = TransactionalMessage.objects.get(template_key="lead-thank-you", context__event_title="Second talk")
+    page_token = re.search(r"/second-talk/download\?t=([^\"&<\s]+)", page).group(1)
+    assert thank_you.context["download_url"].endswith("/second-talk/download?t=" + page_token)
+    contact = Contact.objects.get()
+    assert set(ContactTag.objects.filter(contact=contact).values_list("tag__slug", flat=True)) == {
+        "test-talk", "second-talk",
+    }
+    record = ContactSourceMetadata.objects.get(contact=contact, source=second.source)
+    assert record.metadata["consent_text"] == "I agree to be contacted by Alexey Grigorev"
+    assert record.metadata["skipped_confirmation"] is True
+
+    # Submitting again sends nothing more and still shows the materials.
+    count = TransactionalMessage.objects.count()
+    assert "You're confirmed" in submit(client, slug="second-talk").content.decode()
+    assert TransactionalMessage.objects.count() == count
+
+
+def test_unsubscribed_contact_still_needs_confirmation(client, event, enqueued):
+    submit(client)
+    token = confirm_url(TransactionalMessage.objects.get())
+    client.post("/m/test-talk/confirm", {"t": token})
+    Subscription.objects.update(status=SubscriptionStatus.UNSUBSCRIBED)
+    LeadEvent.objects.create(slug="second-talk", title="Second talk", material=event.material)
+    assert "Check your inbox" in submit(client, slug="second-talk").content.decode()
+
+
+def test_confirmation_failure_is_visible_and_retryable(client, event, monkeypatch):
+    token = lead_capture.issue_token(123, event.id)
+    def fail(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+    monkeypatch.setattr(lead_capture, "confirm_lead", fail)
+    response = client.post("/m/test-talk/confirm", {"t": token})
+    assert response.status_code == 503
+    assert "Please try confirming again" in response.content.decode()
+    assert "Confirm and get the materials" in response.content.decode()
+
+
+def test_other_events_remain_download_only_by_default(client, event, enqueued):
+    event.thank_you_template_key = ""
+    event.save()
+    submit(client)
+    token = confirm_url(TransactionalMessage.objects.get())
+    response = client.post("/m/test-talk/confirm", {"t": token})
+    assert TransactionalMessage.objects.count() == 1
+    assert "sent the download link" not in response.content.decode()

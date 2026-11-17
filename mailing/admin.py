@@ -612,7 +612,7 @@ class LeadEventAdmin(admin.ModelAdmin):
     search_fields = ("slug", "title")
     readonly_fields = ("public_link", "qr_links", "signups", "created_at", "updated_at")
     fields = (
-        "slug", "title", "intro", "offer", "material", "material_url", "consent_text", "is_active",
+        "slug", "title", "intro", "offer", "material", "material_url", "consent_text", "thank_you_template_key", "is_active",
         "public_link", "qr_links", "signups", "created_at", "updated_at",
     )
 

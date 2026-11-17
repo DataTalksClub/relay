@@ -2,8 +2,31 @@
 {% block content %}
   <h1>Confirm your email</h1>
   <p>One click and you get the materials for <strong>{{ event.title }}</strong>.</p>
-  <form method="post" action="">
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="" id="confirm-form">
     <input type="hidden" name="t" value="{{ token }}">
-    <button type="submit" class="primary">Confirm and get the materials</button>
+    <button type="submit" class="primary" id="confirm-button">Confirm and get the materials</button>
   </form>
+  <p class="error" role="alert" id="confirm-slow" hidden>Confirmation could not finish. Check your connection and tap the button again. It's safe to retry.</p>
+  <script>
+    (function () {
+      var form = document.getElementById("confirm-form"), btn = document.getElementById("confirm-button"),
+          slow = document.getElementById("confirm-slow");
+      if (!window.fetch || !window.AbortController) return;
+      form.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        btn.disabled = true; btn.textContent = "Confirming..."; slow.hidden = true;
+        var controller = new AbortController(), timer = setTimeout(function () { controller.abort(); }, 12000);
+        try {
+          var response = await fetch(form.action, {method: "POST", body: new FormData(form), signal: controller.signal});
+          var html = await response.text();
+          if (response.status >= 500) throw new Error("Confirmation failed");
+          document.open(); document.write(html); document.close();
+        } catch (error) {
+          btn.disabled = false; btn.textContent = "Confirm and get the materials"; slow.hidden = false;
+        } finally { clearTimeout(timer); }
+      });
+      window.addEventListener("pageshow", function () { btn.disabled = false; btn.textContent = "Confirm and get the materials"; slow.hidden = true; });
+    })();
+  </script>
 {% endblock %}

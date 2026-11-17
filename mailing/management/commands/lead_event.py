@@ -34,6 +34,7 @@ class Command(BaseCommand):
         setp.add_argument("--intro")
         setp.add_argument("--offer")
         setp.add_argument("--consent-text")
+        setp.add_argument("--thank-you-template-key")
         setp.add_argument("--material", help="Slug of a stored material ('' to clear).")
         setp.add_argument("--material-url")
         state = setp.add_mutually_exclusive_group()
@@ -73,6 +74,7 @@ class Command(BaseCommand):
         for field, option in [
             ("title", "title"), ("intro", "intro"), ("offer", "offer"),
             ("consent_text", "consent_text"), ("material_url", "material_url"),
+            ("thank_you_template_key", "thank_you_template_key"),
         ]:
             if options[option] is not None:
                 setattr(event, field, options[option])
