@@ -1389,6 +1389,21 @@ def test_sent_count_never_decreases_after_bounce_complaint_unsubscribe(campaign,
     assert campaign.sent_count == 4
 
 
+def test_reconcile_scoped_to_batch_recipients_ignores_other_recipients(campaign, contact):
+    recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)
+    payload = webhook_payload(
+        "bounce", "sns-scoped-1", "ses-scoped-1", metadata={"bounce_type": "Permanent", "bounce_sub_type": "General"}
+    )
+    ses_webhooks_handler(records_from_payloads([("m1", payload)]), None)  # arrives before the commit
+    recipient.status = CampaignRecipientStatus.SENT
+    recipient.ses_message_id = "ses-scoped-1"
+    recipient.sent_at = timezone.now()
+    recipient.save()
+    # The committed recipient is not in the batch being reconciled: untouched.
+    assert reconcile_uncorrelated_ses_events(campaign_id=campaign.pk, recipient_ids=[recipient.pk + 1000])["reconciled"] == 0
+    assert reconcile_uncorrelated_ses_events(campaign_id=campaign.pk, recipient_ids=[recipient.pk])["reconciled"] == 1
+
+
 def test_early_webhook_is_reconciled_after_commit_exactly_once(campaign, contact):
 
     recipient = CampaignRecipient.objects.create(campaign=campaign, contact=contact, email=contact.email)

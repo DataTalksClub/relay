@@ -827,16 +827,16 @@ def send_campaign_batch(payload, *, ses_client=None):
             campaign_id, result["sent_count"],
         )
         raise CampaignSendInterrupted("campaign batch interrupted by SIGTERM")
-    _reconcile_early_webhooks(campaign_id)
+    _reconcile_early_webhooks(campaign_id, recipient_ids)
     return CampaignSendResult(**result)
 
 
-def _reconcile_early_webhooks(campaign_id):
+def _reconcile_early_webhooks(campaign_id, recipient_ids=None):
     """Correlate SES events that beat this batch's commit; never fails the batch."""
     from mailing.services.ses_webhooks import reconcile_uncorrelated_ses_events  # noqa: PLC0415 - import cycle
 
     try:
-        reconcile_uncorrelated_ses_events(campaign_id=campaign_id)
+        reconcile_uncorrelated_ses_events(campaign_id=campaign_id, recipient_ids=recipient_ids)
     except Exception:  # noqa: BLE001 - sends are committed; a later batch or the task retries
         logger.exception("ses_reconcile_failed campaign_id=%s", campaign_id)
 
