@@ -241,3 +241,59 @@ def test_queue_monitor_is_quiet_when_queues_drain(recipient):
         queue_monitor._last_alert_at.clear()
         assert queue_monitor.check_queue_age(force=True) == []
     send.assert_not_called()
+
+
+# --- test sends: signed links with no CampaignRecipient row ---
+
+
+def test_test_send_click_redirects_without_recording(client):
+    from mailing.services.tokens import generate_raw_token  # noqa: PLC0415
+
+    token = generate_raw_token()  # what send_campaign_test_message mints; no row exists
+    destination = "https://github.com/alexeygrigorev/workshop-berlin"
+    response = client.get(reverse("mailing:tracking_click", args=[token]), _signed_click_params(token, destination))
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == destination
+    assert DBTaskResult.objects.count() == 0  # nothing enqueued, so no click recorded
+    assert EmailEvent.objects.count() == 0
+
+
+def test_test_send_click_rejects_bad_or_missing_signature_and_other_destination(client):
+    from mailing.services.tokens import generate_raw_token  # noqa: PLC0415
+
+    token = generate_raw_token()
+    params = _signed_click_params(token, "https://example.com/a")
+    url = reverse("mailing:tracking_click", args=[token])
+    assert client.get(url, {"u": "https://evil.example/x", "s": params["s"][0]}).status_code == 400
+    assert client.get(url, {"u": "https://example.com/a", "s": "0" * 64}).status_code == 400
+    assert client.get(url, {"u": "https://example.com/a"}).status_code == 400
+    assert DBTaskResult.objects.count() == 0
+
+
+def test_test_unsubscribe_link_is_a_noop_page(client, recipient):
+    from mailing.services.tokens import generate_test_unsubscribe_token  # noqa: PLC0415
+
+    token = generate_test_unsubscribe_token()
+    url = reverse("mailing:public_unsubscribe", args=[token])
+    response = client.get(url)
+    assert response.status_code == 200 and b"test email" in response.content
+    assert client.post(url).status_code == 200
+    assert client.post(url, {"List-Unsubscribe": "One-Click"}).status_code == 204
+    assert DBTaskResult.objects.count() == 0
+    assert Subscription.objects.filter(status=SubscriptionStatus.UNSUBSCRIBED).count() == 0
+
+
+def test_forged_test_unsubscribe_token_still_404s(client):
+    assert client.get(reverse("mailing:public_unsubscribe", args=["test-abc.deadbeef"])).status_code == 404
+    assert client.get(reverse("mailing:public_unsubscribe", args=["test-nodot"])).status_code == 404
+
+
+def test_real_recipient_click_is_still_recorded_and_redirected(client, recipient):
+    token = ensure_campaign_recipient_tokens(recipient).tracking_token
+    response = client.get(
+        reverse("mailing:tracking_click", args=[token]), _signed_click_params(token, "https://example.com/a")
+    )
+    assert response.status_code == 302
+    assert drain_queue("tracking") == 1
+    assert EmailEvent.objects.filter(event_type=EmailEventType.CLICK).count() == 1
