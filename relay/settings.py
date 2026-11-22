@@ -60,6 +60,7 @@ ALLOWED_HOSTS = csv_env("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver")
 CSRF_TRUSTED_ORIGINS = csv_env("CSRF_TRUSTED_ORIGINS", "", allow_empty=True)
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+CSRF_FAILURE_VIEW = "relay.csrf.csrf_failure"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 AUTH_BASE_URL = os.environ.get("AUTH_BASE_URL", "" if DEBUG else "https://auth.dtcdev.click").rstrip("/")
 AUTH_CLIENT_ID = os.environ.get("AUTH_CLIENT_ID", "" if DEBUG else "41gcnc18qjtq61rsag9iqoepmk")

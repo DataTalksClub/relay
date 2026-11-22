@@ -25,6 +25,11 @@ from mailing.services.operator_management import audit
 USER_CODE_ALPHABET = "BCDFGHJKMNPQRSTWXZ23456789"
 DEVICE_LOGIN_SECONDS = 600
 POLL_INTERVAL_SECONDS = 5
+# The approval page carries the device code in its URL, so it must not leak it
+# cross-origin, but "no-referrer" makes browsers send `Origin: null` on the
+# form POST and Django's CSRF origin check then rejects every approval.
+# "same-origin" keeps the code private and the Origin header intact.
+APPROVAL_REFERRER_POLICY = "same-origin"
 
 
 def _hash(value: str) -> str:
@@ -46,9 +51,9 @@ def _rate_limited(request, purpose: str, limit: int) -> bool:
         return False
 
 
-def _no_store(response):
+def _no_store(response, referrer_policy="no-referrer"):
     response["Cache-Control"] = "no-store"
-    response["Referrer-Policy"] = "no-referrer"
+    response["Referrer-Policy"] = referrer_policy
     response["X-Content-Type-Options"] = "nosniff"
     return response
 
@@ -178,17 +183,17 @@ def _approval_context(request, login):
 @require_GET
 def device_approval(request):
     if _rate_limited(request, "review", 60):
-        return _no_store(HttpResponse("Too many attempts. Wait a few minutes and try again.", status=429))
+        return _no_store(HttpResponse("Too many attempts. Wait a few minutes and try again.", status=429), referrer_policy=APPROVAL_REFERRER_POLICY)
     login = _login_for_code(request.GET.get("code")) if request.GET.get("code") else None
     response = render(request, "mailing/operator/device_login.html", _approval_context(request, login))
-    return _no_store(response)
+    return _no_store(response, referrer_policy=APPROVAL_REFERRER_POLICY)
 
 
 @staff_member_required
 @require_POST
 def device_approval_decide(request):
     if _rate_limited(request, "decision", 20):
-        return _no_store(HttpResponse("Too many attempts. Wait a few minutes and try again.", status=429))
+        return _no_store(HttpResponse("Too many attempts. Wait a few minutes and try again.", status=429), referrer_policy=APPROVAL_REFERRER_POLICY)
     code = request.POST.get("code", "")
     approve_value = request.POST.get("approve")
     login = _login_for_code(code)
@@ -199,7 +204,7 @@ def device_approval_decide(request):
             "expired": True,
             "error": "That device code is unknown, expired, or already decided.",
         }, status=400)
-        return _no_store(response)
+        return _no_store(response, referrer_policy=APPROVAL_REFERRER_POLICY)
     login.status = "approved" if approve_value == "true" else "denied"
     login.user = request.user if approve_value == "true" else None
     login.decided_at = timezone.now()
@@ -211,4 +216,4 @@ def device_approval_decide(request):
         "decided": True,
         "approved": approve_value == "true",
     })
-    return _no_store(response)
+    return _no_store(response, referrer_policy=APPROVAL_REFERRER_POLICY)
