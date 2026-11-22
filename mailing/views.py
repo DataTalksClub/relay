@@ -198,7 +198,7 @@ from mailing.services.ses_webhooks import (
     check_sns_body_size,
     ingest_sns_webhook,
 )
-from mailing.services.tokens import get_recipient_by_unsubscribe_token
+from mailing.services.tokens import get_recipient_by_unsubscribe_token, is_test_unsubscribe_token
 from mailing.services.tracking import TRANSPARENT_GIF, apply_resubscribe, apply_unsubscribe, record_click, record_open
 from mailing.services.transactional import (
     TransactionalSendRejected,
@@ -1549,7 +1549,7 @@ def tracking_open(request, tracking_token):
 def tracking_click(request, tracking_token):
     destination_url = request.GET.get("u", "")
     recipient = record_click(tracking_token, destination_url, request.GET.get("s", ""))
-    if recipient is None:
+    if recipient is None:  # UNRECORDED_CLICK (0) is not None: signed test links redirect
         return JsonResponse({"error": {"code": "invalid_tracking_redirect"}}, status=400)
     return redirect(destination_url)
 
@@ -1557,6 +1557,11 @@ def tracking_click(request, tracking_token):
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def public_unsubscribe(request, unsubscribe_token):
+    if is_test_unsubscribe_token(unsubscribe_token):
+        # Test send: no recipient exists, so nothing is changed.
+        if request.method == "POST" and request.POST.get("List-Unsubscribe") == "One-Click":
+            return HttpResponse(status=204)
+        return render(request, "mailing/unsubscribe.html", context={"test_send": True})
     recipient = get_recipient_by_unsubscribe_token(unsubscribe_token)
     if recipient is None:
         return render(request, "mailing/unsubscribe.html", status=404, context={"invalid": True})

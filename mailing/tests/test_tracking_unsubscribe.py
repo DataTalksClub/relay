@@ -271,11 +271,13 @@ def test_click_redirect_rejects_missing_or_unsafe_urls(client, recipient, destin
 
 def test_click_redirect_invalid_token_does_not_mutate(client, recipient):
     token = "missing-token"
-    response = client.get(
-        reverse("mailing:tracking_click", args=[token]), _signed_click_params(token, "https://example.com")
-    )
-
-    assert response.status_code == 400
+    url = reverse("mailing:tracking_click", args=[token])
+    # Unsigned / badly signed links for an unknown token are rejected.
+    assert client.get(url, {"u": "https://example.com"}).status_code == 400
+    assert client.get(url, {"u": "https://example.com", "s": "0" * 64}).status_code == 400
+    # A validly signed link (test send) redirects but records nothing.
+    response = client.get(url, _signed_click_params(token, "https://example.com"))
+    assert response.status_code == 302
     assert EmailEvent.objects.count() == 0
 
 

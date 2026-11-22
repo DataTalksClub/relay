@@ -173,7 +173,7 @@ def test_failed_finalize_leaves_row_sending_and_fails_loudly(pending, monkeypatc
 
 def test_preview_calls_injectable_sender_and_keeps_token_order(pending, monkeypatch):
     campaign, recipient = pending
-    tokens = iter(["track", "unsub"])
+    tokens = iter(["track"])
     captured = []
     provider = Provider()
 
@@ -190,8 +190,8 @@ def test_preview_calls_injectable_sender_and_keeps_token_order(pending, monkeypa
     assert captured[0]["ses_client"] is provider
     assert captured[0]["source"] == "explicit@example.invalid"
     assert captured[0]["to_email"] == "preview@example.invalid"
-    assert "/t/o/track.gif" in captured[0]["html_body"] and "/unsubscribe/unsub" in captured[0]["html_body"]
-    assert captured[0]["text_body"].endswith("/unsubscribe/unsub")
+    assert "/t/o/track.gif" in captured[0]["html_body"] and "/unsubscribe/test-" in captured[0]["html_body"]
+    assert "/unsubscribe/test-" in captured[0]["text_body"]
     recipient.refresh_from_db()
     assert recipient.status == "pending" and recipient.ses_message_id == ""
     assert EmailEvent.objects.count() == 0

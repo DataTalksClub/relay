@@ -1,7 +1,9 @@
 import hashlib
+import hmac
 import secrets
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.core import signing
 from django.db import transaction
 
@@ -69,6 +71,29 @@ def token_hash(raw_token):
 
 def generate_raw_token():
     return secrets.token_urlsafe(TOKEN_BYTES)
+
+
+TEST_UNSUBSCRIBE_PREFIX = "test-"
+
+
+def _test_unsubscribe_mac(nonce):
+    message = b"relay-test-unsubscribe:v1\0" + nonce.encode("ascii")
+    return hmac.new(settings.SECRET_KEY.encode("utf-8"), message, hashlib.sha256).hexdigest()[:32]
+
+
+def generate_test_unsubscribe_token():
+    """Self-validating unsubscribe token for test sends (no CampaignRecipient row exists)."""
+    nonce = secrets.token_urlsafe(16)
+    return f"{TEST_UNSUBSCRIBE_PREFIX}{nonce}.{_test_unsubscribe_mac(nonce)}"
+
+
+def is_test_unsubscribe_token(raw_token):
+    if not isinstance(raw_token, str) or not raw_token.startswith(TEST_UNSUBSCRIBE_PREFIX):
+        return False
+    nonce, _, mac = raw_token[len(TEST_UNSUBSCRIBE_PREFIX):].rpartition(".")
+    if not nonce or not nonce.isascii() or not mac:
+        return False
+    return hmac.compare_digest(_test_unsubscribe_mac(nonce), mac)
 
 
 @transaction.atomic

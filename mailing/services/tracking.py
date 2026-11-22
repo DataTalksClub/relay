@@ -80,6 +80,9 @@ def record_open(raw_token):
     return recipient_id
 
 
+UNRECORDED_CLICK = 0  # falsy-safe sentinel: valid signed link, nothing to record (test send)
+
+
 def record_click(raw_token, destination_url, signature=None):
     """Web path for the click redirect: validate the token, enqueue, return. Never locks."""
     if not is_allowed_click_destination(destination_url):
@@ -89,6 +92,10 @@ def record_click(raw_token, destination_url, signature=None):
         return None
     recipient = CampaignRecipient.objects.filter(tracking_token_hash=hashed_token).only("pk", "sent_at").first()
     if recipient is None:
+        # Test sends mint a token with no CampaignRecipient row. A valid HMAC proves we
+        # signed this exact (token, url) pair, so redirect without recording a click.
+        if signature and verify_click_redirect(raw_token, destination_url, signature):
+            return UNRECORDED_CLICK
         return None
     if signature:
         if not verify_click_redirect(raw_token, destination_url, signature):

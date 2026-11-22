@@ -31,7 +31,12 @@
   <body class="unsubscribe-page">
     <main class="unsubscribe-main">
       <section class="unsubscribe-panel" aria-labelledby="unsubscribe-title">
-        {% if invalid %}
+        {% if test_send %}
+          <div class="unsubscribe-state">
+            <h1 id="unsubscribe-title">This is a test email</h1>
+            <p>The unsubscribe link works in real sends. Nothing was changed.</p>
+          </div>
+        {% elif invalid %}
           <div class="unsubscribe-state">
             <h1 id="unsubscribe-title">This unsubscribe link is no longer available</h1>
             <p>The link may have expired or been replaced by a newer email. Nothing was changed.</p>

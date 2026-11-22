@@ -79,6 +79,7 @@ from mailing.services.suppression import suppression_skip_reason
 from mailing.services.tokens import (
     CampaignRecipientTokens,
     generate_raw_token,
+    generate_test_unsubscribe_token,
     token_hash,
 )
 from mailing.ses import send_email, send_phase_timings, send_raw_bytes
@@ -180,7 +181,10 @@ def _test_send_merge_values(campaign, to_email):
 
 def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=None):
     merge_values = _test_send_merge_values(campaign, to_email)
-    tokens = CampaignRecipientTokens(generate_raw_token(), generate_raw_token())
+    # No CampaignRecipient exists for a test send: the click link is still signed (the
+    # tracking endpoint redirects without recording) and the unsubscribe token is a
+    # self-validating test token that renders a no-op page.
+    tokens = CampaignRecipientTokens(generate_raw_token(), generate_test_unsubscribe_token())
     html_body, text_body = _render_recipient_bodies(campaign, tokens, merge_values)
     return send_email(
         ses_client=ses_client or default_ses_client(),
