@@ -93,3 +93,50 @@ def test_device_revoke_cannot_revoke_a_regular_admin_key():
     assert response.status_code == 403
     key.refresh_from_db()
     assert key.revoked_at is None
+
+
+PROXY = {"HTTP_HOST": "relay.datatalks.club", "HTTP_X_FORWARDED_PROTO": "https", "HTTP_X_FORWARDED_FOR": "203.0.113.7"}
+
+
+def test_device_decide_csrf_over_https_behind_proxy(settings):
+    settings.ALLOWED_HOSTS = ["relay.datatalks.club", "testserver"]
+    settings.CSRF_TRUSTED_ORIGINS = ["https://relay.datatalks.club"]
+    start = start_device(Client(), remote_addr="192.0.2.20")
+    user = get_user_model().objects.create_user("proxy-operator", email="proxy@example.test", is_staff=True)
+    browser = Client(enforce_csrf_checks=True)
+    browser.force_login(user)
+    page = browser.get(f"/device?code={start['user_code']}", **PROXY)
+    assert page.status_code == 200
+    csrf = re.search(rb'name="csrfmiddlewaretoken" value="([^"]+)"', page.content).group(1).decode()
+    denied = browser.post(
+        "/device/decide",
+        {"code": start["user_code"], "approve": "false", "csrfmiddlewaretoken": csrf},
+        HTTP_ORIGIN="https://relay.datatalks.club",
+        HTTP_REFERER=f"https://relay.datatalks.club/device?code={start['user_code']}",
+        **PROXY,
+    )
+    assert denied.status_code == 200, denied.content[:500]
+    assert DeviceLogin.objects.get().status == "denied"
+
+
+def test_device_pages_keep_origin_header_working_for_the_form_post(settings):
+    """Regression: `Referrer-Policy: no-referrer` makes browsers send `Origin: null`."""
+    settings.ALLOWED_HOSTS = ["relay.datatalks.club", "testserver"]
+    settings.CSRF_TRUSTED_ORIGINS = ["https://relay.datatalks.club"]
+    start = start_device(Client(), remote_addr="192.0.2.21")
+    user = get_user_model().objects.create_user("policy-operator", email="policy@example.test", is_staff=True)
+    browser = Client(enforce_csrf_checks=True)
+    browser.force_login(user)
+    page = browser.get(f"/device?code={start['user_code']}", **PROXY)
+    assert page["Referrer-Policy"] == "same-origin"
+    csrf = re.search(rb'name="csrfmiddlewaretoken" value="([^"]+)"', page.content).group(1).decode()
+    # What a browser sends under `no-referrer`: the user sees a clear page, not a bare 403.
+    rejected = browser.post(
+        "/device/decide",
+        {"code": start["user_code"], "approve": "false", "csrfmiddlewaretoken": csrf},
+        HTTP_ORIGIN="null",
+        **PROXY,
+    )
+    assert rejected.status_code == 403
+    assert b"couldn't verify that request" in rejected.content
+    assert DeviceLogin.objects.get().status == "pending"
