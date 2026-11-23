@@ -193,8 +193,8 @@ def test_mixed_parts_preserve_short_circuits_candidates_and_error_order():
     assert native.parse_content_type("text/custom; x=one")["params"] == {"x": "one"}
 
 
-@pytest.mark.parametrize("count,error", [(200000, {}), (200001, {"message_parts.0.content": "too_large"})])
-def test_part_capacity_counts_multibyte_characters(count, error):
+@pytest.mark.parametrize("count,error", [(250000, {}), (250001, {"message_parts.0.content": "too_large"})])
+def test_part_capacity_counts_utf8_bytes(count, error):
     content = "🧭" * count
     errors = {}
     result = native.validate_message_parts([{"content_type": "text/plain", "content": content}], errors)
@@ -307,3 +307,67 @@ def test_real_api_replay_queue_worker_keeps_original_options(boundary, client, m
     response = transactional_email_handler(queue_event(queued), None)
     assert response == {"batchItemFailures": []} and len(provider.calls) == 1
     assert_provider_projection(provider)
+
+
+@pytest.mark.parametrize("size", [273 * 1024, 1_000_000])
+def test_report_csv_survives_database_queue_and_mime(boundary, client, monkeypatch, size):
+    from django_tasks_db.models import DBTaskResult  # noqa: PLC0415
+
+    from mailing.enqueue import enqueue_transactional_email  # noqa: PLC0415
+    from relay.management.commands.db_worker import ResilientWorker  # noqa: PLC0415
+
+    # Exercise the real queue transport, not a payload-size-blind mock or SQS.
+    monkeypatch.setattr(native, "enqueue_transactional_email", enqueue_transactional_email)
+    provider = Provider()
+    monkeypatch.setattr("mailing.services.transactional_sender.ses_client_for_source", lambda source: provider)
+    monkeypatch.setattr("mailing.services.transactional_sender.configuration_set_for_source", lambda source: "")
+    header = "synthetic_id,value\n"
+    content = header + "x" * (size - len(header) - 1) + "\n"
+    part = {"content_type": "text/csv", "content": content, "filename": "synthetic.csv", "disposition": "attachment"}
+    payload = request_payload(message_parts=[part])
+    # Match the existing partner-contact path; dry_run must create no work.
+    Contact.objects.create(email="recipient@example.invalid", normalized_email="recipient@example.invalid")
+    before = database_counts()
+    preview = post(client, {**payload, "dry_run": True})
+    assert preview.status_code == 202
+    assert preview.json()["enqueued"] is False and preview.json()["message"]["id"] is None
+    assert database_counts() == before
+    assert provider.calls == []
+    assert post(client, payload).status_code == 202
+    task_row = DBTaskResult.objects.get(queue_name="transactional")
+    assert task_row.args_kwargs["args"][0]["metadata"]["message_parts"] == [part]
+    worker = ResilientWorker(
+        queue_names=["transactional"], interval=0, batch=True, backend_name="default",
+        startup_delay=False, max_tasks=None, worker_id="synthetic-report-test",
+    )
+    claimed = worker._claim_next_task()
+    assert claimed.pk == task_row.pk
+    worker.run_task(claimed)
+    task_row.refresh_from_db()
+    assert task_row.status == "SUCCESSFUL"
+    assert len(provider.calls) == 1
+    raw = provider.calls[0]["RawMessage"]["Data"]
+    assert len(raw) < 10_000_000  # actual SES v1 SendRawEmail limit
+    mime = BytesParser(policy=policy.default).parsebytes(raw)
+    attachments = list(mime.iter_attachments())
+    assert len(attachments) == 1
+    assert attachments[0].get_content_type() == "text/csv"
+    assert attachments[0].get_filename() == "synthetic.csv"
+    assert attachments[0].get_payload(decode=True) == content.encode()
+    assert provider.calls[0]["Destinations"] == ["recipient@example.invalid"]
+
+
+def test_attachment_total_budget_rejects_before_queue(boundary, client):
+    part = {"content_type": "text/csv", "content": "x" * 1_000_000}
+    before = database_counts()
+    response = post(client, request_payload(message_parts=[part, part, {**part, "content": "x"}]))
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"message_parts": "too_large"}
+    assert database_counts() == before and boundary[2] == []
+
+
+def test_attachment_invalid_utf8_is_validation_error(boundary, client):
+    response = post(client, request_payload(message_parts=[{"content_type": "text/csv", "content": "\ud800"}]))
+    assert response.status_code == 400
+    assert response.json()["error"]["fields"] == {"message_parts.0.content": "invalid_utf8"}
+    assert boundary[2] == []

@@ -109,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--body-file", dest="body_file", help="Read the body from this file ('-' for stdin).")
     p_send.add_argument("--html", action="store_true", help="Treat the body as raw HTML instead of plain text.")
     p_send.add_argument("--from", dest="from_", help="Sender id (defaults to the client's default sender).")
+    p_send.add_argument(
+        "--attach", dest="attachments", action="append", default=[], metavar="FILE",
+        help="Attach UTF-8 text (repeatable): max 10 files, 1,000,000 bytes each, 2,000,000 bytes total.",
+    )
+    p_send.add_argument("--dry-run", action="store_true", help="Validate and render without queueing or delivery.")
     p_send.add_argument("--idempotency-key", dest="idempotency_key", help="Dedupe key; replays return the prior send.")
     p_send.add_argument("--json", action="store_true", help="Print the raw JSON response.")
     p_send.set_defaults(handler=cmd_send)
@@ -673,6 +678,11 @@ def cmd_send(args) -> int:
         "template_key": template_key,
         "context": {"subject": args.subject, "body": body},
     }
+    attachments = _read_attachments(getattr(args, "attachments", []) or [])
+    if attachments:
+        payload["message_parts"] = attachments
+    if getattr(args, "dry_run", False):
+        payload["dry_run"] = True
     from_sender = args.from_ or settings.default_from
     if from_sender:
         payload["from_email"] = from_sender
@@ -682,7 +692,7 @@ def cmd_send(args) -> int:
     try:
         result = client.send(payload)
     except ApiError as exc:
-        if not exc.is_template_not_found:
+        if not exc.is_template_not_found or getattr(args, "dry_run", False):
             raise
         # First use against this deployment: provision the generic template, then retry once.
         client.upsert_template(template_key, template)
@@ -693,7 +703,8 @@ def cmd_send(args) -> int:
         return 0
 
     message = result.get("message", {}) if isinstance(result, dict) else {}
-    print(f"Sent to {message.get('email', recipient)}")
+    action = "Dry run for" if getattr(args, "dry_run", False) else "Sent to"
+    print(f"{action} {message.get('email', recipient)}")
     print(f"  message id: {message.get('id')}")
     print(f"  status:     {message.get('status')}")
     if result.get("idempotent_replay"):
@@ -820,6 +831,47 @@ def _read_body(args) -> str:
     if not sys.stdin.isatty():
         return sys.stdin.read()
     return ""
+
+
+MAX_ATTACHMENTS = 10
+MAX_ATTACHMENT_BYTES = 1_000_000
+MAX_ATTACHMENT_TOTAL_BYTES = 2_000_000
+
+
+def _read_attachments(paths: list[str]) -> list[dict]:
+    """Read text attachments with the same UTF-8 byte budgets as the API."""
+    import mimetypes  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    if len(paths) > MAX_ATTACHMENTS:
+        raise ApiError(f"Too many attachments ({len(paths)}): max {MAX_ATTACHMENTS}.")
+    parts = []
+    total = 0
+    for path in paths:
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(MAX_ATTACHMENT_BYTES + 1)
+        except OSError:
+            raise ApiError(f"Could not read attachment: {path}") from None
+        if len(raw) > MAX_ATTACHMENT_BYTES:
+            raise ApiError(f"Attachment too large (max {MAX_ATTACHMENT_BYTES} bytes): {path}")
+        total += len(raw)
+        if total > MAX_ATTACHMENT_TOTAL_BYTES:
+            raise ApiError(f"Attachments too large (max {MAX_ATTACHMENT_TOTAL_BYTES} bytes total).")
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ApiError(f"Attachment must be UTF-8 text: {path}") from None
+        content_type, _ = mimetypes.guess_type(str(path))
+        if not content_type or not content_type.startswith("text/"):
+            raise ApiError(f"Attachment must be a text file (.csv, .txt): {path}")
+        parts.append({
+            "content_type": content_type,
+            "content": content,
+            "filename": Path(path).name,
+            "disposition": "attachment",
+        })
+    return parts
 
 
 def _prompt(label: str, default: str, *, secret: bool = False) -> str:
