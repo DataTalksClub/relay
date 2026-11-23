@@ -49,6 +49,9 @@ TRANSIENT_DB_ERROR_SNIPPETS = (
     "remaining connection slots are reserved",
     "too many clients already",
     "too many connections",
+    # psycopg_pool PoolTimeout: no pooled connection freed up in time, so nothing ran on
+    # the server. Campaign 318 stranded 4 batches (1,444 rows) on exactly this error.
+    "couldn't get a connection after",
     # Concurrent writers; Postgres aborts exactly one of them.
     "deadlock detected",
     "could not serialize access",

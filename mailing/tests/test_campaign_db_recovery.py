@@ -138,7 +138,12 @@ def test_concurrent_recovery_processes_create_exactly_one_successor(batch):
     assert DBTaskResult.objects.count() == 2
 
 
-@pytest.mark.parametrize("message", [SLOTS, "sorry, too many clients already", "too many connections for role relay"])
+POOL_TIMEOUT = "couldn't get a connection after 10.00 sec"
+
+
+@pytest.mark.parametrize(
+    "message", [SLOTS, "sorry, too many clients already", "too many connections for role relay", POOL_TIMEOUT],
+)
 def test_connection_exhaustion_variants_are_recovered(batch, message):
     _failed(batch[2], error=OperationalError(message))
     assert len(recover_campaign_db_batches()) == 1
@@ -211,3 +216,16 @@ def test_sender_thread_releases_database_slot_even_on_failure(monkeypatch):
     monkeypatch.setattr(sender.connection, "close", close)
     run.drain(close_connections=True)
     close.assert_called_once()
+
+
+def test_pool_timeout_failed_batch_requeues_only_pending_rows(batch):
+    """Campaign 318: a batch killed by psycopg_pool PoolTimeout must not strand its PENDING rows."""
+    campaign, rows, payload = batch
+    original = _failed(payload, error=OperationalError(POOL_TIMEOUT))
+    successors = recover_campaign_db_batches()
+    assert len(successors) == 1
+    successor = DBTaskResult.objects.get(pk=successors[0])
+    assert successor.args_kwargs["args"][0]["campaign_recipient_ids"] == [rows[0].pk, rows[1].pk]
+    original.refresh_from_db()
+    assert original.return_value["db_retry_task_id"] == successors[0]
+    assert recover_campaign_db_batches() == []
