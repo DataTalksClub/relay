@@ -12,7 +12,10 @@ HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9-]{1,80}$")
 RESERVED_HEADERS = {"bcc", "cc", "content-type", "from", "reply-to", "subject", "to"}
 MAX_CUSTOM_HEADERS = 20
 MAX_MESSAGE_PARTS = 10
-MAX_MESSAGE_PART_CONTENT_LENGTH = 200_000
+# UTF-8 byte budgets: room for report growth while bounding JSON task payloads
+# in the PostgreSQL queue and MIME expansion below SES v1's 10 MB raw limit.
+MAX_MESSAGE_PART_CONTENT_LENGTH = 1_000_000
+MAX_MESSAGE_PART_TOTAL_BYTES = 2_000_000
 
 
 def validate_optional_email_address(data, field, errors):
@@ -100,6 +103,8 @@ def validate_message_parts(value, errors):
         part = _validate_part(raw_part, index, errors)
         if part is not None:
             parts.append(part)
+    if sum(len(part["content"].encode("utf-8")) for part in parts) > MAX_MESSAGE_PART_TOTAL_BYTES:
+        errors["message_parts"] = "too_large"
     return parts
 
 
@@ -126,7 +131,12 @@ def _part_content(content, field, errors):
     if not isinstance(content, str):
         errors[f"{field}.content"] = "must_be_string"
         return ""
-    if len(content) > MAX_MESSAGE_PART_CONTENT_LENGTH:
+    try:
+        size = len(content.encode("utf-8"))
+    except UnicodeEncodeError:
+        errors[f"{field}.content"] = "invalid_utf8"
+        return ""
+    if size > MAX_MESSAGE_PART_CONTENT_LENGTH:
         errors[f"{field}.content"] = "too_large"
     return content
 

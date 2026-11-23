@@ -184,3 +184,21 @@ requires choosing another default in the same command. The underlying PUT API
 still replaces the complete sender policy, so API callers must preserve entries
 that they are not changing. Recipient configuration and inbound allowlists are
 independent and never changed by these commands.
+
+
+### Text attachments
+
+`relay send --attach report.csv` attaches a UTF-8 text file; repeat `--attach`
+for multiple files. The CLI and API accept at most 10 parts, 1,000,000 UTF-8
+bytes per part and 2,000,000 bytes total. Binary files are unsupported.
+The server queues transactional work in PostgreSQL; attachments are stored in
+message metadata and task JSON. These budgets leave room for MIME encoding
+below the SES v1 raw-message limit of 10 MB.
+
+Validate and render without queueing or delivery:
+
+```bash
+relay send --attach synthetic.csv --dry-run --to recipient@example.invalid \
+  --subject Synthetic --body Synthetic --json
+``` Dry runs require an existing template and never provision
+one automatically.
