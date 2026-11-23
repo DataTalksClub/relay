@@ -967,6 +967,9 @@ class EmailEvent(models.Model):
     event_type = models.CharField(max_length=20, choices=EmailEventType.choices)
     provider_event_id = models.CharField(max_length=255, blank=True)
     url = models.URLField(max_length=2048, blank=True)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    country = models.CharField(max_length=2, null=True, blank=True)
+    city = models.CharField(max_length=128, null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     # Original campaign of an event moved by a campaign consolidation; used by rollback.
