@@ -11,17 +11,26 @@ from mailing.db_retry import is_transient_db_error
 logger = logging.getLogger(__name__)
 
 
-def _is_database_lock_timeout(exception):
+def _exception_chain_matches(exception, sqlstate_code, text):
     seen = set()
     current = exception
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         diag = getattr(current, "diag", None)
         sqlstate = getattr(diag, "sqlstate", None) or getattr(current, "pgcode", None)
-        if sqlstate == "55P03" or "lock timeout" in str(current).lower():
+        if sqlstate == sqlstate_code or text in str(current).lower():
             return True
         current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
     return False
+
+
+def _is_database_lock_timeout(exception):
+    return _exception_chain_matches(exception, "55P03", "lock timeout")
+
+
+def is_database_statement_timeout(exception):
+    """PostgreSQL cancelled a statement because it hit ``statement_timeout``."""
+    return _exception_chain_matches(exception, "57014", "statement timeout")
 
 
 def database_error_response(request, exception, *, force_json=False):
@@ -30,6 +39,13 @@ def database_error_response(request, exception, *, force_json=False):
         status = 409
         code = "database_lock_timeout"
         message = "The request could not acquire a database lock. Please retry."
+    elif is_database_statement_timeout(exception):
+        status = 504
+        code = "database_statement_timeout"
+        message = (
+            "A database statement exceeded the web statement timeout and was cancelled; "
+            "the request's transaction was rolled back."
+        )
     elif is_transient_db_error(exception):
         status = 503
         code = "service_unavailable"
@@ -64,6 +80,8 @@ def database_error_response(request, exception, *, force_json=False):
         response["X-Relay-503-Reason"] = "database_unavailable"
     elif status == 500:
         response["X-Relay-Error-Reason"] = "database_error"
+    elif status == 504:
+        response["X-Relay-Error-Reason"] = "database_statement_timeout"
     else:
         response["X-Relay-Error-Reason"] = "database_lock_timeout"
     return response

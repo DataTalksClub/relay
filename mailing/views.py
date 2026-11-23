@@ -103,6 +103,7 @@ from mailing.services.campaign_link_stats import campaign_link_click_payload
 from mailing.services.campaign_sender import render_campaign_message
 from mailing.services.campaigns import (
     CampaignNotReady,
+    CampaignQueueTimeout,
     CampaignRecipientConflict,
     campaign_send_issues,
     estimate_campaign_recipients,
@@ -923,7 +924,7 @@ def campaign_queue(request, campaign_id):
         result = request_campaign_queue(
             campaign, expected_revision=request.POST.get("review_revision"), reject_past_schedule=True
         )
-    except CampaignNotReady as exc:
+    except (CampaignNotReady, CampaignQueueTimeout) as exc:
         messages.error(request, str(exc))
         return redirect("mailing:campaign_detail", campaign_id=campaign.id)
     if result.scheduled:
@@ -1608,15 +1609,32 @@ def authenticate_api_request(request):
         request._transactional_monitor_client_id = auth_result.client.pk
         return auth_result.client, None
 
+    message = "Authentication credentials were not accepted."
+    if _bearer_is_operator_key(request.headers.get("Authorization")):
+        # Operator (admin) keys are not client keys; the same client-scoped
+        # endpoints are mounted under the admin API with an explicit client.
+        suffix = request.path[len("/api"):] if request.path.startswith("/api/") else request.path
+        message = (
+            "This endpoint takes a client API key. Operator keys must call it through the admin API: "
+            f"/api/admin/clients/<client_id>{suffix}"
+        )
     return None, JsonResponse(
         {
             "error": {
                 "code": auth_result.error,
-                "message": "Authentication credentials were not accepted.",
+                "message": message,
             }
         },
         status=auth_result.status_code,
     )
+
+
+OPERATOR_KEY_PREFIX = "relay_admin_"
+
+
+def _bearer_is_operator_key(header):
+    scheme, _, token = (header or "").partition(" ")
+    return scheme.lower() == "bearer" and token.strip().startswith(OPERATOR_KEY_PREFIX)
 
 
 def json_request_body(request):

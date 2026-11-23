@@ -18,6 +18,7 @@ from mailing.admin_api import ApiError, admin_endpoint, body, get_record, listin
 from mailing.forms import CampaignForm, ClientForm, ContactStateForm, ContactSubscriptionForm, ContactTagAddForm
 from mailing.services.campaigns import (
     CampaignNotReady,
+    CampaignQueueTimeout,
     CampaignRecipientConflict,
     estimate_campaign_recipients,
     request_campaign_queue,
@@ -229,6 +230,8 @@ def campaign_queue(request, campaign_id):
         result = request_campaign_queue(campaign)
     except CampaignNotReady as exc:
         raise ApiError("campaign_not_ready", 409, fields={"campaign": str(exc)}) from None
+    except CampaignQueueTimeout as exc:
+        raise ApiError("campaign_queue_timeout", 504, fields={"campaign": str(exc)}) from None
     record_audit(request, "admin.campaign.queue", campaign)
     campaign.refresh_from_db()
     return JsonResponse(

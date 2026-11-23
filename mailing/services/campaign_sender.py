@@ -778,7 +778,8 @@ def send_campaign_batch(payload, *, ses_client=None):
     ses = ses_client or default_ses_client()
     result = {"sent_count": 0, "skipped_count": 0, "failed_count": 0, "unknown_count": 0}
 
-    if not Campaign.objects.filter(pk=campaign_id).exists():
+    campaign_row = Campaign.objects.filter(pk=campaign_id).only("id", "client_id", "audience_id").first()
+    if campaign_row is None:
         raise CampaignSenderError(f"campaign {campaign_id} does not exist")
 
     recipients = CampaignRecipient.objects.filter(pk__in=recipient_ids).only("id", "campaign_id")
@@ -791,6 +792,7 @@ def send_campaign_batch(payload, *, ses_client=None):
         )
 
     install_sigterm_drain()
+    _record_queued_events(campaign_row, recipient_ids, payload.get("batch_id", ""))
     _mark_campaign_sending(campaign_id, recipient_ids)
     context = _BatchContext(campaign_id)
     context.mime_template = _build_batch_mime_template(context)
@@ -934,6 +936,17 @@ def _report_batch_throughput(campaign_id, result, elapsed, concurrency, timings=
             "concurrency=%s",
             campaign_id, attempted, rate, configured, concurrency,
         )
+
+
+def _record_queued_events(campaign, recipient_ids, batch_id):
+    """QUEUED audit rows for this batch; an audit write never blocks the send."""
+    from mailing.services.campaigns import record_batch_queued_events  # noqa: PLC0415 - import cycle
+
+    try:
+        with transaction.atomic():
+            record_batch_queued_events(campaign, recipient_ids, batch_id)
+    except Exception:  # noqa: BLE001 - audit only; sends and their own events still proceed
+        logger.exception("campaign_queued_events_failed campaign_id=%s batch_id=%s", campaign.pk, batch_id)
 
 
 def _mark_campaign_sending(campaign_id, recipient_ids):

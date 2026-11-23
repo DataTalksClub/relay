@@ -41,6 +41,7 @@ from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_sender import render_campaign_message, send_campaign_test_message
 from mailing.services.campaigns import (
     CampaignNotReady,
+    CampaignQueueTimeout,
     CampaignRecipientConflict,
     recount_campaign_audience,
     request_campaign_queue,
@@ -502,6 +503,8 @@ def queue_campaign_for_client(external_key, data, authenticated_client):
         result = request_campaign_queue(campaign)
     except CampaignNotReady as exc:
         raise ApiValidationError({"campaign": str(exc)}, status_code=409) from exc
+    except CampaignQueueTimeout as exc:
+        raise ApiValidationError({"campaign": str(exc)}, status_code=504) from exc
     campaign.refresh_from_db()
     return {
         "campaign": campaign_payload(campaign),
