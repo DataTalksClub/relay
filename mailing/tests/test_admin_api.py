@@ -73,6 +73,11 @@ def test_credentials_are_separate_and_sessions_do_not_authenticate(setup):
     unauth.force_login(user)
     assert unauth.get("/api/admin/clients").status_code == 401
     assert http.get("/api/admin/clients").status_code == 200
+    whoami = http.get("/api/admin/whoami")
+    assert whoami.status_code == 200
+    assert whoami.json()["user"]["username"] == user.username
+    assert whoami.json()["key"]["id"] == key.id
+    assert unauth.get("/api/admin/whoami").status_code == 401
     key.refresh_from_db()
     assert key.last_used_at is not None
     for attr in ("is_staff", "is_active"):
