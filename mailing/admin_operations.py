@@ -4,7 +4,7 @@ from dataclasses import asdict, fields, is_dataclass
 
 from django import forms
 from django.core.exceptions import ValidationError
-from django.db.models import Q, QuerySet
+from django.db.models import Prefetch, Q, QuerySet
 from django.db.models.deletion import ProtectedError
 from django.forms.models import model_to_dict
 from django.http import JsonResponse
@@ -97,7 +97,43 @@ READ_FIELDS = {
 
 
 def projection(resource, obj):
-    return {field: getattr(obj, field) for field in READ_FIELDS[resource][1].split()}
+    data = {field: getattr(obj, field) for field in READ_FIELDS[resource][1].split()}
+    if resource == "transactional-messages":
+        data["bounce"] = bounce_summary(obj)
+    return data
+
+
+BOUNCE_METADATA_FIELDS = ("bounce_type", "bounce_sub_type", "bounce_status", "bounce_action", "diagnostic_code")
+
+
+def bounce_events_prefetch():
+    return Prefetch(
+        "events",
+        queryset=models.EmailEvent.objects.filter(event_type=models.EmailEventType.BOUNCE).order_by("-created_at", "-id"),
+        to_attr="bounce_events",
+    )
+
+
+def bounce_summary(message):
+    """Latest SES bounce for a transactional message, or None.
+
+    ``diagnostic_code`` is the remote MTA's reason (addresses already redacted
+    at ingest). Bounces recorded before it was captured have it as null.
+    """
+    events = getattr(message, "bounce_events", None)
+    if events is None:
+        events = list(
+            message.events.filter(event_type=models.EmailEventType.BOUNCE).order_by("-created_at", "-id")[:1]
+        )
+    if not events:
+        return None
+    event = events[0]
+    metadata = event.metadata if isinstance(event.metadata, dict) else {}
+    return {
+        "occurred_at": metadata.get("event_timestamp") or event.created_at,
+        "provider_event_id": event.provider_event_id,
+        **{field: metadata.get(field) for field in BOUNCE_METADATA_FIELDS},
+    }
 
 
 @admin_endpoint(["GET"])
@@ -106,6 +142,15 @@ def read_resource(request, resource, record_id=None):
     queryset = model.objects.all()
     if resource == "dead-letters":
         queryset = queryset.filter(status=JobStatus.FAILED)
+    if resource == "transactional-messages":
+        queryset = queryset.prefetch_related(bounce_events_prefetch())
+        # Server-side status filter so suppression questions ("which messages
+        # bounced?") are one or two pages, not a full-table crawl that trips
+        # the edge per-IP rate limit.
+        if request.GET.get("status"):
+            if request.GET["status"] not in models.TransactionalMessageStatus.values:
+                raise ApiError("invalid_filter")
+            queryset = queryset.filter(status=request.GET["status"])
     if record_id is not None:
         obj = get_record(model, pk=record_id)
         data = projection(resource, obj)

@@ -125,6 +125,16 @@ def _error_from_response(status: int, raw: bytes) -> ApiError:
         fields = error.get("fields") if isinstance(error.get("fields"), dict) else {}
         message = error.get("message") or _message_for(code, fields, status)
         return ApiError(message, status=status, code=code, fields=fields)
+    if status == 403:
+        # Relay answers its own auth failures with JSON; a bare 403 comes from the
+        # edge (CloudFront WAF), whose per-IP rate limit is 300 requests / 5 min.
+        return ApiError(
+            "HTTP 403 from the Relay edge, not the app: usually the per-IP rate limit "
+            "(300 requests per 5 minutes). Wait about 5 minutes, then use filters "
+            "(e.g. --status) and larger pages instead of crawling.",
+            status=status,
+            code="edge_forbidden",
+        )
     return ApiError(f"Request failed with HTTP {status}.", status=status)
 
 
