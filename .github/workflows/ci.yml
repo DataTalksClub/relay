@@ -7,20 +7,23 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, contabo]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
       - name: Install dependencies
         run: uv sync --dev --group browser
       - name: Install Chromium for the browser tests
-        run: uv run playwright install --with-deps chromium
+        run: uv run playwright install chromium
       - name: Run lint
         run: uv run ruff check .
       - name: Run tests
         run: uv run pytest
 
   campaign-postgres:
+    # Stays GitHub-hosted: wall-clock throughput assertions (msg/s) are not
+    # reliable on the shared 2 vCPU self-hosted box. Public repo, free minutes.
     runs-on: ubuntu-latest
     services:
       postgres:

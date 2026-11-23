@@ -14,7 +14,7 @@ env:
 
 jobs:
   load:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, contabo]
     environment: production
     if: github.ref == 'refs/heads/main'
     steps:

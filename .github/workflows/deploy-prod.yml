@@ -39,7 +39,7 @@ env:
 
 jobs:
   select:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, contabo]
     outputs:
       image_tag: ${{ steps.resolve.outputs.image_tag }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
@@ -110,7 +110,7 @@ jobs:
 
   promote:
     needs: select
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, contabo]
     # The production GitHub environment carries the required reviewer, so a
     # dispatch only proceeds after a human approves it.
     environment: production
