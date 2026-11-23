@@ -20,6 +20,8 @@ from mailing.models import (
     EmailEvent,
     EmailEventType,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
 from mailing.services import operator_ui
 from mailing.services.campaign_consolidation import (
@@ -28,6 +30,8 @@ from mailing.services.campaign_consolidation import (
     merge_campaigns,
     rollback_merge,
 )
+from mailing.services.tokens import ensure_campaign_recipient_tokens, get_recipient_by_unsubscribe_token
+from mailing.services.tracking import apply_unsubscribe
 
 pytestmark = pytest.mark.django_db
 NOW = timezone.now()
@@ -65,11 +69,16 @@ def _recipient(campaign, n, *, sent=True, status=None, opened=False, clicked=Fal
         click_count=1 if clicked else 0,
     )
     if sent:
-        EmailEvent.objects.create(campaign=campaign, campaign_recipient=r, contact=r.contact,
-                                  event_type=EmailEventType.SENT)
+        EmailEvent.objects.create(
+            campaign=campaign, campaign_recipient=r, contact=r.contact,
+            client=campaign.client, audience=campaign.audience, event_type=EmailEventType.SENT,
+        )
     if clicked:
-        EmailEvent.objects.create(campaign=campaign, campaign_recipient=r, contact=r.contact,
-                                  event_type=EmailEventType.CLICK, url="https://example.com/course")
+        EmailEvent.objects.create(
+            campaign=campaign, campaign_recipient=r, contact=r.contact,
+            client=campaign.client, audience=campaign.audience,
+            event_type=EmailEventType.CLICK, url="https://example.com/course",
+        )
     return r
 
 
@@ -191,3 +200,137 @@ def test_command_requires_confirmation_and_reports_json(batches):
     out = StringIO()
     call_command("merge_campaigns", canonical=canonical.pk, rollback=True, stdout=out)
     assert json.loads(out.getvalue())["recipients_moved_back"] == 4
+
+
+def test_cross_client_requires_opt_in_and_rejects_cross_org_or_audience():
+    org = Organization.objects.create(name="DTC", slug="dtc-org-x")
+    other_org = Organization.objects.create(name="Other", slug="other-org")
+    audience = Audience.objects.create(organization=org, name="DTC", slug="dtc")
+    other_audience = Audience.objects.create(organization=org, name="Other Aud", slug="other-aud")
+    other_org_audience = Audience.objects.create(organization=other_org, name="Ext", slug="ext")
+    dtc_client = Client.objects.create(organization=org, name="Newsletter", slug="dtc-newsletter")
+    maven_client = Client.objects.create(organization=org, name="Maven", slug="maven")
+    other_org_client = Client.objects.create(organization=other_org, name="External", slug="external")
+
+    canonical = Campaign.objects.create(
+        client=maven_client, audience=audience, external_key="product-shipping", subject="Shipping",
+        status=CampaignStatus.SENT,
+    )
+    source_same_scope = Campaign.objects.create(
+        client=dtc_client, audience=audience,
+        external_key="product-shipping-cohort-1-application-options-2026-11-23",
+        subject="Shipping Options", status=CampaignStatus.SENT,
+    )
+    source_diff_audience = Campaign.objects.create(
+        client=dtc_client, audience=other_audience, external_key="diff-aud", subject="Other",
+        status=CampaignStatus.SENT,
+    )
+    source_diff_org = Campaign.objects.create(
+        client=other_org_client, audience=other_org_audience, external_key="diff-org", subject="Ext",
+        status=CampaignStatus.SENT,
+    )
+
+    with pytest.raises(CampaignMergeError, match="different client"):
+        merge_campaigns(canonical.pk, [source_same_scope.pk])
+
+    with pytest.raises(CampaignMergeError, match="different audience"):
+        merge_campaigns(canonical.pk, [source_diff_audience.pk], allow_cross_client=True)
+
+    with pytest.raises(CampaignMergeError, match="different audience|different organization"):
+        merge_campaigns(canonical.pk, [source_diff_org.pk], allow_cross_client=True)
+
+
+def test_cross_client_merge_preserves_history_tokens_consent_dedupe_and_rollback():
+    org = Organization.objects.create(name="DTC", slug="dtc-org-cc")
+    audience = Audience.objects.create(organization=org, name="DTC", slug="dtc")
+    dtc_client = Client.objects.create(organization=org, name="Newsletter", slug="dtc-newsletter")
+    maven_client = Client.objects.create(organization=org, name="Maven", slug="maven")
+
+    source = Campaign.objects.create(
+        client=dtc_client,
+        audience=audience,
+        external_key="product-shipping-cohort-1-application-options-2026-11-23",
+        subject="Product Shipping Options",
+        status=CampaignStatus.SENT,
+    )
+    canonical = Campaign.objects.create(
+        client=maven_client,
+        audience=audience,
+        external_key="product-shipping",
+        subject="Product Shipping",
+        status=CampaignStatus.SENT,
+    )
+
+    # 5 delivered in original dtc-newsletter send + 8 distinct delivered in canonical Maven send = 13 distinct delivered.
+    source_tokens = {}
+    for i in range(1, 6):
+        r = _recipient(source, i, clicked=(i == 1))
+        source_tokens[i] = ensure_campaign_recipient_tokens(r)
+    for i in range(6, 14):
+        _recipient(canonical, i, opened=(i == 6))
+    # Unsent duplicate on source for contact 6 should stay on source as history.
+    _recipient(source, 6, sent=False, status=CampaignRecipientStatus.SKIPPED)
+
+    dry = merge_campaigns(canonical.pk, [source.pk], allow_cross_client=True)
+    assert dry["applied"] is False
+    assert dry["allow_cross_client"] is True
+    assert dry["move_recipients"] == {str(source.pk): 5}
+    assert dry["kept_unsent_duplicates"] == {str(source.pk): 1}
+
+    tasks_before = DBTaskResult.objects.count()
+    with mock.patch("mailing.services.campaign_sender.send_campaign_batch", side_effect=AssertionError("send")):
+        report = merge_campaigns(canonical.pk, [source.pk], apply=True, allow_cross_client=True)
+    assert DBTaskResult.objects.count() == tasks_before
+    assert report["applied"] is True
+    assert report["after_canonical_only"]["delivered"] == 13
+    assert report["after_canonical_only"]["contacts"] == 13
+
+    canonical.refresh_from_db()
+    assert canonical.delivered_count == 13
+    assert canonical.client_id == maven_client.pk
+
+    # Pre-merge events retain their original client (dtc-newsletter) on the event row.
+    assert EmailEvent.objects.filter(campaign=canonical, client=dtc_client, event_type=EmailEventType.SENT).count() == 5
+    assert EmailEvent.objects.filter(campaign=canonical, client=maven_client, event_type=EmailEventType.SENT).count() == 8
+
+    # Old unsubscribe token from dtc-newsletter still resolves and unsubscribes on the shared audience.
+    old_unsub_token = source_tokens[2].unsubscribe_token
+    resolved = get_recipient_by_unsubscribe_token(old_unsub_token)
+    assert resolved is not None and resolved.campaign_id == canonical.pk
+    unsub_recipient, _ = apply_unsubscribe(old_unsub_token)
+    unsub_recipient.refresh_from_db()
+    assert unsub_recipient.status == CampaignRecipientStatus.UNSUBSCRIBED
+    assert Subscription.objects.filter(
+        contact=unsub_recipient.contact, audience=audience, client__isnull=True, status=SubscriptionStatus.UNSUBSCRIBED
+    ).exists()
+
+    # Rollback moves recipients and post-merge unsubscribe event back to source.
+    rb = rollback_merge(canonical.pk)
+    assert rb["recipients_moved_back"] == 5
+    assert CampaignRecipient.objects.filter(campaign=source).count() == 6
+    assert CampaignRecipient.objects.filter(campaign=canonical).count() == 8
+    assert EmailEvent.objects.filter(campaign=source, event_type=EmailEventType.UNSUBSCRIBE).count() == 1
+
+
+def test_command_allow_cross_client_flag():
+    org = Organization.objects.create(name="DTC", slug="dtc-org-cmd")
+    audience = Audience.objects.create(organization=org, name="DTC", slug="dtc")
+    c1 = Client.objects.create(organization=org, name="Newsletter", slug="dtc-newsletter")
+    c2 = Client.objects.create(organization=org, name="Maven", slug="maven")
+    canonical = Campaign.objects.create(client=c2, audience=audience, external_key="c2", subject="S", status=CampaignStatus.SENT)
+    source = Campaign.objects.create(client=c1, audience=audience, external_key="c1", subject="S", status=CampaignStatus.SENT)
+    _recipient(source, 1)
+    _recipient(canonical, 2)
+
+    with pytest.raises(CommandError, match="different client"):
+        call_command("merge_campaigns", canonical=canonical.pk, sources=str(source.pk))
+
+    out = StringIO()
+    call_command(
+        "merge_campaigns", canonical=canonical.pk, sources=str(source.pk),
+        apply=True, confirm_sources=str(source.pk), allow_cross_client=True, stdout=out,
+    )
+    report = json.loads(out.getvalue())
+    assert report["applied"] is True
+    assert report["allow_cross_client"] is True
+    assert report["after_canonical_only"]["delivered"] == 2

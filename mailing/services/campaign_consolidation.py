@@ -90,7 +90,7 @@ def _snapshot(campaign):
     return data
 
 
-def _validate(canonical, sources):
+def _validate(canonical, sources, *, allow_cross_client=False):
     if not sources:
         raise CampaignMergeError("no source campaigns given")
     if canonical.pk in {s.pk for s in sources}:
@@ -100,8 +100,12 @@ def _validate(canonical, sources):
             raise CampaignMergeError(f"campaign {campaign.pk} is already merged into {campaign.merged_into_id}")
         if campaign.status not in FINISHED_STATUSES:
             raise CampaignMergeError(f"campaign {campaign.pk} is {campaign.status}; only sent/cancelled can merge")
-        if campaign.client_id != canonical.client_id or campaign.audience_id != canonical.audience_id:
-            raise CampaignMergeError(f"campaign {campaign.pk} has a different client/audience than {canonical.pk}")
+        if campaign.audience_id != canonical.audience_id:
+            raise CampaignMergeError(f"campaign {campaign.pk} has a different audience than {canonical.pk}")
+        if campaign.client.organization_id != canonical.client.organization_id:
+            raise CampaignMergeError(f"campaign {campaign.pk} has a different organization than {canonical.pk}")
+        if not allow_cross_client and campaign.client_id != canonical.client_id:
+            raise CampaignMergeError(f"campaign {campaign.pk} has a different client than {canonical.pk}")
     unsettled = (
         CampaignRecipient.objects.filter(
             campaign_id__in=[canonical.pk, *[s.pk for s in sources]], status__in=UNSETTLED_RECIPIENT_STATUSES
@@ -116,9 +120,9 @@ def _validate(canonical, sources):
         raise CampaignMergeError("a source campaign is itself a merge target")
 
 
-def build_plan(canonical, sources) -> MergePlan:
+def build_plan(canonical, sources, *, allow_cross_client=False) -> MergePlan:
     """Choose which source recipient rows move; never two rows for one contact."""
-    _validate(canonical, sources)
+    _validate(canonical, sources, allow_cross_client=allow_cross_client)
     plan = MergePlan(canonical_id=canonical.pk, source_ids=[s.pk for s in sources])
     canonical_contacts = set(
         CampaignRecipient.objects.filter(campaign_id=canonical.pk).values_list("contact_id", flat=True)
@@ -229,21 +233,42 @@ def _move_events_to_canonical(canonical_id, source_ids):
     return moved
 
 
-def merge_campaigns(canonical_id, source_ids, *, apply=False):
+def merge_campaigns(canonical_id, source_ids, *, apply=False, allow_cross_client=False):
     """Plan (and with ``apply=True`` perform) the merge. Returns a report dict."""
     all_ids = [canonical_id, *source_ids]
     with transaction.atomic():
-        locked = {c.pk: c for c in Campaign.objects.select_for_update().filter(pk__in=all_ids).order_by("pk")}
+        locked = {
+            c.pk: c
+            for c in Campaign.objects.select_for_update(of=("self",))
+            .select_related("client")
+            .filter(pk__in=all_ids)
+            .order_by("pk")
+        }
         missing = sorted(set(all_ids) - set(locked))
         if missing:
             raise CampaignMergeError(f"campaigns not found: {missing}")
         canonical = locked[canonical_id]
         sources = [locked[i] for i in source_ids]
         before = campaign_totals(all_ids)
-        plan = build_plan(canonical, sources)
+        plan = build_plan(canonical, sources, allow_cross_client=allow_cross_client)
         report = {
-            "canonical": {"id": canonical.pk, "external_key": canonical.external_key},
-            "sources": [{"id": s.pk, "external_key": s.external_key, "status": s.status} for s in sources],
+            "canonical": {
+                "id": canonical.pk,
+                "external_key": canonical.external_key,
+                "client_id": canonical.client_id,
+                "client_slug": canonical.client.slug,
+            },
+            "sources": [
+                {
+                    "id": s.pk,
+                    "external_key": s.external_key,
+                    "status": s.status,
+                    "client_id": s.client_id,
+                    "client_slug": s.client.slug,
+                }
+                for s in sources
+            ],
+            "allow_cross_client": allow_cross_client,
             "move_recipients": {str(k): len(v) for k, v in plan.move_recipient_ids.items()},
             "kept_unsent_duplicates": {str(k): len(v) for k, v in plan.kept_duplicate_ids.items() if v},
             "before": before,
@@ -270,6 +295,7 @@ def merge_campaigns(canonical_id, source_ids, *, apply=False):
         canonical_snapshot = dict(canonical.merge_snapshot or {})
         canonical_snapshot["before_merge"] = snapshots[canonical_id]
         canonical_snapshot["merged_sources"] = list(source_ids)
+        canonical_snapshot["allow_cross_client"] = allow_cross_client
         Campaign.objects.filter(pk=canonical_id).update(
             merge_snapshot=canonical_snapshot,
             status=CampaignStatus.SENT,
