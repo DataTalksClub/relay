@@ -75,7 +75,7 @@ from mailing.services.campaign_rendering import (
 from mailing.services.campaign_template_rendering import render_campaign_fields
 from mailing.services.click_security import sign_click_redirect
 from mailing.services.public_urls import unsubscribe_url
-from mailing.services.suppression import suppression_skip_reason
+from mailing.services.suppression import campaign_allows_unverified, suppression_skip_reason
 from mailing.services.tokens import (
     CampaignRecipientTokens,
     generate_raw_token,
@@ -546,12 +546,13 @@ def _suppression_reasons(rows, campaign):
                 tag=campaign.category_tag, enabled=False,
             ).values_list("contact_id", flat=True)
         )
+    allow_unverified = campaign_allows_unverified(campaign)
     reasons = {}
     for row in rows:
         by_scope = subscriptions.get(row.contact_id, {})
         reason = suppression_skip_reason(
             row.contact, by_scope.get(None), by_scope.get(campaign.client_id),
-            category_disabled=row.contact_id in opted_out,
+            category_disabled=row.contact_id in opted_out, allow_unverified=allow_unverified,
         )
         if reason:
             reasons[row.pk] = reason

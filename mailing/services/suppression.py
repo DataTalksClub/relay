@@ -26,11 +26,15 @@ def _subscription_verified_at(subscription):
     return subscription.verified_at
 
 
-def suppression_skip_reason(contact, audience_subscription, client_subscription, *, category_disabled=False):
+def suppression_skip_reason(
+    contact, audience_subscription, client_subscription, *, category_disabled=False, allow_unverified=False,
+):
     """Return the snapshot skip reason for a contact, or "" when sendable.
 
     ``audience_subscription``/``client_subscription`` accept either Subscription
     instances, bulk-query dicts with ``status``/``verified_at`` keys, or None.
+    ``allow_unverified`` skips only the verification gate; pass it solely via
+    ``campaign_allows_unverified`` so it applies to explicit-list campaigns.
     """
     reason = CampaignRecipientSkipReason
     if contact.hard_bounced_at is not None:
@@ -41,7 +45,7 @@ def suppression_skip_reason(contact, audience_subscription, client_subscription,
         return reason.GLOBAL_UNSUBSCRIBE
     if has_invalid_email_validation(contact):
         return reason.INVALID_EMAIL
-    if not _is_verified(contact, audience_subscription, client_subscription):
+    if not allow_unverified and not _is_verified(contact, audience_subscription, client_subscription):
         return reason.UNVERIFIED
     if _subscription_status(audience_subscription) == SubscriptionStatus.UNSUBSCRIBED:
         return reason.AUDIENCE_UNSUBSCRIBE
@@ -52,6 +56,11 @@ def suppression_skip_reason(contact, audience_subscription, client_subscription,
     if category_disabled:
         return reason.CLIENT_UNSUBSCRIBE
     return ""
+
+
+def campaign_allows_unverified(campaign):
+    """The documented explicit-list opt-out: allow_unverified with a recipient list."""
+    return bool(campaign.allow_unverified and campaign.recipient_list_key)
 
 
 def _is_verified(contact, audience_subscription, client_subscription):
