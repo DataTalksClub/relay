@@ -27,27 +27,8 @@ RUN uv sync --frozen
 # Bake offline IP geolocation database (DB-IP City Lite, CC BY 4.0, https://db-ip.com).
 # Standard MaxMind MMDB format; falls back to the previous UTC month if built before
 # the current month's release is published. Verified with maxminddb at build time.
-RUN mkdir -p /app/geoip && uv run python -c '\
-import datetime, gzip, shutil, urllib.request, maxminddb; \
-now = datetime.datetime.now(datetime.timezone.utc); \
-prev = (now.replace(day=1) - datetime.timedelta(days=1)); \
-months = [now.strftime("%Y-%m"), prev.strftime("%Y-%m")]; \
-dest = "/app/geoip/dbip-city-lite.mmdb"; \
-last_err = None; \
-for ym in months: \
-    url = f"https://download.db-ip.com/free/dbip-city-lite-{ym}.mmdb.gz"; \
-    try: \
-        with urllib.request.urlopen(url, timeout=60) as resp, gzip.GzipFile(fileobj=resp) as gz, open(dest, "wb") as out: \
-            shutil.copyfileobj(gz, out); \
-        with maxminddb.open_database(dest) as r: \
-            rec = r.get("8.8.8.8") or {}; \
-            assert (rec.get("country") or {}).get("iso_code") == "US", f"unexpected 8.8.8.8 lookup: {rec}"; \
-        print(f"Downloaded and verified {url}"); \
-        break; \
-    except Exception as exc: \
-        last_err = exc; \
-else: \
-    raise RuntimeError(f"Failed to download DB-IP City Lite MMDB: {last_err}")'
+COPY scripts/fetch_geoip_db.py scripts/fetch_geoip_db.py
+RUN uv run python scripts/fetch_geoip_db.py /app/geoip/dbip-city-lite.mmdb
 
 COPY . .
 RUN groupadd --system --gid 10001 relay \
