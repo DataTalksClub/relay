@@ -187,7 +187,7 @@ def test_dry_run_campaign_batch_with_default_factory_lands_durable_failures(rele
     assert "dry run" in recipient.last_error
     assert recipient.ses_message_id == ""
     assert campaign.sent_count == 0
-    event = EmailEvent.objects.get(campaign_recipient=recipient)
+    event = EmailEvent.objects.exclude(event_type="queued").get(campaign_recipient=recipient)
     assert event.event_type == EmailEventType.FAILED
     assert "dry run" in event.metadata["error"]
     assert boto3_spy.call_count == 0

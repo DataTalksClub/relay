@@ -132,7 +132,7 @@ def test_provider_return_including_empty_id_keeps_state_events_counts_and_no_row
     assert recipient.claimed_at is not None and recipient.claim_owner
     assert recipient.tracking_token_hash and recipient.unsubscribe_token_hash
     assert campaign.sent_count == 1
-    event = EmailEvent.objects.get(campaign_recipient=recipient)
+    event = EmailEvent.objects.exclude(event_type="queued").get(campaign_recipient=recipient)
     assert event.event_type == "sent" and event.metadata == {"ses_message_id": message_id}
     assert provider.calls[0]["Source"] == "global@relay.example.invalid"
 
@@ -148,7 +148,7 @@ def test_cancelled_campaign_records_skip_and_never_calls_provider(pending):
     assert recipient.status == "skipped" and recipient.last_error == "campaign_cancelled"
     # The claim minted tokens; a skipped row drops them since no message carries them.
     assert recipient.tracking_token_hash is None and recipient.unsubscribe_token_hash is None
-    event = EmailEvent.objects.get(campaign_recipient=recipient)
+    event = EmailEvent.objects.exclude(event_type="queued").get(campaign_recipient=recipient)
     assert event.event_type == "skipped" and event.metadata == {"reason": "campaign_cancelled"}
 
 
@@ -167,7 +167,7 @@ def test_failed_finalize_leaves_row_sending_and_fails_loudly(pending, monkeypatc
     # The message was accepted and is never resent: the row waits for lease expiry -> UNKNOWN.
     assert len(provider.calls) == 1
     assert recipient.status == "sending" and recipient.ses_message_id == ""
-    assert EmailEvent.objects.count() == 0
+    assert EmailEvent.objects.exclude(event_type="queued").count() == 0
     assert "campaign_finalize_lost" in caplog.text and f"{recipient.pk}=synthetic-id" in caplog.text
 
 
@@ -194,7 +194,7 @@ def test_preview_calls_injectable_sender_and_keeps_token_order(pending, monkeypa
     assert "/unsubscribe/test-" in captured[0]["text_body"]
     recipient.refresh_from_db()
     assert recipient.status == "pending" and recipient.ses_message_id == ""
-    assert EmailEvent.objects.count() == 0
+    assert EmailEvent.objects.exclude(event_type="queued").count() == 0
 
 
 class FailingProvider(Provider):
@@ -268,16 +268,16 @@ def assert_failure_state(campaign, recipient, error, outcome):
         # Ambiguous: never retried, tokens kept (the copy SES may have accepted carries them).
         assert recipient.status == "unknown" and recipient.last_error == "send_outcome_unknown:TimeoutError"
         assert recipient.tracking_token_hash and recipient.unsubscribe_token_hash
-        assert EmailEvent.objects.count() == 0
+        assert EmailEvent.objects.exclude(event_type="queued").count() == 0
         return
     assert recipient.last_error == str(error)
     if outcome == "retryable":
-        assert recipient.status == "pending" and EmailEvent.objects.count() == 0
+        assert recipient.status == "pending" and EmailEvent.objects.exclude(event_type="queued").count() == 0
         assert recipient.tracking_token_hash is None and recipient.unsubscribe_token_hash is None
         assert recipient.claimed_at is None and recipient.claim_owner == ""
         return
     assert recipient.status == "failed"
-    event = EmailEvent.objects.get(campaign_recipient=recipient)
+    event = EmailEvent.objects.exclude(event_type="queued").get(campaign_recipient=recipient)
     assert event.event_type == "failed" and event.metadata == {"error": str(error)}
 
 
