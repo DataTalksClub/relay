@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass
 
 from django.conf import settings
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.db.models import (
     Case,
     CharField,
@@ -397,6 +397,18 @@ class CampaignNotReady(ValueError):
     """A draft cannot safely be queued for immediate sending."""
 
 
+class CampaignQueueTimeout(RuntimeError):
+    """Queueing hit the database statement timeout; the transaction rolled back."""
+
+
+def queue_timeout_message(campaign_id):
+    return (
+        f"Queueing campaign {campaign_id} exceeded the database statement timeout and was rolled back: "
+        "no recipients were queued and no email was sent. The campaign keeps its previous status. "
+        "Retry, or schedule it a minute ahead so the scheduler queues it outside the web request."
+    )
+
+
 def campaign_send_issues(campaign):
     issues = list(composer_send_issues(campaign))
     if (
@@ -422,7 +434,7 @@ def campaign_send_issues(campaign):
 
 
 def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
-                   expected_revision=None, reject_past_schedule=False):
+                   expected_revision=None, reject_past_schedule=False, handoff_large=False):
     # Keep batches short so the worker can pick up higher-priority transactional
     # sends between campaign batches. Per-recipient status checks keep each
     # smaller batch idempotent if it is redelivered.
@@ -464,6 +476,11 @@ def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
         if dispatching and locked_campaign.scheduled_at is None:
             raise CampaignNotReady("The scheduled campaign has no send time.")
 
+        if handoff_large and not dispatching:
+            candidates = _base_candidate_contacts(locked_campaign).count()
+            if candidates > _sync_queue_max_recipients():
+                return _handoff_to_scheduler(locked_campaign, now, candidates)
+
         snapshot_campaign_recipients(locked_campaign)
         locked_campaign.refresh_from_db()
         pending = list(
@@ -485,7 +502,10 @@ def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
         if dispatching and not payloads:
             locked_campaign.sent_at = now
         locked_campaign.save(update_fields=["status", "sent_at", "updated_at"])
-        _append_queue_audit_events(locked_campaign, recipient_ids, len(payloads))
+        # Per-recipient QUEUED audit rows are written by each campaign batch
+        # (record_batch_queued_events) instead of one INSERT ... SELECT over
+        # every recipient here: on 2026-11-23 that statement took 15-36 s for
+        # 131k recipients and hit the web statement_timeout (campaign 318).
 
         # Enqueue only once this transaction commits.
         #
@@ -526,14 +546,26 @@ logger = logging.getLogger(__name__)
 
 def request_campaign_queue(campaign, *, expected_revision=None, reject_past_schedule=False,
                            batch_size=None):
-    """Complete the snapshot and queue synchronously before returning."""
-    result = queue_campaign(
-        campaign, expected_revision=expected_revision,
-        reject_past_schedule=reject_past_schedule, batch_size=batch_size,
-    )
+    """Queue synchronously, or hand a large send-now audience to the scheduler.
+
+    A statement timeout is re-raised as CampaignQueueTimeout so every caller
+    can report a campaign-specific error instead of a generic database one.
+    """
+    from mailing.middleware import is_database_statement_timeout  # noqa: PLC0415 - middleware imports services
+
+    try:
+        result = queue_campaign(
+            campaign, expected_revision=expected_revision,
+            reject_past_schedule=reject_past_schedule, batch_size=batch_size, handoff_large=True,
+        )
+    except DatabaseError as exc:
+        if is_database_statement_timeout(exc):
+            raise CampaignQueueTimeout(queue_timeout_message(campaign.pk)) from exc
+        raise
     campaign.refresh_from_db()
     return QueueRequestResult(
-        campaign.pk, result.queued, not result.queued, result.scheduled, False, campaign.status, result.batch_count,
+        campaign.pk, result.queued, not result.queued and not result.snapshotting, result.scheduled,
+        result.snapshotting, campaign.status, result.batch_count,
     )
 
 
@@ -695,20 +727,51 @@ def _campaign_email_payloads(campaign_id, recipient_ids, batch_size):
     return payloads
 
 
-def _append_queue_audit_events(campaign, recipient_ids, batch_count):
+def record_batch_queued_events(campaign, recipient_ids, batch_id=""):
+    """Write the QUEUED audit row for each recipient in one batch, once.
+
+    Runs in the campaign worker at the start of a batch, so a large send no
+    longer writes every audit row inside the web request's transaction.
+    Recipients that already have a QUEUED event (an earlier delivery of this
+    batch, a retry, or a campaign queued before this change) are skipped.
+    """
     if not recipient_ids:
-        return
-    # recipient_ids is exactly the campaign's pending rows as of the snapshot
-    # (the campaign row is locked and nothing enqueues before commit), so
-    # select them back by campaign scope instead of splicing a 36k-element
-    # IN list into the INSERT ... SELECT.
-    insert_select(EmailEvent, CampaignRecipient.objects.filter(
-        campaign_id=campaign.pk, status=CampaignRecipientStatus.PENDING,
-    ), {
+        return 0
+    already = EmailEvent.objects.filter(
+        campaign_recipient_id=OuterRef("pk"), event_type=EmailEventType.QUEUED,
+    )
+    return insert_select(EmailEvent, CampaignRecipient.objects.filter(
+        pk__in=list(recipient_ids), campaign_id=campaign.pk, status=CampaignRecipientStatus.PENDING,
+    ).filter(~Exists(already)), {
         "campaign_id": campaign.pk, "campaign_recipient_id": F("pk"), "contact_id": F("contact_id"),
         "client_id": campaign.client_id, "audience_id": campaign.audience_id,
-        "event_type": EmailEventType.QUEUED, "metadata": {"batch_count": batch_count},
+        "event_type": EmailEventType.QUEUED, "metadata": {"batch_id": batch_id} if batch_id else {},
     })
+
+
+def _sync_queue_max_recipients():
+    return int(getattr(settings, "CAMPAIGN_SYNC_QUEUE_MAX_RECIPIENTS", 10000))
+
+
+def _handoff_to_scheduler(locked_campaign, now, candidates):
+    """Queue a large send-now campaign from the scheduler instead of this request.
+
+    Snapshotting a six-figure audience can take longer than the web statement
+    timeout (15 s) and the CLI's 30 s request timeout. The scheduler already
+    queues due SCHEDULED campaigns with the same queue_campaign code and no
+    web statement timeout, so mark the campaign due now and return at once.
+    """
+    locked_campaign.status = CampaignStatus.SCHEDULED
+    locked_campaign.scheduled_at = now
+    locked_campaign.metadata = dict(locked_campaign.metadata or {}) | {
+        "queue_handoff": {"requested_at": now.isoformat(), "candidate_count": candidates},
+    }
+    locked_campaign.save(update_fields=["status", "scheduled_at", "metadata", "updated_at"])
+    logger.info(
+        "campaign_queue_handoff campaign_id=%s candidates=%s threshold=%s",
+        locked_campaign.pk, candidates, _sync_queue_max_recipients(),
+    )
+    return QueueCampaignResult(locked_campaign.id, True, 0, 0, 0, scheduled=False, snapshotting=True)
 
 
 def _recipient_status(contact, campaign):

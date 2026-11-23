@@ -123,7 +123,7 @@ def test_contact_unsubscribes_after_snapshot_is_not_sent(scope):
     assert recipient.ses_message_id == ""
     campaign.refresh_from_db()
     assert campaign.sent_count == 0
-    event = EmailEvent.objects.get(campaign_recipient=recipient)
+    event = EmailEvent.objects.exclude(event_type=EmailEventType.QUEUED).get(campaign_recipient=recipient)
     assert event.event_type == EmailEventType.SKIPPED
     assert event.metadata["suppressed_after_snapshot"] is True
 
@@ -151,7 +151,7 @@ def test_bounced_or_complained_after_snapshot_is_not_sent(field, expected):
     assert recipient.last_error.startswith("suppressed_after_snapshot:")
     campaign.refresh_from_db()
     assert campaign.sent_count == 0
-    assert EmailEvent.objects.get(campaign_recipient=recipient).event_type == EmailEventType.SKIPPED
+    assert EmailEvent.objects.exclude(event_type=EmailEventType.QUEUED).get(campaign_recipient=recipient).event_type == EmailEventType.SKIPPED
 
 
 @override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")

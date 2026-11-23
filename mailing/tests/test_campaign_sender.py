@@ -115,8 +115,10 @@ def test_campaign_sender_sends_pending_recipient_and_persists_audit_state(campai
     assert recipient.sent_at is not None
     assert recipient.last_error == ""
     assert campaign.sent_count == 1
-    event = EmailEvent.objects.get(campaign_recipient=recipient)
+    event = EmailEvent.objects.exclude(event_type=EmailEventType.QUEUED).get(campaign_recipient=recipient)
     assert event.event_type == EmailEventType.SENT
+    # The batch writes the recipient's QUEUED audit row (no longer the queue request).
+    assert EmailEvent.objects.filter(campaign_recipient=recipient, event_type=EmailEventType.QUEUED).count() == 1
     assert event.metadata == {"ses_message_id": "ses-message-1"}
 
 
@@ -287,7 +289,7 @@ def test_campaign_sender_records_permanent_failure_and_acknowledges_record(campa
     assert recipient.status == CampaignRecipientStatus.FAILED
     assert "MessageRejected" in recipient.last_error
     assert campaign.sent_count == 0
-    assert EmailEvent.objects.get(campaign_recipient=recipient).event_type == EmailEventType.FAILED
+    assert EmailEvent.objects.exclude(event_type=EmailEventType.QUEUED).get(campaign_recipient=recipient).event_type == EmailEventType.FAILED
 
 
 @override_settings(DEFAULT_FROM_EMAIL="newsletter@example.com", PUBLIC_BASE_URL="https://mail.example.com")
