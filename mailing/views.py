@@ -114,6 +114,7 @@ from mailing.services.contact_import_export import (
     export_contacts_csv_for_client,
     export_contacts_for_client,
 )
+from mailing.services.geo import client_ip, geo_for_request
 from mailing.services.inbound_views import (
     BLOCK_ORIGIN_BUTTON,
     DEFAULT_STATE,
@@ -1539,7 +1540,9 @@ def transparent_gif_response(*, status=200):
 
 @require_GET
 def tracking_open(request, tracking_token):
-    recipient = record_open(tracking_token)
+    ip = client_ip(request)
+    country, city = geo_for_request(request, ip)
+    recipient = record_open(tracking_token, ip=ip, country=country, city=city)
     if recipient is None:
         return transparent_gif_response(status=404)
     return transparent_gif_response()
@@ -1548,7 +1551,16 @@ def tracking_open(request, tracking_token):
 @require_GET
 def tracking_click(request, tracking_token):
     destination_url = request.GET.get("u", "")
-    recipient = record_click(tracking_token, destination_url, request.GET.get("s", ""))
+    ip = client_ip(request)
+    country, city = geo_for_request(request, ip)
+    recipient = record_click(
+        tracking_token,
+        destination_url,
+        request.GET.get("s", ""),
+        ip=ip,
+        country=country,
+        city=city,
+    )
     if recipient is None:  # UNRECORDED_CLICK (0) is not None: signed test links redirect
         return JsonResponse({"error": {"code": "invalid_tracking_redirect"}}, status=400)
     return redirect(destination_url)

@@ -414,6 +414,16 @@ RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS = int(
     os.environ.get("RELAY_PUBLIC_SUBSCRIBE_IP_WINDOW_SECONDS", "3600")
 )
 RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS = int(os.environ.get("RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS", "2"))
+# Trusted proxy hops for client_ip() on tracking opens/clicks. Prod is
+# client -> CloudFront -> Coolify Traefik -> gunicorn (2 hops).
+RELAY_TRUSTED_PROXY_HOPS = int(
+    os.environ.get("RELAY_TRUSTED_PROXY_HOPS", str(RELAY_PUBLIC_SUBSCRIBE_TRUSTED_PROXY_HOPS))
+)
+# Only enable if Cloudflare is confirmed in front of Relay and Traefik trusts
+# only Cloudflare edges. Prod currently uses CloudFront (not Cloudflare).
+RELAY_TRUST_CLOUDFLARE_HEADERS = bool_env("RELAY_TRUST_CLOUDFLARE_HEADERS", default=False)
+# Offline MaxMind-format MMDB path for IP -> (country, city) resolution.
+RELAY_GEOIP_DB_PATH = os.environ.get("RELAY_GEOIP_DB_PATH", "/app/geoip/dbip-city-lite.mmdb").strip()
 
 # Lead capture pages for talks/workshops (mailing.lead_capture_views). Events
 # are database rows (Django admin or `manage.py lead_event`); these settings

@@ -90,7 +90,7 @@ READ_FIELDS = {
     "inbound-addresses": (models.InboundAddress, "id local_part domain note is_active created_at updated_at"),
     "blocked-senders": (models.BlockedSender, "id value scope origin reason created_at"),
     "audits": (models.OperatorAudit, "id actor_id action target_type target_id metadata created_at"),
-    "events": (models.EmailEvent, "id contact_id client_id audience_id campaign_id event_type created_at"),
+    "events": (models.EmailEvent, "id contact_id client_id audience_id campaign_id event_type ip country city created_at"),
     "dead-letters": (Job, "id client_id status attempt max_attempts error finished_at run_after created_at updated_at"),
 }
 

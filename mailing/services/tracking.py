@@ -71,19 +71,26 @@ def _enqueue_tracking_event(payload):
     return True
 
 
-def record_open(raw_token):
+def record_open(raw_token, *, ip=None, country=None, city=None):
     """Web path for the open pixel: validate the token, enqueue, return. Never locks."""
     recipient_id = _recipient_id_for_tracking_token(raw_token)
     if recipient_id is None:
         return None
-    _enqueue_tracking_event({"kind": "open", "recipient_id": recipient_id, "occurred_at": timezone.now().isoformat()})
+    payload = {"kind": "open", "recipient_id": recipient_id, "occurred_at": timezone.now().isoformat()}
+    if ip:
+        payload["ip"] = ip
+    if country:
+        payload["country"] = country
+    if city:
+        payload["city"] = city
+    _enqueue_tracking_event(payload)
     return recipient_id
 
 
 UNRECORDED_CLICK = 0  # falsy-safe sentinel: valid signed link, nothing to record (test send)
 
 
-def record_click(raw_token, destination_url, signature=None):
+def record_click(raw_token, destination_url, signature=None, *, ip=None, country=None, city=None):
     """Web path for the click redirect: validate the token, enqueue, return. Never locks."""
     if not is_allowed_click_destination(destination_url):
         return None
@@ -102,14 +109,19 @@ def record_click(raw_token, destination_url, signature=None):
             return None
     elif recipient.sent_at is None or recipient.sent_at >= LEGACY_UNSIGNED_CLICK_CUTOFF:
         return None
-    _enqueue_tracking_event(
-        {
-            "kind": "click",
-            "recipient_id": recipient.pk,
-            "occurred_at": timezone.now().isoformat(),
-            "url": destination_url,
-        }
-    )
+    payload = {
+        "kind": "click",
+        "recipient_id": recipient.pk,
+        "occurred_at": timezone.now().isoformat(),
+        "url": destination_url,
+    }
+    if ip:
+        payload["ip"] = ip
+    if country:
+        payload["country"] = country
+    if city:
+        payload["city"] = city
+    _enqueue_tracking_event(payload)
     return recipient.pk
 
 
@@ -119,6 +131,9 @@ def apply_tracking_event(payload):
     if kind not in {"open", "click"}:
         raise ValueError(f"unknown tracking event kind {kind!r}")
     occurred_at = datetime.fromisoformat(payload["occurred_at"])
+    ip = payload.get("ip") or None
+    country = payload.get("country") or None
+    city = payload.get("city") or None
     with transaction.atomic():
         recipient = (
             CampaignRecipient.objects.select_for_update(of=("self",))
@@ -135,7 +150,7 @@ def apply_tracking_event(payload):
                 recipient.first_opened_at = occurred_at
                 update_fields.append("first_opened_at")
             recipient.save(update_fields=update_fields)
-            event = _create_campaign_event(recipient, EmailEventType.OPEN)
+            event = _create_campaign_event(recipient, EmailEventType.OPEN, ip=ip, country=country, city=city)
         else:
             update_fields = ["click_count", "updated_at"]
             recipient.click_count += 1
@@ -143,7 +158,14 @@ def apply_tracking_event(payload):
                 recipient.first_clicked_at = occurred_at
                 update_fields.append("first_clicked_at")
             recipient.save(update_fields=update_fields)
-            event = _create_campaign_event(recipient, EmailEventType.CLICK, url=payload.get("url", ""))
+            event = _create_campaign_event(
+                recipient,
+                EmailEventType.CLICK,
+                url=payload.get("url", ""),
+                ip=ip,
+                country=country,
+                city=city,
+            )
         emit_cmp_contact_event(event)
         emit_client_callback(event)
     refresh_campaign_engagement_counts_if_due(recipient.campaign_id)
@@ -281,7 +303,7 @@ def refresh_campaign_engagement_counts(campaign):
     return counts
 
 
-def _create_campaign_event(recipient, event_type, *, url="", metadata=None):
+def _create_campaign_event(recipient, event_type, *, url="", metadata=None, ip=None, country=None, city=None):
     return EmailEvent.objects.create(
         campaign=recipient.campaign,
         campaign_recipient=recipient,
@@ -290,5 +312,8 @@ def _create_campaign_event(recipient, event_type, *, url="", metadata=None):
         audience=recipient.campaign.audience,
         event_type=event_type,
         url=url,
+        ip=ip,
+        country=country,
+        city=city,
         metadata=metadata or {},
     )
