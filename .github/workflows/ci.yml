@@ -7,21 +7,23 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, contabo]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
       - name: Install dependencies
         run: uv sync --dev --group browser
       - name: Install Chromium for the browser tests
-        run: uv run playwright install --with-deps chromium
+        run: uv run playwright install chromium
       - name: Run lint
         run: uv run ruff check .
       - name: Run tests
         run: uv run pytest
 
   campaign-postgres:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, contabo]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     services:
       postgres:
         image: postgres:16
@@ -29,12 +31,12 @@ jobs:
           POSTGRES_USER: relay_test
           POSTGRES_PASSWORD: test-only
           POSTGRES_DB: relay_test
-        ports: ["5432:5432"]
+        # Ephemeral host port: the shared self-hosted box runs other repos' jobs too.
+        ports: ["5432"]
         options: >-
           --health-cmd "pg_isready -U relay_test -d relay_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      DATABASE_URL: postgresql://relay_test:test-only@localhost:5432/relay_test
       RELAY_DB_POOL_MAX_SIZE: "6"
       RELAY_CAMPAIGN_SEND_CONCURRENCY: "1"
       SECRET_KEY: django-insecure-ci-only-not-for-deployment
@@ -43,6 +45,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --dev
       - name: Prove pooled campaign concurrency and send safety on PostgreSQL
+        env:
+          DATABASE_URL: postgresql://relay_test:test-only@localhost:${{ job.services.postgres.ports['5432'] }}/relay_test
         run: >-
           uv run pytest -q mailing/tests/test_campaign_connection_pool.py
           mailing/tests/test_campaign_send_throughput.py

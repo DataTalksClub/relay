@@ -33,7 +33,7 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, contabo]
     env:
       SECRET_KEY: django-insecure-ci-only-not-for-deployment
     steps:
@@ -50,7 +50,7 @@ jobs:
         run: uv run pytest
 
   database-preflight-test:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, contabo]
     env:
       SECRET_KEY: django-insecure-ci-only-not-for-deployment
     services:
@@ -60,7 +60,8 @@ jobs:
           POSTGRES_USER: relay_test
           POSTGRES_PASSWORD: test-only
           POSTGRES_DB: relay_preflight_test
-        ports: ["5432:5432"]
+        # Ephemeral host port: the shared self-hosted box runs other repos' jobs too.
+        ports: ["5432"]
         options: >-
           --health-cmd "pg_isready -U relay_test -d relay_preflight_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
@@ -70,12 +71,12 @@ jobs:
       - run: uv sync --frozen --dev
       - name: Concurrent migrations and restore-owner rejection on real PostgreSQL
         env:
-          RELAY_TEST_POSTGRES_URL: postgresql://relay_test:test-only@localhost:5432/relay_preflight_test
+          RELAY_TEST_POSTGRES_URL: postgresql://relay_test:test-only@localhost:${{ job.services.postgres.ports['5432'] }}/relay_preflight_test
         run: uv run pytest tests/test_db_preflight_postgresql.py -q
 
   build-and-push:
     needs: [test, database-preflight-test]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, contabo]
     outputs:
       image_tag: ${{ steps.identity.outputs.version }}
       image_digest: ${{ steps.push.outputs.digest }}
@@ -135,7 +136,7 @@ jobs:
 
   deploy:
     needs: build-and-push
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, contabo]
     # DEV only (relay-dev, dev.relay.datatalks.club). Production promotion is
     # the separate, manually dispatched deploy-prod.yml workflow.
     environment: development
