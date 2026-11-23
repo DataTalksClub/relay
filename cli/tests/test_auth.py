@@ -42,6 +42,47 @@ def test_auth_status_does_not_print_token(capsys):
     assert "private-token" not in output
 
 
+def test_auth_status_reports_expired_or_rejected(monkeypatch, capsys):
+    config.save_file({"url": "https://relay.example.test", "api_key": "relay_admin_deadbeef_secret"})
+
+    def fake_whoami(self):
+        raise cli.ApiError("Authentication credentials were not accepted.", status=401)
+
+    monkeypatch.setattr(cli.DatamailerClient, "whoami", fake_whoami)
+    assert cli.cmd_auth_status(SimpleNamespace()) == 1
+    output = capsys.readouterr().out
+    assert "expired/rejected" in output
+    assert "relay_admin_deadbeef_secret" not in output
+
+
+def test_auth_status_reports_valid_operator(monkeypatch, capsys):
+    config.save_file({"url": "https://relay.example.test", "api_key": "relay_admin_abc_secret"})
+    monkeypatch.setattr(
+        cli.DatamailerClient,
+        "whoami",
+        lambda self: {"user": {"email": "orin@datatalks.club"}, "key": {"name": "box", "prefix": "relay_admin_abc"}},
+    )
+    assert cli.cmd_auth_status(SimpleNamespace()) == 0
+    output = capsys.readouterr().out
+    assert "valid (orin@datatalks.club)" in output
+
+
+def test_whoami_uses_admin_endpoint_for_admin_key(monkeypatch, capsys):
+    calls = []
+
+    def fake_request(self, method, path, *, payload=None, query=None):
+        calls.append((method, path))
+        return 200, {"user": {"email": "orin@datatalks.club"}, "key": {"name": "box", "prefix": "relay_admin_abc"}}
+
+    monkeypatch.setattr(cli.DatamailerClient, "request", fake_request)
+    config.save_file({"url": "https://relay.example.test", "api_key": "relay_admin_abc_secret"})
+    args = SimpleNamespace(url=None, api_key=None, json=False)
+    assert cli.cmd_whoami(args) == 0
+    assert calls == [("GET", "/api/admin/whoami")]
+    output = capsys.readouterr().out
+    assert "orin@datatalks.club" in output
+
+
 def test_login_timeout_is_reported_without_hanging(monkeypatch):
     class DeviceLoginError(Exception):
         pass

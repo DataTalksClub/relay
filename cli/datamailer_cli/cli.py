@@ -206,7 +206,28 @@ def cmd_auth_logout(_args) -> int:
 def cmd_auth_status(_args) -> int:
     settings = config.resolve(_args)
     print(f"Relay URL: {settings.base_url or '(not configured)'}")
-    print(f"Login: {'configured' if settings.api_key else 'not logged in'}")
+    if not settings.api_key:
+        print("Login: not logged in")
+        return 0
+    if not settings.base_url:
+        print("Login: configured (no Relay URL configured)")
+        return 0
+    try:
+        result = DatamailerClient(settings.base_url, settings.api_key, timeout=5.0).whoami()
+    except ApiError as exc:
+        if exc.status in (401, 403):
+            print("Login: expired/rejected")
+            return 1
+        print(f"Login: configured (unverified: {exc.message})")
+        return 0
+    if isinstance(result, dict) and "user" in result:
+        user_info = result.get("user") or {}
+        identity = user_info.get("email") or user_info.get("username") or "admin"
+        print(f"Login: valid ({identity})")
+    else:
+        client_info = result.get("client", {}) if isinstance(result, dict) else {}
+        identity = client_info.get("slug") or client_info.get("name") or "client"
+        print(f"Login: valid ({identity})")
     return 0
 
 
@@ -701,6 +722,13 @@ def cmd_whoami(args) -> int:
     result = _client(args).whoami()
     if args.json:
         print(json.dumps(result, indent=2))
+        return 0
+    if isinstance(result, dict) and "user" in result:
+        user_info = result.get("user") or {}
+        key_info = result.get("key") or {}
+        print(f"operator: {user_info.get('email') or user_info.get('username')}")
+        if key_info.get("name"):
+            print(f"key:      {key_info.get('name')} ({key_info.get('prefix')})")
         return 0
     client_info = result.get("client", {}) if isinstance(result, dict) else {}
     print(f"client:  {client_info.get('name')} ({client_info.get('organization')}/{client_info.get('slug')})")

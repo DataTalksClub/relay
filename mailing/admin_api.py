@@ -233,6 +233,23 @@ def scoped_client_endpoint(view):
 
 
 @admin_endpoint(["GET"])
+def whoami(request):
+    user = request.admin_key.user
+    return JsonResponse(
+        {
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+            },
+            "key": serialize_key(request.admin_key),
+        }
+    )
+
+
+@admin_endpoint(["GET"])
 def endpoint_index(request):
     from mailing.admin_urls import urlpatterns  # noqa: PLC0415 - URL registry imports this module
 

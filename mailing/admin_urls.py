@@ -26,6 +26,7 @@ urlpatterns = [
     path("inbound-dmarc-summary", dmarc_api.summary, name="dmarc_summary"),
     path("ses-quota", ses_quota_api.quota, name="ses_quota"),
     path("", admin_api.endpoint_index, name="index"),
+    path("whoami", admin_api.whoami, name="whoami"),
     path("transfer/export", admin_api.data_transfer, {"action": "export"}, name="transfer_export"),
     path("transfer/load", admin_api.data_transfer, {"action": "load"}, name="transfer_load"),
     path("jobs/<uuid:task_id>/retry", operations.job_retry, name="job_retry"),

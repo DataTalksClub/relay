@@ -75,7 +75,8 @@ class DatamailerClient:
     # --- endpoint helpers -------------------------------------------------
 
     def whoami(self) -> Any:
-        _, data = self.request("GET", "/api/client/senders")
+        path = "/api/admin/whoami" if self.api_key.startswith("relay_admin_") else "/api/client/senders"
+        _, data = self.request("GET", path)
         return data
 
     def get_senders(self) -> Any:
