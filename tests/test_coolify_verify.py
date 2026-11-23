@@ -3,6 +3,7 @@ from scripts.coolify_verify import (
     deploy_ready,
     release_matches,
     resolve_timeout,
+    resolve_unhealthy_grace,
 )
 
 
@@ -29,15 +30,19 @@ def test_not_ready_old_image_is_not_fatal():
     assert fatal is False
 
 
-def test_unhealthy_web_is_fatal():
+def test_unhealthy_web_holds_readiness_without_failing_fast():
+    # Coolify's unhealthy has no container age: a worker inside its health
+    # start period looks identical to a broken one (prod run 45195819190).
+    # The age-aware Docker gate decides when unhealthy is fatal.
     want = "ghcr.io/datatalksclub/relay:20261025-010000-abcdef0"
     apps = [
         {"name": "web", "image": want, "status": "running:unhealthy"},
         {"name": "worker", "image": want, "status": "running"},
     ]
-    ready, _, fatal = coolify_ready(apps, want)
+    ready, reason, fatal = coolify_ready(apps, want)
     assert ready is False
-    assert fatal is True
+    assert fatal is False
+    assert "web: status 'running:unhealthy' not healthy yet" in reason
 
 
 def test_exited_worker_is_fatal():
@@ -167,10 +172,11 @@ def test_newly_added_service_exited_before_first_start_is_not_fatal():
     ]
     ready, _, fatal = coolify_ready(apps, image, frozenset({"tracking-worker"}))
     assert (ready, fatal) == (False, False)
-    # An existing worker that exits is still fatal, and so is a new one that is unhealthy.
+    # An existing worker that exits is still fatal; an unhealthy one is not
+    # ready, and the Docker gate fails it once its startup grace is over.
     assert coolify_ready(apps, image)[2] is True
     apps[1]["status"] = "running:unhealthy"
-    assert coolify_ready(apps, image, frozenset({"tracking-worker"}))[2] is True
+    assert coolify_ready(apps, image, frozenset({"tracking-worker"}))[:3:2] == (False, False)
 
 
 def test_resolve_timeout_defaults_to_300(monkeypatch):
@@ -184,3 +190,12 @@ def test_resolve_timeout_reads_the_workflow_override(monkeypatch):
 
     monkeypatch.setenv("RELAY_VERIFY_TIMEOUT_SECONDS", "not-a-number")
     assert resolve_timeout() == 300.0
+
+
+def test_resolve_unhealthy_grace_default_and_override(monkeypatch):
+    monkeypatch.delenv("RELAY_VERIFY_UNHEALTHY_GRACE_SECONDS", raising=False)
+    assert resolve_unhealthy_grace() == 300.0
+    monkeypatch.setenv("RELAY_VERIFY_UNHEALTHY_GRACE_SECONDS", "450")
+    assert resolve_unhealthy_grace() == 450.0
+    monkeypatch.setenv("RELAY_VERIFY_UNHEALTHY_GRACE_SECONDS", "nope")
+    assert resolve_unhealthy_grace() == 300.0

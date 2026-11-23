@@ -35,6 +35,18 @@ The workflow requires all three forms of evidence:
     healthcheck healthy. The environment-restricted SSH inspection returns
     only identity/state fields, never environment variables.
 
+Health start period (intake 6379d121, prod run 45195819190): workers use a
+heartbeat healthcheck with ``start_period: 120s`` and ``retries: 1``. During
+a full rolling restart a freshly created worker can briefly report
+``unhealthy`` before its first heartbeat lands, then turn healthy a minute
+later. Only Docker evidence carries the container age, so ``unhealthy`` is
+fatal there once the new container is older than the startup grace
+(:data:`UNHEALTHY_GRACE_SECONDS`, measured on the host clock from the
+container's creation). Coolify's ``unhealthy`` (aggregate or per-app) has no
+age, so it holds readiness without failing fast; Docker still fails the deploy
+for a container that stays unhealthy. ``exited``/``dead``/``failed`` still
+fail fast immediately.
+
 The service aggregate must have settled to running (running:unknown is
 valid for workers without healthchecks). Public readiness bypasses caches.
 """
@@ -51,7 +63,13 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-FATAL_SUBSTRINGS = ("unhealthy", "exited", "dead", "failed")
+FATAL_SUBSTRINGS = ("exited", "dead", "failed")
+
+# Worker healthchecks: start_period 120s, then a heartbeat must be younger than
+# 105s, checked every 15s with retries 1. 300s covers start period, heartbeat
+# window and a check interval with margin; a container still unhealthy after
+# that is a real failure.
+DEFAULT_UNHEALTHY_GRACE_SECONDS = 300.0
 
 
 def _status(app: dict) -> str:
@@ -79,10 +97,13 @@ def coolify_ready(applications: list[dict] | None, want_image: str, new_services
     """Evaluate one Coolify poll.
 
     Returns (ready, reason, fatal). ``fatal`` means the deploy is
-    definitively broken (e.g. exited/unhealthy container) and the caller
+    definitively broken (e.g. exited/dead/failed container) and the caller
     should fail fast instead of polling to the deadline. Non-fatal
-    not-ready (old image, starting, restarting, missing list) means keep
-    polling; a deadline expiry still fails the job.
+    not-ready (old image, starting, restarting, unhealthy, missing list)
+    means keep polling; a deadline expiry still fails the job. Coolify's
+    ``unhealthy`` carries no container age, so a worker inside its health
+    start period looks the same as a broken one; the age-aware Docker gate
+    (:func:`runtime_ready`) decides when unhealthy becomes fatal.
 
     NOTE: ``ready=True`` here alone does NOT prove the new containers
     run -- ``applications[].image`` is Coolify's desired state and flips
@@ -102,6 +123,8 @@ def coolify_ready(applications: list[dict] | None, want_image: str, new_services
             problems.append(f"{label}: image {image!r} != {want_image!r}")
         if not status.startswith("running"):
             problems.append(f"{label}: status {status!r} not running")
+        elif "unhealthy" in lowered:
+            problems.append(f"{label}: status {status!r} not healthy yet")
         # A service added by this deploy reports "exited" until Coolify first
         # starts it; that is not a crash. A real crash of the new container is
         # still fatal through runtime_ready's Docker evidence.
@@ -154,7 +177,7 @@ def deploy_ready(
     """Combined gate: Coolify desired-state AND public release must agree.
 
     Returns (ready, reason, fatal). ``fatal`` comes only from the Coolify
-    half (exited/unhealthy/dead/failed). A Coolify-ready + old-release
+    half (exited/dead/failed). A Coolify-ready + old-release
     combination -- the 40152657824 false positive -- is explicitly
     NOT ready and NOT fatal: keep polling until the new containers
     serve, or the deadline expires.
@@ -183,35 +206,70 @@ def service_ready(service: dict, want_image: str, payload: dict | None,
         service.get("applications"), want_image, payload, want_tag, want_sha, new_services
     )
     status = str(service.get("status", "") or "").lower()
-    # starting:unhealthy is a normal rollout state; per-app unhealthy still
-    # fails fast through deploy_ready. A settled unhealthy service is fatal.
-    service_fatal = any(s in status for s in ("failed", "exited", "dead")) or status == "running:unhealthy"
+    # starting:unhealthy and running:unhealthy are normal while new workers
+    # are inside their health start period; the age-aware Docker gate fails a
+    # container that stays unhealthy. Crashed services still fail fast.
+    service_fatal = any(s in status for s in ("failed", "exited", "dead"))
     if fatal or service_fatal:
         return False, f"aggregate={status}; {reason}", True
     if not status.startswith("running"):
         return False, f"aggregate={status} not running; {reason}", False
+    if "unhealthy" in status:
+        return False, f"aggregate={status} not healthy yet; {reason}", False
     return ready, f"aggregate={status}; {reason}", False
 
 
-def runtime_ready(snapshot: dict, baseline: dict, names: set[str], want: str) -> tuple[bool, str, bool]:
-    """Actual Docker evidence, including replacement on same-tag redeploys."""
+def _parse_time(value: str) -> datetime:
+    # Docker reports nanoseconds; fromisoformat accepts at most microseconds.
+    value = value.replace("Z", "+00:00")
+    head, sep, tail = value.partition(".")
+    if sep:
+        digits = len(tail) - len(tail.lstrip("0123456789"))
+        tail = tail[:min(digits, 6)] + tail[digits:]
+        value = f"{head}.{tail}" if tail[:1].isdigit() else head + tail
+    return datetime.fromisoformat(value)
+
+
+def runtime_ready(snapshot: dict, baseline: dict, names: set[str], want: str,
+                  unhealthy_grace: float = DEFAULT_UNHEALTHY_GRACE_SECONDS) -> tuple[bool, str, bool]:
+    """Actual Docker evidence, including replacement on same-tag redeploys.
+
+    A new container that is ``unhealthy`` is fatal only once it is older than
+    ``unhealthy_grace`` seconds (host clock: snapshot ``observed_at`` minus
+    container ``created``); before that it is still in its health start
+    period and merely not ready. Without a snapshot timestamp the age is
+    unknown and unhealthy stays fatal (fail closed).
+    """
     containers = snapshot.get("containers") or []
     by_name = {item["name"]: item for item in containers}
     started_after = datetime.fromisoformat(baseline["observed_at"])
     old_ids = {item["id"] for item in baseline.get("containers", [])}
+    observed = snapshot.get("observed_at")
+    observed_at = _parse_time(observed) if observed else None
+    starting: list[str] = []
     # Check all new containers before transient set/image checks, so a failed
     # new worker cannot be hidden by another worker still being replaced.
     for item in containers:
-        created = datetime.fromisoformat(item["created"].replace("Z", "+00:00"))
-        if item["id"] not in old_ids and created > started_after and (
-            item["status"] in {"exited", "dead"} or item["health"] == "unhealthy"
-        ):
+        created = _parse_time(item["created"])
+        if item["id"] in old_ids or created <= started_after:
+            continue
+        if item["status"] in {"exited", "dead"}:
             return False, f"runtime {item['name']}: failed {item['status']}/{item['health']}", True
+        if item["health"] == "unhealthy":
+            age = None if observed_at is None else (observed_at - created).total_seconds()
+            if age is None or age >= unhealthy_grace:
+                shown = "unknown" if age is None else f"{age:.0f}s"
+                return False, (f"runtime {item['name']}: failed {item['status']}/unhealthy "
+                               f"after startup grace (age {shown} >= {unhealthy_grace:.0f}s)"), True
+            starting.append(f"{item['name']} (age {age:.0f}s)")
+    if starting:
+        return False, (f"runtime unhealthy within {unhealthy_grace:.0f}s startup grace, waiting: "
+                       + ", ".join(starting)), False
     if not names or set(by_name) != names or len(containers) != len(names):
         return False, "runtime container set does not match expected services", False
     for name in sorted(names):
         item = by_name[name]
-        created = datetime.fromisoformat(item["created"].replace("Z", "+00:00"))
+        created = _parse_time(item["created"])
         if item["id"] in old_ids or created <= started_after or item["image"] != want:
             return False, f"runtime {name}: old container/image still present", False
         if item["status"] != "running" or not item["image_id"] or item["health"] not in {None, "healthy"}:
@@ -238,6 +296,14 @@ def resolve_timeout() -> float:
         return 300.0
 
 
+def resolve_unhealthy_grace() -> float:
+    """Seconds a new container may report unhealthy before it is fatal."""
+    try:
+        return float(os.environ.get("RELAY_VERIFY_UNHEALTHY_GRACE_SECONDS", "") or DEFAULT_UNHEALTHY_GRACE_SECONDS)
+    except ValueError:
+        return DEFAULT_UNHEALTHY_GRACE_SECONDS
+
+
 def verify(*, timeout: float | None = None, interval: float = 5) -> int:
     """Shared workflow entrypoint; monotonic deadline includes HTTP requests."""
     base = os.environ["COOLIFY_URL"].rstrip("/")
@@ -258,6 +324,7 @@ def verify(*, timeout: float | None = None, interval: float = 5) -> int:
         # follower promoted to the public route) can outlast the historic
         # 300-second default; production overrides it per workflow.
         timeout = resolve_timeout()
+    unhealthy_grace = resolve_unhealthy_grace()
     start = time.monotonic()
     deadline = start + timeout
     last = "no successful poll"
@@ -300,7 +367,7 @@ def verify(*, timeout: float | None = None, interval: float = 5) -> int:
                 if remaining <= 0:
                     raise TimeoutError("verification deadline reached")
                 runtime = inspect_runtime(timeout=min(30, remaining))
-                runtime_ok, runtime_reason, runtime_fatal = runtime_ready(runtime, baseline, names, want)
+                runtime_ok, runtime_reason, runtime_fatal = runtime_ready(runtime, baseline, names, want, unhealthy_grace)
                 ready = ready and runtime_ok
                 fatal = fatal or runtime_fatal
                 last = f"{reason}; {runtime_reason}"

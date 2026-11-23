@@ -57,9 +57,51 @@ def test_metadata_and_new_public_web_cannot_hide_old_or_missing_workers(change):
 @pytest.mark.parametrize("state,health", [("exited", None), ("dead", None), ("running", "unhealthy")])
 def test_failed_new_worker_fails_even_when_public_web_is_new(state, health):
     runtime = deepcopy(RUNTIME)
+    # Snapshot taken long after creation: well past the startup grace.
+    runtime["observed_at"] = "2026-10-26T08:10:00+00:00"
     runtime["containers"][1].update(status=state, health=health)
     ready, _, fatal = verify.runtime_ready(runtime, BASELINE, {"web", "worker"}, IMAGE)
     assert not ready and fatal
+
+
+@pytest.mark.parametrize("state", ["exited", "dead"])
+def test_crashed_new_worker_fails_fast_even_inside_startup_grace(state):
+    runtime = deepcopy(RUNTIME)
+    runtime["observed_at"] = "2026-10-26T08:00:30+00:00"
+    runtime["containers"][1].update(status=state, health=None)
+    ready, _, fatal = verify.runtime_ready(runtime, BASELINE, {"web", "worker"}, IMAGE)
+    assert not ready and fatal
+
+
+@pytest.mark.parametrize("observed,fatal", [
+    ("2026-10-26T08:02:30+00:00", False),   # 149s old: inside start period
+    ("2026-10-26T08:04:59+00:00", False),   # just under the 300s grace
+    ("2026-10-26T08:05:02+00:00", True),    # still unhealthy after grace
+])
+def test_unhealthy_new_worker_is_fatal_only_after_startup_grace(observed, fatal):
+    # Prod run 45195819190: new workers reported unhealthy for ~2 minutes
+    # during the rolling restart and were healthy a minute later.
+    runtime = deepcopy(RUNTIME)
+    runtime["observed_at"] = observed
+    runtime["containers"][1].update(status="running", health="unhealthy")
+    ready, reason, actual_fatal = verify.runtime_ready(runtime, BASELINE, {"web", "worker"}, IMAGE)
+    assert not ready and actual_fatal == fatal
+    assert ("after startup grace" if fatal else "within 300s startup grace") in reason
+
+
+def test_unhealthy_with_unknown_age_fails_closed():
+    runtime = deepcopy(RUNTIME)
+    runtime.pop("observed_at", None)
+    runtime["containers"][1].update(status="running", health="unhealthy")
+    assert verify.runtime_ready(runtime, BASELINE, {"web", "worker"}, IMAGE)[2] is True
+
+
+def test_starting_unhealthy_does_not_hide_crashed_worker():
+    runtime = deepcopy(RUNTIME)
+    runtime["observed_at"] = "2026-10-26T08:01:00+00:00"
+    runtime["containers"][0].update(health="unhealthy")
+    runtime["containers"][1].update(status="exited", health=None)
+    assert verify.runtime_ready(runtime, BASELINE, {"web", "worker"}, IMAGE)[2] is True
 
 
 def test_failed_new_container_is_not_hidden_by_another_old_or_missing_container():
@@ -70,7 +112,7 @@ def test_failed_new_container_is_not_hidden_by_another_old_or_missing_container(
 
 
 @pytest.mark.parametrize("status,fatal", [("starting:unhealthy", False), ("failed", True),
-                                         ("exited", True), ("running:unhealthy", True)])
+                                         ("exited", True), ("dead", True), ("running:unhealthy", False)])
 def test_unfinished_or_failed_service_cannot_pass(status, fatal):
     service = {**SERVICE, "status": status}
     ready, _, actual_fatal = verify.service_ready(service, IMAGE, PAYLOAD, TAG, SHA)
@@ -170,6 +212,56 @@ def test_late_success_after_network_request_is_rejected(monkeypatch, poll_enviro
         return PAYLOAD
     mock_responses(monkeypatch, public)
     assert verify.verify(timeout=300) == 1
+
+
+def test_workers_in_health_start_period_wait_then_pass(monkeypatch, poll_environment, capsys):
+    """Replays run 45195819190: transient unhealthy must not fail the deploy."""
+    unhealthy_service = {"status": "running:unhealthy", "applications": [
+        {**SERVICE["applications"][0]},
+        {**SERVICE["applications"][1], "status": "running:unhealthy"},
+    ]}
+    services = iter([unhealthy_service] * 3 + [SERVICE] * 10)
+    mock_responses(monkeypatch, lambda: PAYLOAD)
+    monkeypatch.setattr(verify.urllib.request, "urlopen", _urlopen_with(lambda: next(services)))
+
+    def runtime(**kwargs):
+        snap = deepcopy(RUNTIME)
+        # Host clock advances with the fake monotonic clock; worker created at 08:00:01.
+        snap["observed_at"] = f"2026-10-26T08:02:{int(poll_environment[0]):02d}+00:00"
+        if poll_environment[0] < 15:
+            snap["containers"][1]["health"] = "unhealthy"
+        return snap
+
+    monkeypatch.setattr(verify, "inspect_runtime", runtime)
+    assert verify.verify(timeout=60) == 0
+    out = capsys.readouterr().out
+    assert "startup grace" in out and "ready=True" in out
+    assert poll_environment[0] == 15
+
+
+def test_worker_still_unhealthy_after_grace_fails_fast(monkeypatch, poll_environment, capsys):
+    monkeypatch.setenv("RELAY_VERIFY_UNHEALTHY_GRACE_SECONDS", "130")
+    mock_responses(monkeypatch, lambda: PAYLOAD, {**SERVICE, "status": "running:unhealthy"})
+
+    def runtime(**kwargs):
+        snap = deepcopy(RUNTIME)
+        snap["observed_at"] = f"2026-10-26T08:02:{int(poll_environment[0]):02d}+00:00"
+        snap["containers"][1]["health"] = "unhealthy"
+        return snap
+
+    monkeypatch.setattr(verify, "inspect_runtime", runtime)
+    assert verify.verify(timeout=600) == 1
+    out = capsys.readouterr().out
+    assert "failed fast" in out and "after startup grace" in out
+    # 08:02:10 is 129s after creation; 08:02:15 is past the 130s grace.
+    assert poll_environment[0] == 15
+
+
+def _urlopen_with(service):
+    def urlopen(request, **kwargs):
+        value = service() if request.full_url.startswith("https://coolify.test") else PAYLOAD
+        return io.BytesIO(json.dumps(value).encode())
+    return urlopen
 
 
 def test_same_tag_failed_replacement_does_not_pass(monkeypatch, poll_environment):
