@@ -231,3 +231,16 @@ def test_contact_csv_import_requires_dry_run_or_confirmation(tmp_path, capsys):
         "POST", "/api/admin/clients/3/contacts/imports/csv",
         payload={"csv": "email\nx@y.z\n", "dry_run": True}, query=None,
     )
+
+
+def test_messages_list_pages_and_filters_by_status():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"items": []})) as request:
+        result = cli.main([
+            "operator", "messages", "list", "--status", "bounced", "--client-id", "4", "--offset", "200",
+            "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ])
+    assert result == 0
+    request.assert_called_once_with(
+        "GET", "/api/admin/transactional-messages", payload=None,
+        query={"offset": 200, "limit": 200, "client_id": 4, "status": "bounced"},
+    )

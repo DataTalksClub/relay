@@ -139,6 +139,18 @@ Read collections and `/{id}` detail endpoints are available for `contacts`,
 `transactional-messages`, `events`, `audits`, `client-callbacks`, `cmp-callbacks`,
 `inbound-messages`, `inbound-addresses`, `blocked-senders` and `dead-letters`.
 Inbound message detail includes the body; marking it read is an explicit POST.
+`transactional-messages` list and detail include `bounce`: `null`, or the
+latest SES bounce with `occurred_at`, `provider_event_id`, `bounce_type`,
+`bounce_sub_type`, `bounce_status`, `bounce_action` and `diagnostic_code` (the
+remote MTA's reason, addresses redacted; `null` for bounces recorded before
+2026-11-23). The list accepts `status` (e.g. `bounced`, `skipped`) besides
+`client_id`/`contact_id`, so suppression questions do not need a full crawl:
+`relay operator messages list --status bounced`.
+
+The `relay.datatalks.club` edge (CloudFront WAF) blocks any single IP above 300
+requests per 5 minutes with a bare HTTP 403 that never reaches Relay, including
+authenticated admin GETs. Page with filters and `limit=200`, and keep crawls
+under 1 request/second; a blocked IP is released automatically within minutes.
 Related histories and subscriptions can be fetched through the filtered read
 collections. GET `contacts/{id}/overview`, `audiences/{id}/overview` and
 `campaigns/{id}/overview` expose the UI metrics, eligibility, breakdowns and send

@@ -47,6 +47,9 @@ SNS_SUBSCRIPTION_CONFIRMATION = "SubscriptionConfirmation"
 SUPPORTED_SNS_TYPES = {SNS_NOTIFICATION, SNS_SUBSCRIPTION_CONFIRMATION}
 SNS_MOCK_SIGNATURE = "datamailer-local-sns-signature"
 
+# Bounce diagnostic text is operator context; cap it so a chatty MTA cannot bloat event rows.
+MAX_DIAGNOSTIC_CODE_LENGTH = 1000
+
 SES_EVENT_TYPES = {
     "Send": "send",
     "Reject": "reject",
@@ -445,6 +448,18 @@ def build_ses_metadata(ses_payload, sns_payload):
             "bounce_type": detail.get("bounceType"),
             "bounce_sub_type": detail.get("bounceSubType"),
         }
+        # The remote MTA's reason (e.g. "smtp; 550 5.1.1 user unknown") is what
+        # operators need to judge a suppression; addresses inside it are redacted.
+        bounced_recipients = detail.get("bouncedRecipients") or []
+        first = bounced_recipients[0] if isinstance(bounced_recipients, list) and bounced_recipients else None
+        if isinstance(first, dict):
+            diag = first.get("diagnosticCode")
+            if diag:
+                metadata["diagnostic_code"] = sanitize_for_logging(str(diag))[:MAX_DIAGNOSTIC_CODE_LENGTH]
+            if first.get("status"):
+                metadata["bounce_status"] = str(first["status"])[:32]
+            if first.get("action"):
+                metadata["bounce_action"] = str(first["action"])[:32]
     elif notification_type == "complaint":
         metadata["complaint_feedback_type"] = detail.get("complaintFeedbackType")
     elif notification_type == "reject":

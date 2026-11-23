@@ -66,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_operator.add_argument("--uuid", help="UUID of a schedule, job, or dead letter for show/retry actions.")
     p_operator.add_argument("--client-id", type=int, help="Explicit Relay client id for scoped operations.")
     p_operator.add_argument("--query", help="Text search for list actions that support it.")
+    p_operator.add_argument("--status", help="Filter `messages list` by delivery status, e.g. bounced, skipped, failed.")
     p_operator.add_argument("--suppression", choices=("global_unsubscribed", "hard_bounced", "complained"), help="Filter contacts by suppression state.")
     p_operator.add_argument("--client-slug", help="Client slug required by some campaign API operations.")
     p_operator.add_argument("--audience", help="Audience slug required by some campaign API operations.")
@@ -77,8 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_operator.add_argument("--job-id", type=int, help="Recipient list import job id.")
     p_operator.add_argument("--data-file", help="JSON request body; use - to read stdin.")
     p_operator.add_argument("--resource-name", help="Archive resource name for paged exports.")
-    p_operator.add_argument("--offset", type=int, default=0, help="Archive export page offset.")
-    p_operator.add_argument("--limit", type=int, default=200, help="Archive export page size.")
+    p_operator.add_argument("--offset", type=int, default=0, help="Page offset for archive export and messages list.")
+    p_operator.add_argument("--limit", type=int, default=200, help="Page size (max 200) for archive export and messages list.")
     p_operator.add_argument("--include-removed", action="store_true", help="Include removed recipient-list members.")
     p_operator.add_argument("--confirm", action="store_true", help="Confirm that Relay should queue/send the campaign.")
     p_operator.add_argument("--json", action="store_true", help="Print JSON (the default).")
@@ -484,6 +485,8 @@ def cmd_operator(args) -> int:
     elif resource == "messages":
         if action == "list":
             path = "/api/admin/transactional-messages"
+            query = {"offset": args.offset, "limit": args.limit}
+            query |= {key: value for key, value in {"client_id": args.client_id, "status": args.status}.items() if value}
         elif action == "show" and args.id:
             path = f"/api/admin/transactional-messages/{args.id}"
         elif action == "retry" and args.id:

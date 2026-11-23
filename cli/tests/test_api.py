@@ -3,7 +3,7 @@ import urllib.request
 
 import pytest
 from datamailer_cli import config
-from datamailer_cli.api import ApiError, DatamailerClient
+from datamailer_cli.api import ApiError, DatamailerClient, _error_from_response
 
 
 def test_timeout_fails_with_a_clear_error(monkeypatch):
@@ -25,3 +25,11 @@ def test_relay_environment_names_take_precedence(monkeypatch, tmp_path):
     settings = config.resolve(object(), path)
     assert settings.base_url == "https://env.test"
     assert settings.api_key == "relay-key"
+
+
+def test_bare_403_is_reported_as_edge_block_not_app_auth():
+    edge = _error_from_response(403, b"<html><body>Request blocked.</body></html>")
+    assert edge.code == "edge_forbidden"
+    assert "rate limit" in edge.message
+    app = _error_from_response(403, b'{"error": {"code": "forbidden"}}')
+    assert app.code == "forbidden"
