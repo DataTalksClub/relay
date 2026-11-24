@@ -113,11 +113,16 @@ relay operator messages retry --id 71 --confirm
 relay operator messages bulk-retry --data-file retry-filters.json --confirm
 relay operator stats list
 relay operator archive export --resource-name contacts --offset 0 --limit 200
+relay operator subscriptions delete --client-id 2 --ids 101,102          # dry run
+relay operator subscriptions delete --client-id 2 --ids 101,102 --confirm
 ```
 
 `relay operator` actions use a Relay admin API key. Campaign queueing requires
 an explicit `--confirm`; bulk retry without it only runs when the JSON file sets
-`"dry_run": true`. `relay api METHOD /api/...` is available for API
+`"dry_run": true`. `subscriptions delete` is a dry run unless `--confirm` is
+given: it lists the rows (id, audience, client, status, verified_at; never
+emails) and deletes nothing. See "Delete subscription rows by id" in
+[`docs/admin-api.md`](../docs/admin-api.md). `relay api METHOD /api/...` is available for API
 operations that do not yet have a dedicated command. Current UI/API/CLI gaps
 are tracked in [`docs/relay-cli-coverage.md`](../docs/relay-cli-coverage.md).
 

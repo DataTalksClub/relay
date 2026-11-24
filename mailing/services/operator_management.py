@@ -367,3 +367,83 @@ def assume_recipient_sent(*, actor, campaign, recipient):
     )
     refresh_campaign_send_counts(campaign.id)
     return recipient
+
+
+MAX_SUBSCRIPTION_DELETE_IDS = 1000
+SUBSCRIPTION_DELETE_FIELDS = ("id", "audience_id", "client_id", "status", "verified_at")
+
+
+class SubscriptionDeleteRejected(ValueError):
+    """The request was refused as a whole; nothing was deleted."""
+
+    def __init__(self, code, fields=None):
+        super().__init__(code)
+        self.code, self.fields = code, fields or {}
+
+
+def parse_subscription_ids(raw_ids):
+    """Validate an explicit id list: positive integers, no duplicates, bounded size."""
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise SubscriptionDeleteRejected("ids_required", {"ids": "non_empty_list_required"})
+    if len(raw_ids) > MAX_SUBSCRIPTION_DELETE_IDS:
+        raise SubscriptionDeleteRejected("too_many_ids", {"ids": f"max_{MAX_SUBSCRIPTION_DELETE_IDS}"})
+    malformed = [value for value in raw_ids if type(value) is not int or value <= 0]
+    if malformed:
+        raise SubscriptionDeleteRejected("malformed_ids", {"ids": [str(value) for value in malformed[:20]]})
+    if len(set(raw_ids)) != len(raw_ids):
+        duplicates = sorted({value for value in raw_ids if raw_ids.count(value) > 1})
+        raise SubscriptionDeleteRejected("duplicate_ids", {"ids": duplicates[:20]})
+    return sorted(raw_ids)
+
+
+@transaction.atomic
+def delete_subscriptions(*, actor, client, ids, confirm, audit_metadata=None):
+    """Delete exactly the Subscription rows named by ``ids`` within ``client``.
+
+    Fail-closed: every id must exist and belong to ``client``; if any id is
+    missing or out of scope the whole request is refused and nothing is
+    deleted. Without ``confirm`` this is a dry run that only reports the rows.
+    The report never includes contact emails or names. Both outcomes write an
+    operator audit entry on the client.
+    """
+    ids = parse_subscription_ids(ids)
+    rows = list(
+        Subscription.objects.select_for_update().filter(pk__in=ids).order_by("id").values(*SUBSCRIPTION_DELETE_FIELDS)
+    )
+    found = {row["id"] for row in rows}
+    missing = [value for value in ids if value not in found]
+    out_of_scope = [row["id"] for row in rows if row["client_id"] != client.id]
+    if missing or out_of_scope:
+        raise SubscriptionDeleteRejected(
+            "ids_not_deletable",
+            {key: value for key, value in {"missing": missing, "out_of_scope": out_of_scope}.items() if value},
+        )
+
+    deleted = 0
+    if confirm:
+        deleted, _ = Subscription.objects.filter(pk__in=ids, client=client).delete()
+        if deleted != len(ids):  # pragma: no cover - guarded by the row lock above
+            raise SubscriptionDeleteRejected("delete_count_mismatch")
+    audit(
+        actor,
+        "subscription.delete" if confirm else "subscription.delete.dry_run",
+        client,
+        {
+            **(audit_metadata or {}),
+            "client": client.slug,
+            "ids": ids,
+            "dry_run": not confirm,
+            "confirm": bool(confirm),
+            "requested": len(ids),
+            "matched": len(rows),
+            "deleted": deleted,
+        },
+    )
+    return {
+        "dry_run": not confirm,
+        "client_id": client.id,
+        "requested": len(ids),
+        "matched": len(rows),
+        "deleted": deleted,
+        "subscriptions": rows,
+    }

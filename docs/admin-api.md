@@ -124,6 +124,7 @@ IDs rather than the browser's selected-client session. Presentation concerns
 | Resolve failed recipient as sent | POST `campaigns/{id}/recipients/{recipient_id}/assume-sent` |
 | Contact verification, validation and suppression | POST `contacts/{id}/state`, using `ContactStateForm` fields |
 | Contact subscription updates | POST `clients/{id}/contacts/{contact_id}/subscriptions`, using operator form fields |
+| Delete subscription rows by id (dry run by default) | POST `clients/{id}/subscriptions/delete`, with `ids` and `confirm` |
 | Add contact tag, including creating a new tag | POST `clients/{id}/contacts/{contact_id}/tags/add`, using operator form fields |
 | Remove contact tag | POST `clients/{id}/contacts/{contact_id}/tags/remove`, with `tag_id` |
 | Mailchimp tag mappings | GET/PUT `clients/{id}/client/mailchimp/tag-mappings` |
@@ -133,6 +134,48 @@ IDs rather than the browser's selected-client session. Presentation concerns
 | Unblock message sender | POST `inbound-messages/{id}/unblock` |
 | Inspect/retry dead letters | GET `dead-letters`; POST `dead-letters/{uuid}/retry` |
 | Manage admin credentials | `/admin-api-keys/` in UI; admin `api-keys` routes |
+
+## Delete subscription rows by id
+
+`update_subscription` can only create or change a Subscription (for example,
+mark it unsubscribed). Rows that should never have existed, such as contacts
+added to an audience without consent, are removed with this endpoint instead.
+It never sends email and never creates subscriptions or contacts.
+
+POST `clients/{client_id}/subscriptions/delete`
+
+```json
+{"ids": [101, 102], "confirm": true}
+```
+
+- `ids`: required, non-empty list of positive integer Subscription ids, no
+  duplicates, at most 1000.
+- Dry run is the default. Without `"confirm": true` nothing is deleted and the
+  response lists the matched rows. `"dry_run": true` may be sent explicitly.
+  `"dry_run": false` without `"confirm": true` is refused with
+  `400 confirm_required`; `confirm` and `dry_run` both true is a `400
+  validation_error`.
+- Fail-closed scope: every id must exist and belong to `client_id`. If any id
+  is missing or belongs to another client (or to no client), the whole request
+  is refused with `409 ids_not_deletable` and `fields.missing` /
+  `fields.out_of_scope` listing the offending ids. Nothing is deleted.
+- Response: `dry_run`, `client_id`, `requested`, `matched`, `deleted`, and
+  `subscriptions` with `id`, `audience_id`, `client_id`, `status`,
+  `verified_at` for each row. Contact emails and names are never returned.
+- Audit: every dry run and every confirmed delete writes an `OperatorAudit`
+  row on the client (`subscription.delete.dry_run` or `subscription.delete`)
+  with the actor, `admin_key_id`, `ids`, `dry_run`, `confirm`, `requested`,
+  `matched` and `deleted`. Read it with GET `audits`. Refused requests write
+  nothing and change nothing.
+- Only the Subscription rows are deleted. Contacts, tags, events and other
+  subscriptions are untouched.
+
+CLI:
+
+```bash
+relay operator subscriptions delete --client-id 2 --ids 101,102            # dry run
+relay operator subscriptions delete --client-id 2 --ids 101,102 --confirm  # delete
+```
 
 Read collections and `/{id}` detail endpoints are available for `contacts`,
 `subscriptions`, `contact-tags`, `campaigns`, `campaign-recipients`, `templates`,
