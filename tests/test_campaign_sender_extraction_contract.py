@@ -184,12 +184,12 @@ def test_preview_calls_injectable_sender_and_keeps_token_order(pending, monkeypa
     monkeypatch.setattr(sender, "generate_raw_token", lambda: next(tokens))
     monkeypatch.setattr(sender, "send_email", capture)
     result = sender.send_campaign_test_message(
-        campaign, "preview@example.invalid", ses_client=provider, source="explicit@example.invalid"
+        campaign, "dev+preview@dtcdev.click", ses_client=provider, source="explicit@example.invalid"
     )
     assert result == "preview-id" and provider.calls == []
     assert captured[0]["ses_client"] is provider
     assert captured[0]["source"] == "explicit@example.invalid"
-    assert captured[0]["to_email"] == "preview@example.invalid"
+    assert captured[0]["to_email"] == "dev+preview@dtcdev.click"
     assert "/t/o/track.gif" in captured[0]["html_body"] and "/unsubscribe/test-" in captured[0]["html_body"]
     assert "/unsubscribe/test-" in captured[0]["text_body"]
     recipient.refresh_from_db()
