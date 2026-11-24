@@ -61,7 +61,11 @@ def campaign_test_send(request, campaign_id):
             value for value in re.split(r"[,;\s]+", request.POST.get("test_emails", "").strip()) if value
         ])
     except ApiValidationError:
-        messages.error(request, "Enter 1–25 valid test email addresses, separated by commas or new lines.")
+        messages.error(
+            request,
+            "Enter 1–25 valid test email addresses (dev+...@dtcdev.click or *@simulator.amazonses.com), "
+            "separated by commas or new lines.",
+        )
         return redirect("mailing:campaign_detail", campaign_id=campaign.pk)
     try:
         result = enqueue_campaign_test(campaign, emails)

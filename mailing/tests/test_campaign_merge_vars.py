@@ -160,15 +160,22 @@ def test_static_merge_tag_issues(setup):
 
 
 @override_settings(**SETTINGS)
-def test_test_send_uses_member_values_or_fails_loudly(setup):
+def test_test_send_uses_member_values_or_synthetic_fallback(setup):
     campaign, rl, audience, client = setup
-    _member(rl, audience, client, "qa@example.com", {"invite_url": "https://c.example/?ref=9"})
+    _member(rl, audience, client, "dev+qa@dtcdev.click", {"invite_url": "https://c.example/?ref=9"})
     ses = _SesStub()
-    send_campaign_test_message(campaign, "qa@example.com", ses_client=ses)
+    send_campaign_test_message(campaign, "dev+qa@dtcdev.click", ses_client=ses)
     params = ses.sent[0]
     payload = str(params)
     assert "?ref=9" in payload and "{{" not in payload
 
+    # Allowed test address NOT on the recipient list still succeeds with synthetic merge vars.
+    send_campaign_test_message(campaign, "dev+other@dtcdev.click", ses_client=ses)
+    assert len(ses.sent) == 2
+    assert "https://example.invalid/test-merge/invite_url" in str(ses.sent[1])
+    assert "{{" not in str(ses.sent[1])
+
+    # Non-test addresses are refused.
     with pytest.raises(ApiValidationError):
         send_campaign_test_message(campaign, "stranger@example.com", ses_client=ses)
-    assert len(ses.sent) == 1
+    assert len(ses.sent) == 2

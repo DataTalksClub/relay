@@ -1547,7 +1547,11 @@ OPENAPI_SPEC = {
             "post": {
                 "tags": ["Campaigns"],
                 "summary": "Test-send campaign",
-                "description": "Sends one rendered campaign to explicit test addresses without creating campaign recipients or updating campaign delivery counts.",
+                "description": (
+                    "Sends one rendered campaign to explicit test addresses (dev+...@dtcdev.click or "
+                    "*@simulator.amazonses.com only) without creating campaign recipients or updating "
+                    "campaign delivery counts. Refuses drafts with an empty/footer-only body."
+                ),
                 "security": [{"BearerAuth": []}],
                 "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
                 "requestBody": json_body("#/components/schemas/CampaignTestSendRequest"),

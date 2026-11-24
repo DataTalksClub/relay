@@ -419,7 +419,9 @@ def campaign_send_issues(campaign):
         issues.append("Set PUBLIC_BASE_URL to HTTPS before sending campaigns.")
     if not campaign.subject.strip():
         issues.append("Add a subject before sending.")
-    if not campaign.template_key and not campaign.html_body.strip() and not campaign.text_body.strip():
+    from mailing.services.test_send_guard import has_meaningful_body  # noqa: PLC0415
+
+    if not campaign.template_key and not has_meaningful_body(campaign.html_body, campaign.text_body):
         issues.append("Add HTML or plain-text email content before sending.")
     if any(re.search(r"\*\|[^|]+\|\*", body or "") for body in (
         campaign.subject,

@@ -381,7 +381,7 @@ def test_test_sends_bypass_the_guard_and_do_not_consume_the_slot():
     audience, client = _world()
     campaign, recipients = _campaign(audience, client, EMAILS[:1])
     ses = FakeSes()
-    send_campaign_test_message(campaign, EMAILS[0], ses_client=ses, source="news@example.com")
+    send_campaign_test_message(campaign, "dev+dedupe@dtcdev.click", ses_client=ses, source="news@example.com")
     assert SendFingerprint.objects.count() == 0
     _send(campaign, recipients, ses)
     assert len(ses.calls) == 2

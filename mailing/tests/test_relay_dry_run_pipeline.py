@@ -220,7 +220,7 @@ def test_dry_run_campaign_test_message_raises_loudly(campaign_setup, monkeypatch
     _forbid_boto3_and_sts(monkeypatch)
 
     with pytest.raises(DryRunSuppressed):
-        send_campaign_test_message(campaign, "staff@example.com")
+        send_campaign_test_message(campaign, "dev+staff@dtcdev.click")
 
 
 def _campaign_payload(campaign, recipient):
