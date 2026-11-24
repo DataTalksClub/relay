@@ -39,7 +39,9 @@ from mailing.queue_contracts import CONTRACT_VERSION, SES_WEBHOOKS_CONTRACT, val
 from mailing.services import send_dedupe
 from mailing.services.client_callbacks import emit_client_callback, is_hard_bounce
 from mailing.services.cmp_callbacks import callback_payload, cmp_callback_config, emit_cmp_contact_event
+from mailing.services.db_commit import set_local_async_commit
 from mailing.services.operator_management import safe_metadata
+from mailing.services.values_update import values_update
 from mailing.sqs import sanitize_for_logging
 
 SNS_NOTIFICATION = "Notification"
@@ -695,6 +697,10 @@ def process_ses_webhook_batch(payloads):
 def _apply_ses_webhook_batch_atomic(pending, targets, cr_pks, tm_pks):
     now = timezone.now()
     with transaction.atomic():
+        # Provider events are idempotent by provider_event_id and redelivered by SQS
+        # until acknowledged, so this transaction may skip the commit fsync. Per
+        # transaction only: the role/server default is untouched.
+        set_local_async_commit()
         recipients_by_pk = (
             {
                 r.pk: r
@@ -812,7 +818,8 @@ def _apply_ses_webhook_batch_atomic(pending, targets, cr_pks, tm_pks):
                 emit_client_callback(event)
 
         if updated_crs:
-            CampaignRecipient.objects.bulk_update(
+            values_update(
+                CampaignRecipient,
                 list(updated_crs.values()),
                 [
                     "status",

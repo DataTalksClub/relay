@@ -14,6 +14,7 @@ from mailing.services.click_security import verify_click_redirect
 from mailing.services.client_callbacks import emit_client_callback
 from mailing.services.cmp_callbacks import emit_cmp_contact_event
 from mailing.services.contacts import subscribe_contact, unsubscribe_contact
+from mailing.services.db_commit import set_local_async_commit
 from mailing.services.tokens import get_recipient_by_unsubscribe_token, token_hash
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,9 @@ def apply_tracking_event(payload):
     country = payload.get("country") or None
     city = payload.get("city") or None
     with transaction.atomic():
+        # Tracking events run as DB tasks whose later completion commit is synchronous
+        # (see mailing.services.db_commit), so this one may skip the commit fsync.
+        set_local_async_commit()
         recipient = (
             CampaignRecipient.objects.select_for_update(of=("self",))
             .select_related("campaign", "campaign__client", "campaign__audience", "contact")

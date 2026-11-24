@@ -74,6 +74,7 @@ from mailing.services.campaign_rendering import (
 )
 from mailing.services.campaign_template_rendering import render_campaign_fields
 from mailing.services.click_security import sign_click_redirect
+from mailing.services.db_commit import set_local_sync_commit
 from mailing.services.public_urls import unsubscribe_url
 from mailing.services.suppression import campaign_allows_unverified, suppression_skip_reason
 from mailing.services.tokens import (
@@ -82,6 +83,7 @@ from mailing.services.tokens import (
     generate_test_unsubscribe_token,
     token_hash,
 )
+from mailing.services.values_update import values_update
 from mailing.ses import send_email, send_phase_timings, send_raw_bytes
 from mailing.ses_rate_limiter import TRANSACTIONAL, SesRateLimiterUnavailable
 
@@ -303,6 +305,55 @@ def _send_gate(campaign_id):
     return _Gate(row[0], row[1] is not None, row[2])
 
 
+class _SharedGate:
+    """Single-flight ``_send_gate`` for the sender threads of one batch.
+
+    A caller only accepts a result from a read that *started after* it asked, so
+    every SES call is still preceded by a fresh halt/cancel check (stop latency
+    stays one in-flight call). Threads that ask while a read is running wait for
+    the next one instead of each queueing for a pooled connection: 16 threads
+    share about one gate query per database round trip.
+    """
+
+    def __init__(self, campaign_id, read=None):
+        self.campaign_id = campaign_id
+        self.read_gate = read or _send_gate
+        self.cond = threading.Condition()
+        self.started = 0
+        self.done = 0
+        self.running = False
+        self.outcome = None  # (gate, exception) of read number ``done``
+
+    def read(self):
+        with self.cond:
+            need = self.started + 1
+            while True:
+                if self.done >= need:
+                    gate, exc = self.outcome
+                    if exc is not None:
+                        raise exc
+                    return gate
+                if not self.running:
+                    self.running = True
+                    self.started += 1
+                    seq = self.started
+                    break
+                self.cond.wait()
+        gate = exc = None
+        try:
+            gate = self.read_gate(self.campaign_id)
+        except Exception as error:  # noqa: BLE001 - re-raised to every caller of this read
+            exc = error
+        with self.cond:
+            self.running = False
+            self.done = seq
+            self.outcome = (gate, exc)
+            self.cond.notify_all()
+        if exc is not None:
+            raise exc
+        return gate
+
+
 def _check_gate_sendable(campaign_id, gate):
     if gate.status == CampaignStatus.SCHEDULED or (gate.scheduled_at and gate.scheduled_at > timezone.now()):
         raise RetryableCampaignSendError("Campaign send time has not arrived.")
@@ -422,9 +473,10 @@ def _write_outcomes(campaign, items):
                 ))
                 events.append(_event(campaign, r, EmailEventType.SENT, {"ses_message_id": done.message_id}))
             # A SENT result also wins over an UNKNOWN produced by lease expiry mid-flush.
-            matched = CampaignRecipient.objects.filter(
-                status__in=[CampaignRecipientStatus.SENDING, CampaignRecipientStatus.UNKNOWN]
-            ).bulk_update(objs, ["status", "ses_message_id", "sent_at", "last_error", "updated_at"])
+            matched = values_update(
+                CampaignRecipient, objs, ["status", "ses_message_id", "sent_at", "last_error", "updated_at"],
+                where={"status": [CampaignRecipientStatus.SENDING, CampaignRecipientStatus.UNKNOWN]},
+            )
             if matched != len(objs):
                 logger.error(
                     "campaign_finalize_state_mismatch campaign_id=%s outcome=sent expected=%d updated=%d",
@@ -455,8 +507,8 @@ def _write_outcomes(campaign, items):
             update_fields = ["status", "last_error", "updated_at"]
             if outcome == "skipped":
                 update_fields += ["skip_reason", "tracking_token_hash", "unsubscribe_token_hash"]  # nothing was sent
-            matched = CampaignRecipient.objects.filter(status=CampaignRecipientStatus.SENDING).bulk_update(
-                objs, update_fields
+            matched = values_update(
+                CampaignRecipient, objs, update_fields, where={"status": CampaignRecipientStatus.SENDING},
             )
             if matched != len(objs):
                 logger.error(
@@ -513,10 +565,13 @@ def _claim_chunk(campaign_id, recipient_ids, owner):
             tracking_token_hash=token_hash(pair.tracking_token),
             unsubscribe_token_hash=token_hash(pair.unsubscribe_token), last_error="", updated_at=now,
         ))
-    CampaignRecipient.objects.filter(campaign_id=campaign_id, status=CampaignRecipientStatus.PENDING).bulk_update(
+    values_update(
+        CampaignRecipient,
         objs,
         ["status", "claimed_at", "claim_owner", "tracking_token_hash", "unsubscribe_token_hash", "last_error",
          "updated_at"],
+        # A row that already carries an SES message id was accepted by SES once: never claim it again.
+        where={"campaign_id": campaign_id, "status": CampaignRecipientStatus.PENDING, "ses_message_id": ""},
     )
     rows = list(
         CampaignRecipient.objects.filter(
@@ -576,6 +631,7 @@ class _BatchRun:
         self.halted = False
         self.interrupted = False
         self.finalizer = _Finalizer(context.campaign)
+        self.gate = _SharedGate(campaign_id)
         self.chunk = max(1, int(getattr(settings, "CAMPAIGN_CLAIM_CHUNK", 20) or 20))
 
     def _take(self):
@@ -608,8 +664,12 @@ class _BatchRun:
             if close_connections:
                 connection.close()
 
-    def _reserve_content(self, sendable, merge_values, campaign):
-        """Atomic duplicate guard: reserve (client, email, content hash) for the chunk before any SES call."""
+    def _reserve_content(self, sendable, merge_values, campaign, deferred):
+        """Atomic duplicate guard: reserve (client, email, content hash) for the chunk before any SES call.
+
+        Runs inside the claim transaction; skip outcomes go to ``deferred`` and are
+        recorded only after that transaction commits.
+        """
         if not sendable or not send_dedupe.dedupe_enabled():
             return sendable
         candidates = [
@@ -632,7 +692,7 @@ class _BatchRun:
                 kept.append(row)
                 continue
             info = blocked[row.pk]
-            self._finish(_Done(
+            deferred.append(_Done(
                 row, "skipped", error=f"duplicate_blocked:first_{info.first_state}",
                 skip_reason=CampaignRecipientSkipReason.DUPLICATE_BLOCKED,
             ))
@@ -646,40 +706,52 @@ class _BatchRun:
 
     def _process_chunk(self, ids):
         gate_started = time.perf_counter()
-        gate = _send_gate(self.campaign_id)
+        gate = self.gate.read()
         _check_gate_sendable(self.campaign_id, gate)
         if gate.halted:
             self._halt()  # unclaimed rows simply stay PENDING (pause is resumable)
             return
         owner = f"{os.getpid()}-{uuid.uuid4().hex[:24]}"
-        rows, tokens = _claim_chunk(self.campaign_id, ids, owner)
+        campaign = self.context.campaign
+        deferred = []
+        # Claim, suppression recheck and duplicate-guard reservation commit together, and
+        # durably (synchronous_commit forced on whatever the role default is): a row is
+        # either PENDING with no fingerprint, or SENDING with its fingerprint RESERVED,
+        # before any SES call. One commit per chunk instead of two.
+        with transaction.atomic():
+            set_local_sync_commit()
+            rows, tokens = _claim_chunk(self.campaign_id, ids, owner)
+            sql_share = (time.perf_counter() - gate_started) / max(1, len(rows))
+            for row in rows:
+                row.campaign = campaign
+            reasons = _suppression_reasons(rows, campaign) if rows else {}
+            sendable = []
+            for row in rows:
+                reason = reasons.get(row.pk)
+                if reason:
+                    logger.info(
+                        "Campaign recipient suppressed after snapshot campaign_id=%s recipient_id=%s reason=%s",
+                        self.campaign_id, row.pk, reason,
+                    )
+                    deferred.append(
+                        _Done(row, "skipped", error=f"suppressed_after_snapshot:{reason}", skip_reason=reason)
+                    )
+                else:
+                    sendable.append(row)
+            merge_values = self._merge_values(sendable)
+            sendable = self._reserve_content(sendable, merge_values, campaign, deferred)
+        release_pooled_connection()
         for _ in range(len(ids) - len(rows)):
             self.outcomes.append("skipped")  # already claimed/terminal: not ours to send
-        sql_share = (time.perf_counter() - gate_started) / max(1, len(rows))
-        campaign = self.context.campaign
-        for row in rows:
-            row.campaign = campaign
-        reasons = _suppression_reasons(rows, campaign) if rows else {}
-        sendable = []
-        for row in rows:
-            reason = reasons.get(row.pk)
-            if reason:
-                logger.info(
-                    "Campaign recipient suppressed after snapshot campaign_id=%s recipient_id=%s reason=%s",
-                    self.campaign_id, row.pk, reason,
-                )
-                self._finish(_Done(row, "skipped", error=f"suppressed_after_snapshot:{reason}", skip_reason=reason))
-            else:
-                sendable.append(row)
-        merge_values = self._merge_values(sendable)
+        for done in deferred:
+            self._finish(done)
         index = 0
         delivered = False
         try:
-            sendable = self._reserve_content(sendable, merge_values, campaign)
             for index, row in enumerate(sendable):  # noqa: B007 - index is read by the handler below
                 delivered = False
                 started = time.perf_counter()
-                gate = _send_gate(self.campaign_id)  # halt/cancel check before EVERY SES call
+                gate = self.gate.read()  # fresh halt/cancel check before EVERY SES call
                 gate_seconds = time.perf_counter() - started
                 if self.stop.is_set() or _shutdown.is_set() or gate.halted:
                     _release_claims([r.pk for r in sendable[index:]], owner)

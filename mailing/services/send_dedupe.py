@@ -15,6 +15,7 @@ An ambiguous SES outcome keeps the row ``reserved`` forever: same doctrine as th
 UNKNOWN status, never auto-resent.
 """
 
+import functools
 import hashlib
 import json
 import logging
@@ -52,7 +53,24 @@ def dedupe_enabled():
 
 
 def normalise_text(value):
-    value = unicodedata.normalize("NFC", value or "")
+    value = value or ""
+    if len(value) >= _NORMALISE_CACHE_MIN_CHARS:
+        # Every recipient of a campaign without merge fields hashes the same subject and
+        # bodies: normalising a newsletter body was ~10% of sender CPU (py-spy, 2026-11-24).
+        return _normalise_text_cached(value)
+    return _normalise_text(value)
+
+
+_NORMALISE_CACHE_MIN_CHARS = 256
+
+
+@functools.lru_cache(maxsize=16)
+def _normalise_text_cached(value):
+    return _normalise_text(value)
+
+
+def _normalise_text(value):
+    value = unicodedata.normalize("NFC", value)
     value = _OPEN_PIXEL_RE.sub("/t/o/TOKEN.gif", value)
     value = _CLICK_RE.sub("/t/c/TOKEN?u=", value)
     value = _SIGNATURE_RE.sub("&s=SIG", value)

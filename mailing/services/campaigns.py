@@ -438,8 +438,7 @@ def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
     # Keep batches short so the worker can pick up higher-priority transactional
     # sends between campaign batches. Per-recipient status checks keep each
     # smaller batch idempotent if it is redelivered.
-    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 100)
-    if batch_size <= 0:
+    if batch_size is not None and batch_size <= 0:
         raise ValueError("batch_size must be positive")
 
     with transaction.atomic():
@@ -497,7 +496,9 @@ def queue_campaign(campaign, *, batch_size=None, dispatch_due=False, now=None,
         if merge_issues:
             raise CampaignNotReady(" ".join(merge_issues))
         recipient_ids = [recipient_id for recipient_id, _ in pending]
-        payloads = _campaign_email_payloads(locked_campaign.id, recipient_ids, batch_size)
+        payloads = _campaign_email_payloads(
+            locked_campaign.id, recipient_ids, campaign_batch_size(len(recipient_ids), batch_size),
+        )
         locked_campaign.status = CampaignStatus.SENT if dispatching and not payloads else CampaignStatus.QUEUED
         if dispatching and not payloads:
             locked_campaign.sent_at = now
@@ -577,7 +578,6 @@ def resume_campaign_send(campaign_id, *, batch_size=None):
     task will reach. Enqueues only once the surrounding transaction commits.
     Returns (payloads, recipient_ids).
     """
-    batch_size = batch_size or getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 100)
     recipient_ids = list(
         CampaignRecipient.objects.filter(
             campaign_id=campaign_id,
@@ -586,7 +586,9 @@ def resume_campaign_send(campaign_id, *, batch_size=None):
         .order_by("id")
         .values_list("id", flat=True)
     )
-    payloads = _campaign_email_payloads(campaign_id, recipient_ids, batch_size)
+    payloads = _campaign_email_payloads(
+        campaign_id, recipient_ids, campaign_batch_size(len(recipient_ids), batch_size),
+    )
     send_correlation_id = uuid.uuid4()
     transaction.on_commit(lambda: _resume_enqueue_batches(send_correlation_id, payloads))
     return payloads, recipient_ids
@@ -708,6 +710,25 @@ def _base_candidate_contacts(campaign):
         .values_list("contact_id", flat=True)
     )
     return Contact.objects.filter(id__in=contacts).order_by("normalized_email", "id")
+
+
+def campaign_batch_size(recipient_count, batch_size=None):
+    """Recipients per batch task; an explicit ``batch_size`` always wins.
+
+    Each batch task runs on one campaign-worker, so a small campaign split by
+    the full CAMPAIGN_EMAIL_BATCH_SIZE leaves most workers idle (1,416
+    recipients at 500 per batch = 3 tasks for 6 workers, measured ~22/s each on
+    campaign 321). Split into at least CAMPAIGN_MIN_BATCH_TASKS tasks, never
+    smaller than CAMPAIGN_MIN_BATCH_SIZE, never larger than the configured size.
+    """
+    if batch_size:
+        return batch_size
+    configured = max(1, int(getattr(settings, "CAMPAIGN_EMAIL_BATCH_SIZE", 100) or 100))
+    tasks = int(getattr(settings, "CAMPAIGN_MIN_BATCH_TASKS", 1) or 1)
+    if tasks <= 1 or recipient_count <= 0:
+        return configured
+    floor = max(1, int(getattr(settings, "CAMPAIGN_MIN_BATCH_SIZE", 1) or 1))
+    return min(configured, max(floor, -(-recipient_count // tasks)))
 
 
 def _campaign_email_payloads(campaign_id, recipient_ids, batch_size):
