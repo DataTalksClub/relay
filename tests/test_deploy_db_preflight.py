@@ -75,3 +75,25 @@ def test_forced_command_rejects_arbitrary_commands(selection):
     with pytest.raises(ValueError):
         run_preflight(selection, {}, run=run)
     run.assert_not_called()
+
+
+@pytest.mark.parametrize("failing_step, label", [("login", "docker login"), ("pull", "docker pull")])
+def test_registry_failure_surfaces_exit_code_and_stderr_without_token(failing_step, label, capsys):
+    web = {"NetworkSettings": {"Networks": {"coolify": {}}}, "Config": {"Env": ["DATABASE_URL=private"]}}
+
+    def run(args, **kwargs):
+        if "inspect" in args:
+            return MagicMock(stdout=json.dumps([web]))
+        if failing_step in args:
+            raise subprocess.CalledProcessError(
+                1, args, output="", stderr="Error response from daemon: no space left on device token=s3cr3t-token"
+            )
+        return MagicMock()
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run_preflight("development 20261024-000000-abcdef0", {"username": "test", "token": "s3cr3t-token"}, run=run)
+    err = capsys.readouterr().err
+    assert f"{label} failed with exit code 1" in err
+    assert "no space left on device" in err
+    assert "s3cr3t-token" not in err
+    assert "[redacted]" in err
