@@ -488,6 +488,11 @@ SES_MAX_SEND_RATE_PER_SECOND = float_env("RELAY_SES_MAX_SEND_RATE", default=10.0
 # 100-message batches spent ~15% of their time in fixed per-batch overhead (thread +
 # DB connection setup, last SES call tail); 500 reaches the limiter rate.
 CAMPAIGN_EMAIL_BATCH_SIZE = int_env("RELAY_CAMPAIGN_EMAIL_BATCH_SIZE", default=500)
+# Smaller campaigns are split into at least this many batch tasks (each no smaller
+# than CAMPAIGN_MIN_BATCH_SIZE) so every campaign-worker replica sends: 2 per worker
+# for the 6 prod replicas. Campaign 321 (1,416 recipients) ran as 3 tasks at 500.
+CAMPAIGN_MIN_BATCH_TASKS = int_env("RELAY_CAMPAIGN_MIN_BATCH_TASKS", default=12)
+CAMPAIGN_MIN_BATCH_SIZE = int_env("RELAY_CAMPAIGN_MIN_BATCH_SIZE", default=50)
 # Send-now campaigns with more candidate contacts than this are queued by the
 # scheduler instead of inside the web request (statement/CLI timeouts).
 CAMPAIGN_SYNC_QUEUE_MAX_RECIPIENTS = int_env("RELAY_CAMPAIGN_SYNC_QUEUE_MAX_RECIPIENTS", default=10000)
