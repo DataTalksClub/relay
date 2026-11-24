@@ -59,7 +59,7 @@ def test_test_send_only_explicit_addresses_no_snapshot(setup, client):
 @pytest.mark.parametrize("payload", [
     {"test_emails": "dev+me@dtcdev.click"},
     {"test_emails": "bad-address", "confirm_test": "1"},
-    {"test_emails": "alexey@datatalks.club", "confirm_test": "1"},
+    {"test_emails": "subscriber@example.com", "confirm_test": "1"},
     {"test_emails": ",".join(f"dev+u{i}@dtcdev.click" for i in range(26)), "confirm_test": "1"},
     {"test_emails": "dev+me@dtcdev.click", "confirm_test": "1", "operator_client_id": "999"},
 ])

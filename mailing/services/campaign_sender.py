@@ -197,6 +197,9 @@ def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=No
     from mailing.services.test_send_guard import (  # noqa: PLC0415
         ensure_allowed_test_recipient,
         ensure_test_sendable_campaign,
+        format_test_subject,
+        prepend_test_banner_html,
+        prepend_test_banner_text,
     )
 
     to_email = ensure_allowed_test_recipient(to_email)
@@ -211,9 +214,9 @@ def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=No
         ses_client=ses_client or default_ses_client(),
         source=source or _campaign_default_source(campaign) or settings.DEFAULT_FROM_EMAIL,
         to_email=to_email,
-        subject=campaign.subject,
-        html_body=html_body,
-        text_body=text_body,
+        subject=format_test_subject(campaign.subject),
+        html_body=prepend_test_banner_html(html_body),
+        text_body=prepend_test_banner_text(text_body),
         kind=TRANSACTIONAL,
     )
 
