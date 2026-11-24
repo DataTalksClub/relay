@@ -733,6 +733,11 @@ def preview_campaign_for_client(external_key, data, authenticated_client):
 
 
 def validate_test_recipient_emails(value):
+    from mailing.services.test_send_guard import (  # noqa: PLC0415
+        ALLOWED_TEST_RECIPIENT_HINT,
+        is_allowed_test_recipient,
+    )
+
     if not isinstance(value, list) or not value:
         raise ApiValidationError({"emails": "required"})
     if len(value) > 25:
@@ -750,7 +755,18 @@ def validate_test_recipient_emails(value):
         except ValidationError:
             errors.append({"index": index, "email": email, "error": "invalid"})
             continue
-        emails.append(normalize_email(email))
+        normalized = normalize_email(email)
+        if not is_allowed_test_recipient(normalized):
+            errors.append(
+                {
+                    "index": index,
+                    "email": normalized,
+                    "error": "not_allowed_test_recipient",
+                    "allowed": ALLOWED_TEST_RECIPIENT_HINT,
+                }
+            )
+            continue
+        emails.append(normalized)
 
     if errors:
         raise ApiValidationError({"emails": errors})
@@ -759,14 +775,23 @@ def validate_test_recipient_emails(value):
 
 def test_send_campaign_for_client(external_key, data, authenticated_client):
     """Send only explicitly supplied test addresses and return final outcomes."""
+    from mailing.services.test_send_guard import ensure_test_sendable_campaign  # noqa: PLC0415
+
     campaign = campaign_for_client(external_key, data, authenticated_client)
     emails = validate_test_recipient_emails(data.get("emails"))
     if len(emails) > 2:
         raise ApiValidationError({"emails": "too_many", "max": 2})
+    merge_vars = data.get("merge_vars")
+    if merge_vars is not None and not isinstance(merge_vars, dict):
+        raise ApiValidationError({"merge_vars": "must_be_object"})
+    ensure_test_sendable_campaign(campaign)
     accepted = []
     for index, email in enumerate(emails):
         try:
-            message_id = send_campaign_test_message(campaign, email)
+            if merge_vars is not None:
+                message_id = send_campaign_test_message(campaign, email, merge_vars=merge_vars)
+            else:
+                message_id = send_campaign_test_message(campaign, email)
         except DryRunSuppressed:
             return {"campaign": campaign_payload(campaign), "sent_count": len(accepted),
                     "recipients": accepted, "status": "dry_run_suppressed", "not_attempted": emails[index:]}

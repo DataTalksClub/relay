@@ -53,6 +53,7 @@ from mailing.models import (
 from mailing.services import send_dedupe
 from mailing.services.api_errors import ApiValidationError
 from mailing.services.campaign_merge import (
+    MERGE_VARS_KEY,
     MergeVarError,
     member_merge_values,
     member_metadata_by_contact,
@@ -155,34 +156,52 @@ def render_campaign_message(
     }
 
 
-def _test_send_merge_values(campaign, to_email):
-    """Merge values for a test send: the list member with that address, else fail loudly."""
+def _test_send_merge_values(campaign, to_email, explicit_merge_vars=None):
+    """Merge values for a test send: explicit overrides, matching list member, else safe placeholders.
+
+    Never requires the test address to be an active member of the live recipient list,
+    so callers are never pushed toward sending tests to a real subscriber's inbox.
+    """
+    from mailing.services.test_send_guard import synthetic_test_merge_values  # noqa: PLC0415
+
     names = merge_var_names(campaign)
     if not names:
         return {}
-    metadata = (
-        RecipientListMember.objects.filter(
-            recipient_list__audience_id=campaign.audience_id,
-            recipient_list__client_id=campaign.client_id,
-            recipient_list__key=campaign.recipient_list_key,
-            active=True,
-            email__iexact=to_email,
+    if explicit_merge_vars is not None:
+        try:
+            return member_merge_values({MERGE_VARS_KEY: explicit_merge_vars}, names)
+        except MergeVarError as exc:
+            logger.error("campaign_test_send_merge_vars_invalid campaign_id=%s error=%s", campaign.pk, exc)
+            raise ApiValidationError({"merge_vars": f"Invalid test merge vars ({exc}); nothing was sent."}) from exc
+    if campaign.recipient_list_key:
+        metadata = (
+            RecipientListMember.objects.filter(
+                recipient_list__audience_id=campaign.audience_id,
+                recipient_list__client_id=campaign.client_id,
+                recipient_list__key=campaign.recipient_list_key,
+                active=True,
+                email__iexact=to_email,
+            )
+            .values_list("metadata", flat=True)
+            .first()
         )
-        .values_list("metadata", flat=True)
-        .first()
+        if metadata:
+            try:
+                return member_merge_values(metadata, names)
+            except MergeVarError:
+                pass
+    return member_merge_values({MERGE_VARS_KEY: synthetic_test_merge_values(names)}, names)
+
+
+def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=None, merge_vars=None):
+    from mailing.services.test_send_guard import (  # noqa: PLC0415
+        ensure_allowed_test_recipient,
+        ensure_test_sendable_campaign,
     )
-    try:
-        return member_merge_values(metadata, names)
-    except MergeVarError as exc:
-        logger.error("campaign_test_send_merge_vars_invalid campaign_id=%s error=%s", campaign.pk, exc)
-        raise ApiValidationError(
-            {"merge_vars": f"Test address must be an active member of the campaign's recipient list "
-                           f"with merge vars set ({exc}); nothing was sent."}
-        ) from exc
 
-
-def send_campaign_test_message(campaign, to_email, *, ses_client=None, source=None):
-    merge_values = _test_send_merge_values(campaign, to_email)
+    to_email = ensure_allowed_test_recipient(to_email)
+    ensure_test_sendable_campaign(campaign)
+    merge_values = _test_send_merge_values(campaign, to_email, explicit_merge_vars=merge_vars)
     # No CampaignRecipient exists for a test send: the click link is still signed (the
     # tracking endpoint redirects without recording) and the unsubscribe token is a
     # self-validating test token that renders a no-op page.

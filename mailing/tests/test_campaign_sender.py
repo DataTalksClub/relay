@@ -637,9 +637,9 @@ def test_campaign_test_send_uses_client_default_sender(campaign_setup):
     client.save(update_fields=["sender_emails", "default_sender_id", "updated_at"])
     ses = _CapturingSes()
 
-    assert send_campaign_test_message(campaign, "test@example.com", ses_client=ses) == "test-message-1"
+    assert send_campaign_test_message(campaign, "dev+test@dtcdev.click", ses_client=ses) == "test-message-1"
     assert ses.params["Source"] == "Alexey Grigorev <alexey@datatalks.club>"
-    assert ses.params["Destination"] == {"ToAddresses": ["test@example.com"]}
+    assert ses.params["Destination"] == {"ToAddresses": ["dev+test@dtcdev.click"]}
 
 
 @override_settings(DEFAULT_FROM_EMAIL="relay@example.com", PUBLIC_BASE_URL="https://mail.example.com")
@@ -647,7 +647,7 @@ def test_campaign_test_send_falls_back_to_default_from_without_sender(campaign_s
     campaign, _recipient = campaign_setup
     ses = _CapturingSes()
 
-    send_campaign_test_message(campaign, "test@example.com", ses_client=ses)
+    send_campaign_test_message(campaign, "dev+test@dtcdev.click", ses_client=ses)
 
     assert ses.params["Source"] == "relay@example.com"
 
@@ -661,7 +661,7 @@ def test_campaign_test_send_explicit_source_wins_over_client_sender(campaign_set
     client.save(update_fields=["sender_emails", "default_sender_id", "updated_at"])
     ses = _CapturingSes()
 
-    send_campaign_test_message(campaign, "test@example.com", ses_client=ses, source="explicit@example.com")
+    send_campaign_test_message(campaign, "dev+test@dtcdev.click", ses_client=ses, source="explicit@example.com")
 
     assert ses.params["Source"] == "explicit@example.com"
 

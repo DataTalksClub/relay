@@ -37,13 +37,14 @@ def test_test_send_only_explicit_addresses_no_snapshot(setup, client):
     integration, campaign = setup
     with patch("mailing.campaign_test_tasks.send_campaign_test_message", return_value="test-id") as send:
         response = client.post(reverse("mailing:campaign_test_send", args=[campaign.pk]), {
-            "test_emails": "Me@example.com, me@example.com\nother@example.com", "confirm_test": "1",
+            "test_emails": "Dev+Me@dtcdev.click, dev+me@dtcdev.click\nsuccess@simulator.amazonses.com",
+            "confirm_test": "1",
             "operator_client_id": integration.pk,
         })
     assert response.status_code == 302
     send.assert_not_called()
     task = DBTaskResult.objects.get()
-    assert task.args_kwargs["args"][1] == ["me@example.com", "other@example.com"]
+    assert task.args_kwargs["args"][1] == ["dev+me@dtcdev.click", "success@simulator.amazonses.com"]
     assert task.args_kwargs["args"][0]["subject"] == "Review me"
     run = TaskRun.objects.get(result_id=str(task.pk))
     assert run.owner_id == str(integration.pk)
@@ -56,10 +57,11 @@ def test_test_send_only_explicit_addresses_no_snapshot(setup, client):
 
 
 @pytest.mark.parametrize("payload", [
-    {"test_emails": "me@example.com"},
+    {"test_emails": "dev+me@dtcdev.click"},
     {"test_emails": "bad-address", "confirm_test": "1"},
-    {"test_emails": ",".join(f"user{i}@example.com" for i in range(26)), "confirm_test": "1"},
-    {"test_emails": "me@example.com", "confirm_test": "1", "operator_client_id": "999"},
+    {"test_emails": "alexey@datatalks.club", "confirm_test": "1"},
+    {"test_emails": ",".join(f"dev+u{i}@dtcdev.click" for i in range(26)), "confirm_test": "1"},
+    {"test_emails": "dev+me@dtcdev.click", "confirm_test": "1", "operator_client_id": "999"},
 ])
 def test_test_send_rejects_unconfirmed_invalid_excess_or_stale(setup, client, payload):
     _, campaign = setup
@@ -75,7 +77,7 @@ def test_partial_test_failure_reports_accepted_count(setup, client):
     error = ClientError({"Error": {"Code": "MessageRejected", "Message": "Rejected"}}, "SendEmail")
     with patch("mailing.campaign_test_tasks.send_campaign_test_message", side_effect=["id", error]) as send:
         response = client.post(reverse("mailing:campaign_test_send", args=[campaign.pk]), {
-            "test_emails": "a@example.com,b@example.com,c@example.com", "confirm_test": "1",
+            "test_emails": "dev+a@dtcdev.click,dev+b@dtcdev.click,dev+c@dtcdev.click", "confirm_test": "1",
         }, follow=True)
         send.assert_not_called()
         assert b"Test queued" in response.content
@@ -87,8 +89,8 @@ def test_partial_test_failure_reports_accepted_count(setup, client):
     outcome = DBTaskResult.objects.get().return_value
     assert outcome["status"] == "partial"
     assert outcome["accepted_count"] == 1
-    assert outcome["unconfirmed_email"] == "b@example.com"
-    assert outcome["not_attempted"] == ["c@example.com"]
+    assert outcome["unconfirmed_email"] == "dev+b@dtcdev.click"
+    assert outcome["not_attempted"] == ["dev+c@dtcdev.click"]
     assert "1 provider accepted; 1 unconfirmed; 1 not attempted" in TaskRun.objects.get().message
     assert not campaign.recipients.exists()
 
@@ -198,7 +200,7 @@ def test_get_test_send_and_cross_scope_post_never_send(setup, client):
     with patch("mailing.campaign_test_tasks.send_campaign_test_message") as send:
         assert client.get(reverse("mailing:campaign_test_send", args=[campaign.pk])).status_code == 405
         assert client.post(reverse("mailing:campaign_test_send", args=[outside.pk]), {
-            "test_emails": "me@example.com", "confirm_test": "1",
+            "test_emails": "dev+me@dtcdev.click", "confirm_test": "1",
         }).status_code == 404
     send.assert_not_called()
 
@@ -208,7 +210,7 @@ def test_queued_test_and_projection_rollback_together(setup):
     _, campaign = setup
     with patch("mailing.campaign_test_tasks.send_campaign_test_message") as send:
         with pytest.raises(ValueError), transaction.atomic():
-            enqueue_campaign_test(campaign, ["a@example.com"])
+            enqueue_campaign_test(campaign, ["dev+a@dtcdev.click"])
             assert DBTaskResult.objects.count() == 1
             raise ValueError("rollback")
     send.assert_not_called()
@@ -220,7 +222,7 @@ def test_queued_test_and_projection_rollback_together(setup):
 def test_worker_uses_confirmed_content_snapshot_and_persisted_replay_guard(setup, client):
     _, campaign = setup
     client.post(reverse("mailing:campaign_test_send", args=[campaign.pk]), {
-        "test_emails": "a@example.com", "confirm_test": "1",
+        "test_emails": "dev+a@dtcdev.click", "confirm_test": "1",
     })
     campaign.subject = "Edited after confirmation"
     campaign.html_body = "<p>Changed</p>"
@@ -247,7 +249,7 @@ def test_immediate_backend_cannot_send_from_request(setup, client):
     _, campaign = setup
     with patch("mailing.campaign_test_tasks.send_campaign_test_message") as send:
         response = client.post(reverse("mailing:campaign_test_send", args=[campaign.pk]), {
-            "test_emails": "a@example.com", "confirm_test": "1",
+            "test_emails": "dev+a@dtcdev.click", "confirm_test": "1",
         }, follow=True)
     send.assert_not_called()
     assert b"Configure a deferred background worker" in response.content
@@ -256,7 +258,7 @@ def test_immediate_backend_cannot_send_from_request(setup, client):
 
 def test_claim_before_provider_call_prevents_retry_after_uncertain_worker_stop(setup):
     _, campaign = setup
-    result = enqueue_campaign_test(campaign, ["a@example.com", "b@example.com"])
+    result = enqueue_campaign_test(campaign, ["dev+a@dtcdev.click", "dev+b@dtcdev.click"])
     task = DBTaskResult.objects.get(pk=result.id)
     # A worker could stop after provider acceptance but before saving its result.
     with patch("mailing.campaign_test_tasks.send_campaign_test_message", side_effect=KeyboardInterrupt), \

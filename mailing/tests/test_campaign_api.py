@@ -491,7 +491,7 @@ def test_campaign_api_test_send_sends_explicit_recipients_without_campaign_recip
         {
             "audience": audience.slug,
             "client": api_client_record.slug,
-            "emails": ["B@example.com", "a@example.com", "a@example.com"],
+            "emails": ["Dev+B@dtcdev.click", "dev+a@dtcdev.click", "dev+a@dtcdev.click"],
         },
     )
 
@@ -499,12 +499,12 @@ def test_campaign_api_test_send_sends_explicit_recipients_without_campaign_recip
     body = response.json()
     assert body["sent_count"] == 2
     assert body["recipients"] == [
-        {"email": "a@example.com", "message_id": "message-1"},
-        {"email": "b@example.com", "message_id": "message-2"},
+        {"email": "dev+a@dtcdev.click", "message_id": "message-1"},
+        {"email": "dev+b@dtcdev.click", "message_id": "message-2"},
     ]
     assert sent == [
-        ("test-send-campaign", "a@example.com"),
-        ("test-send-campaign", "b@example.com"),
+        ("test-send-campaign", "dev+a@dtcdev.click"),
+        ("test-send-campaign", "dev+b@dtcdev.click"),
     ]
     assert CampaignRecipient.objects.count() == 0
 
@@ -900,7 +900,7 @@ def test_client_test_send_fanout_cap_precedes_provider_calls(client, audience, a
     put_campaign(client, "capped-test", campaign_payload(audience, api_client_record))
     response = post_campaign_test_send(client, "capped-test", {
         "audience": audience.slug, "client": api_client_record.slug,
-        "emails": ["a@example.com", "b@example.com", "c@example.com"],
+        "emails": ["dev+a@dtcdev.click", "dev+b@dtcdev.click", "dev+c@dtcdev.click"],
     })
     assert response.status_code == 400
     assert not calls
@@ -922,11 +922,11 @@ def test_client_test_send_returns_partial_provider_outcome(client, audience, api
     with CaptureQueriesContext(connection) as queries:
         response = post_campaign_test_send(client, "partial-test", {
             "audience": audience.slug, "client": api_client_record.slug,
-            "emails": ["a@example.com", "b@example.com"],
+            "emails": ["dev+a@dtcdev.click", "dev+b@dtcdev.click"],
         })
     assert response.status_code == 200
     assert response.json()["sent_count"] == 1
-    assert response.json()["unconfirmed_email"] == "b@example.com"
+    assert response.json()["unconfirmed_email"] == "dev+b@dtcdev.click"
     assert len(queries) < 20
     assert len(calls) == 2
 
