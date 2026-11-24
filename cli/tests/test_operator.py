@@ -244,3 +244,37 @@ def test_messages_list_pages_and_filters_by_status():
         "GET", "/api/admin/transactional-messages", payload=None,
         query={"offset": 200, "limit": 200, "client_id": 4, "status": "bounced"},
     )
+
+
+CONN = ["--url", "https://relay.test", "--api-key", "relay_admin_test"]
+
+
+def test_subscription_delete_defaults_to_dry_run():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"dry_run": True})) as request:
+        assert cli.main(["operator", "subscriptions", "delete", "--client-id", "2", "--ids", "11, 12", *CONN]) == 0
+    request.assert_called_once_with(
+        "POST", "/api/admin/clients/2/subscriptions/delete", payload={"ids": [11, 12], "dry_run": True}, query=None
+    )
+
+
+def test_subscription_delete_with_confirm_sends_confirm():
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"deleted": 2})) as request:
+        assert cli.main(["operator", "subscriptions", "delete", "--client-id", "2", "--ids", "11,12", "--confirm", *CONN]) == 0
+    request.assert_called_once_with(
+        "POST", "/api/admin/clients/2/subscriptions/delete", payload={"ids": [11, 12], "confirm": True}, query=None
+    )
+
+
+def test_subscription_delete_rejects_bad_ids_before_calling_api(capsys):
+    for bad in ("", "1,,2", "a,2", "0", "-3", "4,4"):
+        with patch("datamailer_cli.api.DatamailerClient.request") as request:
+            assert cli.main(["operator", "subscriptions", "delete", "--client-id", "2", "--ids", bad, *CONN]) == 1
+        request.assert_not_called()
+    assert "--ids" in capsys.readouterr().err
+
+
+def test_subscription_delete_requires_client_id(capsys):
+    with patch("datamailer_cli.api.DatamailerClient.request") as request:
+        assert cli.main(["operator", "subscriptions", "delete", "--ids", "1", "--confirm", *CONN]) == 1
+    request.assert_not_called()
+    assert "--client-id" in capsys.readouterr().err

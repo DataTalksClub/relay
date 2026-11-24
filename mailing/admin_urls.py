@@ -44,6 +44,11 @@ urlpatterns = [
         operations.assume_sent,
         name="assume_sent",
     ),
+    path(
+        "clients/<int:client_id>/subscriptions/delete",
+        operations.subscriptions_delete,
+        name="subscriptions_delete",
+    ),
     path("contacts/<int:contact_id>/state", operations.contact_action, {"action": "state"}, name="contact_state"),
     path("workers", operations.status, {"kind": "workers"}, name="workers"),
     path("dashboard", operations.status, {"kind": "dashboard"}, name="dashboard"),

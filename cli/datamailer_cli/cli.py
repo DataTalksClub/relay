@@ -60,9 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_operator = sub.add_parser("operator", help="Run a supported Relay operator action through the admin API.")
     _add_connection_args(p_operator)
-    p_operator.add_argument("resource", choices=("campaigns", "contacts", "templates", "lists", "newsletters", "messages", "stats", "complaints", "archive", "schedules", "jobs", "dead-letters", "events"))
+    p_operator.add_argument("resource", choices=("campaigns", "contacts", "subscriptions", "templates", "lists", "newsletters", "messages", "stats", "complaints", "archive", "schedules", "jobs", "dead-letters", "events"))
     p_operator.add_argument("action", choices=("list", "show", "create", "edit", "delete", "stats", "queue", "cancel", "pause", "resume", "stop", "recipients", "recipient-retry", "assume-sent", "unknown-recipients", "unknown-resend", "state", "subscriptions", "tag-add", "tag-remove", "preferences", "erase", "history", "validation", "suppression", "verification", "import", "import-show", "csv-export", "csv-import", "overview", "workers", "tags", "tag-create", "tag-edit", "recipient-list", "recipient-list-upsert", "members", "member-upsert", "member-remove", "members-upsert", "members-reconcile", "list-send", "retry", "bulk-retry", "versions", "publish", "block-types", "block-add", "block-show", "block-edit", "block-delete", "preview", "test-send", "export"))
     p_operator.add_argument("--id", type=int, help="Record id for show or an action.")
+    p_operator.add_argument("--ids", help="Comma-separated record ids, e.g. for `subscriptions delete`.")
     p_operator.add_argument("--uuid", help="UUID of a schedule, job, or dead letter for show/retry actions.")
     p_operator.add_argument("--client-id", type=int, help="Explicit Relay client id for scoped operations.")
     p_operator.add_argument("--query", help="Text search for list actions that support it.")
@@ -81,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_operator.add_argument("--offset", type=int, default=0, help="Page offset for archive export and messages list.")
     p_operator.add_argument("--limit", type=int, default=200, help="Page size (max 200) for archive export and messages list.")
     p_operator.add_argument("--include-removed", action="store_true", help="Include removed recipient-list members.")
-    p_operator.add_argument("--confirm", action="store_true", help="Confirm that Relay should queue/send the campaign.")
+    p_operator.add_argument("--confirm", action="store_true", help="Confirm a state-changing action (queue, send, delete). Without it, `subscriptions delete` is a dry run.")
     p_operator.add_argument("--json", action="store_true", help="Print JSON (the default).")
     p_operator.set_defaults(handler=cmd_operator)
 
@@ -409,6 +410,22 @@ def cmd_operator(args) -> int:
                 raise ApiError("Contact erasure is irreversible. Repeat with --confirm.")
         else:
             raise ApiError("Contact action requires an appropriate --id and, for scoped operations, --client-id.")
+    elif resource == "subscriptions":
+        if action == "list":
+            path = "/api/admin/subscriptions"
+            query = {key: value for key, value in {"client_id": args.client_id, "audience_id": args.audience_id, "offset": args.offset or None, "limit": args.limit}.items() if value}
+        elif action == "show" and args.id:
+            path = f"/api/admin/subscriptions/{args.id}"
+        elif action == "delete":
+            if not args.client_id or not args.ids:
+                raise ApiError("Subscription delete requires --client-id and --ids (comma-separated subscription ids).")
+            ids = _parse_ids(args.ids)
+            path = f"/api/admin/clients/{args.client_id}/subscriptions/delete"
+            method = "POST"
+            # Dry run unless --confirm: Relay reports the rows and deletes nothing.
+            payload = {"ids": ids, "confirm": True} if args.confirm else {"ids": ids, "dry_run": True}
+        else:
+            raise ApiError("Subscription actions support list, show --id, or delete --client-id --ids [--confirm].")
     elif resource == "templates":
         if action == "list":
             path = "/api/admin/templates"
@@ -814,6 +831,16 @@ def cmd_layout(args) -> int:
 
 
 # --- helpers --------------------------------------------------------------
+
+
+def _parse_ids(value: str) -> list[int]:
+    parts = [part.strip() for part in value.split(",")]
+    if not parts or any(not part.isdigit() or int(part) <= 0 for part in parts):
+        raise ApiError("--ids must be a comma-separated list of positive integer ids.")
+    ids = [int(part) for part in parts]
+    if len(set(ids)) != len(ids):
+        raise ApiError("--ids contains duplicate ids.")
+    return ids
 
 
 def _record_uuid(value: str) -> str:

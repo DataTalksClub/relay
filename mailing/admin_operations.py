@@ -26,9 +26,11 @@ from mailing.services.campaigns import (
 from mailing.services.inbound_email import load_body_text
 from mailing.services.inbound_views import BLOCK_ORIGIN_BUTTON, block_sender, mark_read, unblock_sender
 from mailing.services.operator_management import (
+    SubscriptionDeleteRejected,
     add_contact_tag,
     assume_recipient_sent,
     create_or_update_client,
+    delete_subscriptions,
     remove_contact_tag,
     update_contact_state,
     update_subscription,
@@ -462,6 +464,40 @@ def blocked_delete(request, rule_id):
     record_audit(request, "admin.blocked_sender.delete", rule)
     unblock_sender(rule)
     return JsonResponse({"deleted": True})
+
+
+@admin_endpoint(["POST"])
+def subscriptions_delete(request, client_id):
+    """Delete explicitly listed Subscription rows of one client.
+
+    Body: ``{"ids": [int, ...], "confirm": bool, "dry_run": bool}``. Without
+    ``confirm: true`` the call is a dry run and deletes nothing; ``dry_run:
+    false`` without ``confirm: true`` is refused. Missing or other-client ids
+    refuse the whole request (nothing deleted).
+    """
+    client = get_record(models.Client, pk=client_id)
+    data = body(request, {"ids", "confirm", "dry_run"})
+    for flag in ("confirm", "dry_run"):
+        if flag in data and type(data[flag]) is not bool:
+            raise ApiError("validation_error", fields={flag: "must_be_boolean"})
+    confirm = data.get("confirm", False)
+    dry_run = data.get("dry_run", not confirm)
+    if confirm and dry_run:
+        raise ApiError("validation_error", fields={"dry_run": "conflicts_with_confirm"})
+    if not confirm and not dry_run:
+        raise ApiError("confirm_required", fields={"confirm": "required_to_delete"})
+    try:
+        result = delete_subscriptions(
+            actor=request.admin_key.user,
+            client=client,
+            ids=data.get("ids"),
+            confirm=confirm,
+            audit_metadata={"admin_key_id": request.admin_key.id},
+        )
+    except SubscriptionDeleteRejected as exc:
+        status = 409 if exc.code == "ids_not_deletable" else 400
+        raise ApiError(exc.code, status, fields=exc.fields) from None
+    return JsonResponse(result)
 
 
 @admin_endpoint(["GET"])
