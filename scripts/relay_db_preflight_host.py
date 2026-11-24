@@ -38,6 +38,28 @@ def inspect_runtime(environment, run=subprocess.run):
     return {"observed_at": datetime.now(timezone.utc).isoformat(), "containers": containers}
 
 
+MAX_DIAGNOSTIC_CHARS = 2000
+
+
+def redact(text, secrets):
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "[redacted]")
+    return text
+
+
+def run_step(run, step, args, secrets, **kwargs):
+    """Run a captured registry command; on failure report its exit code and
+    output (credentials redacted) before failing closed."""
+    try:
+        return run(args, check=True, capture_output=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as exc:
+        output = "\n".join(part for part in (exc.stderr, exc.stdout) if isinstance(part, str) and part.strip())
+        output = redact(output.strip(), secrets)[-MAX_DIAGNOSTIC_CHARS:] or "(no output)"
+        print(f"{step} failed with exit code {exc.returncode}: {output}", file=sys.stderr, flush=True)
+        raise
+
+
 def run_preflight(selection, credentials, run=subprocess.run):
     match = re.fullmatch(r"(development|production) (\d{8}-\d{6}-[0-9a-f]{7})", selection)
     if not match:
@@ -64,12 +86,13 @@ def run_preflight(selection, credentials, run=subprocess.run):
         env_file.chmod(0o600)
         docker = ["docker", "--config", directory]
         print("Authenticating candidate image pull", flush=True)
-        run(
-            [*docker, "login", "ghcr.io", "--username", credentials["username"], "--password-stdin"],
-            input=credentials["token"], check=True, capture_output=True, text=True,
+        secrets = [credentials["token"]]
+        run_step(
+            run, "docker login", [*docker, "login", "ghcr.io", "--username", credentials["username"], "--password-stdin"],
+            secrets, input=credentials["token"],
         )
         print("Pulling candidate image", flush=True)
-        run([*docker, "pull", "--quiet", image], check=True, capture_output=True, text=True)
+        run_step(run, "docker pull", [*docker, "pull", "--quiet", image], secrets)
         print(f"Candidate-image DB preflight: environment={environment} tag={tag}", flush=True)
         # Override the normal startup gate so ownership is checked BEFORE any DDL.
         run(
