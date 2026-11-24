@@ -61,9 +61,11 @@ def campaign_test_send(request, campaign_id):
             value for value in re.split(r"[,;\s]+", request.POST.get("test_emails", "").strip()) if value
         ])
     except ApiValidationError:
+        from mailing.services.test_send_guard import ALLOWED_TEST_RECIPIENT_HINT  # noqa: PLC0415
+
         messages.error(
             request,
-            "Enter 1–25 valid test email addresses (dev+...@dtcdev.click or *@simulator.amazonses.com), "
+            f"Enter 1–25 valid test email addresses ({ALLOWED_TEST_RECIPIENT_HINT}), "
             "separated by commas or new lines.",
         )
         return redirect("mailing:campaign_detail", campaign_id=campaign.pk)

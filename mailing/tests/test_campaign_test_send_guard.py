@@ -82,6 +82,9 @@ def _post_test_send(django_client, external_key, payload):
         "success@simulator.amazonses.com",
         "bounce@simulator.amazonses.com",
         "complaint+tag@simulator.amazonses.com",
+        "alexey@datatalks.club",
+        "Alexey@DataTalks.Club",
+        "alexey.s.grigoriev@gmail.com",
     ],
 )
 def test_allowed_test_send_recipients(email):
@@ -91,8 +94,8 @@ def test_allowed_test_send_recipients(email):
 @pytest.mark.parametrize(
     "email",
     [
-        "alexey@datatalks.club",
-        "alexey.s.grigoriev@gmail.com",
+        "subscriber@datatalks.club",
+        "other@gmail.com",
         "dev@dtcdev.click",
         "other@dtcdev.click",
         "user@example.com",
@@ -108,8 +111,8 @@ def test_disallowed_test_send_recipients(email):
 @pytest.mark.parametrize(
     "blocked_email",
     [
-        "alexey@datatalks.club",
-        "alexey.s.grigoriev@gmail.com",
+        "subscriber@datatalks.club",
+        "other@gmail.com",
         "dev@dtcdev.click",
         "someone@example.com",
     ],
@@ -136,7 +139,7 @@ def test_direct_send_campaign_test_message_refuses_real_address(env):
     ses = _SesStub()
 
     with pytest.raises(ApiValidationError) as exc_info:
-        send_campaign_test_message(campaign, "alexey@datatalks.club", ses_client=ses)
+        send_campaign_test_message(campaign, "subscriber@datatalks.club", ses_client=ses)
 
     assert "dev+...@dtcdev.click" in exc_info.value.errors["email"]
     assert ses.sent == []
@@ -241,5 +244,58 @@ def test_api_test_send_accepts_explicit_merge_vars(client, env, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["sent_count"] == 1
+    assert ses.sent[0]["Message"]["Subject"]["Data"] == "[TEST] Course update"
     text = ses.sent[0]["Message"]["Body"]["Text"]["Data"]
     assert "Hello QA, join here: https://c.example/qa" in text
+
+
+@override_settings(**SETTINGS)
+@pytest.mark.parametrize(
+    ("raw_subject", "expected_subject"),
+    [
+        ("Course update", "[TEST] Course update"),
+        ("[TEST] Course update", "[TEST] Course update"),
+        ("[test] Course update", "[TEST] Course update"),
+        ("  [TEST]   Course update  ", "[TEST] Course update"),
+    ],
+)
+def test_test_send_prefixes_subject_without_double_prefix(env, raw_subject, expected_subject):
+    campaign, _, _, _ = env
+    campaign.subject = raw_subject
+    campaign.save(update_fields=["subject", "updated_at"])
+    ses = _SesStub()
+
+    send_campaign_test_message(campaign, "alexey@datatalks.club", ses_client=ses)
+
+    assert len(ses.sent) == 1
+    assert ses.sent[0]["Destination"] == {"ToAddresses": ["alexey@datatalks.club"]}
+    assert ses.sent[0]["Message"]["Subject"]["Data"] == expected_subject
+
+
+@override_settings(**SETTINGS)
+@pytest.mark.parametrize(
+    "html_body",
+    [
+        "<p>Hello {{ first_name }}, <a href=\"{{ invite_url }}\">join</a></p>",
+        "<!DOCTYPE html><html><head><title>T</title></head><body class=\"x\"><p>Hello {{ first_name }}</p></body></html>",
+    ],
+)
+def test_test_send_prepends_visible_banner_to_html_and_text(env, html_body):
+    campaign, _, _, _ = env
+    campaign.html_body = html_body
+    campaign.save(update_fields=["html_body", "updated_at"])
+    ses = _SesStub()
+
+    send_campaign_test_message(campaign, "alexey.s.grigoriev@gmail.com", ses_client=ses)
+
+    sent = ses.sent[0]
+    html = sent["Message"]["Body"]["Html"]["Data"]
+    text = sent["Message"]["Body"]["Text"]["Data"]
+    assert "TEST SEND" in html
+    assert "not sent to your subscriber list" in html
+    assert html.index("TEST SEND") < html.index("Hello [test:first_name]")
+    if "<body" in html_body:
+        assert html.index("<body") < html.index("TEST SEND")
+    assert text.startswith("========================================================================")
+    assert "[TEST SEND]" in text
+    assert text.index("[TEST SEND]") < text.index("Hello [test:first_name]")

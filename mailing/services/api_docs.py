@@ -1548,9 +1548,11 @@ OPENAPI_SPEC = {
                 "tags": ["Campaigns"],
                 "summary": "Test-send campaign",
                 "description": (
-                    "Sends one rendered campaign to explicit test addresses (dev+...@dtcdev.click or "
-                    "*@simulator.amazonses.com only) without creating campaign recipients or updating "
-                    "campaign delivery counts. Refuses drafts with an empty/footer-only body."
+                    "Sends one rendered campaign to explicit test addresses (dev+...@dtcdev.click, "
+                    "*@simulator.amazonses.com, alexey@datatalks.club, or alexey.s.grigoriev@gmail.com) "
+                    "without creating campaign recipients or updating campaign delivery counts. "
+                    "Automatically prefixes the subject with '[TEST] ' and prepends a test-send banner. "
+                    "Refuses drafts with an empty/footer-only body."
                 ),
                 "security": [{"BearerAuth": []}],
                 "parameters": [CAMPAIGN_EXTERNAL_KEY_PARAM],
