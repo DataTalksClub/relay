@@ -110,11 +110,61 @@ class ExternalLinksExtension(Extension):
         md.treeprocessors.register(ExternalLinksTreeprocessor(md), "external_links", 0)
 
 
-def render_email_markdown(text):
+# The AISL shell is 600px wide with 32px body padding on each side.
+# Outlook's Word renderer needs an HTML width because it ignores max-width.
+_IMAGE_SIZE_PROPERTIES = {"width", "height", "min-width", "max-width", "min-height", "max-height"}
+
+
+def _image_width(element, max_width):
+    value = element.get("width", "")
+    if value.isdecimal() and int(value) > 0:
+        return min(int(value), max_width), True
+    return max_width, False
+
+
+class ResponsiveImagesTreeprocessor(Treeprocessor):
+    """Constrain Markdown images after attr_list has applied author attributes."""
+
+    def __init__(self, md, max_width):
+        super().__init__(md)
+        self.max_width = max_width
+
+    def run(self, root):
+        for element in root.iter("img"):
+            width, explicit_width = _image_width(element, self.max_width)
+            styles = []
+            for declaration in element.get("style", "").split(";"):
+                property_name = declaration.partition(":")[0].strip().lower()
+                if declaration.strip() and property_name not in _IMAGE_SIZE_PROPERTIES:
+                    styles.append(declaration.strip())
+            # Auto width keeps small un-sized images at their intrinsic width in
+            # browsers; the numeric attribute supplies Outlook's safe fallback.
+            display_width = "auto"
+            if explicit_width:
+                display_width = f"{width}px"
+            styles.extend([f"width:{display_width}", "max-width:100%", "height:auto"])
+            element.set("width", str(width))
+            element.attrib.pop("height", None)
+            element.set("style", ";".join(styles) + ";")
+
+
+class ResponsiveImagesExtension(Extension):
+    def __init__(self, max_width):
+        super().__init__()
+        self.max_width = max_width
+
+    def extendMarkdown(self, md):
+        md.treeprocessors.register(ResponsiveImagesTreeprocessor(md, self.max_width), "responsive_images", 0)
+
+
+def render_email_markdown(text, *, image_max_width=None):
     """Convert email markdown to HTML with the donor extension set."""
+    extensions = [ExternalLinksExtension(), *MARKDOWN_EMAIL_EXTENSIONS]
+    if image_max_width is not None:
+        extensions.append(ResponsiveImagesExtension(image_max_width))
     return markdown_lib.markdown(
         normalize_inline_bullets(text or ""),
-        extensions=[ExternalLinksExtension(), *MARKDOWN_EMAIL_EXTENSIONS],
+        extensions=extensions,
         output_format="html",
     )
 

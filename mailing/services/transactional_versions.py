@@ -162,11 +162,15 @@ def render_source_message_fields(source, context, *, sender_id=""):
     if source.markdown_body:
         rendered_body = render_template_string(source.markdown_body, context)
         layout_context = validate_markdown_layout_context(source, context)
+        image_max_width = None
+        if source.template.client.slug in {"aisl", "aisl-website"}:
+            # 600px AISL wrapper minus 32px body padding on each side.
+            image_max_width = 536
         return {
             "subject": subject,
             "html_body": wrap_email_html(
                 subject,
-                render_email_markdown(rendered_body),
+                render_email_markdown(rendered_body, image_max_width=image_max_width),
                 client=source.template.client,
                 sender_id=sender_id,
                 markdown_layout_context=layout_context,
