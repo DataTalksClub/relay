@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,41 @@ def inspect_runtime(environment, run=subprocess.run):
 
 
 MAX_DIAGNOSTIC_CHARS = 2000
+PULL_RETRY_DELAYS = (5, 15, 30)
+
+_NON_TRANSIENT_PULL_PATTERNS = (
+    "manifest unknown",
+    "unauthorized",
+    "denied",
+    "authentication required",
+    "no basic auth credentials",
+    "invalid reference format",
+    "no space left on device",
+)
+
+_TRANSIENT_PULL_PATTERNS = (
+    "connection reset",
+    "i/o timeout",
+    "tls handshake timeout",
+    "context deadline exceeded",
+    "unexpected eof",
+    "connection refused",
+    "broken pipe",
+    "temporary failure in name resolution",
+    "server misbehaving",
+    "network is unreachable",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "too many requests",
+)
+
+_TRANSIENT_PULL_REGEXES = (
+    re.compile(r"\beof\b"),
+    re.compile(r"(?:http status|status(?:\s+code)?[:=]?|\bhttp)\s*5\d\d\b"),
+    re.compile(r"\b50[0234]\b"),
+)
 
 
 def redact(text, secrets):
@@ -48,19 +84,54 @@ def redact(text, secrets):
     return text
 
 
+def _format_step_output(exc, secrets):
+    output = "\n".join(part for part in (exc.stderr, exc.stdout) if isinstance(part, str) and part.strip())
+    return redact(output.strip(), secrets)[-MAX_DIAGNOSTIC_CHARS:] or "(no output)"
+
+
+def is_transient_pull_error(output):
+    lowered = output.lower()
+    if any(pattern in lowered for pattern in _NON_TRANSIENT_PULL_PATTERNS):
+        return False
+    if any(pattern in lowered for pattern in _TRANSIENT_PULL_PATTERNS):
+        return True
+    return any(regex.search(lowered) for regex in _TRANSIENT_PULL_REGEXES)
+
+
 def run_step(run, step, args, secrets, **kwargs):
     """Run a captured registry command; on failure report its exit code and
     output (credentials redacted) before failing closed."""
     try:
         return run(args, check=True, capture_output=True, text=True, **kwargs)
     except subprocess.CalledProcessError as exc:
-        output = "\n".join(part for part in (exc.stderr, exc.stdout) if isinstance(part, str) and part.strip())
-        output = redact(output.strip(), secrets)[-MAX_DIAGNOSTIC_CHARS:] or "(no output)"
+        output = _format_step_output(exc, secrets)
         print(f"{step} failed with exit code {exc.returncode}: {output}", file=sys.stderr, flush=True)
         raise
 
 
-def run_preflight(selection, credentials, run=subprocess.run):
+def pull_image_with_retry(run, args, secrets, retry_delays=PULL_RETRY_DELAYS, sleep=time.sleep):
+    """Pull an image, retrying boundedly on transient registry/network errors."""
+    total_attempts = len(retry_delays) + 1
+    for attempt in range(1, total_attempts + 1):
+        try:
+            return run(args, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            output = _format_step_output(exc, secrets)
+            if attempt <= len(retry_delays) and is_transient_pull_error(output):
+                delay = retry_delays[attempt - 1]
+                print(
+                    f"docker pull attempt {attempt}/{total_attempts} failed with exit code "
+                    f"{exc.returncode} (retrying in {delay}s): {output}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                sleep(delay)
+                continue
+            print(f"docker pull failed with exit code {exc.returncode}: {output}", file=sys.stderr, flush=True)
+            raise
+
+
+def run_preflight(selection, credentials, run=subprocess.run, sleep=time.sleep):
     match = re.fullmatch(r"(development|production) (\d{8}-\d{6}-[0-9a-f]{7})", selection)
     if not match:
         raise ValueError("Expected an allowed environment and immutable Relay release tag")
@@ -92,7 +163,7 @@ def run_preflight(selection, credentials, run=subprocess.run):
             secrets, input=credentials["token"],
         )
         print("Pulling candidate image", flush=True)
-        run_step(run, "docker pull", [*docker, "pull", "--quiet", image], secrets)
+        pull_image_with_retry(run, [*docker, "pull", "--quiet", image], secrets, sleep=sleep)
         print(f"Candidate-image DB preflight: environment={environment} tag={tag}", flush=True)
         # Override the normal startup gate so ownership is checked BEFORE any DDL.
         run(
