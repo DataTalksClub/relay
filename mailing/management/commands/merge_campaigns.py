@@ -43,10 +43,17 @@ class Command(BaseCommand):
         parser.add_argument("--sources", default="")
         parser.add_argument("--apply", action="store_true")
         parser.add_argument("--confirm-sources", default="")
+        parser.add_argument(
+            "--allow-cross-client",
+            action="store_true",
+            help="Explicit opt-in to merge campaigns across different clients in the same org and audience.",
+        )
         parser.add_argument("--settle", action="store_true")
         parser.add_argument("--rollback", action="store_true")
 
-    def handle(self, *args, canonical, sources, apply, confirm_sources, settle, rollback, **options):
+    def handle(
+        self, *args, canonical, sources, apply, confirm_sources, allow_cross_client, settle, rollback, **options
+    ):
         try:
             if rollback:
                 result = rollback_merge(canonical)
@@ -58,7 +65,9 @@ class Command(BaseCommand):
                     raise CommandError("--sources is required")
                 if apply and _ids(confirm_sources) != source_ids:
                     raise CommandError("--apply needs --confirm-sources identical to --sources")
-                result = merge_campaigns(canonical, source_ids, apply=apply)
+                result = merge_campaigns(
+                    canonical, source_ids, apply=apply, allow_cross_client=allow_cross_client
+                )
                 if apply:
                     result["settle"] = settle_merge(canonical)
         except CampaignMergeError as exc:
