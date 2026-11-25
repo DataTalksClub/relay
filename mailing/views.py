@@ -10,7 +10,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
 from django.db import DatabaseError, connection
 from django.db.models import Count, Max, Q, Sum
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import Resolver404, resolve, reverse
 from django.utils import timezone
@@ -114,6 +114,8 @@ from mailing.services.contact_import_export import (
     csv_import_contacts_for_client,
     export_contacts_csv_for_client,
     export_contacts_for_client,
+    parse_query_bool,
+    stream_contacts_csv_for_client,
 )
 from mailing.services.geo import client_ip, geo_for_request
 from mailing.services.inbound_views import (
@@ -1717,11 +1719,17 @@ def api_contacts_csv(request):
         return error_response
 
     try:
-        csv_body = export_contacts_csv_for_client(request.GET, client)
+        full = parse_query_bool(request.GET.get("full", "false"), "full")
+        if full:
+            csv_body = stream_contacts_csv_for_client(request.GET, client)
+        else:
+            csv_body = export_contacts_csv_for_client(request.GET, client)
     except ApiValidationError as exc:
         return validation_error_response(exc)
 
-    response = HttpResponse(csv_body, content_type="text/csv; charset=utf-8")
+    response_class = StreamingHttpResponse if full else HttpResponse
+    response = response_class(csv_body, content_type="text/csv; charset=utf-8")
+    response.headers["Cache-Control"] = "no-store"
     response.headers["Content-Disposition"] = 'attachment; filename="contacts.csv"'
     return response
 

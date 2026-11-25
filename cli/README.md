@@ -207,3 +207,19 @@ relay send --attach synthetic.csv --dry-run --to recipient@example.invalid \
   --subject Synthetic --body Synthetic --json
 ``` Dry runs require an existing template and never provision
 one automatically.
+
+
+### Weekly audience backup
+
+```bash
+relay operator contacts csv-export --client-id 8 --client-slug dtc-newsletter \
+  --audience dtc --full --output relay-dtc-YYYY-MM-DD.csv
+```
+
+`--full` exports every subscription state without a row cap. Both audience and
+client slug are required. `--output` creates a new private CSV file (0600),
+without printing contact data. Compare CSV record count with the audience
+overview, then upload the dated file to DTC Files in Google Drive as specified by
+`sop.newsletter.mailchimp.backup-mailchimp-audience`. See
+[the backup procedure](../docs/admin-api.md#complete-audience-csv-backup).
+Do not use `operator archive export` for the backup: it includes secrets.

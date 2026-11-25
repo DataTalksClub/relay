@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import sys
 import urllib.parse
 import uuid as uuid_module
@@ -71,6 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_operator.add_argument("--suppression", choices=("global_unsubscribed", "hard_bounced", "complained"), help="Filter contacts by suppression state.")
     p_operator.add_argument("--client-slug", help="Client slug required by some campaign API operations.")
     p_operator.add_argument("--audience", help="Audience slug required by some campaign API operations.")
+    p_operator.add_argument("--full", action="store_true", help="Export the entire contacts audience as CSV, all subscription states, without a row cap.")
+    p_operator.add_argument("--output", help="Write contacts csv-export to a private file instead of stdout.")
     p_operator.add_argument("--key", help="Newsletter issue key for issue actions.")
     p_operator.add_argument("--block-id", type=int, help="Newsletter block id.")
     p_operator.add_argument("--recipient-id", type=int, help="Campaign recipient id.")
@@ -382,8 +385,15 @@ def cmd_operator(args) -> int:
             path = f"/api/admin/clients/{args.client_id}/contacts"
             query = {key: value for key, value in {"q": args.query, "suppression": args.suppression}.items() if value}
         elif action == "csv-export" and args.client_id:
+            if not args.audience or not args.client_slug:
+                raise ApiError("CSV export requires --audience and --client-slug in addition to --client-id.")
             path = f"/api/admin/clients/{args.client_id}/contacts.csv"
-            query = {key: value for key, value in {"q": args.query, "suppression": args.suppression}.items() if value}
+            query = {key: value for key, value in {
+                "q": args.query, "suppression": args.suppression,
+                "audience": args.audience, "client": args.client_slug,
+            }.items() if value}
+            if args.full:
+                query["full"] = "true"
         elif action == "csv-import" and args.client_id:
             path = f"/api/admin/clients/{args.client_id}/contacts/imports/csv"
             method = "POST"
@@ -658,7 +668,16 @@ def cmd_operator(args) -> int:
         payload.setdefault("audience", args.audience)
     _, result = _client(args).request(method, path, payload=payload, query=query)
     if isinstance(result, dict) and set(result) == {"raw"} and isinstance(result["raw"], str):
-        print(result["raw"])
+        if resource == "contacts" and action == "csv-export" and args.output:
+            # Exclusive creation avoids overwriting an existing backup or following a symlink.
+            try:
+                fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                    handle.write(result["raw"])
+            except OSError as exc:
+                raise ApiError("Could not write CSV backup; use a new writable output path.") from exc
+        else:
+            print(result["raw"], end="")
         return 0
     print(json.dumps(result, indent=2, default=str))
     return 0
