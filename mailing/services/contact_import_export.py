@@ -480,13 +480,54 @@ def export_contacts_csv_for_client(data, authenticated_client):
     return output.getvalue()
 
 
-def export_contact_csv_row(contact, audience, client):
-    subscription = Subscription.objects.filter(contact=contact, audience=audience, client=client).first()
+def stream_contacts_csv_for_client(data, authenticated_client):
+    """Validate before returning a bounded-memory, keyset-paged CSV stream."""
+    queryset, scope = filtered_contact_queryset(data, authenticated_client)
+    ceiling = queryset.order_by("-id").values_list("id", flat=True).first() or 0
+    return _contact_csv_chunks(queryset.filter(id__lte=ceiling), scope)
+
+
+def _contact_csv_chunks(queryset, scope):
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=CSV_COLUMNS)
+    writer.writeheader()
+    yield output.getvalue()
+    cursor = 0
+    while True:
+        contacts = list(queryset.filter(id__gt=cursor)[:1000])
+        if not contacts:
+            return
+        ids = [contact.id for contact in contacts]
+        subscriptions = {
+            sub.contact_id: sub for sub in Subscription.objects.filter(
+                contact_id__in=ids, audience=scope.audience, client=scope.client,
+            )
+        }
+        tags = {}
+        for contact_id, slug in ContactTag.objects.filter(
+            contact_id__in=ids, tag__audience=scope.audience,
+        ).values_list("contact_id", "tag__slug"):
+            tags.setdefault(contact_id, []).append(slug)
+        output.seek(0)
+        output.truncate(0)
+        for contact in contacts:
+            writer.writerow(export_contact_csv_row(
+                contact, scope.audience, scope.client,
+                subscription=subscriptions.get(contact.id), tags=sorted(tags.get(contact.id, [])),
+            ))
+        yield output.getvalue()
+        cursor = contacts[-1].id
+
+
+def export_contact_csv_row(contact, audience, client, *, subscription=None, tags=None):
+    if tags is None:
+        subscription = Subscription.objects.filter(contact=contact, audience=audience, client=client).first()
+        tags = contact_tags(contact, audience)
     return {
         "email": contact.normalized_email,
         "audience": audience.slug,
         "client": client.slug,
-        "tags": ";".join(contact_tags(contact, audience)),
+        "tags": ";".join(tags),
         "subscription_status": subscription.status if subscription else "",
         "verified": bool(contact.verified_at or (subscription and subscription.verified_at)),
         "verified_at": isoformat(contact.verified_at or (subscription.verified_at if subscription else None)) or "",

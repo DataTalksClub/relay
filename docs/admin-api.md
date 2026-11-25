@@ -240,6 +240,39 @@ the next future cron occurrence without submitting work immediately or replaying
 missed occurrences. Automatic campaign scheduling remains unavailable; these
 schedules describe Relay task submissions.
 
-Campaign queue actions complete the audience snapshot synchronously and return the final queue result, unless the send-now audience has more than `RELAY_CAMPAIGN_SYNC_QUEUE_MAX_RECIPIENTS` candidate contacts (default 10000). Such a campaign is marked `scheduled` with `scheduled_at` = now and the response has `queued: true, snapshotting: true`; the scheduler queues it on its next pass (~15 s) with no web statement timeout. If queueing still exceeds the database statement timeout, the request is rolled back and returns HTTP 504 `campaign_queue_timeout` with a campaign-specific message. The campaign is left unchanged. Client `campaigns/{key}/test-send` accepts at most two distinct explicit test addresses and returns HTTP 200 with `sent_count` and provider message IDs in `recipients`; provider acceptance does not confirm delivery. Admin transactional bulk retry completes synchronously, returns retried/skipped rows, and accepts at most 1000 matching messages per confirmed request. Import (200) and CSV export (2000) limits remain unchanged; use their management commands for larger files.
+Campaign queue actions complete the audience snapshot synchronously and return the final queue result, unless the send-now audience has more than `RELAY_CAMPAIGN_SYNC_QUEUE_MAX_RECIPIENTS` candidate contacts (default 10000). Such a campaign is marked `scheduled` with `scheduled_at` = now and the response has `queued: true, snapshotting: true`; the scheduler queues it on its next pass (~15 s) with no web statement timeout. If queueing still exceeds the database statement timeout, the request is rolled back and returns HTTP 504 `campaign_queue_timeout` with a campaign-specific message. The campaign is left unchanged. Client `campaigns/{key}/test-send` accepts at most two distinct explicit test addresses and returns HTTP 200 with `sent_count` and provider message IDs in `recipients`; provider acceptance does not confirm delivery. Admin transactional bulk retry completes synchronously, returns retried/skipped rows, and accepts at most 1000 matching messages per confirmed request. Import (200) and default CSV export (2000) limits remain unchanged. Use `full=true` for a complete streamed CSV backup; use the import management command for larger imports.
 
 Campaign sends default to 1000 recipients per existing send task (override `CAMPAIGN_EMAIL_BATCH_SIZE` in Django settings). Snapshotting and task creation finish within the request; only delivery uses the existing send worker.
+
+
+## Complete audience CSV backup
+
+The weekly backup in `sop.newsletter.mailchimp.backup-mailchimp-audience` must
+come from Relay. Export all subscription states of the selected audience:
+
+```bash
+umask 077
+relay operator contacts csv-export --client-id 8 --client-slug dtc-newsletter \
+  --audience dtc --full --output relay-dtc-YYYY-MM-DD.csv
+```
+
+Use the current CLI from `cli/` (install with `uv tool install ./cli --force`).
+The output path must be new; the CLI creates it with owner-only permissions.
+Without `--output`, CSV goes to stdout. Omit search and suppression filters for
+a complete backup. `--full` sends `full=true` to
+`GET /api/admin/clients/8/contacts.csv?client=dtc-newsletter&audience=dtc`.
+The server streams batches without a total row cap; the CLI reads the response
+before writing the file, so failed downloads do not leave a partial backup.
+The default CSV endpoint still returns at most 1000 rows (2000 with `limit`).
+
+Count data records with a CSV parser (not line count, since quoted fields can
+contain newlines) and compare with the audience overview total before uploading.
+Concurrent audience changes can affect the count: export again if they differ.
+The stream bounds membership at the highest matching contact ID when it starts;
+it is not a database snapshot of concurrent subscription edits.
+Upload the verified dated CSV to the existing **DTC Files** Google Drive folder
+under the weekly backup SOP. Treat the CSV as private contact data; report only
+counts in task evidence. The CSV includes contact, tag, subscription, verification
+and suppression fields; it excludes integration credentials, client keys and IPs.
+Never use `relay operator archive export` for this Drive backup: transfer archives
+contain client key hashes and integration secrets.

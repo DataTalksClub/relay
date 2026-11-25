@@ -1,4 +1,5 @@
 import ast
+import csv
 import inspect
 import io
 import json
@@ -37,6 +38,8 @@ from mailing.models import (
     InboundMessage,
     OperatorAudit,
     Organization,
+    Subscription,
+    SubscriptionStatus,
 )
 from mailing.services.admin_auth import create_admin_api_key
 from mailing.services.auth import authenticate_bearer_token, create_client_api_key
@@ -428,3 +431,40 @@ def test_schedule_admin_pause_resume_uses_existing_future_policy(setup):
     schedule.refresh_from_db()
     assert schedule.enabled and schedule.next_run_at > timezone.now()
     assert not schedule.jobs.exists()
+
+
+def test_full_csv_stream_exports_all_states_without_cap(setup, django_assert_max_num_queries):
+    http, _, _, _, client, audience = setup
+    contacts = Contact.objects.bulk_create([
+        Contact(email=f"backup-{i}@example.invalid", normalized_email=f"backup-{i}@example.invalid")
+        for i in range(2105)
+    ])
+    states = list(SubscriptionStatus.values)
+    Subscription.objects.bulk_create([
+        Subscription(contact=contact, audience=audience, client=client, status=states[i % len(states)])
+        for i, contact in enumerate(contacts)
+    ])
+    other = Audience.objects.create(organization=client.organization, name="Other", slug="other-backup")
+    extra = Contact.objects.create(email="excluded@example.invalid")
+    Subscription.objects.create(contact=extra, audience=other, client=client)
+    response = http.get(f"/api/admin/clients/{client.id}/contacts.csv", {
+        "audience": audience.slug, "client": client.slug, "full": "true",
+    })
+    assert response.status_code == 200
+    assert response.streaming
+    assert response["Cache-Control"] == "no-store"
+    with django_assert_max_num_queries(10):
+        body = b"".join(response.streaming_content).decode()
+    rows = list(csv.DictReader(io.StringIO(body)))
+    assert len(rows) == 2105
+    assert len({row["email"] for row in rows}) == 2105
+    assert {row["subscription_status"] for row in rows} == set(states)
+    assert {row["audience"] for row in rows} == {audience.slug}
+    assert set(rows[0]) == {
+        "email", "audience", "client", "tags", "subscription_status", "verified", "verified_at",
+        "email_validation_status", "email_validation_reason", "email_validated_at",
+        "global_unsubscribed", "hard_bounced", "complained", "unsubscribed", "unsubscribed_at",
+        "unsubscribe_reason", "updated_at",
+    }
+    invalid = http.get(f"/api/admin/clients/{client.id}/contacts.csv", {"full": "true"})
+    assert invalid.status_code == 400

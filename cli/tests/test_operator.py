@@ -201,11 +201,12 @@ def test_contact_csv_export_prints_raw_csv():
     with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"raw": "email\nx@y.z\n"})) as request:
         result = cli.main([
             "operator", "contacts", "csv-export", "--client-id", "3", "--query", "x@y.z",
+            "--audience", "dtc", "--client-slug", "newsletter",
             "--url", "https://relay.test", "--api-key", "relay_admin_test",
         ])
     assert result == 0
     request.assert_called_once_with(
-        "GET", "/api/admin/clients/3/contacts.csv", payload=None, query={"q": "x@y.z"},
+        "GET", "/api/admin/clients/3/contacts.csv", payload=None, query={"q": "x@y.z", "audience": "dtc", "client": "newsletter"},
     )
 
 
@@ -278,3 +279,39 @@ def test_subscription_delete_requires_client_id(capsys):
         assert cli.main(["operator", "subscriptions", "delete", "--ids", "1", "--confirm", *CONN]) == 1
     request.assert_not_called()
     assert "--client-id" in capsys.readouterr().err
+
+
+def test_full_csv_export_writes_private_file(tmp_path, capsys):
+    output = tmp_path / "backup.csv"
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"raw": "email\nsynthetic@example.invalid\n"})) as request:
+        assert cli.main([
+            "operator", "contacts", "csv-export", "--client-id", "8",
+            "--audience", "dtc", "--client-slug", "dtc-newsletter", "--full",
+            "--output", str(output), "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ]) == 0
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert output.read_text() == "email\nsynthetic@example.invalid\n"
+    assert capsys.readouterr().out == ""
+    assert request.call_args.kwargs["query"] == {
+        "audience": "dtc", "client": "dtc-newsletter", "full": "true",
+    }
+
+
+def test_csv_export_requires_audience_and_client_slug(capsys):
+    with patch("datamailer_cli.api.DatamailerClient.request") as request:
+        assert cli.main(["operator", "contacts", "csv-export", "--client-id", "8"]) == 1
+    request.assert_not_called()
+    assert "--audience" in capsys.readouterr().err
+
+
+def test_csv_export_does_not_overwrite_existing_backup(tmp_path, capsys):
+    output = tmp_path / "backup.csv"
+    output.write_text("original")
+    with patch("datamailer_cli.api.DatamailerClient.request", return_value=(200, {"raw": "email\n"})):
+        assert cli.main([
+            "operator", "contacts", "csv-export", "--client-id", "8",
+            "--audience", "dtc", "--client-slug", "dtc-newsletter",
+            "--output", str(output), "--url", "https://relay.test", "--api-key", "relay_admin_test",
+        ]) == 1
+    assert output.read_text() == "original"
+    assert capsys.readouterr().out == ""
