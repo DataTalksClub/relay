@@ -293,11 +293,46 @@ git -C "$app_dir" fetch --prune origin "$release"
 git -C "$app_dir" checkout --force "$release"
 git -C "$app_dir" clean -ffd -e .env
 
+retry_docker_pull() {
+  local image="$1"
+  local delays=(5 15 30)
+  local max_attempts=$(( ${#delays[@]} + 1 ))
+  local attempt=1
+  local output rc lowered
+
+  while true; do
+    if output="$(docker pull "$image" 2>&1)"; then
+      [[ -n "$output" ]] && printf '%s\n' "$output"
+      return 0
+    else
+      rc=$?
+    fi
+
+    lowered="$(printf '%s' "$output" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$lowered" == *"manifest unknown"* || "$lowered" == *"unauthorized"* || "$lowered" == *"denied"* || "$lowered" == *"authentication required"* || "$lowered" == *"no space left on device"* ]]; then
+      printf '%s\n' "$output" >&2
+      return "$rc"
+    fi
+
+    if (( attempt <= ${#delays[@]} )) && [[ "$lowered" =~ (connection\ reset|i/o\ timeout|tls\ handshake\ timeout|context\ deadline\ exceeded|unexpected\ eof|\beof\b|connection\ refused|broken\ pipe|temporary\ failure\ in\ name\ resolution|server\ misbehaving|network\ is\ unreachable|internal\ server\ error|bad\ gateway|service\ unavailable|gateway\ timeout|too\ many\ requests|(http\ status|status|http)[[:space:]:=]*5[0-9]{2}|\b50[0234]\b) ]]; then
+      local delay="${delays[$((attempt - 1))]}"
+      printf 'docker pull %s attempt %d/%d failed with exit code %d (retrying in %ss): %s\n' \
+        "$image" "$attempt" "$max_attempts" "$rc" "$delay" "$output" >&2
+      sleep "$delay"
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    printf '%s\n' "$output" >&2
+    return "$rc"
+  done
+}
+
 docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network"
 docker build --pull --tag "$image" "$app_dir"
 if [[ "$environment" == sandbox ]]; then
-  docker pull postgres:17-alpine
-  docker pull caddy:2-alpine
+  retry_docker_pull postgres:17-alpine
+  retry_docker_pull caddy:2-alpine
 fi
 
 log_options=(
